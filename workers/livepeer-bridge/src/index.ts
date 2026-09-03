@@ -102,6 +102,7 @@ export interface Env {
     UPLOAD_JOB_ARCHIVE_ENABLED?: string;
     OPERATOR_OUTBOX_ARCHIVE_ENABLED?: string;
     MARKET_READ_MODEL?: D1Database;
+    PUBLIC_BETA_RATE_LIMITER?: RateLimit;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -291,6 +292,22 @@ type OnChainJob = {
     fee_usd_micro?: unknown;
     fee_quote_hash?: unknown;
 };
+type PublicTestnetBetaJob = {
+    creator_id: string;
+    generation: number;
+    request_sha256: string;
+    sponsor_quote_id: string;
+    admitted_at_ms: string;
+    deadline_at_ms: string;
+};
+type PublicTestnetBetaState = {
+    version: number;
+    started_at_ms: string;
+    upload_closes_at_ms: string;
+    ends_at_ms: string;
+    closed_at_ms: string | null;
+    total_job_count: number;
+};
 type JobState = 'AUTHORIZED' | 'LEASED' | 'PROVIDER_CREATE_PENDING'
     | 'CREATE_PENDING' | 'CREATE_AMBIGUOUS' | 'UPLOAD_READY'
     | 'UPLOADING' | 'PROCESSING' | 'READY_VERIFIED' | 'FINALIZE_QUEUED'
@@ -342,6 +359,12 @@ type JobRecord = {
         archiveSha256?: string;
         committedAtMs?: number;
         cleanupEligibleAtMs?: number;
+    };
+    absoluteDeadlineAtMs?: number;
+    providerDelete?: {
+        assetIdSha256: string;
+        outcome: 'DELETED' | 'MISSING' | 'AMBIGUOUS';
+        attemptedAtMs: number;
     };
 };
 type ReconcileStatus = 'HEALTHY' | 'DRIFT_BLOCKED' | 'PROVIDER_UNKNOWN' | 'NEAR_UNKNOWN';
@@ -494,8 +517,19 @@ type LivepeerWebhookQueueMessage = {
 };
 
 const PUBLIC_CONTROL_REQUESTS_IMPLEMENTED = true;
+const PUBLIC_BETA_RATE_LIMIT_ROUTES = new Set([
+    '/v1/upload-preflight',
+    '/v1/upload-intents',
+    '/v1/upload-heartbeats',
+    '/v1/sponsored-upload-quotes',
+    '/v1/sponsored-upload-relays',
+    '/v1/playback-tokens',
+    '/v2/playback-tokens',
+]);
 const MAX_CONTROL_BODY_BYTES = 64 * 1024;
 const MAX_SOURCE_BYTES = 20_000_000_000n;
+const PUBLIC_TESTNET_BETA_MAX_SOURCE_BYTES = 1_000_000_000n;
+const PUBLIC_TESTNET_BETA_JOB_TTL_MS = 24 * 60 * 60 * 1_000;
 const MIN_CREATOR_UPLOAD_FEE_USD_MICROS = 500_000n;
 const CREATOR_FEE_RATE_SOURCE = 'outlayer-price-oracle-wrap-near-v1';
 const OUTLAYER_NEAR_ASSET_ID = 'wrap.near';
@@ -659,6 +693,7 @@ const SAFE_ERROR_CODES = new Set([
     'provider_unavailable',
     'provider_mutations_disabled',
     'rate_source_invalid',
+    'rate_limited',
     'rate_source_stale',
     'rate_source_unavailable',
     'playback_authorization_unavailable',
@@ -666,6 +701,7 @@ const SAFE_ERROR_CODES = new Set([
     'protocol_binding_mismatch',
     'provider_create_ambiguous',
     'provider_create_pending',
+    'provider_delete_ambiguous',
     'reservation_conflict',
     'runtime_not_configured',
     'sponsor_balance_insufficient',
@@ -695,8 +731,9 @@ const bridgeWorker = {
                     && env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED === 'true',
                 operatorMutationEnabled: env.LIVEPEER_BRIDGE_ENABLED === 'true'
                     && env.LIVEPEER_OPERATOR_MUTATIONS_ENABLED === 'true'
-                    && JOB_ID_PATTERN.test(env.LIVEPEER_OPERATOR_JOB_ID || '')
-                    && creatorAllowlist(env).size === 1,
+                    && (isPublicBetaPacket(env)
+                        || (JOB_ID_PATTERN.test(env.LIVEPEER_OPERATOR_JOB_ID || '')
+                            && creatorAllowlist(env).size === 1)),
                 operatorJobFingerprint: JOB_ID_PATTERN.test(env.LIVEPEER_OPERATOR_JOB_ID || '')
                     ? await sha256Hex(env.LIVEPEER_OPERATOR_JOB_ID!)
                     : null,
@@ -741,7 +778,16 @@ const bridgeWorker = {
                     && validWebhookConfig(env),
                 uploadJobArchiveReady: validTerminalArchiveConfig(env),
                 operatorOutboxArchiveReady: validOperatorArchiveConfig(env),
+                publicBetaRateLimitReady: isPublicBetaPacket(env)
+                    && Boolean(env.PUBLIC_BETA_RATE_LIMITER),
             });
+        }
+
+        if (request.method === 'POST'
+            && PUBLIC_BETA_RATE_LIMIT_ROUTES.has(url.pathname)
+            && isPublicBetaPacket(env)) {
+            const limited = await publicBetaRateLimitResponse(request, env, url.pathname);
+            if (limited) return limited;
         }
 
         if (request.method === 'OPTIONS'
@@ -796,6 +842,19 @@ const bridgeWorker = {
                 return json({ error: 'runtime_not_configured' }, 503);
             }
             return forwardAdmissionReopen(request, env);
+        }
+
+        if (request.method === 'POST' && url.pathname === '/v1/operations/provider-assets/delete') {
+            if (env.LIVEPEER_BRIDGE_ENABLED !== 'true'
+                || env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED !== 'true'
+                || !isPublicBetaPacket(env)) {
+                return json({ error: 'control_plane_disabled' }, 503);
+            }
+            if (!env.LIVEPEER_CONTROL || !validAdmissionReopenConfig(env)
+                || !validProviderVerificationConfig(env)) {
+                return json({ error: 'runtime_not_configured' }, 503);
+            }
+            return forwardPublicBetaAssetDelete(request, env);
         }
 
         if (request.method === 'GET' && url.pathname === '/v1/operations/admission-status') {
@@ -1102,6 +1161,9 @@ export class LivepeerControl {
                 this.operatorTail = run.then(() => undefined, () => undefined);
                 return await run;
             }
+            if (request.method === 'POST' && url.pathname === '/internal/provider-asset-delete') {
+                return await this.deletePublicBetaAsset(request);
+            }
             if (request.method === 'POST' && url.pathname === '/internal/admission/reserve') {
                 return await reserveAdmission(this.state, this.env, await readJsonObject(request));
             }
@@ -1159,8 +1221,17 @@ export class LivepeerControl {
         await verifyControlSignature(request, input.envelope);
         const { job: chainJob } = await readFinalMediaJob(this.env, input.body.job_id);
         requireExactChainJob(input, chainJob);
+        const [publicBetaJob, publicBetaState] = isPublicBetaPacket(this.env)
+            ? await Promise.all([
+                readFinalPublicTestnetBetaJob(this.env, input.body.job_id),
+                readFinalPublicTestnetBetaState(this.env),
+            ])
+            : [null, null];
+        if (isPublicBetaPacket(this.env)) {
+            await requirePublicTestnetBetaJob(input, chainJob, publicBetaJob, publicBetaState);
+        }
 
-        const candidate = jobRecord(input, this.env);
+        const candidate = jobRecord(input, this.env, publicBetaJob?.deadline_at_ms);
         const result = await this.state.storage.transaction(async (transaction) => {
             const nonceKey = `nonce:${input.envelope.device_nonce}`;
             if (await transaction.get(nonceKey)) throw new Error('device_nonce_replayed');
@@ -1194,7 +1265,10 @@ export class LivepeerControl {
                 record = {
                     ...record,
                     leaseId: lease.leaseId,
-                    leaseExpiresAtMs: lease.expiresAtMs,
+                    leaseExpiresAtMs: Math.min(
+                        lease.expiresAtMs,
+                        record.absoluteDeadlineAtMs ?? lease.expiresAtMs,
+                    ),
                 };
                 await this.state.storage.put(JOB_KEY, record);
             }
@@ -1210,6 +1284,7 @@ export class LivepeerControl {
                 ? 'provider_create_pending'
                 : 'provider_create_ambiguous');
         }
+        if (publicBetaDeadlineExpired(record)) throw new Error('admission_denied');
         if (this.env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED !== 'true') {
             throw new Error('provider_mutations_disabled');
         }
@@ -1219,7 +1294,10 @@ export class LivepeerControl {
             const leased = {
                 ...transitionJob(record, 'LEASED'),
                 leaseId: lease.leaseId,
-                leaseExpiresAtMs: lease.expiresAtMs,
+                leaseExpiresAtMs: Math.min(
+                    lease.expiresAtMs,
+                    record.absoluteDeadlineAtMs ?? lease.expiresAtMs,
+                ),
             };
             await this.state.storage.put(JOB_KEY, leased);
             logJobStateTransition(record.state, leased.state);
@@ -1229,7 +1307,10 @@ export class LivepeerControl {
             record = {
                 ...record,
                 leaseId: lease.leaseId,
-                leaseExpiresAtMs: lease.expiresAtMs,
+                leaseExpiresAtMs: Math.min(
+                    lease.expiresAtMs,
+                    record.absoluteDeadlineAtMs ?? lease.expiresAtMs,
+                ),
             };
             await this.state.storage.put(JOB_KEY, record);
         }
@@ -1293,6 +1374,12 @@ export class LivepeerControl {
                 completedAtMs: Date.now(),
             },
         };
+        if (publicBetaDeadlineExpired(ready)) {
+            const expired = transitionJob(ready, 'UPLOAD_EXPIRED');
+            await this.state.storage.put(JOB_KEY, expired);
+            await updateAdmission(this.env, expired, 'UPLOAD_EXPIRED');
+            throw new Error('admission_denied');
+        }
         await this.state.storage.put(JOB_KEY, ready);
         logJobStateTransition(pending.state, ready.state);
         await updateAdmission(this.env, ready, 'UPLOAD_READY');
@@ -1304,6 +1391,15 @@ export class LivepeerControl {
         await verifyControlSignature(request, input.envelope);
         const { job: chainJob } = await readFinalMediaJob(this.env, input.body.job_id);
         requireHeartbeatChainJob(input, chainJob);
+        const [publicBetaJob, publicBetaState] = isPublicBetaPacket(this.env)
+            ? await Promise.all([
+                readFinalPublicTestnetBetaJob(this.env, input.body.job_id),
+                readFinalPublicTestnetBetaState(this.env),
+            ])
+            : [null, null];
+        if (isPublicBetaPacket(this.env)) {
+            await requirePublicTestnetBetaJob(input, chainJob, publicBetaJob, publicBetaState);
+        }
         const record = await this.state.storage.transaction(async (transaction) => {
             const nonceKey = `nonce:${input.envelope.device_nonce}`;
             if (await transaction.get(nonceKey)) throw new Error('device_nonce_replayed');
@@ -1312,6 +1408,8 @@ export class LivepeerControl {
                 || current.jobId !== input.body.job_id
                 || current.generation !== input.body.generation
                 || current.leaseId !== input.body.lease_id
+                || (current.absoluteDeadlineAtMs !== undefined
+                    && current.absoluteDeadlineAtMs <= Date.now())
                 || !['UPLOAD_READY', 'UPLOADING'].includes(current.state)) {
                 throw new Error('admission_denied');
             }
@@ -1341,7 +1439,10 @@ export class LivepeerControl {
         await this.state.storage.put(JOB_KEY, {
             ...uploading,
             leaseId: lease.leaseId,
-            leaseExpiresAtMs: lease.expiresAtMs,
+            leaseExpiresAtMs: Math.min(
+                lease.expiresAtMs,
+                record.absoluteDeadlineAtMs ?? lease.expiresAtMs,
+            ),
         });
         logJobStateTransition(record.state, uploading.state);
         return json({
@@ -1349,7 +1450,10 @@ export class LivepeerControl {
             job_id: record.jobId,
             generation: record.generation,
             lease_id: lease.leaseId,
-            expires_at_ms: String(lease.expiresAtMs),
+            expires_at_ms: String(Math.min(
+                lease.expiresAtMs,
+                record.absoluteDeadlineAtMs ?? lease.expiresAtMs,
+            )),
             heartbeat_interval_ms: ADMISSION_LEASE_HEARTBEAT_MS,
         });
     }
@@ -1424,7 +1528,11 @@ export class LivepeerControl {
         const nowMs = Date.now();
         const remainingSeconds = Math.floor((authorization.grantExpiresAtMs - nowMs) / 1000);
         if (remainingSeconds < 1) throw new Error('playback_denied');
-        const ttlSeconds = Math.min(input.body.requested_ttl_seconds, remainingSeconds);
+        const ttlSeconds = Math.min(
+            input.body.requested_ttl_seconds,
+            remainingSeconds,
+            isPublicBetaPacket(this.env) ? PLAYBACK_V2_TTL_SECONDS : PLAYBACK_MAX_TTL_SECONDS,
+        );
         const issuedAtSeconds = Math.floor(nowMs / 1000);
         const token = await signLivepeerJwt(
             this.env,
@@ -1484,6 +1592,15 @@ export class LivepeerControl {
         const existing = await this.state.storage.get<JobRecord>(JOB_KEY);
         if (!existing || asset.id !== existing.assetId) {
             return json({ accepted: true, ignored: true }, 202);
+        }
+        if (publicBetaDeadlineExpired(existing)
+            && !['UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'CANCELLED', 'ONCHAIN_PUBLISHED']
+                .includes(existing.state)) {
+            const expired = transitionJob(existing, 'UPLOAD_EXPIRED');
+            await this.state.storage.put(JOB_KEY, expired);
+            await scheduleTerminalArchive(this.state, this.env, expired);
+            await updateAdmission(this.env, expired, 'UPLOAD_EXPIRED');
+            return json({ accepted: true, expired: true }, 202);
         }
         if (['PROVIDER_FAILED', 'UPLOAD_EXPIRED'].includes(existing.state)) {
             return json({ accepted: true, ignored: true, terminal: true }, 202);
@@ -1598,6 +1715,84 @@ export class LivepeerControl {
     private async suspendSales(request: Request): Promise<Response> {
         const input = await parseSuspendSalesInput(await readJsonObject(request));
         return processSuspendSalesOutbox(this.state, this.env, input);
+    }
+
+    private async deletePublicBetaAsset(request: Request): Promise<Response> {
+        const input = await readJsonObject(request);
+        requireExactKeys(input, ['jobId', 'generation', 'assetId'], 'invalid_outbox');
+        if (typeof input.jobId !== 'string'
+            || !JOB_ID_PATTERN.test(input.jobId)
+            || input.generation !== 1
+            || typeof input.assetId !== 'string'
+            || !PROVIDER_ID_PATTERN.test(input.assetId)) {
+            throw new Error('invalid_outbox');
+        }
+        const record = await this.state.storage.get<JobRecord>(JOB_KEY);
+        if (!record
+            || record.jobId !== input.jobId
+            || record.generation !== input.generation
+            || record.assetId !== input.assetId
+            || !record.projectId
+            || !record.playbackId) {
+            throw new Error('provider_identity_mismatch');
+        }
+        const assetIdSha256 = await sha256Hex(input.assetId);
+        if (record.providerDelete) {
+            if (record.providerDelete.assetIdSha256 !== assetIdSha256) {
+                throw new Error('provider_identity_mismatch');
+            }
+            if (record.providerDelete.outcome === 'AMBIGUOUS') {
+                throw new Error('provider_delete_ambiguous');
+            }
+            return json({ deleted: true, duplicate: true, outcome: record.providerDelete.outcome });
+        }
+        const [chainJob, marker, publication] = await Promise.all([
+            readFinalMediaJob(this.env, input.jobId),
+            readFinalPublicTestnetBetaJob(this.env, input.jobId),
+            readFinalPublicationById(this.env, input.jobId),
+        ]);
+        if (!marker
+            || marker.creator_id !== record.creator
+            || marker.generation !== 1
+            || chainJob.job.fee_quote_hash !== marker.sponsor_quote_id) {
+            throw new Error('provider_identity_mismatch');
+        }
+        const takedown = publication?.availability === 'TAKEDOWN'
+            && publication.asset_id_hash === assetIdSha256;
+        const expired = publication === null
+            && record.state === 'UPLOAD_EXPIRED'
+            && Number(marker.deadline_at_ms) <= Date.now();
+        if (!takedown && !expired) throw new Error('provider_identity_mismatch');
+
+        const asset = await livepeerProvider(this.env).readAsset(input.assetId);
+        if (asset.id !== input.assetId
+            || asset.projectId !== record.projectId
+            || asset.projectId !== this.env.LIVEPEER_PROJECT_ID
+            || asset.playbackId !== record.playbackId
+            || asset.creatorBindingType !== 'unverified'
+            || asset.creatorBindingValue !== `${record.jobId}:${record.generation}`
+            || asset.name !== `youtick-${record.jobId}-g${record.generation}`
+            || (publication !== null
+                && (publication.playback_id !== asset.playbackId
+                    || publication.project_id_hash !== await sha256Hex(asset.projectId)))) {
+            throw new Error('provider_identity_mismatch');
+        }
+        try {
+            const outcome = await livepeerProvider(this.env).deleteAsset(input.assetId);
+            const storedOutcome = outcome === 'deleted' ? 'DELETED' : 'MISSING';
+            await this.state.storage.put(JOB_KEY, {
+                ...record,
+                providerDelete: { assetIdSha256, outcome: storedOutcome, attemptedAtMs: Date.now() },
+            } satisfies JobRecord);
+            return json({ deleted: true, duplicate: false, outcome: storedOutcome });
+        } catch {
+            await this.state.storage.put(JOB_KEY, {
+                ...record,
+                providerDelete: { assetIdSha256, outcome: 'AMBIGUOUS', attemptedAtMs: Date.now() },
+            } satisfies JobRecord);
+            await closeAdmissionAfterAmbiguousDelete(this.env, record);
+            throw new Error('provider_delete_ambiguous');
+        }
     }
 }
 
@@ -1993,9 +2188,14 @@ async function advanceFinalization(
     env: Env,
     job: JobRecord,
 ): Promise<Response> {
-    if (env.LIVEPEER_OPERATOR_JOB_ID !== job.jobId
-        || job.generation !== 1
-        || !creatorAllowlist(env).has(job.creator)) {
+    if (publicBetaDeadlineExpired(job)) {
+        const expired = transitionJob(job, 'UPLOAD_EXPIRED');
+        await state.storage.put(JOB_KEY, expired);
+        await scheduleTerminalArchive(state, env, expired);
+        await updateAdmission(env, expired, 'UPLOAD_EXPIRED');
+        return json({ accepted: true, expired: true }, 202);
+    }
+    if (!operatorJobAllowed(env, job.jobId, job.creator) || job.generation !== 1) {
         return json({ accepted: true, ignored: true }, 202);
     }
     const response = await forwardFinalize(env, job.publication!);
@@ -2060,6 +2260,18 @@ async function requestAdmission(env: Env, job: JobRecord): Promise<AdmissionLeas
         throw new Error('admission_closed');
     }
     return { leaseId: result.lease_id, expiresAtMs: Number(result.expires_at_ms) };
+}
+
+async function closeAdmissionAfterAmbiguousDelete(env: Env, job: JobRecord): Promise<void> {
+    if (!env.LIVEPEER_CONTROL) return;
+    const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+        admissionObjectName(job.network, job.contractId),
+    ));
+    await object.fetch(new Request('https://object/internal/admission/mark', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: job.jobId, generation: job.generation, state: 'AUTO_CLOSED' }),
+    }));
 }
 
 async function heartbeatAdmissionLease(env: Env, job: JobRecord): Promise<AdmissionLease> {
@@ -2131,7 +2343,7 @@ async function preflightAdmission(
     const candidate = parseAdmissionCandidate(input, 'invalid_upload_preflight');
     const jobReservationUsdMicros = operationReservation(env);
     const monthlyBudgetUsdMicros = monthlyBudget(env);
-    if (!creatorAllowlist(env).has(candidate.creator)
+    if (!creatorAllowed(env, candidate.creator)
         || !jobReservationUsdMicros
         || !monthlyBudgetUsdMicros) {
         throw new Error('admission_closed');
@@ -2165,7 +2377,7 @@ async function reserveAdmission(
     input: JsonObject,
 ): Promise<Response> {
     const candidate = parseAdmissionCandidate(input, 'invalid_outbox');
-    if (!creatorAllowlist(env).has(candidate.creator)) throw new Error('admission_closed');
+    if (!creatorAllowed(env, candidate.creator)) throw new Error('admission_closed');
     const jobReservationUsdMicros = operationReservation(env);
     const monthlyBudgetUsdMicros = monthlyBudget(env);
     if (!jobReservationUsdMicros || !monthlyBudgetUsdMicros) throw new Error('admission_closed');
@@ -2687,9 +2899,79 @@ function emptyAdmissionRecord(utcDay: string, utcMonth: string): AdmissionRecord
 
 function creatorAllowlist(env: Env): Set<string> {
     const values = (env.LIVEPEER_CREATOR_ALLOWLIST || '').split(',').map((value) => value.trim()).filter(Boolean);
-    return values.length > 0 && values.every((value) => ACCOUNT_ID_PATTERN.test(value))
+    return values.length > 0
+        && (values.every((value) => ACCOUNT_ID_PATTERN.test(value))
+            || (values.length === 1 && values[0] === '*'))
         ? new Set(values)
         : new Set();
+}
+
+function creatorAllowed(env: Env, creator: string): boolean {
+    const allowlist = creatorAllowlist(env);
+    return allowlist.has('*') || allowlist.has(creator);
+}
+
+function isPublicBetaPacket(env: Env): boolean {
+    const allowlist = creatorAllowlist(env);
+    return env.NEAR_NETWORK === 'testnet'
+        && env.LIVEPEER_BRIDGE_ENABLED === 'true'
+        && env.LIVEPEER_NEW_UPLOADS_ENABLED === 'true'
+        && env.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED === 'true'
+        && env.LIVEPEER_PLAYBACK_V2_ENABLED === 'true'
+        && env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED === 'true'
+        && env.LIVEPEER_OPERATOR_MUTATIONS_ENABLED === 'true'
+        && env.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true'
+        && env.LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED === 'true'
+        && env.LIVEPEER_OPERATOR_JOB_ID === ''
+        && env.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS === '20000000'
+        && env.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS === '2000000'
+        && (allowlist.has('*') || allowlist.size === 2);
+}
+
+function operatorJobAllowed(env: Env, jobId: string, creator?: string): boolean {
+    return isPublicBetaPacket(env)
+        ? creator === undefined || creatorAllowed(env, creator)
+        : env.LIVEPEER_OPERATOR_JOB_ID === jobId
+            && (creator === undefined || creatorAllowed(env, creator));
+}
+
+async function publicBetaRateLimitResponse(
+    request: Request,
+    env: Env,
+    route: string,
+): Promise<Response | null> {
+    if (!env.PUBLIC_BETA_RATE_LIMITER) {
+        return json({ error: 'runtime_not_configured' }, 503);
+    }
+    const ip = request.headers.get('CF-Connecting-IP')
+        || request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim()
+        || 'unknown';
+    try {
+        if (!(await env.PUBLIC_BETA_RATE_LIMITER.limit({ key: `${route}:ip:${ip}` })).success) {
+            const response = json({ error: 'rate_limited' }, 429);
+            response.headers.set('Retry-After', '60');
+            return response;
+        }
+    } catch {
+        return json({ error: 'runtime_not_configured' }, 503);
+    }
+    return null;
+}
+
+async function enforcePublicBetaAccountRateLimit(
+    env: Env,
+    route: string,
+    account: string,
+): Promise<void> {
+    if (!isPublicBetaPacket(env)) return;
+    if (!env.PUBLIC_BETA_RATE_LIMITER) throw new Error('runtime_not_configured');
+    let outcome: RateLimitOutcome;
+    try {
+        outcome = await env.PUBLIC_BETA_RATE_LIMITER.limit({ key: `${route}:account:${account}` });
+    } catch {
+        throw new Error('runtime_not_configured');
+    }
+    if (!outcome.success) throw new Error('rate_limited');
 }
 
 function operationReservation(env: Env): bigint | null {
@@ -2824,9 +3106,9 @@ async function persistDriftReconcile(
     }
     if (confirmed
         && !salesSuspensionQueuedAtMs
-        && env.LIVEPEER_OPERATOR_JOB_ID === job.jobId
+        && operatorJobAllowed(env, job.jobId, job.creator)
         && job.generation === 1
-        && creatorAllowlist(env).has(job.creator)) {
+    ) {
         await enqueueSalesSuspension(state, job, code);
         salesSuspensionQueuedAtMs = now;
     }
@@ -2919,9 +3201,7 @@ async function tryProcessSalesSuspension(
     env: Env,
     job: JobRecord,
 ): Promise<void> {
-    if (env.LIVEPEER_OPERATOR_JOB_ID !== job.jobId
-        || job.generation !== 1
-        || !creatorAllowlist(env).has(job.creator)) return;
+    if (!operatorJobAllowed(env, job.jobId, job.creator) || job.generation !== 1) return;
     const key = `outbox:${job.jobId}:suspend-sales`;
     const record = await state.storage.get<OutboxRecord>(key);
     if (!record || record.state === 'CONFIRMED') return;
@@ -2944,6 +3224,11 @@ export async function forwardUploadIntent(request: Request, env: Env): Promise<R
         if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
         const forwardingRequest = request.clone();
         const input = await parseUploadIntentRequest(request, env);
+        await enforcePublicBetaAccountRateLimit(
+            env,
+            '/v1/upload-intents',
+            input.envelope.account_id,
+        );
         const objectName = jobObjectName(
             input.envelope.network,
             input.envelope.contract_id,
@@ -2966,6 +3251,11 @@ export async function forwardUploadHeartbeat(request: Request, env: Env): Promis
         if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
         const forwardingRequest = request.clone();
         const input = await parseUploadHeartbeatRequest(request, env);
+        await enforcePublicBetaAccountRateLimit(
+            env,
+            '/v1/upload-heartbeats',
+            input.envelope.account_id,
+        );
         const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(jobObjectName(
             input.envelope.network,
             input.envelope.contract_id,
@@ -2990,6 +3280,11 @@ export async function forwardUploadPreflight(request: Request, env: Env): Promis
             throw new Error('runtime_not_configured');
         }
         const input = parseUploadPreflightRequest(await readJsonObject(request));
+        await enforcePublicBetaAccountRateLimit(
+            env,
+            '/v1/upload-preflight',
+            input.creator_id,
+        );
         const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(admissionObjectName(
             env.NEAR_NETWORK!,
             env.MARKET_CONTRACT_ID!,
@@ -3064,6 +3359,30 @@ export async function forwardSponsoredUploadQuote(request: Request, env: Env): P
             throw new Error('runtime_not_configured');
         }
         const input = parseSponsoredUploadQuoteRequest(await readJsonObject(request.clone()));
+        await enforcePublicBetaAccountRateLimit(
+            env,
+            '/v1/sponsored-upload-quotes',
+            input.request.creator_id,
+        );
+        if (isPublicBetaPacket(env)) {
+            const [state, alreadyAdmittedToday] = await Promise.all([
+                readFinalPublicTestnetBetaState(env),
+                hasFinalPublicTestnetBetaJobToday(env, input.request.creator_id),
+            ]);
+            const now = Date.now();
+            if (!state
+                || state.version !== 1
+                || state.closed_at_ms !== null
+                || Number(state.upload_closes_at_ms) <= now
+                || Number(state.ends_at_ms) <= now
+                || state.total_job_count >= 10
+                || alreadyAdmittedToday
+                || BigInt(input.request.upload_key_expires_at_ms) > BigInt(state.ends_at_ms)
+                || BigInt(input.request.expected_source_bytes)
+                    > PUBLIC_TESTNET_BETA_MAX_SOURCE_BYTES) {
+                throw new Error('admission_closed');
+            }
+        }
         await preflightSponsoredUpload(env, input.request);
         const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
             `creator-fee-quote:${env.NEAR_NETWORK}:${env.MARKET_CONTRACT_ID}:${input.request.creator_id}`,
@@ -3544,6 +3863,11 @@ async function relaySponsoredUpload(
     request: Request,
 ): Promise<Response> {
     const input = await parseSponsoredUploadRelayRequest(request, env);
+    await enforcePublicBetaAccountRateLimit(
+        env,
+        '/v1/sponsored-upload-relays',
+        input.request.creator_id,
+    );
     const existingJob = await readSponsoredMediaJob(env, input.request.job_id);
     if (existingJob) {
         requireExactSponsoredJob(existingJob, input);
@@ -4198,6 +4522,12 @@ export async function forwardPlaybackToken(
     try {
         if (!env.LIVEPEER_CONTROL || !validPlaybackConfig(env)) throw new Error('runtime_not_configured');
         const input = await parsePlaybackTokenRequest(request, env);
+        await enforcePublicBetaAccountRateLimit(
+            env,
+            '/v1/playback-tokens',
+            input.envelope.account_id,
+        );
+        await requireActivePublicTestnetBetaForPlayback(env);
         const forwardingRequest = new Request(request.url, {
             method: 'POST',
             headers: request.headers,
@@ -4300,6 +4630,40 @@ export async function forwardAdmissionReopen(request: Request, env: Env): Promis
     } catch (error) {
         const code = safeErrorCode(error);
         console.error(formatLog('livepeer_admission_reopen_failed', { code }));
+        return json({ error: code }, errorStatus(code));
+    }
+}
+
+export async function forwardPublicBetaAssetDelete(request: Request, env: Env): Promise<Response> {
+    try {
+        await requireOperatorAuthorization(request, env);
+        const input = await readJsonObject(request);
+        requireExactKeys(input, ['job_id', 'generation', 'asset_id'], 'invalid_outbox');
+        if (typeof input.job_id !== 'string'
+            || !JOB_ID_PATTERN.test(input.job_id)
+            || input.generation !== 1
+            || typeof input.asset_id !== 'string'
+            || !PROVIDER_ID_PATTERN.test(input.asset_id)) {
+            throw new Error('invalid_outbox');
+        }
+        const object = env.LIVEPEER_CONTROL!.get(env.LIVEPEER_CONTROL!.idFromName(jobObjectName(
+            env.NEAR_NETWORK!,
+            env.MARKET_CONTRACT_ID!,
+            input.job_id,
+            input.generation,
+        )));
+        return await object.fetch(new Request('https://object/internal/provider-asset-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jobId: input.job_id,
+                generation: input.generation,
+                assetId: input.asset_id,
+            }),
+        }));
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('public_beta_provider_delete_failed', { code }));
         return json({ error: code }, errorStatus(code));
     }
 }
@@ -4567,17 +4931,17 @@ function logJobStateTransition(
 }
 
 const JOB_STATE_TRANSITIONS: Record<JobState, ReadonlySet<JobState>> = {
-    AUTHORIZED: new Set(['LEASED', 'CANCELLED']),
-    LEASED: new Set(['PROVIDER_CREATE_PENDING', 'CANCELLED']),
-    PROVIDER_CREATE_PENDING: new Set(['CREATE_AMBIGUOUS', 'UPLOAD_READY']),
+    AUTHORIZED: new Set(['LEASED', 'UPLOAD_EXPIRED', 'CANCELLED']),
+    LEASED: new Set(['PROVIDER_CREATE_PENDING', 'UPLOAD_EXPIRED', 'CANCELLED']),
+    PROVIDER_CREATE_PENDING: new Set(['CREATE_AMBIGUOUS', 'UPLOAD_READY', 'UPLOAD_EXPIRED']),
     CREATE_PENDING: new Set(['CREATE_AMBIGUOUS', 'UPLOAD_READY']),
     CREATE_AMBIGUOUS: new Set(),
     UPLOAD_READY: new Set(['UPLOADING', 'PROCESSING', 'READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED']),
     UPLOADING: new Set(['PROCESSING', 'READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED']),
-    PROCESSING: new Set(['READY_VERIFIED', 'PROVIDER_FAILED']),
-    READY_VERIFIED: new Set(['FINALIZE_QUEUED', 'FINALIZE_RETRY', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED']),
-    FINALIZE_QUEUED: new Set(['FINALIZE_RETRY', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED']),
-    FINALIZE_RETRY: new Set(['FINALIZE_QUEUED', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED']),
+    PROCESSING: new Set(['READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED']),
+    READY_VERIFIED: new Set(['FINALIZE_QUEUED', 'FINALIZE_RETRY', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED']),
+    FINALIZE_QUEUED: new Set(['FINALIZE_RETRY', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED']),
+    FINALIZE_RETRY: new Set(['FINALIZE_QUEUED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED']),
     UPLOAD_EXPIRED: new Set(),
     PROVIDER_FAILED: new Set(),
     ONCHAIN_PUBLISHED: new Set(),
@@ -4603,6 +4967,10 @@ function transitionJob(record: JobRecord, state: JobState): JobRecord {
             },
         } : {}),
     };
+}
+
+function publicBetaDeadlineExpired(record: JobRecord): boolean {
+    return record.absoluteDeadlineAtMs !== undefined && record.absoluteDeadlineAtMs <= Date.now();
 }
 
 async function parseUploadIntentRequest(request: Request, env: Env): Promise<UploadIntentRequest> {
@@ -5051,6 +5419,118 @@ async function readFinalMediaJob(env: Env, jobId: string): Promise<FinalJob> {
     return { job: job as OnChainJob, blockHash: payload.result.block_hash };
 }
 
+async function readFinalPublicTestnetBetaJob(
+    env: Env,
+    jobId: string,
+): Promise<PublicTestnetBetaJob | null> {
+    const value = await readFinalPublicTestnetBetaView(
+        env,
+        'get_public_testnet_beta_job',
+        { job_id: jobId },
+    );
+    return value === null
+        ? null
+        : requireObject(value, 'near_job_response_invalid') as PublicTestnetBetaJob;
+}
+
+async function readFinalPublicTestnetBetaState(env: Env): Promise<PublicTestnetBetaState | null> {
+    const value = await readFinalPublicTestnetBetaView(
+        env,
+        'get_public_testnet_beta_state',
+        {},
+    );
+    return value === null
+        ? null
+        : requireObject(value, 'near_job_response_invalid') as PublicTestnetBetaState;
+}
+
+async function hasFinalPublicTestnetBetaJobToday(env: Env, creatorId: string): Promise<boolean> {
+    const value = await readFinalPublicTestnetBetaView(
+        env,
+        'has_public_testnet_beta_job_today',
+        { creator_id: creatorId },
+    );
+    if (typeof value !== 'boolean') throw new Error('near_job_response_invalid');
+    return value;
+}
+
+async function requireActivePublicTestnetBetaForPlayback(env: Env): Promise<void> {
+    if (!isPublicBetaPacket(env)) return;
+    const state = await readFinalPublicTestnetBetaState(env);
+    if (!state
+        || state.version !== 1
+        || state.closed_at_ms !== null
+        || !Number.isSafeInteger(Number(state.ends_at_ms))
+        || Number(state.ends_at_ms) <= Date.now()) {
+        throw new Error('playback_denied');
+    }
+}
+
+async function readFinalPublicTestnetBetaView(
+    env: Env,
+    methodName: string,
+    args: JsonObject,
+): Promise<unknown> {
+    const payload = await nearRpc(env, {
+        request_type: 'call_function',
+        finality: 'final',
+        account_id: env.MARKET_CONTRACT_ID,
+        method_name: methodName,
+        args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify(args))),
+    });
+    const result = requireObject(payload.result, 'near_job_query_failed');
+    if (!Array.isArray(result.result)) throw new Error('near_job_query_failed');
+    let value: unknown;
+    try {
+        value = JSON.parse(new TextDecoder().decode(Uint8Array.from(result.result as number[])));
+    } catch {
+        throw new Error('near_job_response_invalid');
+    }
+    return value;
+}
+
+async function requirePublicTestnetBetaJob(
+    input: UploadIntentRequest | UploadHeartbeatRequest,
+    job: OnChainJob,
+    marker: PublicTestnetBetaJob | null,
+    state: PublicTestnetBetaState | null,
+): Promise<void> {
+    const now = Date.now();
+    const request = {
+        creator_id: job.creator_id,
+        job_id: job.job_id,
+        title: job.title,
+        price_usdc: job.price_usdc,
+        expected_source_bytes: job.expected_source_bytes,
+        profile_id: job.profile_id,
+        profile_config_sha256: job.profile_config_sha256,
+        upload_public_key: job.upload_public_key,
+        upload_key_expires_at_ms: job.upload_key_expires_at_ms,
+    };
+    const admittedAtMs = Number(marker?.admitted_at_ms);
+    const deadlineAtMs = Number(marker?.deadline_at_ms);
+    const endsAtMs = Number(state?.ends_at_ms);
+    if (!marker
+        || !state
+        || state.version !== 1
+        || state.closed_at_ms !== null
+        || !Number.isSafeInteger(endsAtMs)
+        || endsAtMs <= now
+        || marker.creator_id !== input.envelope.account_id
+        || marker.generation !== 1
+        || input.body.generation !== 1
+        || marker.sponsor_quote_id !== job.fee_quote_hash
+        || marker.request_sha256 !== await sha256Hex(JSON.stringify(request))
+        || !Number.isSafeInteger(admittedAtMs)
+        || !Number.isSafeInteger(deadlineAtMs)
+        || deadlineAtMs <= now
+        || deadlineAtMs > admittedAtMs + PUBLIC_TESTNET_BETA_JOB_TTL_MS
+        || deadlineAtMs > endsAtMs
+        || BigInt(String(job.expected_source_bytes)) > PUBLIC_TESTNET_BETA_MAX_SOURCE_BYTES) {
+        throw new Error('on_chain_job_mismatch');
+    }
+}
+
 async function verifyControlSignature(request: Request, envelope: ControlEnvelope): Promise<void> {
     const signature = request.headers.get('X-Youtick-Signature') || '';
     let signatureBytes: Uint8Array;
@@ -5175,7 +5655,11 @@ function requireExactChainJob(input: UploadIntentRequest, job: OnChainJob): void
     }
 }
 
-function jobRecord(input: UploadIntentRequest, env: Env): JobRecord {
+function jobRecord(
+    input: UploadIntentRequest,
+    env: Env,
+    absoluteDeadlineAtMs?: string,
+): JobRecord {
     if (typeof env.LIVEPEER_API_TOKEN_NAME !== 'string'
         || env.LIVEPEER_API_TOKEN_NAME.length < 1
         || env.LIVEPEER_API_TOKEN_NAME.length > 128) {
@@ -5198,6 +5682,9 @@ function jobRecord(input: UploadIntentRequest, env: Env): JobRecord {
         createdAtMs,
         stateChangedAtMs: createdAtMs,
         apiTokenName: env.LIVEPEER_API_TOKEN_NAME,
+        ...(absoluteDeadlineAtMs === undefined
+            ? {}
+            : { absoluteDeadlineAtMs: Number(absoluteDeadlineAtMs) }),
     };
 }
 
@@ -5205,6 +5692,12 @@ async function issueStatelessPlaybackToken(request: Request, env: Env): Promise<
     const startedAtMs = Date.now();
     try {
         const input = await parsePlaybackV2Request(request, env);
+        await enforcePublicBetaAccountRateLimit(
+            env,
+            '/v2/playback-tokens',
+            input.request.account_id,
+        );
+        await requireActivePublicTestnetBetaForPlayback(env);
         const certificateCacheHit = await verifyPlaybackV2Proofs(env, input);
         const authorization = await readStatelessPlaybackAuthorization(env, input);
         const nowMs = Date.now();
@@ -6113,9 +6606,8 @@ async function processFinalizeOutbox(
     env: Env,
     input: FinalizeInput,
 ): Promise<Response> {
-    if (env.LIVEPEER_OPERATOR_JOB_ID !== input.submission.job_id
-        || input.submission.generation !== 1
-        || !creatorAllowlist(env).has(input.submission.creator_id)) {
+    if (!operatorJobAllowed(env, input.submission.job_id, input.submission.creator_id)
+        || input.submission.generation !== 1) {
         throw new Error('operator_unauthorized');
     }
     const result = await processOperatorOutbox(
@@ -6134,7 +6626,7 @@ async function processSuspendSalesOutbox(
     env: Env,
     input: SuspendSalesInput,
 ): Promise<Response> {
-    if (env.LIVEPEER_OPERATOR_JOB_ID !== input.publicationId) {
+    if (!operatorJobAllowed(env, input.publicationId)) {
         throw new Error('operator_unauthorized');
     }
     const result = await processOperatorOutbox(
@@ -6788,7 +7280,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function errorStatus(code: string): number {
     if (code === 'internal_error') return 500;
-    if (code === 'creator_fee_quote_rate_limited') return 429;
+    if (code === 'creator_fee_quote_rate_limited' || code === 'rate_limited') return 429;
     if (code === 'origin_denied'
         || code === 'device_key_not_authorized'
         || code === 'invalid_webhook_signature'
@@ -6810,6 +7302,7 @@ function errorStatus(code: string): number {
         || code === 'provider_state_invalid'
         || code === 'device_nonce_replayed'
         || code === 'provider_create_pending'
+        || code === 'provider_delete_ambiguous'
         || code === 'upload_cancel_denied'
         || code === 'sponsor_balance_insufficient'
         || code === 'sponsor_job_conflict'

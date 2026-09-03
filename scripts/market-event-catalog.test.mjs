@@ -24,6 +24,10 @@ const PILOT_EXTENSIONS = [
     'new_purchases_paused',
     'new_purchases_unpaused',
 ];
+const PUBLIC_BETA_EXTENSIONS = [
+    'public_testnet_beta_started',
+    'public_testnet_beta_closed',
+];
 const NOT_APPLICABLE_TO_FRESH_ID = ['contract_migrated'];
 
 function sorted(values) {
@@ -53,7 +57,8 @@ test('Market producer, consumers and testnet evidence share the EVENT-001 catalo
         readFile(new URL('../docs/architecture/event-catalog-testnet-evidence.json',
             import.meta.url), 'utf8'),
     ]);
-    const expectedEmitted = sorted([...REQUIRED_EVENTS, ...PILOT_EXTENSIONS]);
+    const historicalEmitted = sorted([...REQUIRED_EVENTS, ...PILOT_EXTENSIONS]);
+    const expectedEmitted = sorted([...historicalEmitted, ...PUBLIC_BETA_EXTENSIONS]);
     const expectedAccepted = sorted([
         ...expectedEmitted,
         ...NOT_APPLICABLE_TO_FRESH_ID,
@@ -65,10 +70,10 @@ test('Market producer, consumers and testnet evidence share the EVENT-001 catalo
 
     const evidence = JSON.parse(evidenceText);
     assert.equal(evidence.status, 'PASS_TESTNET_FINAL');
-    assert.deepEqual(sorted(evidence.events.map(({ event }) => event)), expectedEmitted);
+    assert.deepEqual(sorted(evidence.events.map(({ event }) => event)), historicalEmitted);
     assert.equal(new Set(evidence.events.map((event) => [event.contract_id,
         event.block_height, event.receipt_id, event.event_index].join(':'))).size,
-    expectedEmitted.length);
+    historicalEmitted.length);
     assert.deepEqual(evidence.not_applicable.map(({ event, status }) => ({ event, status })), [{
         event: 'contract_migrated', status: 'NOT_APPLICABLE_FRESH_ID',
     }]);

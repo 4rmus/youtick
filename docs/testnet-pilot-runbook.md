@@ -1,11 +1,17 @@
 # Testnet ve internal pilot runbook
 
-Durum: `EVIDENCE_PACKET_READY / RUNTIME_CLOSED / PROVIDER_RESOURCES_NOT_CREATED`
+Durum: `PUBLIC_BETA_PLAN_READY / RUNTIME_CLOSED / NO_MUTATION_AUTHORIZED`
 
-Bu paket yalnız NEAR testnet ve sınırlı internal pilot içindir. Mainnet,
-genel kullanıcı trafiği ve otomatik iade kapsam dışıdır. Teknik pilot açıkça
-non-refundable'dır; başarısız provider işlemi yeni bir ücret veya otomatik
-iade üretmez.
+Bu satır belgedeki tarihsel internal-pilot paketini ve belgenin sonundaki ayrı
+public-beta hedef planını birlikte sınıflandırır. Çalışan runtime hâlâ kapalıdır;
+bu belge commit, deploy, config, provider, cüzdan, ödeme veya testnet mutasyonu
+yetkisi vermez.
+
+Aşağıdaki mevcut paket yalnız NEAR testnet ve sınırlı internal pilot içindir.
+Bu pakette Mainnet, genel kullanıcı trafiği ve otomatik iade kapsam dışıdır.
+Teknik pilot açıkça non-refundable'dır; başarısız provider işlemi yeni bir ücret
+veya otomatik iade üretmez. Bu tarihsel kapsam sınırı, aşağıda ayrıca tanımlanan
+ve henüz uygulanmamış herkese açık testnet beta planını geçersiz kılmaz.
 
 ## Sabit hedefler
 
@@ -236,3 +242,263 @@ zorunludur; guardian pause/freeze anlık ve yalnız yetki azaltıcı kalır. Mai
 fresh contract ID ile, bağımsız denetimli snapshot/import ve invariant
 doğrulamasından sonra açılabilir. Bunların implementation, custody, denetim,
 tatbikat ve governance onayı tamamlanmadan genel açılış yapılamaz.
+
+---
+
+## Herkese Açık Testnet Beta Planı
+
+Durum: `PLAN_READY / IMPLEMENTATION_NOT_STARTED / RUNTIME_CLOSED`
+
+Bu bölüm, yukarıdaki internal-pilot geçmişini değiştirmez. Hedef;
+`preview.youtick.net` üzerinde Mainnet ve Production'a dokunmadan, herkese açık
+fakat arama motorlarına kapalı, tek seferlik ve 14 günlük bir testnet beta
+çalıştırmaktır.
+
+### Sabit kararlar
+
+| Alan | Public beta kararı |
+|---|---|
+| Erişim | Desteklenen Meteor `.testnet` hesabı olan herkes upload, satın alma ve playback yapabilir. |
+| Adres | Yalnız `preview.youtick.net`; yeni domain veya ikinci deploy hattı yok. |
+| Süre | Tek seferlik 14 gün; ilk 13 gün yeni upload, son 24 saat drain/cleanup. Uzatma ve restart yok. |
+| Upload | Dosya başına en çok `1,000,000,000` decimal byte; creator başına UTC günde 1 yeni job. |
+| Toplam sınır | Beta boyunca en çok 10 yeni job. Bu bir Sybil koruması değil, maliyet ve storage hasarı tavanıdır. |
+| Job süresi | Upload başlangıcından publication sonucuna kadar mutlak 24 saat; heartbeat bu süreyi uzatamaz. |
+| Ödeme | Mevcut sponsor quote + `SignedDelegate`; kullanıcı tek onayla upload ücreti + `0.10` test USDC öder, relayer testnet gas'ini karşılar. |
+| Token edinimi | Kullanıcı exact Circle testnet USDC ve test NEAR'ı kendisi getirir; YouTick faucet kurmaz. |
+| Yayın | Provider doğrulaması geçince otomatik publication. |
+| Takedown | Şikâyetle kapatılan veya 24 saatte yayınlanmayan exact Livepeer asset doğrulanıp silinir. |
+| Storage | Açılışta Market runway en az 100,000 byte; state büyüten işlem sonrasında en az 25,000 byte acil alan korunur. |
+| Sahiplik | Operasyon, abuse bildirimi ve acil kapatma sahibi `@4rmus`; `abuse@youtick.net` teslimatı açılıştan önce kanıtlanır. |
+
+### Mimari sınırlar
+
+- NEAR job, ödeme, publication, entitlement ve settlement otoritesidir.
+- Livepeer medya ingest, işleme, depolama ve HLS katmanıdır.
+- Bridge admission, provider kontrolü, sponsor relay ve playback authorization
+  katmanıdır; video byte'ları Bridge üzerinden geçmez.
+- D1 yardımcı read modeldir. Public beta Discover akışı kanonik NEAR fallback'ini
+  kullanır; continuous ingestion ve full rebuild açılmaz.
+- Queue bu en çok 10 job'lık beta için eklenmez. Mevcut imzalı doğrudan webhook
+  ve bounded reconcile yolu kullanılır; bu istisna Faz 3'ü tamamlanmış saymaz.
+
+### Market tarafından zorlanan public-beta sınırı
+
+Web veya Bridge tek başına güvenlik sınırı değildir. Kullanıcı Market'e doğrudan
+işlem gönderebildiği için 14 günlük pencere, kota ve storage koruması Market
+tarafından da uygulanmalıdır.
+
+Mevcut `Contract`, `MediaJob` ve `Publication` Borsh layout'ları değişmez;
+migration yapılmaz. Mevcut raw purchase-pause örneği kullanılarak sürümlü raw
+kayıtlar eklenir:
+
+- beta başlangıcı, upload kapanışı, bitiş, erken kapanış ve toplam job sayısı;
+- creator + UTC gün için tek job marker'ı;
+- job için creator, request hash, sponsor quote ID, admission zamanı ve mutlak
+  deadline marker'ı.
+
+Yeni contract API'si:
+
+- `start_public_testnet_beta()`: yalnız admin, yalnız testnet, Market pause
+  durumundayken, beta daha önce başlamamışken ve runway en az 100,000 byte iken
+  sabit 13+1 günlük pencereyi açar;
+- `close_public_testnet_beta()`: yalnız guardian; beta state'ini kapatır ve yeni
+  alımları atomik pause eder;
+- `get_public_testnet_beta_state()`;
+- `get_public_testnet_beta_job(job_id)`;
+- `has_public_testnet_beta_job_today(creator_id)`.
+
+Yeni USDC upload job yalnız şu koşullarda kabul edilir:
+
+- beta ve upload admission penceresi aktif;
+- mevcut `SponsoredUploadQuote`, imzası ve tam request hash'i geçerli;
+- creator, job, title, price, profile, source byte ve upload key quote ile aynı;
+- source en çok 1 GB, creator'ın o UTC gününde job'ı yok ve toplam job sayısı
+  10'dan küçük;
+- upload key deadline en çok 24 saat ve beta bitişini aşmıyor;
+- atomik yazımdan sonra Market runway en az 25,000 byte.
+
+Quote'suz, sahte, stale, yanlış creator/job'a ait veya sınırı aşan transfer tam
+iade edilir. Exact mevcut-job replay'i ikinci sayaç veya ücret üretmez. Public
+beta sırasında native NEAR upload kapalıdır. Bilet satın alma hem beta aktifliği
+hem `new_purchases_paused=false` ister; beta bittikten sonra yeni transfer tam
+iade edilir.
+
+Job, ilk entitlement ve publication yazımlarından sonra 25,000 byte acil alan
+korunur. Takedown ve guardian close bu alandan yararlanabilir. Beta başlangıcı
+ve kapanışı sırasıyla `public_testnet_beta_started` ve
+`public_testnet_beta_closed` NEP-297 olaylarını üretir; mevcut event
+allowlist/reducer kaynakları bu olayları tanır fakat D1 ingestion açılmaz.
+
+### Tek imzalı upload ve operator akışı
+
+1. Web mevcut sponsor quote endpoint'inden tam isteğe bağlı quote alır.
+2. Meteor kullanıcıdan tek `SignedDelegate` onayı ister.
+3. Mevcut relayer admission slotunu ayırır ve işlemi yayınlar.
+4. Market quote, beta, günlük/global kota, 1 GB ve storage kurallarını atomik
+   doğrular; mevcut `MediaJob.fee_quote_hash` sponsor quote ID'yi taşır.
+5. Bridge finality'den public-beta job marker'ını ve quote ID'yi doğrulamadan
+   provider asset oluşturmaz.
+6. İmzalı webhook ve reconcile provider doğrulaması sonrası publication'ı
+   otomatik finalize eder.
+
+Public operator yalnız zincirde geçerli public-beta marker'ı bulunan generation-1
+job'ları finalize veya suspend edebilir. Eski/işaretsiz `Authorized` job genel
+operator yetkisi kazanmaz. Mevcut exact-job sponsor recovery modu ayrı kalır ve
+public-beta modu ile aynı anda açılamaz.
+
+Admission lease 30 dakikalık dilimlerle yenilenebilir, fakat hiçbir heartbeat
+job'ın mutlak 24 saatlik deadline'ını aşamaz. Deadline sonrası yeni intent,
+heartbeat, provider create veya finalize reddedilir ve slot bırakılır.
+
+### Provider silme sınırı
+
+Mevcut Livepeer adapter'ına yalnız exact asset delete eklenir. Silme yalnız:
+
+- zincirde publication `TAKEDOWN` olduğunda; veya
+- job 24 saatte yayınlanmadan sona erdiğinde ve zincirde publication olmadığında
+
+çalışır. Job ID, generation, project, asset adı, creator binding ve zincirdeki
+asset hash'i eşleşmeden silme yapılmaz. Tek `DELETE` sonrasında `204` veya
+bağımsız `404` başarıdır. Belirsiz sonuç otomatik tekrarlanmaz; yeni admission
+kapanır ve salt-okunur uzlaştırma gerekir. Normal beta kapanışında başarılı
+publication asset'leri silinmez ve JWT korumalı kalır.
+
+### Release paketi
+
+Yeni üst seviye beta flag'i eklenmez. Public beta, mevcut üç Preview değişkeninin
+birlikte açık olduğu exact pakettir:
+
+- `PREVIEW_MULTI_CREATOR_UPLOAD_CANARY_ENABLED=true`;
+- `PREVIEW_PLAYBACK_V2_CANARY_ENABLED=true`;
+- `PREVIEW_SPONSORED_UPLOAD_CANARY_ENABLED=true`.
+
+Canary'de creator allowlist exact iki hesaptır. Public açılışta allowlist exact
+`*` sentinel'idir; boş değer kapalı kalır. `*` yalnız testnet combined packet'te
+kabul edilir. Public pakette upload, provider create, sponsor relay, bounded
+operator ve playback-v2 açıktır. Queue, archive, derived read, multi-asset,
+native NEAR fee ve shadow kapalıdır. `LIVEPEER_OPERATOR_JOB_ID` boş kalır.
+Production bütün bu kombinasyonu ve `*` sentinel'ini reddeder.
+
+Release metadata, Cloudflare validator ve smoke aynı policy matrisini birlikte
+uygular. Deploy sonrasında `DEPLOY_PREVIEW_ENABLED=false` geri yüklenir; başarılı
+workflow tek başına runtime veya ürün UAT kanıtı sayılmaz.
+
+### Public kullanıcı yüzeyi
+
+- Site genelinde Testnet Beta, test tokenlarının gerçek değeri olmadığı, kalan
+  süre, 1 GB, günlük 1 job, toplam 10 job, `0.10` test USDC sponsor ücreti ve
+  24 saatlik deadline ödeme öncesi gösterilir.
+- Meteor `SignedDelegate` sunmuyorsa normal USDC fallback'e geçilmez; cüzdan
+  açılmadan anlaşılır hata verilir.
+- Mevcut `readPaymentPreflight` ve `registerUsdcAccount` işlevleri exact Circle
+  USDC registration için yeniden kullanılır; faucet yazılmaz.
+- Terms; otomatik yayın, non-refundable test tokenı, içerik hakkı, expiry,
+  takedown ve provider delete politikasını açıklar.
+- Preview sayfaları `noindex` olur; URL'yi bilen herkes erişebilir.
+
+### Edge rate limit
+
+Yeni paket veya özel limiter yazılmaz; Cloudflare native Rate Limiting binding
+kullanılır:
+
+- Web read RPC: IP ve varsa account başına 60/dakika;
+- Web broadcast RPC: IP başına 10/dakika;
+- Bridge sponsor quote/relay, upload intent ve playback: route + IP/account
+  başına 30/dakika.
+
+Public pakette binding eksikliği fail-closed `503`, limit aşımı dış NEAR/Livepeer
+çağrısından önce `429` döndürür. Bu sayaçlar yaklaşık abuse korumasıdır; beta
+kotasının veya gerçek provider faturasının otoritesi değildir. Mevcut
+`20,000,000 / 2,000,000 micro-USD` admission değerleri pratikte en çok 10
+admitted job sınırıdır; 20 USD kesin fatura garantisi değildir.
+
+### Gate sırası
+
+Her gate tek başına çalışır, tamamlanınca raporlanır ve durulur. Bir gate diğer
+gate'in Git, deploy, provider veya testnet yetkisini vermez.
+
+1. `PUBLIC_TESTNET_BETA_SOURCE`
+   - Yalnız Market contract/testleri, paid-media protokol/vectorleri, ilgili Web
+     upload/payment UX ve testleri, Bridge admission/operator/provider ve testleri,
+     Preview workflow/release araçları, ilgili event scriptleri ve bu runbook
+     değişebilir.
+   - Access contract, Production promotion, mainnet config, yeni D1/Queue kaynağı,
+     lockfile, yeni paket ve servis yasaktır.
+   - Contract raw state, sponsor-quote zorunluluğu, kota/storage, absolute TTL,
+     exact provider delete ve combined release packet yerel olarak uygulanıp
+     doğrulanır. Commit/deploy/dış işlem yapılmaz.
+2. `PUBLIC_TESTNET_BETA_INTEGRATION`
+   - Yalnız source gate diff'i temiz current-main snapshot'ında explicit-path
+     commit/PR'a alınır; exact-head CI, squash merge ve exact-main CI ayrı onay
+     ister. Runtime kapalı kalır.
+3. `PUBLIC_TESTNET_BETA_PREFLIGHT`
+   - Exact Market artifact/state hash, işaretsiz `Authorized` job yokluğu,
+     admin/guardian/takedown/operator/relayer yetkileri ve bakiyeleri, provider
+     token/webhook/JWT/delete desteği, rate-limit binding, fresh-wallet Circle
+     USDC edinimi ve `abuse@youtick.net` teslimatı salt-okunur doğrulanır.
+4. `PUBLIC_TESTNET_MARKET_CAPACITY`
+   - Ayrı testnet-transfer onayıyla yalnız gereken NEAR aktarılır ve runway en az
+     100,000 byte yapılır. Başka mutasyon yapılmaz.
+5. `PUBLIC_TESTNET_MARKET_CODE_UPDATE`
+   - Mevcut korumalı workflow exact-main artifact ile tek `DeployContract` yapar.
+     Init, migration, key, funding, Access veya Cloudflare değişikliği yoktur;
+     code hash eşleşir ve serialized state/pause değişmez. Belirsiz sonuç retry
+     edilmez.
+6. `PUBLIC_TESTNET_CLOSED_PREVIEW`
+   - Aynı exact SHA bütün ürün kapıları kapalıyken Preview'a deploy edilir;
+     version, kapalı endpoint'ler, beta-not-started ve rollback sürümü kanıtlanır.
+7. `PUBLIC_TESTNET_BETA_CANARY`
+   - Admin beta penceresini Market pause durumunda başlatır. Combined paket exact
+     iki creator ile deploy edilir. Ayrı onayla unpause sonrası iki creator
+     eşzamanlı tek-imzalı küçük upload yapar; tam iki payment/job/asset/publication
+     beklenir. Aynı creator'ın ikinci günlük job'ı ve 1 GB + 1 byte reddedilir.
+     Buyer purchase/playback ve stranger denial geçer. İkinci canary publication
+     takedown edilir, yeni token durur, exact Livepeer asset silinip `404`
+     kanıtlanır. Guardian yeniden pause eder.
+8. `PUBLIC_TESTNET_PUBLIC_OPEN`
+   - Market pause durumundayken aynı SHA `*` sentinel'iyle protected deploy edilir.
+     Config/health/beta state eşleşince ayrı onayla unpause edilir. Allowlist'te
+     hiç bulunmamış fresh creator tam upload→publication, fresh buyer ise kendi
+     test tokenlarıyla purchase→playback akışını geçirir. Kanıt geçerse beta açık
+     bırakılır.
+9. `PUBLIC_TESTNET_14_DAY_CLOSE`
+   - Beta'nın 13. gününde yeni upload admission otomatik kapanır. Son 24 saat
+     drain içindir. Beta'nın 14. gününde contract yeni job/bileti iade eder ve
+     Bridge yeni playback tokenı vermez. En geç 210 saniye sonra mevcut
+     token/cache erişimi sona erer. Guardian close, kapalı Preview redeploy ve
+     tüm public/canary flag'lerinin false olduğu health kanıtı alınır.
+
+### Public beta kabul kriterleri
+
+Sonuç yalnız aşağıdakilerin tamamında `PASS_PUBLIC_TESTNET_BETA` olur:
+
+- exact-main CI, release artifact ve çalışan Web/Bridge version eşleşmesi;
+- quote'suz, sahte, stale ve yanlış creator/job doğrudan contract çağrılarının
+  tam iadesi;
+- 1 GB, günlük 1, toplam 10, 13+1 gün, 24 saat ve 25,000-byte negatif testleri;
+- eski/işaretsiz job'ın genel operator tarafından finalize edilememesi;
+- heartbeat'in mutlak deadline'ı uzatamaması;
+- provider delete'in yalnız exact takedown/expired asset üzerinde çalışması ve
+  belirsiz sonucu tekrar etmemesi;
+- default-off ve Production-reject release testleri;
+- iki-creator canary, public fresh creator, tek buyer purchase/playback, stranger
+  denial ve takedown→provider `404` kanıtı;
+- Testnet Beta uyarısı, Terms, `noindex`, çalışan abuse bildirimi ve isim verilmiş
+  `@4rmus` sahibi;
+- Beta'nın 13. günündeki upload kapanışı ve 14. günündeki tam runtime reclose
+  kanıtı.
+
+Yerel test, CI, testnet, provider, Preview ve Production sonuçları ayrı evidence
+sınıflarıyla raporlanır. Local/mock sonuç canlı provider veya deployment kanıtı
+sayılmaz.
+
+### Kapsam dışı
+
+- Mainnet ve Production;
+- yeni wallet entegrasyonu;
+- native NEAR creator fee ve multi-asset/1Click;
+- sponsor dışı yeni admission protokolü;
+- continuous D1 ingestion, full rebuild/RTO ve Queue aktivasyonu;
+- 20 GB provider testi, ABR, tam load/soak/chaos programı;
+- otomatik refund, yeni kimlik/KYC/CAPTCHA sistemi ve beta uzatma.

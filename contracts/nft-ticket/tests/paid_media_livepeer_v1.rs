@@ -57,6 +57,14 @@ fn contract() -> Contract {
     })
 }
 
+fn start_public_beta(contract: &mut Contract) {
+    testing_env!(context("guardian.testnet").build());
+    contract.pause_new_purchases();
+    testing_env!(context("admin.testnet").build());
+    contract.start_public_testnet_beta();
+    contract.unpause_new_purchases();
+}
+
 fn near_request() -> PaidJobRequest {
     PaidJobRequest {
         creator_id: account("creator.testnet"),
@@ -264,6 +272,161 @@ fn sponsored_usdc_quote_charges_one_total_and_refunds_exact_replay() {
         contract.get_media_job("job-sponsored".to_string()).unwrap(),
         job
     );
+}
+
+#[test]
+fn public_beta_uses_raw_state_and_requires_exact_sponsored_job() {
+    let mut contract = contract();
+    let serialized_before = near_sdk::borsh::to_vec(&contract).unwrap();
+    testing_env!(context("attacker.testnet").build());
+    must_fail(|| {
+        contract.start_public_testnet_beta();
+    });
+    testing_env!(context("guardian.testnet").build());
+    contract.pause_new_purchases();
+    testing_env!(context("admin.testnet").build());
+    let state = contract.start_public_testnet_beta();
+    assert_eq!(state.started_at_ms, U64(1_785_589_300_000));
+    assert_eq!(state.upload_closes_at_ms, U64(1_786_712_500_000));
+    assert_eq!(state.ends_at_ms, U64(1_786_798_900_000));
+    assert_eq!(
+        near_sdk::borsh::to_vec(&contract).unwrap(),
+        serialized_before
+    );
+    contract.unpause_new_purchases();
+
+    testing_env!(context(TESTNET_USDC).build());
+    let request = sponsored_request();
+    let quote_less = near_sdk::serde_json::json!({
+        "action": "create_paid_job",
+        "job_id": request.job_id,
+        "title": request.title,
+        "price_usdc": request.price_usdc,
+        "expected_source_bytes": request.expected_source_bytes,
+        "profile_id": request.profile_id,
+        "profile_config_sha256": request.profile_config_sha256,
+        "upload_public_key": request.upload_public_key,
+        "upload_key_expires_at_ms": request.upload_key_expires_at_ms,
+    })
+    .to_string();
+    assert!(matches!(
+        contract.ft_on_transfer(account("creator.testnet"), U128(500_000), quote_less),
+        PromiseOrValue::Value(U128(500_000))
+    ));
+
+    let mut valid_context = context(TESTNET_USDC);
+    valid_context.block_height(1_200);
+    testing_env!(valid_context.build());
+    assert!(matches!(
+        contract.ft_on_transfer(
+            account("creator.testnet"),
+            U128(600_000),
+            sponsored_message(&request, sponsored_quote()),
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+    let marker = contract
+        .get_public_testnet_beta_job("job-sponsored".to_string())
+        .unwrap();
+    assert_eq!(marker.creator_id, account("creator.testnet"));
+    assert_eq!(marker.generation, 1);
+    assert_eq!(marker.deadline_at_ms, U64(1_785_675_700_000));
+    assert!(contract.has_public_testnet_beta_job_today(account("creator.testnet")));
+    assert_eq!(
+        contract
+            .get_public_testnet_beta_state()
+            .unwrap()
+            .total_job_count,
+        1
+    );
+
+    testing_env!(context("creator.testnet").build());
+    must_fail(|| {
+        contract.restart_paid_job(
+            "job-sponsored".to_string(),
+            U128(1_000_000_000),
+            PROFILE.to_string(),
+            PROFILE_HASH.to_string(),
+        );
+    });
+    testing_env!(context("guardian.testnet").build());
+    let closed = contract.close_public_testnet_beta();
+    assert_eq!(closed.closed_at_ms, Some(U64(1_785_589_300_000)));
+    assert!(contract.get_governance_state().new_purchases_paused);
+    assert!(get_logs()
+        .last()
+        .map(String::as_str)
+        .unwrap()
+        .contains("public_testnet_beta_closed"));
+}
+
+#[test]
+fn public_beta_rejects_native_upload_and_expired_finalize() {
+    let mut contract = contract();
+    start_public_beta(&mut contract);
+
+    let mut near_context = context("creator.testnet");
+    near_context.attached_deposit(near_sdk::NearToken::from_yoctonear(
+        100_000_000_000_000_000_000_000,
+    ));
+    testing_env!(near_context.build());
+    must_fail(|| {
+        contract.create_paid_job_near(
+            near_request(),
+            near_quote(),
+            Base64VecU8(QUOTE_SIGNATURE.to_vec()),
+        );
+    });
+
+    let request = sponsored_request();
+    let mut valid_context = context(TESTNET_USDC);
+    valid_context.block_height(1_200);
+    testing_env!(valid_context.build());
+    contract.ft_on_transfer(
+        account("creator.testnet"),
+        U128(600_000),
+        sponsored_message(&request, sponsored_quote()),
+    );
+    let mut expired = context("bridge.testnet");
+    expired.block_timestamp(1_785_675_700_001_000_000);
+    testing_env!(expired.build());
+    must_fail(|| {
+        contract.finalize_livepeer_publication(submission(
+            "job-sponsored",
+            1,
+            "creator.testnet",
+            ASSET_HASH,
+            "playback_expired",
+        ));
+    });
+    let mut ended = context(TESTNET_USDC);
+    ended.block_timestamp(1_786_798_900_000_000_000);
+    testing_env!(ended.build());
+    assert!(matches!(
+        contract.ft_on_transfer(
+            account("buyer.testnet"),
+            U128(2_000_000),
+            r#"{"publication_id":"missing"}"#.to_string(),
+        ),
+        PromiseOrValue::Value(U128(2_000_000))
+    ));
+}
+
+#[test]
+fn public_beta_operator_rejects_an_unmarked_legacy_job() {
+    let mut contract = contract();
+    create_job(&mut contract, "legacy-job", "creator.testnet");
+    start_public_beta(&mut contract);
+    testing_env!(context("bridge.testnet").build());
+    must_fail(|| {
+        contract.finalize_livepeer_publication(submission(
+            "legacy-job",
+            1,
+            "creator.testnet",
+            ASSET_HASH,
+            "playback_legacy",
+        ));
+    });
 }
 
 #[test]

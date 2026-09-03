@@ -111,6 +111,14 @@ const sponsorLifetime = BigInt(sponsorVector.quote.expires_at_ms)
   - BigInt(sponsorVector.quote.issued_at_ms);
 assert(sponsorLifetime > 0n && sponsorLifetime <= 120_000n, "sponsor quote lifetime drift");
 
+const beta = vectors.public_testnet_beta;
+assert(beta.max_source_bytes === "1000000000", "public beta source limit drift");
+assert(beta.max_jobs === 10 && beta.jobs_per_creator_utc_day === 1, "public beta quota drift");
+assert(beta.upload_days === 13 && beta.total_days === 14, "public beta window drift");
+assert(beta.job_ttl_ms === "86400000", "public beta job TTL drift");
+assert(beta.start_runway_bytes === "100000" && beta.emergency_runway_bytes === "25000", "public beta storage runway drift");
+assert(beta.sponsor_quote_required === true && beta.native_near_upload_enabled === false, "public beta payment policy drift");
+
 const upload = vectors.upload_intent.body;
 const publication = vectors.finalize_publication;
 const playback = vectors.playback_token_request.body;

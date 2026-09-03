@@ -50,9 +50,27 @@ describe('Livepeer-only configuration', () => {
             enablePlaybackShadowV2: false,
             enableLivepeerNearCreatorFee: false,
             enableSponsoredLivepeerUploads: false,
+            publicTestnetBeta: false,
             enableDerivedReadModel: false,
         });
         expect(MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes).toBe(32 * 1024 * 1024);
+    });
+
+    it('derives public beta only from the existing combined testnet packet', async () => {
+        clearEnv();
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+        process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID = 'market.testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.testnet';
+        process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = 'true';
+        process.env.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 = 'true';
+        process.env.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS = 'true';
+        const { FEATURE_FLAGS } = await import('@/lib/constants');
+        expect(FEATURE_FLAGS.publicTestnetBeta).toBe(true);
+        const { validateLivepeerSourceFile } = await import('@/lib/livepeer-upload');
+        expect(validateLivepeerSourceFile({ name: 'beta.mp4', type: 'video/mp4', size: 1_000_000_000 }))
+            .toEqual({ ok: true, sourceType: 'mp4' });
+        expect(validateLivepeerSourceFile({ name: 'beta.mp4', type: 'video/mp4', size: 1_000_000_001 }))
+            .toEqual({ ok: false, error: 'source_limit_exceeded' });
     });
 
     it('requires an exact HTTPS read-model origin only when its gate is enabled', async () => {

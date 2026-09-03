@@ -21,6 +21,8 @@ const CATALOG = new Set([
     'bridge_unfrozen',
     'new_purchases_paused',
     'new_purchases_unpaused',
+    'public_testnet_beta_started',
+    'public_testnet_beta_closed',
     'quote_key_rotated',
     'contract_migrated',
 ]);
@@ -32,6 +34,8 @@ const GOVERNANCE_EVENTS = new Set([
     'bridge_unfrozen',
     'new_purchases_paused',
     'new_purchases_unpaused',
+    'public_testnet_beta_started',
+    'public_testnet_beta_closed',
     'quote_key_rotated',
     'contract_migrated',
 ]);

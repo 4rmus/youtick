@@ -214,6 +214,10 @@ export function LivepeerPaidUploadForm() {
                 expectedSourceBytes: file.size,
             });
             const wallet = await getWallet();
+            if (FEATURE_FLAGS.publicTestnetBeta
+                && typeof wallet.signDelegateActions !== 'function') {
+                throw new Error('sponsored_upload_wallet_unsupported');
+            }
             const uploadFeeUsdc = livepeerUploadFeeUsdc(file.size);
             const activeCheckout = loadActivePaymentCheckout(accountId);
             const matchingCheckout = multiAssetPaymentsEnabled
@@ -242,7 +246,7 @@ export function LivepeerPaidUploadForm() {
             setStatus(null);
         } catch (reason) {
             setFailedStep(0);
-            setError(reason instanceof Error ? reason.message : 'Payment options could not be loaded.');
+            setError(uploadErrorMessage(reason, false));
         } finally {
             setBusy(false);
         }
@@ -436,7 +440,7 @@ export function LivepeerPaidUploadForm() {
             <Card>
                 <CardHeader>
                     <CardTitle>Publication</CardTitle>
-                    <CardDescription>MP4, MOV, AVI, WebM, WMV, MKV or FLV; maximum 20 GB and minimum ticket price 2 USDC.</CardDescription>
+                    <CardDescription>MP4, MOV, AVI, WebM, WMV, MKV or FLV; maximum {FEATURE_FLAGS.publicTestnetBeta ? '1 GB' : '20 GB'} and minimum ticket price 2 USDC.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">
                     <Input type="file" accept={LIVEPEER_SOURCE_ACCEPT} disabled={busy || uploaded} onChange={selectFile} />
@@ -569,7 +573,9 @@ function formatMicroUsdc(value: string): string {
 
 function fileValidationMessage(error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type'): string {
     if (error === 'empty_file') return 'Choose a non-empty video file.';
-    if (error === 'source_limit_exceeded') return 'Choose a video file no larger than 20 GB.';
+    if (error === 'source_limit_exceeded') {
+        return `Choose a video file no larger than ${FEATURE_FLAGS.publicTestnetBeta ? '1 GB' : '20 GB'}.`;
+    }
     return 'Choose an MP4, MOV, AVI, WebM, WMV, MKV or FLV video file.';
 }
 
@@ -591,6 +597,9 @@ function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): st
     }
     if (code === 'sponsor_balance_insufficient') {
         return 'Your USDC balance is below the quoted upload and gas-sponsor total.';
+    }
+    if (code === 'sponsored_upload_wallet_unsupported') {
+        return 'This testnet beta requires a Meteor wallet that supports one-step sponsored approval.';
     }
     return code || 'Upload failed.';
 }

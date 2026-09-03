@@ -173,7 +173,10 @@ export function validateLivepeerSourceFile(
     file: Pick<File, 'size' | 'type'> & Partial<Pick<File, 'name'>>,
 ): LivepeerSourceValidation {
     if (!Number.isSafeInteger(file.size) || file.size < 1) return { ok: false, error: 'empty_file' };
-    if (file.size > MEDIA_UPLOAD_POLICY.paidSourceMaxBytes) {
+    const maxBytes = FEATURE_FLAGS.publicTestnetBeta
+        ? 1_000_000_000
+        : MEDIA_UPLOAD_POLICY.paidSourceMaxBytes;
+    if (file.size > maxBytes) {
         return { ok: false, error: 'source_limit_exceeded' };
     }
     const sourceType = livepeerSourceType(file);

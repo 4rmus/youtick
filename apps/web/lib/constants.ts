@@ -30,15 +30,22 @@ export const NEAR_CONFIG = {
 } as const;
 
 const enableDerivedReadModel = process.env.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL === 'true';
+const enablePaidMediaLivepeerV1 = process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 === 'true';
+const enablePlaybackAuthorizerV2 = process.env.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 === 'true';
+const enableSponsoredLivepeerUploads =
+    process.env.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS === 'true';
 
 export const FEATURE_FLAGS = {
-    enablePaidMediaLivepeerV1: process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 === 'true',
-    enablePlaybackAuthorizerV2: process.env.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 === 'true',
+    enablePaidMediaLivepeerV1,
+    enablePlaybackAuthorizerV2,
     enablePlaybackShadowV2: process.env.NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2 === 'true',
     enableLivepeerNearCreatorFee:
         process.env.NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE === 'true',
-    enableSponsoredLivepeerUploads:
-        process.env.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS === 'true',
+    enableSponsoredLivepeerUploads,
+    publicTestnetBeta: NEAR_NETWORK === 'testnet'
+        && enablePaidMediaLivepeerV1
+        && enablePlaybackAuthorizerV2
+        && enableSponsoredLivepeerUploads,
     enableDerivedReadModel,
 } as const;
 

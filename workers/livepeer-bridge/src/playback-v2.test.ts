@@ -159,6 +159,7 @@ function playbackRpc(input: {
     availability?: string;
     entitlement?: boolean;
     playbackId?: string;
+    betaState?: unknown;
 }) {
     return vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
         const rpc = JSON.parse(String(init?.body)) as {
@@ -190,6 +191,9 @@ function playbackRpc(input: {
                 profile_config_sha256: PROFILE_HASH,
                 availability: input.availability ?? 'ACTIVE',
             });
+        }
+        if (rpc.params.method_name === 'get_public_testnet_beta_state') {
+            return rpcResult(input.betaState);
         }
         expect(rpc.params.block_id).toBe(BLOCK_HASH);
         expect(rpc.params.method_name).toBe('has_entitlement');
@@ -252,6 +256,46 @@ function decodePart(value: string): Record<string, unknown> {
 
 describe('stateless playback v2', () => {
     beforeEach(() => vi.restoreAllMocks());
+
+    it('denies new public-beta tokens at the exact end time before entitlement or provider reads', async () => {
+        const now = 1_785_589_300_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const { env } = await createEnv();
+        Object.assign(env, {
+            LIVEPEER_NEW_UPLOADS_ENABLED: 'true',
+            LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'true',
+            LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'true',
+            LIVEPEER_OPERATOR_JOB_ID: '',
+            LIVEPEER_SPONSORED_UPLOADS_ENABLED: 'true',
+            LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true',
+            LIVEPEER_CREATOR_ALLOWLIST: '*',
+            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '20000000',
+            LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '2000000',
+            PUBLIC_BETA_RATE_LIMITER: {
+                limit: vi.fn().mockResolvedValue({ success: true }),
+            } as RateLimit,
+        });
+        const signed = await playbackRequest();
+        const dependencies = playbackDependencies({
+            ...signed,
+            betaState: {
+                version: 1,
+                started_at_ms: String(now - 14 * 24 * 60 * 60 * 1_000),
+                upload_closes_at_ms: String(now - 24 * 60 * 60 * 1_000),
+                ends_at_ms: String(now),
+                closed_at_ms: null,
+                total_job_count: 2,
+            },
+        });
+        vi.stubGlobal('fetch', dependencies.fetcher);
+
+        const response = await handler.fetch(signed.request, env);
+
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: 'playback_denied' });
+        expect(dependencies.provider).not.toHaveBeenCalled();
+        expect(dependencies.rpc).toHaveBeenCalledOnce();
+    });
 
     it('issues a 180-second JWT from final chain reads without touching Durable Object state', async () => {
         const { env, verifyKey, idFromName } = await createEnv();

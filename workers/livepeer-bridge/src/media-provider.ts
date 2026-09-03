@@ -85,4 +85,5 @@ export interface MediaProvider {
     readAsset(assetId: string): Promise<ProviderAsset>;
     readPlayback(playbackId: string): Promise<ProviderPlayback>;
     verifyReadyAsset(input: VerifyReadyAssetInput): Promise<VerifiedAsset>;
+    deleteAsset(assetId: string): Promise<'deleted' | 'missing'>;
 }

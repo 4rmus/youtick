@@ -19,6 +19,18 @@
     "deposit_yocto": "0",
     "full_access": false
   },
+  "public_testnet_beta": {
+    "max_source_bytes": "1000000000",
+    "max_jobs": 10,
+    "jobs_per_creator_utc_day": 1,
+    "upload_days": 13,
+    "total_days": 14,
+    "job_ttl_ms": "86400000",
+    "start_runway_bytes": "100000",
+    "emergency_runway_bytes": "25000",
+    "sponsor_quote_required": true,
+    "native_near_upload_enabled": false
+  },
   "creator_fee_quote": {
     "quote": {
       "domain": "youtick.creator-fee-quote",

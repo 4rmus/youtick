@@ -15,6 +15,10 @@
   "env": {
     "preview": {
       "name": "youtick-web-preview",
+      "ratelimits": [
+        { "name": "NEAR_RPC_READ_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } },
+        { "name": "NEAR_RPC_BROADCAST_RATE_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } }
+      ],
       "routes": [
         {
           "pattern": "preview.youtick.net",
@@ -24,6 +28,10 @@
     },
     "production": {
       "name": "youtick-web",
+      "ratelimits": [
+        { "name": "NEAR_RPC_READ_RATE_LIMITER", "namespace_id": "2001", "simple": { "limit": 60, "period": 60 } },
+        { "name": "NEAR_RPC_BROADCAST_RATE_LIMITER", "namespace_id": "2002", "simple": { "limit": 10, "period": 60 } }
+      ],
       "routes": [
         {
           "pattern": "app.youtick.net",
