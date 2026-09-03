@@ -5,8 +5,8 @@
   "access_contract_id": "lp-arch-access-v2-260809.youtick-dev-v3.testnet",
   "bridge_operator_account_id": "lp-d6-bridge-5301d15.youtick-dev-v3.testnet",
   "deploy_public_key": "ed25519:6uE7vxQkUF9Qg6FLp9jnztgeJ2fmafYsekCkpHDNgqzX",
-  "expected_current_code_hash": "FCXekKBpv9ianguMVUPyHapUNudXXTMszmMaDGyE8SY2",
-  "expected_current_wasm_bytes": 307173,
+  "expected_current_code_hash": "5Ahky3jYBz2JPP9yg6jW6kn8d9cjoC1PkEkeXEghc671",
+  "expected_current_wasm_bytes": 323082,
   "max_deploy_cost_yocto": "100000000000000000000000",
   "expected_governance": {
     "state_version": 2,
@@ -18,7 +18,7 @@
     "new_purchases_paused": true,
     "bridge_rotation_proposed_at_ms": null
   },
-  "expected_quote_key_version": 1,
+  "expected_quote_key_version": 2,
   "expected_usdc_contract_id": "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af",
   "expected_access_state": {
     "state_version": 2,
@@ -30,7 +30,7 @@
   },
   "expected_bridge_key": {
     "public_key": "ed25519:8EcEK3GG7RPPEzPTe39QwJMuXb2XMG4b1s4ginPcTkFg",
-    "allowance": "19666911666125800000000",
+    "allowance": "18980690382602200000000",
     "receiver_id": "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
     "method_names": [
       "finalize_livepeer_publication",
