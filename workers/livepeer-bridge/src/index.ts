@@ -46,7 +46,6 @@ import {
     paymentRateLimit,
     paymentStatus,
 } from './payments';
-
 export interface Env {
     CF_VERSION_METADATA: WorkerVersionMetadata;
     LIVEPEER_BRIDGE_ENABLED?: string;
@@ -115,6 +114,7 @@ type UploadIntentBody = {
     source_type: LivepeerSourceType;
     profile_id: 'paid-media-livepeer-v1';
     profile_config_sha256: string;
+    recovery?: 'reconcile';
 };
 type PlaybackTokenBody = {
     job_id: string;
@@ -373,6 +373,7 @@ type ReconcileRecord = {
     status: ReconcileStatus;
     consecutiveErrors: number;
     nextReconcileAtMs: number;
+    uploadReadFailed?: boolean;
     lastGoodAtMs?: number;
     lastDrift?: {
         code: string;
@@ -701,6 +702,7 @@ const SAFE_ERROR_CODES = new Set([
     'protocol_binding_mismatch',
     'provider_create_ambiguous',
     'provider_create_pending',
+    'provider_recovery_not_ready',
     'provider_delete_ambiguous',
     'reservation_conflict',
     'runtime_not_configured',
@@ -1090,6 +1092,12 @@ export class LivepeerControl {
     ) {}
 
     async alarm(): Promise<void> {
+        const run = this.operatorTail.then(() => this.advanceAlarm());
+        this.operatorTail = run.then(() => undefined, () => undefined);
+        return run;
+    }
+
+    private async advanceAlarm(): Promise<void> {
         if (await expirePaymentRateLimit(this.state)) return;
         if (await expireCreatorFeeQuoteRateLimit(this.state)) return;
         if (await advanceSponsorRelayAlarm(this.state, this.env)) return;
@@ -1111,9 +1119,13 @@ export class LivepeerControl {
             await advanceTerminalArchive(this.state, this.env, job);
             return;
         }
-        if (!job || !job.publication) return;
+        if (!job) return;
         if (this.env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
             await scheduleReconcile(this.state, Date.now() + RECONCILE_HEALTHY_INTERVAL_MS);
+            return;
+        }
+        if (!job.publication) {
+            await this.reconcileUpload(job);
             return;
         }
         if (job.state === 'FINALIZE_RETRY'
@@ -1134,9 +1146,17 @@ export class LivepeerControl {
         const url = new URL(request.url);
         try {
             if (request.method === 'POST' && url.pathname === '/v1/upload-intents') {
-                return await this.reserveUploadIntent(request);
+                if (!isPublicBetaPacket(this.env)) return await this.reserveUploadIntent(request);
+                const run = this.operatorTail.then(() => this.reserveUploadIntent(request));
+                this.operatorTail = run.then(() => undefined, () => undefined);
+                return await run;
             }
             if (request.method === 'POST' && url.pathname === '/v1/upload-heartbeats') {
+                if (isPublicBetaPacket(this.env)) {
+                    const run = this.operatorTail.then(() => this.heartbeatUploadLease(request));
+                    this.operatorTail = run.then(() => undefined, () => undefined);
+                    return await run;
+                }
                 return await this.heartbeatUploadLease(request);
             }
             if (request.method === 'POST' && url.pathname === '/v1/upload-cancellations') {
@@ -1149,7 +1169,10 @@ export class LivepeerControl {
                 return await this.enqueueOutbox(request);
             }
             if (request.method === 'POST' && url.pathname === '/internal/livepeer-webhook') {
-                return await this.handleLivepeerWebhook(request);
+                if (!isPublicBetaPacket(this.env)) return await this.handleLivepeerWebhook(request);
+                const run = this.operatorTail.then(() => this.handleLivepeerWebhook(request));
+                this.operatorTail = run.then(() => undefined, () => undefined);
+                return await run;
             }
             if (request.method === 'POST' && url.pathname === '/internal/finalize') {
                 const run = this.operatorTail.then(() => this.finalizePublication(request));
@@ -1248,6 +1271,7 @@ export class LivepeerControl {
                 await transaction.put(nonceKey, { expiresAtMs: Number(input.envelope.expires_at_ms) });
                 return { record: existing, created: false };
             }
+            if (input.body.recovery) throw new Error('provider_recovery_not_ready');
             if (this.env.LIVEPEER_NEW_UPLOADS_ENABLED !== 'true') {
                 throw new Error('admission_closed');
             }
@@ -1259,6 +1283,13 @@ export class LivepeerControl {
         if (result.created) logJobStateTransition(null, candidate.state);
 
         let record = result.record;
+        if (input.body.recovery === 'reconcile') {
+            await this.reconcileUpload(record);
+            record = await this.state.storage.get<JobRecord>(JOB_KEY) || record;
+            const observation = await this.state.storage.get<ReconcileRecord>(RECONCILE_KEY);
+            if (observation?.uploadReadFailed) throw new Error('provider_unavailable');
+            return json({ job_id: record.jobId, generation: record.generation, state: record.state });
+        }
         if (['UPLOAD_READY', 'UPLOADING'].includes(record.state)) {
             if (!record.leaseExpiresAtMs || record.leaseExpiresAtMs <= Date.now()) {
                 const lease = await requestAdmission(this.env, record);
@@ -1384,6 +1415,52 @@ export class LivepeerControl {
         logJobStateTransition(pending.state, ready.state);
         await updateAdmission(this.env, ready, 'UPLOAD_READY');
         return uploadIntentResponse(ready, true);
+    }
+
+    private async reconcileUpload(record: JobRecord): Promise<void> {
+        if (!isPublicBetaPacket(this.env)
+            || !record.absoluteDeadlineAtMs
+            || !record.assetId
+            || !['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(record.state)) return;
+        if (publicBetaDeadlineExpired(record)) {
+            const expired = transitionJob(record, 'UPLOAD_EXPIRED');
+            await this.state.storage.put(JOB_KEY, expired);
+            await updateAdmission(this.env, expired, 'UPLOAD_EXPIRED');
+            return;
+        }
+        const previous = await this.state.storage.get<ReconcileRecord>(RECONCILE_KEY);
+        if (previous && previous.nextReconcileAtMs > Date.now()) {
+            await scheduleReconcile(this.state, Math.min(previous.nextReconcileAtMs, record.absoluteDeadlineAtMs));
+            return;
+        }
+        // Persist the next read before external I/O; duplicate polls cannot spin the provider.
+        await persistUnknownReconcile(this.state, 'PROVIDER_UNKNOWN');
+        const observation = (await this.state.storage.get<ReconcileRecord>(RECONCILE_KEY))!;
+        await this.state.storage.put(RECONCILE_KEY, { ...observation, uploadReadFailed: true });
+        await scheduleReconcile(this.state, record.absoluteDeadlineAtMs);
+        const asset = await livepeerProvider(this.env).readAsset(record.assetId);
+        if (asset.id !== record.assetId
+            || asset.playbackId !== record.playbackId
+            || asset.projectId !== record.projectId
+            || asset.projectId !== this.env.LIVEPEER_PROJECT_ID
+            || asset.creatorBindingType !== 'unverified'
+            || asset.creatorBindingValue !== `${record.jobId}:${record.generation}`
+            || asset.createdByTokenName !== record.apiTokenName
+            || asset.name !== `youtick-${record.jobId}-g${record.generation}`
+            || asset.policy !== 'jwt') throw new Error('provider_identity_mismatch');
+        if (!['waiting', 'processing', 'ready', 'failed'].includes(asset.phase)) {
+            throw new Error('provider_state_invalid');
+        }
+        await this.handleLivepeerWebhook(new Request('https://object/internal/livepeer-webhook', {
+            method: 'POST',
+            body: JSON.stringify({
+                event: asset.phase === 'failed' ? 'asset.failed' : 'asset.updated',
+                timestamp: Date.now(),
+                payload: { asset: { id: asset.id, status: { phase: asset.phase } } },
+            }),
+        }));
+        const current = (await this.state.storage.get<ReconcileRecord>(RECONCILE_KEY))!;
+        await this.state.storage.put(RECONCILE_KEY, { ...current, uploadReadFailed: false });
     }
 
     private async heartbeatUploadLease(request: Request): Promise<Response> {
@@ -5274,7 +5351,7 @@ function parsePlaybackTokenBody(value: unknown): PlaybackTokenBody {
 
 function parseUploadBody(value: unknown): UploadIntentBody {
     const body = requireObject(value, 'invalid_upload_intent');
-    requireExactKeys(body, [
+    const keys = [
         'job_id',
         'generation',
         'expected_source_bytes',
@@ -5282,7 +5359,8 @@ function parseUploadBody(value: unknown): UploadIntentBody {
         'source_type',
         'profile_id',
         'profile_config_sha256',
-    ], 'invalid_upload_intent');
+    ];
+    requireExactKeys(body, body.recovery === undefined ? keys : [...keys, 'recovery'], 'invalid_upload_intent');
     if (typeof body.job_id !== 'string'
         || !JOB_ID_PATTERN.test(body.job_id)
         || !Number.isSafeInteger(body.generation)
@@ -5294,7 +5372,8 @@ function parseUploadBody(value: unknown): UploadIntentBody {
         || !SHA256_PATTERN.test(body.source_fingerprint_sha256)
         || !isLivepeerSourceType(body.source_type)
         || body.profile_id !== 'paid-media-livepeer-v1'
-        || body.profile_config_sha256 !== PROFILE_CONFIG_SHA256) {
+        || body.profile_config_sha256 !== PROFILE_CONFIG_SHA256
+        || (body.recovery !== undefined && body.recovery !== 'reconcile')) {
         throw new Error('invalid_upload_intent');
     }
     return body as UploadIntentBody;
@@ -7303,6 +7382,7 @@ function errorStatus(code: string): number {
         || code === 'device_nonce_replayed'
         || code === 'provider_create_pending'
         || code === 'provider_delete_ambiguous'
+        || code === 'provider_recovery_not_ready'
         || code === 'upload_cancel_denied'
         || code === 'sponsor_balance_insufficient'
         || code === 'sponsor_job_conflict'

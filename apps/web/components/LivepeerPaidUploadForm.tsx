@@ -55,6 +55,7 @@ import {
 } from '@/lib/livepeer-upload';
 
 const UPLOAD_STEPS = ['Payment options', 'Wallet approval', 'Upload', 'Processing', 'Published'] as const;
+const UPLOAD_EXPIRED_MESSAGE = 'The publication deadline has passed. This paid upload can no longer be published or retried.';
 const UPLOAD_STAGE_STATE: Record<UploadStage, { active: number; completeThrough: number }> = {
     draft: { active: -1, completeThrough: -1 },
     preflight: { active: 0, completeThrough: -1 },
@@ -102,7 +103,19 @@ export function LivepeerPaidUploadForm() {
         queryKey: ['livepeerUploadPublication', accountId, jobId],
         queryFn: async () => {
             if (!jobId) throw new Error('livepeer_job_missing');
-            return readLivepeerUploadProgress(jobId);
+            const progress = await readLivepeerUploadProgress(jobId);
+            if (progress.publication || progress.expired || !FEATURE_FLAGS.publicTestnetBeta) {
+                return { ...progress, providerState: null };
+            }
+            if (!file || !accountId) throw new Error('livepeer_upload_status_unavailable');
+            const source = validateLivepeerSourceFile(file);
+            if (!source.ok) throw new Error(source.error);
+            const provider = await requestLivepeerUploadIntent({
+                accountId, jobId, generation: 1, expectedSourceBytes: file.size,
+                sourceFingerprintSha256: await fingerprintLivepeerSource(file),
+                sourceType: source.sourceType, recovery: 'reconcile',
+            });
+            return { ...progress, providerState: provider.state };
         },
         enabled: publicationPollingEnabled,
         retry: false,
@@ -114,6 +127,8 @@ export function LivepeerPaidUploadForm() {
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: true,
     });
+    const publicationExpired = publicationQuery.data?.expired === true;
+    const providerFailed = publicationQuery.data?.providerState === 'PROVIDER_FAILED';
 
     React.useEffect(() => {
         const preview = previewRef.current;
@@ -144,16 +159,28 @@ export function LivepeerPaidUploadForm() {
         if (!publicationPollingEnabled || !accountId) return;
         if (publicationQuery.data?.publication) {
             clearLivepeerUploadDraft(accountId);
+            if (jobId) clearLivepeerJobSessionKey(accountId, jobId);
             moveUploadStage('published');
+            setFailedStep(null);
+            setError(null);
             setStatus('Publication ready.');
+        } else if (publicationQuery.data?.expired) {
+            setFailedStep(3);
+            setStatus(UPLOAD_EXPIRED_MESSAGE);
+        } else if (publicationQuery.isError) {
+            setStatus('Publication status is unavailable. Keep your file; no retry or new payment has been started.');
+        } else if (publicationQuery.data?.providerState === 'PROVIDER_FAILED') {
+            setFailedStep(3);
+            setStatus('Livepeer could not process this upload. No new payment or upload has been started.');
         } else if (publicationQuery.data?.job) {
             setStatus(publicationQuery.data.job.status === 'Published'
+                || ['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY', 'ONCHAIN_PUBLISHED'].includes(publicationQuery.data.providerState || '')
                 ? 'Finalizing publication…'
-                : 'Livepeer is processing the upload…');
-        } else if (publicationQuery.isError) {
-            setStatus('Waiting for the publication status…');
+                : publicationQuery.data.providerState === 'PROCESSING'
+                    ? 'Livepeer is processing the upload…'
+                    : 'Upload complete. Waiting for Livepeer processing…');
         }
-    }, [accountId, moveUploadStage, publicationPollingEnabled, publicationQuery.data, publicationQuery.isError]);
+    }, [accountId, jobId, moveUploadStage, publicationPollingEnabled, publicationQuery.data, publicationQuery.isError]);
 
     const selectFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const selectionVersion = ++fileSelectionVersion.current;
@@ -273,6 +300,7 @@ export function LivepeerPaidUploadForm() {
             const existingJob = await readLivepeerMediaJob(jobId);
             if (existingJob?.status === 'Published') {
                 clearLivepeerUploadDraft(accountId);
+                clearLivepeerJobSessionKey(accountId, jobId);
                 moveUploadStage('published');
                 setStatus('Publication ready.');
                 return;
@@ -374,7 +402,6 @@ export function LivepeerPaidUploadForm() {
                 ),
                 heartbeat: () => heartbeatLivepeerUploadLease({ accountId, intent }),
             });
-            clearLivepeerJobSessionKey(accountId, jobId);
             advanceLivepeerUploadDraftStage(accountId, jobId, 'provider_processing');
             setUploadProgress(100);
             moveUploadStage('provider_processing');
@@ -432,8 +459,8 @@ export function LivepeerPaidUploadForm() {
             {uploaded && (
                 <Alert>
                     <CheckCircle2 className="h-4 w-4" />
-                    <AlertTitle>{publicationReady ? 'Publication ready' : 'Upload complete; processing'}</AlertTitle>
-                    <AlertDescription>A watch link appears only after the publication exists on NEAR.</AlertDescription>
+                    <AlertTitle>{publicationReady ? 'Publication ready' : publicationExpired ? 'Publication deadline passed' : publicationQuery.isError ? 'Publication status unavailable' : providerFailed ? 'Video processing failed' : 'Upload complete; awaiting publication'}</AlertTitle>
+                    <AlertDescription>{publicationExpired ? UPLOAD_EXPIRED_MESSAGE : 'A watch link appears only after the publication exists on NEAR.'}</AlertDescription>
                 </Alert>
             )}
 
@@ -443,7 +470,7 @@ export function LivepeerPaidUploadForm() {
                     <CardDescription>MP4, MOV, AVI, WebM, WMV, MKV or FLV; maximum {FEATURE_FLAGS.publicTestnetBeta ? '1 GB' : '20 GB'} and minimum ticket price 2 USDC.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">
-                    <Input type="file" accept={LIVEPEER_SOURCE_ACCEPT} disabled={busy || uploaded} onChange={selectFile} />
+                    <Input type="file" accept={LIVEPEER_SOURCE_ACCEPT} disabled={busy || (uploaded && !publicationExpired)} onChange={selectFile} />
                     {fileError && <p role="alert" className="text-sm text-red-400">{fileError}</p>}
                     {file && !fileError && (
                         <div className="relative overflow-hidden rounded-xl border border-zinc-800 bg-black">
@@ -542,8 +569,13 @@ export function LivepeerPaidUploadForm() {
                         <Button onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>
                     ) : publicationReady && jobId ? (
                         <Button asChild className="w-full"><Link href={`/watch?job=${encodeURIComponent(jobId)}`}>Open publication</Link></Button>
+                    ) : publicationExpired ? (
+                        <Button className="w-full" disabled>Publication deadline passed</Button>
                     ) : uploaded ? (
-                        <Button className="w-full" disabled><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing</Button>
+                        <Button className="w-full" disabled>
+                            {!publicationQuery.isError && !providerFailed && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            {publicationQuery.isError ? 'Status unavailable' : providerFailed ? 'Processing failed' : 'Waiting for publication'}
+                        </Button>
                     ) : !payment ? (
                         <Button className="w-full" disabled={!formReady || busy} onClick={() => void preparePayment()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Check payment options</Button>
                     ) : (
@@ -581,6 +613,10 @@ function fileValidationMessage(error: 'empty_file' | 'source_limit_exceeded' | '
 
 function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): string {
     const code = reason instanceof Error ? reason.message : '';
+    if (code === 'livepeer_upload_expired') return UPLOAD_EXPIRED_MESSAGE;
+    if (code === 'livepeer_upload_status_unavailable') {
+        return 'Publication status could not be confirmed. Recovery has not been started.';
+    }
     if (code === 'admission_closed' || code === 'admission_denied') {
         return availabilityConfirmed
             ? 'Upload availability changed after authorization. Retry this same upload job.'
@@ -600,6 +636,9 @@ function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): st
     }
     if (code === 'sponsored_upload_wallet_unsupported') {
         return 'This testnet beta requires a Meteor wallet that supports one-step sponsored approval.';
+    }
+    if (code === 'livepeer_upload_key_recovery_unavailable') {
+        return 'This upload key is unavailable. Keep the existing job; no new payment or key change has been started.';
     }
     return code || 'Upload failed.';
 }

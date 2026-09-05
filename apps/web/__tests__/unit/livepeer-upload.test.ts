@@ -14,6 +14,7 @@ const featureFlags = vi.hoisted(() => ({
     enablePaidMediaLivepeerV1: true,
     enableLivepeerNearCreatorFee: true,
     enableSponsoredLivepeerUploads: false,
+    publicTestnetBeta: false,
 }));
 
 vi.mock('@/lib/near', () => ({
@@ -187,6 +188,7 @@ describe('Livepeer browser upload', () => {
         vi.restoreAllMocks();
         featureFlags.enableLivepeerNearCreatorFee = true;
         featureFlags.enableSponsoredLivepeerUploads = false;
+        featureFlags.publicTestnetBeta = false;
         near.viewContract.mockReset().mockResolvedValue(null);
         sessionStorage.clear();
         delete process.env.NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO;
@@ -243,6 +245,25 @@ describe('Livepeer browser upload', () => {
             sourceType: 'mp4',
         })).resolves.toEqual(INTENT);
         expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads only bounded status for the same signed job without wallet or payment calls', async () => {
+        const wallet = createWallet();
+        await provisionJobSession(wallet);
+        wallet.signAndSendTransaction.mockClear();
+        const status = { job_id: 'job-001', generation: 1, state: 'PROVIDER_FAILED' };
+        const fetchMock = vi.fn().mockResolvedValueOnce(Response.json(status))
+            .mockResolvedValueOnce(Response.json({ ...status, job_id: 'other-job' }));
+        vi.stubGlobal('fetch', fetchMock);
+        const input = {
+            accountId: 'creator.testnet', jobId: 'job-001', generation: 1,
+            expectedSourceBytes: SOURCE_BYTES, sourceFingerprintSha256: SOURCE_FINGERPRINT,
+            sourceType: 'mp4' as const, recovery: 'reconcile' as const,
+        };
+        await expect(requestLivepeerUploadIntent(input)).resolves.toEqual(status);
+        await expect(requestLivepeerUploadIntent(input)).rejects.toThrow('livepeer_upload_status_unavailable');
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).body.recovery).toBe('reconcile');
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
     });
 
     it('signs a lease heartbeat with the same session-only upload key', async () => {
@@ -772,6 +793,19 @@ describe('Livepeer browser upload', () => {
         ));
         expect(messages[0].upload_public_key).toBe(messages[1].upload_public_key);
         expect(messages[0].upload_key_expires_at_ms).toBe(messages[1].upload_key_expires_at_ms);
+    });
+
+    it('blocks public-beta key replacement before wallet approval or a second payment', async () => {
+        const wallet = createWallet();
+        await provisionJobSession(wallet);
+        const request = JSON.parse((wallet.signAndSendTransaction.mock.calls[0][0].actions[0] as { args: { msg: string } }).args.msg);
+        near.viewContract.mockResolvedValue({ ...request, fee_asset: 'USDC', status: 'Authorized' });
+        clearLivepeerJobSessionKey('creator.testnet', 'job-001');
+        wallet.signAndSendTransaction.mockClear();
+        featureFlags.publicTestnetBeta = true;
+        await expect(provisionJobSession(wallet)).rejects.toThrow('livepeer_upload_key_recovery_unavailable');
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+        expect(sessionStorage.length).toBe(0);
     });
 
     it('replaces only the missing upload key for the matching on-chain job', async () => {
