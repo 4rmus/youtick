@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
-    featureFlags: { enablePlaybackAuthorizerV2: false },
+    featureFlags: { enablePlaybackAuthorizerV2: false, publicTestnetBeta: false },
     viewContract: vi.fn(),
     send: vi.fn(),
 }));
@@ -54,8 +54,12 @@ const PUBLICATION = {
 describe('Livepeer publication UI boundary', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        state.viewContract.mockReset();
         state.featureFlags.enablePlaybackAuthorizerV2 = false;
+        state.featureFlags.publicTestnetBeta = false;
     });
+
+    afterEach(() => vi.useRealTimers());
 
     it('reads only a publication bound to the requested job', async () => {
         state.viewContract.mockResolvedValueOnce(PUBLICATION);
@@ -248,8 +252,95 @@ describe('Livepeer publication UI boundary', () => {
         await expect(readLivepeerUploadProgress('job-001')).resolves.toEqual({
             job,
             publication: null,
+            expired: false,
         });
         expect(state.viewContract).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        ['before the deadline', 1, false],
+        ['at the deadline', 0, true],
+        ['after the deadline', -1, true],
+    ])('uses the on-chain beta deadline %s', async (_label, offset, expired) => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-05T12:00:00Z'));
+        state.featureFlags.publicTestnetBeta = true;
+        const job = {
+            job_id: 'job-001', creator_id: 'creator.testnet', status: 'Authorized',
+            upload_public_key: 'ed25519:11111111111111111111111111111111',
+        };
+        state.viewContract.mockResolvedValueOnce(job).mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({
+                creator_id: job.creator_id, generation: 1,
+                deadline_at_ms: String(Date.now() + offset),
+            });
+
+        await expect(readLivepeerUploadProgress('job-001')).resolves.toEqual({
+            job, publication: null, expired,
+        });
+        expect(state.viewContract).toHaveBeenLastCalledWith(
+            { id: 'provider' }, 'paid-media-livepeer-v1.testnet',
+            'get_public_testnet_beta_job', { job_id: 'job-001' },
+        );
+        expect(state.send).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        null,
+        { creator_id: 'other.testnet', generation: 1, deadline_at_ms: '1788609600000' },
+        { creator_id: 'creator.testnet', generation: 2, deadline_at_ms: '1788609600000' },
+        { creator_id: 'creator.testnet', generation: 1, deadline_at_ms: 'invalid' },
+        { creator_id: 'creator.testnet', generation: 1, deadline_at_ms: '9007199254740992' },
+        { creator_id: 'creator.testnet', generation: 1, deadline_at_ms: '0' },
+    ])('does not invent an expiry from an invalid beta marker: %j', async (marker) => {
+        state.featureFlags.publicTestnetBeta = true;
+        state.viewContract.mockResolvedValueOnce({
+            job_id: 'job-001', creator_id: 'creator.testnet', status: 'Authorized',
+            upload_public_key: 'ed25519:11111111111111111111111111111111',
+        }).mockResolvedValueOnce(null).mockResolvedValueOnce(marker);
+
+        await expect(readLivepeerUploadProgress('job-001'))
+            .rejects.toThrow('invalid_livepeer_beta_deadline');
+    });
+
+    it('preserves an existing publication without applying the upload deadline', async () => {
+        state.featureFlags.publicTestnetBeta = true;
+        state.viewContract.mockResolvedValueOnce({
+            job_id: 'job-001', creator_id: 'creator.testnet', status: 'Published',
+            upload_public_key: 'ed25519:11111111111111111111111111111111',
+        }).mockResolvedValueOnce(PUBLICATION);
+
+        await expect(readLivepeerUploadProgress('job-001')).resolves.toMatchObject({
+            publication: PUBLICATION, expired: false,
+        });
+        expect(state.viewContract).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports an unreadable deadline instead of assuming processing or expiry', async () => {
+        state.featureFlags.publicTestnetBeta = true;
+        state.viewContract.mockResolvedValueOnce({
+            job_id: 'job-001', creator_id: 'creator.testnet', status: 'Authorized',
+            upload_public_key: 'ed25519:11111111111111111111111111111111',
+        }).mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('RPC unavailable'));
+
+        await expect(readLivepeerUploadProgress('job-001')).rejects.toThrow('RPC unavailable');
+    });
+
+    it('recognizes a publication that becomes visible after an expired observation', async () => {
+        state.featureFlags.publicTestnetBeta = true;
+        const job = {
+            job_id: 'job-001', creator_id: 'creator.testnet', status: 'Authorized',
+            upload_public_key: 'ed25519:11111111111111111111111111111111',
+        };
+        state.viewContract.mockResolvedValueOnce(job).mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({ creator_id: job.creator_id, generation: 1, deadline_at_ms: '1' });
+        await expect(readLivepeerUploadProgress('job-001')).resolves.toMatchObject({ expired: true });
+
+        state.viewContract.mockResolvedValueOnce({ ...job, status: 'Published' })
+            .mockResolvedValueOnce(PUBLICATION);
+        await expect(readLivepeerUploadProgress('job-001')).resolves.toMatchObject({
+            publication: PUBLICATION, expired: false,
+        });
     });
 
     it('reads and withdraws the creator USDC balance', async () => {

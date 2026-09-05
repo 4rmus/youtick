@@ -208,6 +208,9 @@
         "source_type": {
           "enum": ["mp4", "mov", "avi", "webm", "wmv", "mkv", "flv"]
         },
+        "recovery": {
+          "const": "reconcile"
+        },
         "profile_id": {
           "const": "paid-media-livepeer-v1"
         },

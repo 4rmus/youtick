@@ -74,10 +74,30 @@ export async function waitForAuthorizedLivepeerJob(
 export async function readLivepeerUploadProgress(jobId: string): Promise<{
     job: LivepeerMediaJob;
     publication: LivepeerPublication | null;
+    expired: boolean;
 }> {
     const job = await readLivepeerMediaJob(jobId);
     if (!job) throw new Error('livepeer_job_missing');
-    return { job, publication: await readLivepeerPublication(jobId) };
+    const publication = await readLivepeerPublication(jobId);
+    if (publication || !FEATURE_FLAGS.publicTestnetBeta) {
+        return { job, publication, expired: false };
+    }
+    const value = await viewContract<unknown>(
+        getProvider(),
+        NEAR_CONFIG.marketContractId,
+        'get_public_testnet_beta_job',
+        { job_id: jobId },
+    );
+    const marker = value && typeof value === 'object' ? value as Record<string, unknown> : null;
+    if (!marker
+        || marker.creator_id !== job.creator_id
+        || marker.generation !== 1
+        || typeof marker.deadline_at_ms !== 'string'
+        || !/^[1-9][0-9]*$/.test(marker.deadline_at_ms)
+        || !Number.isSafeInteger(Number(marker.deadline_at_ms))) {
+        throw new Error('invalid_livepeer_beta_deadline');
+    }
+    return { job, publication, expired: Date.now() >= Number(marker.deadline_at_ms) };
 }
 
 export async function readLivepeerPublications(

@@ -414,6 +414,7 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
         if (!samePaidJob(existingChainJob, request, asset)) {
             throw new Error('livepeer_paid_job_conflict');
         }
+        if (FEATURE_FLAGS.publicTestnetBeta) throw new Error('livepeer_upload_key_recovery_unavailable');
         if (!existingSession) {
             persistLivepeerJobSessionKey(
                 input.accountId,
@@ -870,14 +871,21 @@ function samePaidJob(
         && job.status === 'Authorized';
 }
 
-export async function requestLivepeerUploadIntent(input: {
+type UploadIntentInput = {
     accountId: string;
     jobId: string;
     generation: number;
     expectedSourceBytes: number;
     sourceFingerprintSha256: string;
     sourceType: LivepeerSourceType;
-}): Promise<LivepeerUploadIntent> {
+    recovery?: 'reconcile';
+};
+
+export type LivepeerUploadStatus = { job_id: string; generation: number; state: string };
+
+export function requestLivepeerUploadIntent(input: UploadIntentInput & { recovery: 'reconcile' }): Promise<LivepeerUploadStatus>;
+export function requestLivepeerUploadIntent(input: UploadIntentInput & { recovery?: never }): Promise<LivepeerUploadIntent>;
+export async function requestLivepeerUploadIntent(input: UploadIntentInput): Promise<LivepeerUploadIntent | LivepeerUploadStatus> {
     requireFeature();
     if (!Number.isSafeInteger(input.expectedSourceBytes)
         || input.expectedSourceBytes < 1
@@ -901,6 +909,7 @@ export async function requestLivepeerUploadIntent(input: {
         source_type: input.sourceType,
         profile_id: PROFILE_ID,
         profile_config_sha256: PROFILE_CONFIG_SHA256,
+        ...(input.recovery ? { recovery: input.recovery } : {}),
     };
     const bodySha256 = await sha256Hex(canonicalJson(body));
     const envelope = {
@@ -933,6 +942,15 @@ export async function requestLivepeerUploadIntent(input: {
     const value = await readJson(response);
     if (!response.ok) {
         throw new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`);
+    }
+    if (input.recovery === 'reconcile') {
+        if (value.job_id !== input.jobId || value.generation !== input.generation
+            || typeof value.state !== 'string'
+            || !['UPLOAD_READY', 'UPLOADING', 'PROCESSING', 'READY_VERIFIED', 'FINALIZE_QUEUED',
+                'FINALIZE_RETRY', 'ONCHAIN_PUBLISHED', 'PROVIDER_FAILED', 'UPLOAD_EXPIRED'].includes(value.state)) {
+            throw new Error('livepeer_upload_status_unavailable');
+        }
+        return { job_id: input.jobId, generation: input.generation, state: value.state };
     }
     return parseIntent(value, input);
 }

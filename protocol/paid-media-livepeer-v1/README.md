@@ -186,8 +186,24 @@ the wrong version instead of silently accepting the changed body contract.
 Upload intent v2 returns a random lease ID, 30-minute expiry and five-minute
 heartbeat interval. Heartbeats use the same session-only upload key, recheck
 the final on-chain job/key and never create another provider resource. The web
-clears that local key after upload success and preserves it on failure/reload
-for same-resource recovery.
+preserves that local key through provider processing and clears it once the
+NEAR publication exists. Failure/reload keeps the key for same-resource recovery.
+
+In the public testnet beta packet, an upload intent may additionally sign
+`recovery: "reconcile"`. It requires an existing exact job and returns only
+`{ job_id, generation, state }`, without TUS/provider identifiers. It consumes
+a fresh nonce and uses the same final job/key, source fingerprint and beta
+deadline checks. It never creates or deletes an asset or charges another fee.
+The durable alarm also reconciles unpublished jobs through the existing ready
+verification/finalize path, with bounded 60–900 second backoff and no deadline
+extension. Provider read failures remain unavailable during backoff.
+
+Replacing a waiting asset is rejected. Deletion remains restricted to the
+existing exact takedown/expired operation. Public-beta upload-key replacement
+is not offered: the original beta request hash binds the original key and its
+expiry. A missing/mismatched browser key fails before any wallet action; an
+already-uploaded job can still be reconciled by its durable alarm. Restoring a
+lost key is not claimed as supported by this source package.
 
 The creator may use that same job-bound session key to cancel only while the
 durable job is `AUTHORIZED` or `LEASED`, before provider creation begins. The

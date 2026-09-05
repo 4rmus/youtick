@@ -1064,6 +1064,34 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(testState.alarms.at(-1)).toBe(now + 15 * 60 * 1000);
     });
 
+    it('recovers a missing ready webhook through the alarm and finalizes only once', async () => {
+        const now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const testState = createState();
+        testState.values.set('job:v1', { ...jobRecord(), absoluteDeadlineAtMs: now + 3_600_000 });
+        const operatorFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true, finalized: true }));
+        const env = createEnv({
+            LIVEPEER_OPERATOR_JOB_ID: '', LIVEPEER_CREATOR_ALLOWLIST: '*',
+            LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: 'true', LIVEPEER_PLAYBACK_V2_ENABLED: 'true',
+            LIVEPEER_SPONSORED_UPLOADS_ENABLED: 'true', LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true',
+            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '20000000',
+            LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '2000000',
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+        });
+        const fetchMock = reconcileFetch((await publishedJob()).publication);
+        vi.stubGlobal('fetch', fetchMock);
+        const control = new LivepeerControl(testState.state, env);
+        await control.alarm();
+        await control.alarm();
+        await control.fetch(internalWebhookRequest());
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'ONCHAIN_PUBLISHED', absoluteDeadlineAtMs: now + 3_600_000 });
+        expect(operatorFetch.mock.calls.filter(([request]) => new URL((request as Request).url).pathname === '/internal/finalize')).toHaveLength(1);
+        expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('livepeer.studio') && ['POST', 'DELETE'].includes(init?.method || ''))).toBe(false);
+    });
+
     it('retries a queued finalization from the job alarm', async () => {
         const now = 1_785_600_000_000;
         vi.spyOn(Date, 'now').mockReturnValue(now);

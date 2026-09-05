@@ -32,6 +32,7 @@ const TESTNET_USDC = '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4a
 const BLOCK_HASH = '11111111111111111111111111111111';
 const TUS_ENDPOINT = 'https://origin.livepeer.com/api/asset/upload/tus?token=secret';
 const TUS_UPLOAD_URL = 'https://origin.livepeer.com/api/asset/upload/tus/upload-123';
+const RECOVERY_SOURCE_BYTES = '1000000000';
 let requestKey: CryptoKeyPair;
 let requestPublicKey: string;
 let quoteKey: CryptoKeyPair;
@@ -404,7 +405,7 @@ async function controlRequest(overrides?: {
         keyPair.privateKey,
         new TextEncoder().encode(canonicalControlMessage(envelope)),
     ));
-    return new Request('https://bridge.youtick.net/v1/upload-intents', {
+    return new Request(`https://bridge.youtick.net${String(envelope.route)}`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -558,6 +559,115 @@ function backendFetch(options?: {
             });
         }
         throw new Error(`unexpected_fetch:${url}`);
+    });
+}
+
+function recoveryBackend(now: number, waitingAgeMs: number) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === RPC_URL) {
+            const body = JSON.parse(String(init?.body)) as { params: { method_name: string } };
+            const job = {
+                job_id: vectors.upload_intent.body.job_id,
+                creator_id: vectors.upload_intent.envelope.account_id,
+                title: 'Paid video',
+                price_usdc: '2000000',
+                expected_source_bytes: RECOVERY_SOURCE_BYTES,
+                profile_id: vectors.upload_intent.body.profile_id,
+                profile_config_sha256: vectors.upload_intent.body.profile_config_sha256,
+                generation: 1,
+                status: 'Authorized',
+                upload_public_key: requestPublicKey,
+                upload_key_expires_at_ms: String(now + 60 * 60 * 1000),
+                fee_quote_hash: 'a'.repeat(64),
+            };
+            const request = {
+                creator_id: job.creator_id,
+                job_id: job.job_id,
+                title: job.title,
+                price_usdc: job.price_usdc,
+                expected_source_bytes: job.expected_source_bytes,
+                profile_id: job.profile_id,
+                profile_config_sha256: job.profile_config_sha256,
+                upload_public_key: job.upload_public_key,
+                upload_key_expires_at_ms: job.upload_key_expires_at_ms,
+            };
+            const value = body.params.method_name === 'get_media_job'
+                ? job
+                : body.params.method_name === 'get_public_testnet_beta_job'
+                    ? {
+                        creator_id: job.creator_id,
+                        generation: 1,
+                        request_sha256: await sha256Hex(JSON.stringify(request)),
+                        sponsor_quote_id: job.fee_quote_hash,
+                        admitted_at_ms: String(now - 7 * 60 * 60 * 1000),
+                        deadline_at_ms: String(now + 60 * 60 * 1000),
+                    }
+                    : body.params.method_name === 'get_public_testnet_beta_state'
+                        ? {
+                            version: 1,
+                            started_at_ms: String(now - 8 * 60 * 60 * 1000),
+                            upload_closes_at_ms: String(now + 30 * 60 * 1000),
+                            ends_at_ms: String(now + 2 * 60 * 60 * 1000),
+                            closed_at_ms: null,
+                            total_job_count: 1,
+                        }
+                        : null;
+            return Response.json({
+                result: {
+                    block_hash: BLOCK_HASH,
+                    result: Array.from(new TextEncoder().encode(JSON.stringify(value))),
+                },
+            });
+        }
+        if (url === 'https://livepeer.studio/api/asset/asset-123' && !init?.method) {
+            return Response.json({
+                id: 'asset-123',
+                playbackId: 'playback-123',
+                projectId: 'project-123',
+                creatorId: {
+                    type: 'unverified',
+                    value: `${vectors.upload_intent.body.job_id}:1`,
+                },
+                createdByTokenName: 'paid-media-test',
+                name: `youtick-${vectors.upload_intent.body.job_id}-g1`,
+                playbackPolicy: { type: 'jwt' },
+                status: { phase: 'waiting', updatedAt: now - waitingAgeMs },
+                size: Number(RECOVERY_SOURCE_BYTES),
+                downloadUrl: 'https://asset-cdn.lp-playback.com/asset-123/video',
+                hash: null,
+            });
+        }
+        throw new Error(`unexpected_fetch:${url}:${init?.method || 'GET'}`);
+    });
+}
+
+function seedStuckRecoveryJob(
+    state: TestState,
+    now: number,
+    jobState: 'UPLOADING' | 'PROCESSING' = 'PROCESSING',
+) {
+    state.values.set('job:v1', {
+        schema: 'youtick.livepeer-control-job.v2',
+        state: jobState,
+        network: 'testnet',
+        contractId: CONTRACT_ID,
+        jobId: vectors.upload_intent.body.job_id,
+        generation: 1,
+        creator: vectors.upload_intent.envelope.account_id,
+        expectedSourceBytes: RECOVERY_SOURCE_BYTES,
+        sourceFingerprintSha256: vectors.upload_intent.body.source_fingerprint_sha256,
+        sourceType: vectors.upload_intent.body.source_type,
+        profileId: vectors.upload_intent.body.profile_id,
+        profileConfigSha256: vectors.upload_intent.body.profile_config_sha256,
+        createdAtMs: now - 7 * 60 * 60 * 1000,
+        stateChangedAtMs: now - 6 * 60 * 60 * 1000,
+        apiTokenName: 'paid-media-test',
+        assetId: 'asset-123',
+        playbackId: 'playback-123',
+        projectId: 'project-123',
+        tusEndpoint: TUS_UPLOAD_URL,
+        absoluteDeadlineAtMs: now + 60 * 60 * 1000,
     });
 }
 
@@ -1667,6 +1777,84 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(admissionFetch.mock.calls.filter(([request]) => (
             new URL(request.url).pathname === '/internal/admission/reserve'
         ))).toHaveLength(1);
+    });
+
+    it.each(['waiting', 'processing', 'failed'])('reconciles the same signed job with provider phase %s without creating an asset', async (phase) => {
+        const now = 1_788_430_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const backend = recoveryBackend(now, 6 * 60 * 60 * 1000);
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const response = await backend(input, init);
+            if (String(input) === 'https://livepeer.studio/api/asset/asset-123' && !init?.method) {
+                const asset = await response.json() as Record<string, unknown>;
+                return Response.json({ ...asset, status: { phase, updatedAt: now } });
+            }
+            return response;
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const state = createState();
+        seedStuckRecoveryJob(state, now, 'UPLOADING');
+        const control = new LivepeerControl(state.state, publicBetaEnv({ LIVEPEER_PROJECT_ID: 'project-123' }));
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const response = await control.fetch(await controlRequest({
+                body: { recovery: 'reconcile', expected_source_bytes: RECOVERY_SOURCE_BYTES },
+            }));
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({
+                job_id: vectors.upload_intent.body.job_id, generation: 1,
+                state: phase === 'failed' ? 'PROVIDER_FAILED' : phase === 'processing' ? 'PROCESSING' : 'UPLOADING',
+            });
+        }
+        expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('livepeer.studio'))).toHaveLength(1);
+        expect(state.values.get('job:v1')).toMatchObject({ assetId: 'asset-123', absoluteDeadlineAtMs: now + 60 * 60 * 1000 });
+        expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+    });
+
+    it('rejects waiting-asset replacement before any chain or provider call', async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        const control = new LivepeerControl(createState().state, publicBetaEnv());
+        const response = await control.fetch(await controlRequest({ body: { recovery: 'replace_stuck_waiting' } }));
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'invalid_upload_intent' });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps a failed provider read unavailable during backoff without another provider attempt', async () => {
+        const now = 1_788_430_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const backend = recoveryBackend(now, 6 * 60 * 60 * 1000);
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+            String(input).includes('livepeer.studio')
+                ? Response.json({ error: 'private provider detail' }, { status: 503 })
+                : backend(input, init));
+        vi.stubGlobal('fetch', fetchMock);
+        const state = createState();
+        seedStuckRecoveryJob(state, now);
+        const control = new LivepeerControl(state.state, publicBetaEnv({ LIVEPEER_PROJECT_ID: 'project-123' }));
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const response = await control.fetch(await controlRequest({
+                body: { recovery: 'reconcile', expected_source_bytes: RECOVERY_SOURCE_BYTES },
+            }));
+            expect(response.ok).toBe(false);
+            expect(await response.text()).not.toContain('private provider detail');
+        }
+        expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('livepeer.studio'))).toHaveLength(1);
+        expect(state.values.get('reconcile:v1')).toMatchObject({ uploadReadFailed: true });
+    });
+
+    it('expires an unpublished job at its fixed deadline without provider I/O', async () => {
+        const now = 1_788_430_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const state = createState();
+        seedStuckRecoveryJob(state, now - 3_600_000);
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        const control = new LivepeerControl(state.state, publicBetaEnv());
+        await control.alarm();
+        await control.alarm();
+        expect(state.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_EXPIRED', absoluteDeadlineAtMs: now });
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('closes new upload intents while preserving an existing TUS recovery', async () => {
