@@ -1,3 +1,4 @@
+import { publicTestnetFlags } from './release-metadata.mjs';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
@@ -145,11 +146,12 @@ async function request(baseUrl, path, init, headers, fetchImpl) {
 async function bridgeHealth(
     bridgeUrl, headers, expectedVersion, expectedBridgeEnabled, expectedUploadReady,
     expectedPlaybackReady, expectedSponsoredUploadReady, expectedPublicBetaRateLimitReady,
-    bridgeBootstrap, fetchImpl, sleepFn,
+    bridgeBootstrap, fetchImpl, sleepFn, publicMode,
 ) {
     const delays = bridgeBootstrap
         ? BOOTSTRAP_HEALTH_RETRY_DELAYS_MS
         : expectedVersion ? VERSION_IDENTITY_RETRY_DELAYS_MS : [0];
+    const packet = publicMode && publicMode !== 'observe' ? publicTestnetFlags(publicMode) : null;
     let observedVersion;
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
         const delay = delays[attempt];
@@ -176,7 +178,9 @@ async function bridgeHealth(
             : expectedSponsoredUploadReady === false
                 ? sponsoredUploadsClosed
                 : sponsoredUploadsReady || sponsoredUploadsClosed || sponsoredUploadsLegacyClosed;
-        const operatorMutationMatch = expectedSponsoredUploadReady === true
+        const operatorMutationMatch = packet ? healthJson.operatorMutationEnabled === (packet.LIVEPEER_OPERATOR_MUTATIONS_ENABLED === 'true')
+            : publicMode === 'observe' ? typeof healthJson.operatorMutationEnabled === 'boolean'
+            : expectedSponsoredUploadReady === true
             ? healthJson.operatorMutationEnabled === true
             : expectedSponsoredUploadReady === false
                 ? healthJson.operatorMutationEnabled === false
@@ -187,7 +191,8 @@ async function bridgeHealth(
             || healthJson.publicBetaRateLimitReady === expectedPublicBetaRateLimitReady;
         const inferredUploadReady = healthJson.providerMutationEnabled === true
             && healthJson.newUploadReady === true;
-        const inferredPlaybackReady = healthJson.providerMutationEnabled === false
+        const inferredPlaybackReady = (healthJson.providerMutationEnabled === false
+            || (publicMode === 'observe' && healthJson.providerMutationEnabled === true && healthJson.operatorMutationEnabled === true))
             && healthJson.newUploadReady === false
             && healthJson.playbackReady === true
             && healthJson.playbackV2Ready === true
@@ -205,13 +210,14 @@ async function bridgeHealth(
             && operatorMutationMatch
             && publicBetaRateLimitMatch;
         const explicitPolicyMatch = healthJson.stage === (expectedBridgeEnabled ? 'ENABLED' : 'DISABLED')
-            && healthJson.providerMutationEnabled === expectedUploadReady
+            && healthJson.providerMutationEnabled === (packet ? packet.LIVEPEER_PROVIDER_MUTATIONS_ENABLED === 'true' : expectedUploadReady)
             && healthJson.newUploadReady === expectedUploadReady
             && healthJson.playbackReady === expectedPlaybackReady
             && healthJson.playbackV2Ready === expectedPlaybackReady
             && healthJson.playbackShadowV2Ready === false
             && sponsoredUploadsMatch
             && operatorMutationMatch
+            && (!packet || healthJson.webhookQueueReady === (packet.LIVEPEER_WEBHOOK_QUEUE_ENABLED === 'true'))
             && publicBetaRateLimitMatch;
         if (expectedBridgeEnabled === null
             ? !inferredEnabled && !inferredDisabled
@@ -284,6 +290,8 @@ export async function runReleaseSmoke({
     expectedPlaybackReady = expectedBridgeEnabled === null ? null : false,
     expectedSponsoredUploadReady = expectedBridgeEnabled === null ? null : false,
     expectedPublicBetaRateLimitReady = null,
+    publicTestnetMode: publicMode,
+    expectedReadModel,
     bridgeBootstrap = false,
     includePlaybackV2 = true,
     includeProviderAssetDelete = true,
@@ -291,6 +299,7 @@ export async function runReleaseSmoke({
     browserRunner = runChromeSmoke,
     sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
 }) {
+    if (publicMode && !['closed', 'acceptance', 'drain', 'observe'].includes(publicMode)) throw new Error('release_smoke_public_mode_invalid');
     const webUrl = httpUrl(webValue, 'web_url', true);
     const bridgeUrl = httpUrl(bridgeValue, 'bridge_url', true);
     const allowedOrigin = httpUrl(allowedValue, 'allowed_origin', true);
@@ -345,8 +354,20 @@ export async function runReleaseSmoke({
     const healthJson = await bridgeHealth(
         bridgeUrl, headers, expectedVersion, expectedBridgeEnabled, expectedUploadReady,
         expectedPlaybackReady, expectedSponsoredUploadReady, expectedPublicBetaRateLimitReady,
-        bridgeBootstrap, fetchImpl, sleepFn,
+        bridgeBootstrap, fetchImpl, sleepFn, publicMode,
     );
+
+    if (expectedReadModel) {
+        const origin = httpUrl(expectedReadModel.url, 'read_model_url', true);
+        const result = await request(origin, '/__health', {}, {}, fetchImpl);
+        expectStatus(result.response, 200, 'read_model_health');
+        const health = expectJson(result.response, result.body, 'read_model_health');
+        if (health.status !== 'ok' || health.versionId !== expectedReadModel.versionId
+            || health.network !== 'testnet' || health.contractId !== expectedReadModel.contractId
+            || health.startBlockHeight !== expectedReadModel.startBlockHeight
+            || (expectedReadModel.enabled !== null && health.ingestionEnabled !== expectedReadModel.enabled) || health.backfillEnabled !== false
+            || (expectedReadModel.enabled !== null && health.stage !== (expectedReadModel.enabled ? 'ENABLED' : 'DISABLED'))) throw new Error('release_smoke_read_model_mismatch');
+    }
 
     const mutationStatuses = {};
     const mutationRetryDelays = overrideVersion

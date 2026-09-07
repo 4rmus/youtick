@@ -14,14 +14,19 @@ const state = vi.hoisted(() => ({
     setQueryData: vi.fn(),
     updateCheckout: vi.fn(),
     verifyUsdc: vi.fn(),
+    publicationReady: true,
+    queries: [] as Array<{ queryKey: string[]; enabled?: boolean }>,
 }));
 
 vi.mock('@/lib/constants', () => ({ FEATURE_FLAGS: state.featureFlags }));
 
 vi.mock('@tanstack/react-query', () => ({
-    useQuery: ({ queryKey }: { queryKey: string[] }) => (queryKey[0] === 'livepeerPublication'
-        ? { data: PUBLICATION, error: null, isLoading: false }
-        : { data: false, error: null, isLoading: false }),
+    useQuery: (options: { queryKey: string[]; enabled?: boolean }) => {
+        state.queries.push(options);
+        return options.queryKey[0] === 'livepeerPublication'
+            ? { data: state.publicationReady ? PUBLICATION : undefined, error: null, isLoading: !state.publicationReady }
+            : { data: false, error: null, isLoading: false };
+    },
     useQueryClient: () => ({
         invalidateQueries: state.invalidateQueries,
         setQueryData: state.setQueryData,
@@ -96,6 +101,8 @@ describe('Livepeer ticket payment recovery', () => {
         vi.clearAllMocks();
         state.featureFlags.enablePlaybackAuthorizerV2 = false;
         state.onPurchase = null;
+        state.publicationReady = true;
+        state.queries = [];
         state.getWallet.mockResolvedValue({});
         state.readPublication.mockResolvedValue(PUBLICATION);
         state.loadCheckout.mockReturnValue(CHECKOUT);
@@ -104,6 +111,13 @@ describe('Livepeer ticket payment recovery', () => {
 
     afterEach(() => {
         vi.useRealTimers();
+    });
+
+    it('starts the entitlement query while publication data is still loading', () => {
+        state.publicationReady = false;
+        renderToStaticMarkup(React.createElement(LivepeerWatch, { jobId: PUBLICATION.publication_id }));
+        expect(state.queries.find((query) => query.queryKey[0] === 'livepeerEntitlement')?.enabled).toBe(true);
+        expect(state.buyTicket).not.toHaveBeenCalled();
     });
 
     it('completes an already submitted ticket without another wallet call', async () => {

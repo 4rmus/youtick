@@ -11,9 +11,19 @@ evidence; no Worker, web, staging or production runtime is enabled.
 - protocol: `youtick.paid-media-livepeer-v1.protocol.v1`;
 - control-signature domain: `youtick.paid-media-livepeer-v1.control`;
 - publication profile: `paid-media-livepeer-v1`;
-- profile configuration SHA-256:
+- legacy profile configuration SHA-256:
   `96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77`
   for the canonical 720p H.264 Baseline configuration;
+- public-testnet adaptive profile SHA-256:
+  `28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2`.
+  `profiles.json` adds 640×360 at 800 kbit/s to the unchanged 720p profile.
+  Its hash is SHA-256 of UTF-8 JSON `{ "profiles": [...] }` with recursively
+  sorted object keys and no whitespace. The legacy hash and signed vectors stay unchanged.
+  Public policy orders profiles as current-for-new-jobs, then supported-for-existing-jobs;
+  `[legacy]` is accepted for an earlier deployment, `[adaptive, legacy]` for the new initializer.
+  Provider creation and verification use the job's stored hash. Adaptive publication
+  verification requires both HLS renditions, denied child playlists, and denied first/last
+  segments plus key/map references. These bounded probes do not prove full-video delivery.
 - maximum declared source size: decimal `20_000_000_000` bytes;
 - accepted source containers: MP4, MOV, AVI, WebM, WMV, MKV and FLV;
 - browser upload chunks: fixed `33_554_432` bytes (32 MiB), one sequential
@@ -195,8 +205,10 @@ In the public testnet beta packet, an upload intent may additionally sign
 a fresh nonce and uses the same final job/key, source fingerprint and beta
 deadline checks. It never creates or deletes an asset or charges another fee.
 The durable alarm also reconciles unpublished jobs through the existing ready
-verification/finalize path, with bounded 60–900 second backoff and no deadline
-extension. Provider read failures remain unavailable during backoff.
+verification/finalize path. Valid waiting/processing observations keep a
+60-second interval and reset the error counter; only temporary read failures
+use the bounded 60–900 second backoff. No check extends the deadline.
+Provider read failures remain unavailable during backoff.
 
 Replacing a waiting asset is rejected. Deletion remains restricted to the
 existing exact takedown/expired operation. Public-beta upload-key replacement
@@ -204,6 +216,31 @@ is not offered: the original beta request hash binds the original key and its
 expiry. A missing/mismatched browser key fails before any wallet action; an
 already-uploaded job can still be reconciled by its durable alarm. Restoring a
 lost key is not claimed as supported by this source package.
+
+The separate `public-testnet` video V1 environment also accepts signed
+`recovery: "resume"`. It returns an existing matching TUS intent with
+`created: false`, or a status-only response once processing has begun. The
+source fingerprint must match, and a HEAD read must confirm the existing
+resource length. A missing resource/job cannot enter provider creation.
+Reacquiring an expired transfer lease preserves daily attempts and reserved
+job budget; concurrency and the original paid-job deadline still apply.
+
+In this environment the browser keeps only scoped job/file metadata and
+attempt markers in local storage. Matching uses the existing filename, size,
+modification time and sampled source fingerprint. Private keys and TUS URLs
+remain session-only. A native browser lock serializes key replacement; a
+public-key digest lets a closed tab reconcile a pending replacement without
+persisting the key. An unknown wallet result is never another automatic
+payment or key change. A confirmed replacement uses the original deadline.
+Account changes and page exit abort the transfer without deleting its source;
+a completed/aborted transfer cannot restart its heartbeat.
+
+Public video Queue delivery handles at most ten messages concurrently; each
+job still uses its existing serialized state transitions. A persisted public
+operator broadcast is reconciled through at most three transaction-status
+reads per check, with no second send. Token renewal retains the current player
+during temporary failures, but denies access on explicit rejection or token
+expiry even if a renewal request hangs.
 
 The creator may use that same job-bound session key to cancel only while the
 durable job is `AUTHORIZED` or `LEASED`, before provider creation begins. The
@@ -316,3 +353,19 @@ canonical body hashes and signed messages, and verifies the creator and sponsore
 fee quotes.
 
 Current architecture: [YouTick architecture](../../docs/architecture/README.md).
+
+### Public video quality and Discover source gate
+
+`VIDEO_QUALITY_DISCOVER_SOURCE` is local source/test evidence, not a deployment.
+The existing browser harness accepts `verifyAdaptive: true`; it must play 360p,
+then 720p while time advances, and restore HLS automatic selection in each browser.
+Its default leaves `adaptive_quality: EXTERNAL_NOT_RUN`. Automatic adaptation under
+changing real network conditions, long playback and 1,000 viewers remain external acceptance.
+The public read-model candidate uses the new Market/start block and fresh D1 binding,
+with API/ingestion/backfill gates closed. Its minute schedule registers finality and
+bounded ingestion independently. Domain attachment, resource provisioning, protected
+workflow activation and real Discover-to-Watch acceptance remain separate live actions.
+
+Test token links use the [NEAR faucet guide](https://docs.near.org/getting-started/faucet)
+and [Circle faucet](https://faucet.circle.com/) (Near Testnet listed when checked 2026-09-07).
+No token was requested; actual faucet receipt into the configured USDC contract remains unproven.

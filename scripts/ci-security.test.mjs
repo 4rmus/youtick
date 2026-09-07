@@ -6,6 +6,7 @@ const workflows = [
     'ci.yml',
     'codeql.yml',
     'deploy-preview.yml',
+    'deploy-public-testnet.yml',
     'preview-market-code-update.yml',
     'promote-production.yml',
 ];
@@ -288,4 +289,35 @@ test('Preview operator archive scan workflow is exact-one and single-POST', asyn
     assert.doesNotMatch(source, /wrangler|gh api|set -x|echo .*OPERATOR_TOKEN|printenv/);
     assert.doesNotMatch(source, /\b(?:for|while)\b/);
     assert.doesNotMatch(source, /\\\$\{/);
+});
+
+
+test('public testnet builds a reviewed isolated artifact before its protected deploy', async () => {
+    const source = await readFile(new URL('../.github/workflows/deploy-public-testnet.yml', import.meta.url), 'utf8');
+    const prepare = source.slice(source.indexOf('  prepare:'), source.indexOf('  deploy:'));
+    const deploy = source.slice(source.indexOf('  deploy:'));
+    assert.match(source, /workflow_dispatch:/);
+    assert.doesNotMatch(source, /workflow_run:|pull_request_target:/);
+    assert.match(source, /default: closed/);
+    assert.match(source, /cancel-in-progress: false/);
+    assert.match(prepare, /github.ref == 'refs\/heads\/main'/);
+    assert.match(prepare, /\.head_sha == \$sha/);
+    assert.match(prepare, /\.event == "push"/);
+    assert.match(prepare, /\.conclusion == "success"/);
+    assert.match(prepare, /compare\/\$\{REQUESTED_SHA\}\.\.\.main/);
+    assert.match(prepare, /--environment public-testnet/);
+    assert.match(prepare, /--mode "\$RELEASE_MODE"/);
+    assert.match(prepare, /npm sbom --omit=dev --sbom-format=spdx/);
+    assert.match(prepare, /sbom-path:/);
+    assert.doesNotMatch(prepare, /secrets\./);
+    assert.match(deploy, /vars.DEPLOY_PUBLIC_TESTNET_ENABLED == 'true'/);
+    assert.match(deploy, /name: public-testnet/);
+    assert.match(deploy, /required_reviewers/);
+    assert.match(deploy, /gh attestation verify/);
+    assert.match(deploy, /attestations: read/);
+    assert.doesNotMatch(deploy, /attestations: write|id-token: write/);
+    assert.match(deploy, /--signer-workflow/);
+    assert.match(deploy, /reviewed_mode_mismatch/);
+    assert.match(deploy, /cloudflare-release.mjs deploy public-testnet/);
+    assert.doesNotMatch(deploy, /secrets\.(PREVIEW_|PRODUCTION_)|near .*call|d1 execute|workflow run/);
 });

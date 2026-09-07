@@ -518,7 +518,7 @@ test('minute finality schedule makes exactly two RPC reads without D1 or Queue a
         logger: { log: (value) => logs.push(value), error: (value) => logs.push(value) },
     });
 
-    assert.equal(waits.length, 1);
+    assert.equal(waits.length, 2);
     const receipt = await waits[0];
     assert.deepEqual(receipt, {
         schema: 'youtick.near-finality-probe.v1',
@@ -533,7 +533,10 @@ test('minute finality schedule makes exactly two RPC reads without D1 or Queue a
         { method: 'block', params: { finality: 'final' } },
         { method: 'block', params: { finality: 'optimistic' } },
     ]);
-    assert.deepEqual(logs, [receipt]);
+    const ingestion = await waits[1];
+    assert.equal(ingestion.status, 'disabled');
+    assert.ok(logs.includes(receipt));
+    assert.ok(logs.includes(JSON.stringify(ingestion)));
 });
 
 test('scheduled Worker applies one testnet block and rejects unsafe activation config', async () => {
@@ -888,4 +891,34 @@ test('final-height RPC is bounded and requires the exact final block response', 
     }, async () => Response.json({
         jsonrpc: '2.0', id: 'wrong', result: { header: { height: 250 } },
     })), /invalid_read_model_final_rpc/);
+});
+
+test('public minute tick ingests from its configured Market start even when finality fails', async () => {
+    const db = await database();
+    const requested = [];
+    const waits = [];
+    const env = {
+        VIDEO_ENVIRONMENT: 'public-testnet', MARKET_CONTRACT_ID: 'public-video.testnet',
+        READ_MODEL_INGESTION_ENABLED: 'true', READ_MODEL_NETWORK: 'testnet',
+        READ_MODEL_CONTRACT_ID: 'public-video.testnet', READ_MODEL_START_BLOCK_HEIGHT: '300000001',
+        READ_MODEL_MAX_BLOCKS_PER_RUN: '180', READ_MODEL_NEAR_RPC_URL: 'https://test.rpc.fastnear.com', MARKET_READ_MODEL: db,
+    };
+    const dependencies = {
+        fetchImpl: async () => { throw new Error('unavailable'); },
+        fetchFinalHeight: async () => 300000001,
+        fetchBlock: async (input) => {
+            requested.push(input);
+            return { schema: 'youtick.market-final-block.v1', network: input.network, contract_id: input.contractId,
+                finality: 'final', block_height: input.blockHeight, block_hash: 'block_hash_000000000000300000001', events: [] };
+        },
+        logger: { log() {}, error() {} },
+    };
+    marketReadModelWorker.scheduled({ cron: '* * * * *' }, env, { waitUntil: (work) => waits.push(work) }, dependencies);
+    const result = await Promise.allSettled(waits);
+    assert.equal(result[0].status, 'rejected');
+    assert.equal(result[1].status, 'fulfilled');
+    assert.equal(result[1].value.block_height, 300000001);
+    assert.deepEqual(requested.map((entry) => [entry.contractId, entry.blockHeight]), [['public-video.testnet', 300000001]]);
+    await assert.rejects(() => ingestMarketReadModelBatch({ ...env, READ_MODEL_CONTRACT_ID: 'old-beta.testnet' }, dependencies), /invalid_read_model_ingestion_config/);
+    db.sqlite.close();
 });

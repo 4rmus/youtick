@@ -23,6 +23,14 @@ test('browser canary only binds its token endpoint to loopback', async () => {
     );
 });
 
+test('browser canary rejects unknown network conditions before issuing a token', async () => {
+    await assert.rejects(runLivepeerHlsBrowserCanary({
+        hlsUrl: 'https://playback.livepeer.studio/asset/hls/playback-123/index.m3u8',
+        issueToken: () => { throw new Error('must not issue'); },
+        networkProfile: 'unknown',
+    }), /browser_canary_network_profile_invalid/);
+});
+
 test('browser canary rejects noncanonical HLS URLs before issuing a JWT', async () => {
     for (const hlsUrl of [
         'https://example.test/asset/hls/playback-123/index.m3u8',
@@ -46,7 +54,7 @@ test('browser canary rejects noncanonical HLS URLs before issuing a JWT', async 
     }
 });
 
-test('browser canary serves no-store inputs only to its launched browser challenges', async () => {
+for (const verifyAdaptive of [false, true]) test(`browser canary serves no-store inputs and verifies adaptive report=${verifyAdaptive}`, async () => {
     const startedAt = Date.now();
     let resolveReady;
     let releaseBrowsers;
@@ -58,6 +66,7 @@ test('browser canary serves no-store inputs only to its launched browser challen
         hlsUrl: 'https://playback.livepeer.studio/asset/hls/playback-123/index.m3u8',
         issueToken: () => `header.payload.signature-${tokenNumber += 1}`,
         timeoutMs: 5_000,
+        verifyAdaptive,
         onReady: resolveReady,
         browserRunner: async (input) => {
             browserInputs.push(input);
@@ -70,6 +79,7 @@ test('browser canary serves no-store inputs only to its launched browser challen
             assert.equal(config.headers.get('Cache-Control'), 'no-store');
             assert.deepEqual(await config.json(), {
                 hls_url: 'https://playback.livepeer.studio/asset/hls/playback-123/index.m3u8',
+                ...(verifyAdaptive ? { verify_adaptive: true } : {}),
             });
             const first = await fetch(`${pageUrl.origin}/token${query}`, { method: 'POST' });
             const second = await fetch(`${pageUrl.origin}/token${query}`, { method: 'POST' });
@@ -77,8 +87,11 @@ test('browser canary serves no-store inputs only to its launched browser challen
             assert.notEqual((await first.json()).token, (await second.json()).token);
             return {
                 browser: input.browser,
+                adaptive_quality_verified: verifyAdaptive,
                 initial_played: true,
                 refreshed_played: true,
+                initial_first_frame_ms: 250,
+                short_repeat_first_frame_ms: 120,
                 initial_hls_header_requests: 1,
                 refreshed_hls_header_requests: 1,
                 anonymous_denied: true,
@@ -106,9 +119,17 @@ test('browser canary serves no-store inputs only to its launched browser challen
 
     assert.deepEqual(await result, {
         matrix_proven: true,
+        network_profile: 'normal',
+        network_conditions: { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 },
         chrome: {
+            adaptive_quality: verifyAdaptive ? 'PASS' : 'EXTERNAL_NOT_RUN',
             initial_played: true,
             refreshed_played: true,
+            initial_first_frame_ms: 250,
+            short_repeat_first_frame_ms: 120,
+            playback_scenario: 'short_repeat_new_player',
+            token_renewal: 'EXTERNAL_NOT_RUN',
+            long_playback: 'EXTERNAL_NOT_RUN',
             initial_hls_header_requests: 1,
             refreshed_hls_header_requests: 1,
             anonymous_denied: true,
@@ -124,8 +145,14 @@ test('browser canary serves no-store inputs only to its launched browser challen
             persistent_storage_empty: true,
         },
         edge: {
+            adaptive_quality: verifyAdaptive ? 'PASS' : 'EXTERNAL_NOT_RUN',
             initial_played: true,
             refreshed_played: true,
+            initial_first_frame_ms: 250,
+            short_repeat_first_frame_ms: 120,
+            playback_scenario: 'short_repeat_new_player',
+            token_renewal: 'EXTERNAL_NOT_RUN',
+            long_playback: 'EXTERNAL_NOT_RUN',
             initial_hls_header_requests: 1,
             refreshed_hls_header_requests: 1,
             anonymous_denied: true,
@@ -161,6 +188,8 @@ test('browser canary requires a JWT header request in both playback rounds', asy
                 browser,
                 initial_played: true,
                 refreshed_played: true,
+                initial_first_frame_ms: 250,
+                short_repeat_first_frame_ms: 120,
                 initial_hls_header_requests: 0,
                 refreshed_hls_header_requests: 2,
                 anonymous_denied: true,

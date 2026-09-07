@@ -45,6 +45,7 @@ describe('Livepeer-only configuration', () => {
         process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.near';
         const { FEATURE_FLAGS, MEDIA_UPLOAD_POLICY } = await import('@/lib/constants');
         expect(FEATURE_FLAGS).toEqual({
+            publicTestnetVideoV1: false,
             enablePaidMediaLivepeerV1: false,
             enablePlaybackAuthorizerV2: false,
             enablePlaybackShadowV2: false,

@@ -25,7 +25,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <html lang="en" data-scroll-behavior="smooth">
             <body className={`${geist.variable} min-h-screen bg-black text-white antialiased`}>
                 <QueryProvider>
-                    {FEATURE_FLAGS.publicTestnetBeta && <PublicTestnetBetaBanner />}
+                    {(FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1) && <PublicTestnetBetaBanner />}
                     <WalletProvider cspNonce={cspNonce}>
                         <Navbar />
                         <main>{children}</main>

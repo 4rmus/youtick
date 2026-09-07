@@ -1,3 +1,4 @@
+import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     Account,
@@ -14,6 +15,7 @@ import handler, {
     forwardUploadIntent,
     jobObjectName,
     operatorObjectName,
+    requirePublicUploadPolicy,
     type Env,
 } from './index';
 import { LivepeerTransport } from './livepeer-provider';
@@ -562,6 +564,35 @@ function backendFetch(options?: {
     });
 }
 
+function publicUploadPolicy() {
+    return {
+        version: 1, environment: 'public-testnet', network: 'testnet', market_contract_id: CONTRACT_ID,
+        max_source_bytes: '5000000000', job_ttl_ms: '86400000', signed_quote_required: true,
+        profiles: [{ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: vectors.upload_intent.body.profile_config_sha256 }],
+    };
+}
+
+function publicUploadBackend(jobOverride: Record<string, unknown> = {}, policy: unknown = publicUploadPolicy()) {
+    const createdAtMs = Date.now() - 1000;
+    const backend = backendFetch();
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === TUS_UPLOAD_URL && init?.method === 'HEAD') {
+            return new Response(null, { headers: { 'Upload-Length': '5000000000', 'Upload-Offset': '0' } });
+        }
+        if (String(input) !== RPC_URL) return backend(input, init);
+        const { params } = JSON.parse(String(init?.body));
+        expect(params.finality).toBe('final');
+        if (params.method_name === 'get_public_upload_policy') {
+            return Response.json({ result: { result: Array.from(new TextEncoder().encode(JSON.stringify(policy))) } });
+        }
+        const response = await rpcResponse().json() as { result: { block_hash: string; result: number[] } };
+        const job = JSON.parse(new TextDecoder().decode(Uint8Array.from(response.result.result)));
+        Object.assign(job, { expected_source_bytes: '5000000000', created_at_ms: createdAtMs, fee_asset: 'USDC', fee_quote_hash: 'a'.repeat(64) }, jobOverride);
+        response.result.result = Array.from(new TextEncoder().encode(JSON.stringify(job)));
+        return Response.json(response);
+    });
+}
+
 function recoveryBackend(now: number, waitingAgeMs: number) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -754,6 +785,121 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         vi.restoreAllMocks();
     });
 
+    it('binds public upload policy independently of operation switches and rejects drift', async () => {
+        const env = createEnv({ VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_CREATOR_ALLOWLIST: '' });
+        const backend = publicUploadBackend();
+        vi.stubGlobal('fetch', backend);
+        await expect(requirePublicUploadPolicy(env)).resolves.toBe(profiles.legacy.hash);
+        await expect(requirePublicUploadPolicy({ ...env, LIVEPEER_NEW_UPLOADS_ENABLED: 'false',
+            LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'false', LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'false' }))
+            .resolves.toBe(profiles.legacy.hash);
+        for (const drift of [null, { ...publicUploadPolicy(), signed_quote_required: false },
+            { ...publicUploadPolicy(), market_contract_id: 'other.testnet' },
+            { ...publicUploadPolicy(), job_ttl_ms: '172800000' },
+            { ...publicUploadPolicy(), max_source_bytes: '20000000000' }]) {
+            vi.stubGlobal('fetch', publicUploadBackend({}, drift));
+            await expect(requirePublicUploadPolicy(env)).rejects.toThrow('deployment_binding_mismatch');
+        }
+        backend.mockClear();
+        vi.stubGlobal('fetch', backend);
+        await expect(requirePublicUploadPolicy({ ...env, NEAR_NETWORK: 'mainnet' }))
+            .rejects.toThrow('deployment_binding_mismatch');
+        expect(backend).not.toHaveBeenCalled();
+    });
+
+    it.each([profiles.legacy.hash, profiles.adaptive.hash])('admits a public creator with stored profile %s and preserves the paid deadline', async (profileHash) => {
+        const now = Date.now();
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const env = createEnv({ VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_CREATOR_ALLOWLIST: '', LIVEPEER_OPERATOR_JOB_ID: '' });
+        const state = createState();
+        const backend = publicUploadBackend({ profile_config_sha256: profileHash }, { ...publicUploadPolicy(),
+            profiles: [profiles.adaptive, profiles.legacy].map((profile) => ({ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: profile.hash })) });
+        vi.stubGlobal('fetch', backend);
+        const control = new LivepeerControl(state.state, env);
+        const first = await control.fetch(await controlRequest({ body: { expected_source_bytes: '5000000000', profile_config_sha256: profileHash } }));
+        expect(first.status, (await first.clone().json() as { error?: string }).error).toBe(201);
+        expect(state.values.get('job:v1')).toMatchObject({ absoluteDeadlineAtMs: now - 1000 + 86_400_000 });
+        const creation = backend.mock.calls.find(([url]) => String(url).endsWith('/asset/request-upload'));
+        expect(JSON.parse(String(creation?.[1]?.body)).profiles).toEqual(profileHash === profiles.adaptive.hash ? profiles.adaptive.profiles : profiles.legacy.profiles);
+        env.LIVEPEER_NEW_UPLOADS_ENABLED = 'false';
+        env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED = 'false';
+        expect((await control.fetch(await controlRequest({ body: { expected_source_bytes: '5000000000', profile_config_sha256: profileHash } }))).status).toBe(200);
+        expect(state.values.get('job:v1')).toMatchObject({ absoluteDeadlineAtMs: now - 1000 + 86_400_000 });
+        expect(backend.mock.calls.filter(([url]) => String(url).includes('asset/request-upload'))).toHaveLength(1);
+    });
+
+    it.each([
+        { fee_quote_hash: null }, { fee_asset: 'NEAR' }, { created_at_ms: 1 }, { created_at_ms: null },
+    ])('rejects an unmarked or expired public job before provider creation: %j', async (override) => {
+        const backend = publicUploadBackend(override);
+        vi.stubGlobal('fetch', backend);
+        const state = createState();
+        const control = new LivepeerControl(state.state, createEnv({ VIDEO_ENVIRONMENT: 'public-testnet' }));
+        const response = await control.fetch(await controlRequest({ body: { expected_source_bytes: '5000000000' } }));
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(state.values.get('job:v1')).toBeUndefined();
+        expect(backend.mock.calls.every(([url]) => String(url) === RPC_URL)).toBe(true);
+    });
+
+    it('resumes only an existing bound TUS resource and never creates a replacement asset', async () => {
+        const env = createEnv({ VIDEO_ENVIRONMENT: 'public-testnet' });
+        const state = createState();
+        const backend = publicUploadBackend();
+        vi.stubGlobal('fetch', backend);
+        const control = new LivepeerControl(state.state, env);
+        const body = { expected_source_bytes: '5000000000' };
+        expect((await control.fetch(await controlRequest({ body: { ...body, recovery: 'resume' } }))).status).toBe(409);
+        expect(state.values.get('job:v1')).toBeUndefined();
+        expect((await control.fetch(await controlRequest({ body }))).status).toBe(201);
+        env.LIVEPEER_NEW_UPLOADS_ENABLED = 'false';
+        env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED = 'false';
+        const resumed = await control.fetch(await controlRequest({ body: { ...body, recovery: 'resume' } }));
+        expect(resumed.status).toBe(200);
+        expect(await resumed.json()).toMatchObject({ created: false, tus_endpoint: TUS_UPLOAD_URL });
+        const wrong = await control.fetch(await controlRequest({ body: { ...body, recovery: 'resume', source_fingerprint_sha256: 'b'.repeat(64) } }));
+        expect(wrong.status).toBe(409);
+        vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => (
+            String(url) === TUS_UPLOAD_URL ? new Response(null, { status: 404 }) : backend(url, init)
+        )));
+        const missing = await control.fetch(await controlRequest({ body: { ...body, recovery: 'resume' } }));
+        expect(await missing.json()).toEqual({ error: 'provider_recovery_not_ready' });
+        expect(backend.mock.calls.filter(([url]) => String(url).includes('/asset/request-upload'))).toHaveLength(1);
+        expect(backend.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+    });
+
+    it('reacquires expired public upload slots without spending another daily attempt or reservation', async () => {
+        let now = Date.now();
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        vi.stubGlobal('fetch', publicUploadBackend());
+        const state = createState();
+        const control = new LivepeerControl(state.state, createEnv({ VIDEO_ENVIRONMENT: 'public-testnet' }));
+        const body = { jobId: vectors.upload_intent.body.job_id, generation: 1,
+            creator: vectors.upload_intent.envelope.account_id, expectedSourceBytes: '5000000000' };
+        expect((await control.fetch(admissionRequest('reserve', body))).status).toBe(200);
+        const initial = structuredClone(state.values.get('admission:v1')) as { daily: unknown; monthly: unknown };
+        for (let repeat = 0; repeat < 4; repeat += 1) {
+            now += 31 * 60_000;
+            const response = await control.fetch(new Request('https://object/internal/admission/resume', { method: 'POST', body: JSON.stringify(body) }));
+            expect(response.status).toBe(200);
+            expect(state.values.get('admission:v1')).toMatchObject({ daily: initial.daily, monthly: initial.monthly });
+        }
+    });
+
+    it('uses ten public slots while retaining one active job per creator and the 5 GB boundary', async () => {
+        vi.stubGlobal('fetch', publicUploadBackend());
+        const control = new LivepeerControl(createState().state, createEnv({
+            VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_CREATOR_ALLOWLIST: '',
+            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '2000000000',
+        }));
+        const reserve = (index: number, creator = `creator-${index}.testnet`, bytes = '5000000000') => control.fetch(
+            admissionRequest('reserve', { jobId: `job-${index}`, generation: 1, creator, expectedSourceBytes: bytes }),
+        );
+        expect((await reserve(99, 'oversized.testnet', '5000000001')).status).toBeGreaterThanOrEqual(400);
+        for (let index = 0; index < 10; index += 1) expect((await reserve(index)).status).toBeLessThan(300);
+        expect((await reserve(10)).status).toBeGreaterThanOrEqual(400);
+        expect((await reserve(11, 'creator-0.testnet')).status).toBeGreaterThanOrEqual(400);
+    });
+
     it('keeps the implemented public control route disabled by default', async () => {
         const health = await handler.fetch(
             new Request('https://bridge.youtick.net/__health'),
@@ -927,12 +1073,13 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(fetchMock.mock.calls.every(([, init]) => init?.method === 'DELETE')).toBe(true);
     });
 
-    it('deletes only the exact takedown asset and never repeats the provider call', async () => {
+    it.each([{ environment: undefined, expired: false }, { environment: 'public-testnet', expired: false },
+        { environment: 'public-testnet', expired: true }])('deletes only the exact eligible asset once: $environment expired=$expired', async ({ environment, expired }) => {
         vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
         const testState = createState();
         testState.values.set('job:v1', {
             schema: 'youtick.livepeer-control-job.v2',
-            state: 'ONCHAIN_PUBLISHED',
+            state: expired ? 'UPLOAD_EXPIRED' : 'ONCHAIN_PUBLISHED',
             network: 'testnet',
             contractId: CONTRACT_ID,
             jobId: 'job-delete',
@@ -954,8 +1101,13 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             const url = String(input);
             if (url === RPC_URL) {
                 const rpc = JSON.parse(String(init?.body)) as { params: { method_name: string } };
-                const value = rpc.params.method_name === 'get_media_job'
-                    ? { fee_quote_hash: 'a'.repeat(64) }
+                const value = rpc.params.method_name === 'get_public_upload_policy' ? publicUploadPolicy()
+                    : rpc.params.method_name === 'get_media_job'
+                    ? { fee_quote_hash: 'a'.repeat(64), fee_asset: 'USDC', job_id: 'job-delete',
+                        creator_id: 'creator.testnet', generation: 1, expected_source_bytes: '1000',
+                        profile_id: 'paid-media-livepeer-v1', profile_config_sha256: vectors.upload_intent.body.profile_config_sha256,
+                        created_at_ms: Date.now() - (expired ? 86_400_001 : 300_000),
+                        status: expired ? 'Authorized' : 'Published' }
                     : rpc.params.method_name === 'get_public_testnet_beta_job'
                         ? {
                             creator_id: 'creator.testnet',
@@ -965,7 +1117,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
                             admitted_at_ms: '1785589000000',
                             deadline_at_ms: '1785675400000',
                         }
-                        : {
+                        : expired ? null : {
                             publication_id: 'job-delete',
                             availability: 'TAKEDOWN',
                             asset_id_hash: assetHash,
@@ -998,7 +1150,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         });
         vi.stubGlobal('fetch', fetchMock);
         const control = new LivepeerControl(testState.state, publicBetaEnv({
-            LIVEPEER_PROJECT_ID: 'project-123',
+            LIVEPEER_PROJECT_ID: 'project-123', VIDEO_ENVIRONMENT: environment,
         }));
         const request = () => new Request('https://object/internal/provider-asset-delete', {
             method: 'POST',
@@ -1808,6 +1960,44 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('livepeer.studio'))).toHaveLength(1);
         expect(state.values.get('job:v1')).toMatchObject({ assetId: 'asset-123', absoluteDeadlineAtMs: now + 60 * 60 * 1000 });
         expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+    });
+
+    it('polls normal waiting every minute and backs off only after temporary read failures', async () => {
+        let now = 1_788_430_000_000;
+        const started = now;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const backend = recoveryBackend(started, 6 * 60 * 60 * 1000);
+        let unavailable = false;
+        let providerReads = 0;
+        vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+            if (String(url).endsWith('/asset/asset-123')) {
+                providerReads += 1;
+                if (unavailable) return new Response(null, { status: 503 });
+            }
+            return backend(url, init);
+        }));
+        const state = createState();
+        seedStuckRecoveryJob(state, started, 'UPLOADING');
+        const control = new LivepeerControl(state.state, publicBetaEnv({ LIVEPEER_PROJECT_ID: 'project-123' }));
+        const read = async () => control.fetch(await controlRequest({ body: { recovery: 'reconcile', expected_source_bytes: RECOVERY_SOURCE_BYTES } }));
+        for (let count = 0; count < 3; count += 1) {
+            expect((await read()).status).toBe(200);
+            expect(state.values.get('reconcile:v1')).toMatchObject({ consecutiveErrors: 0, nextReconcileAtMs: now + 60_000 });
+            now += 60_000;
+        }
+        expect(providerReads).toBe(3);
+        unavailable = true;
+        expect((await read()).status).toBe(503);
+        now += 60_000;
+        expect((await read()).status).toBe(503);
+        expect(state.values.get('reconcile:v1')).toMatchObject({ consecutiveErrors: 2, nextReconcileAtMs: now + 120_000 });
+        now += 60_000;
+        await read();
+        expect(providerReads).toBe(5);
+        now += 60_000;
+        unavailable = false;
+        expect((await read()).status).toBe(200);
+        expect(state.values.get('reconcile:v1')).toMatchObject({ consecutiveErrors: 0, uploadReadFailed: false });
     });
 
     it('rejects waiting-asset replacement before any chain or provider call', async () => {

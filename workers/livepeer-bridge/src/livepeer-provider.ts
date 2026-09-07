@@ -9,7 +9,7 @@ import type {
     VerifiedAsset,
     VerifyReadyAssetInput,
 } from './media-provider';
-import { MEDIA_SOURCE_FORMATS } from './media-provider';
+import { MEDIA_SOURCE_FORMATS, mediaProfiles } from './media-provider';
 import { dependencyFetch } from './dependency-fetch';
 import { verifyLivepeerReadyAsset } from './provider-verification';
 
@@ -66,6 +66,7 @@ export class LivepeerTransport {
 
     async createUpload(input: CreateUploadInput): Promise<CreateUploadResult> {
         if (!validApiKey(this.apiKey)) throw new Error('runtime_not_configured');
+        const profiles = mediaProfiles(input.profileConfigSha256);
         let response: Response;
         try {
             response = await dependencyFetch(
@@ -82,17 +83,7 @@ export class LivepeerTransport {
                         name: `youtick-${input.jobId}-g${input.generation}`,
                         playbackPolicy: { type: 'jwt' },
                         creatorId: { type: 'unverified', value: `${input.jobId}:${input.generation}` },
-                        profiles: [{
-                            name: '720p',
-                            width: 1280,
-                            height: 720,
-                            bitrate: 3_000_000,
-                            fps: 30,
-                            fpsDen: 1,
-                            gop: '2',
-                            profile: 'H264Baseline',
-                            encoder: 'H.264',
-                        }],
+                        profiles,
                     }),
                     signal: AbortSignal.timeout(20_000),
                 },

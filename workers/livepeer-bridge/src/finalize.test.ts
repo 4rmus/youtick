@@ -430,6 +430,80 @@ async function sha256(value: string): Promise<string> {
 describe('Livepeer bridge PR-4 finalize flow', () => {
     beforeEach(() => vi.restoreAllMocks());
 
+    it.each(['other-job', 'expired-job', 'unquoted-job'])('rejects public operator input before signing: %s', async (kind) => {
+        const env = createEnv({ VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_OPERATOR_JOB_ID: '', LIVEPEER_CREATOR_ALLOWLIST: '' });
+        const input = publication();
+        const rpc = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body));
+            expect(body.method).toBe('query');
+            const value = body.params.method_name === 'get_public_upload_policy' ? {
+                version: 1, environment: 'public-testnet', network: 'testnet', market_contract_id: CONTRACT_ID,
+                max_source_bytes: '5000000000', job_ttl_ms: '86400000', signed_quote_required: true,
+                profiles: [{ profile_id: input.profile_id, profile_config_sha256: input.profile_config_sha256 }],
+            } : {
+                job_id: kind === 'other-job' ? 'foreign-job' : input.job_id,
+                generation: input.generation, creator_id: input.creator_id,
+                expected_source_bytes: input.expected_source_bytes,
+                profile_id: input.profile_id, profile_config_sha256: input.profile_config_sha256,
+                fee_asset: 'USDC', fee_quote_hash: kind === 'unquoted-job' ? null : 'a'.repeat(64),
+                created_at_ms: kind === 'expired-job' ? 1 : Date.now() - 1000, status: 'Authorized',
+            };
+            return Response.json({ result: { block_hash: BLOCK_HASH,
+                result: Array.from(new TextEncoder().encode(JSON.stringify(value))) } });
+        });
+        vi.stubGlobal('fetch', rpc);
+        const state = createState();
+        const response = await new LivepeerControl(state.state, env).fetch(await finalizeRequest(input));
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect([...state.values.keys()].some((key) => key.startsWith('operator:'))).toBe(false);
+        expect(rpc).toHaveBeenCalled();
+        expect(rpc.mock.calls.every(([, init]) => JSON.parse(String(init?.body)).method === 'query')).toBe(true);
+    });
+
+    it('finalizes distinct policy-verified public jobs once with the existing restricted operator key', async () => {
+        const env = createEnv({ VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_OPERATOR_JOB_ID: '', LIVEPEER_CREATOR_ALLOWLIST: '' });
+        let current = 'public-a';
+        let holdFinality = false;
+        const testState = createState();
+        const published = new Set<string>();
+        const rpc = operatorRpc({
+            onSend: () => {
+                expect(testState.values.get(`outbox:${current}:1:finalize`)).toMatchObject({ state: 'BROADCAST', txHash: expect.any(String) });
+                if (!holdFinality) published.add(current);
+            },
+            publicationFor: (id) => published.has(id) ? contractPublication(publication(id)) : null,
+        });
+        vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body));
+            const input = publication(current);
+            if (body.params?.method_name === 'get_public_upload_policy') return rpcResult({
+                version: 1, environment: 'public-testnet', network: 'testnet', market_contract_id: CONTRACT_ID,
+                max_source_bytes: '5000000000', job_ttl_ms: '86400000', signed_quote_required: true,
+                profiles: [{ profile_id: input.profile_id, profile_config_sha256: input.profile_config_sha256 }],
+            });
+            if (body.params?.method_name === 'get_media_job') return rpcResult({
+                ...input, fee_asset: 'USDC', fee_quote_hash: 'a'.repeat(64),
+                created_at_ms: Date.now() - 1000, status: published.has(current) ? 'Published' : 'Authorized',
+            });
+            return rpc(url, init);
+        }));
+        const control = new LivepeerControl(testState.state, env);
+        for (const id of ['public-a', 'public-b']) {
+            current = id;
+            expect((await control.fetch(await finalizeRequest(publication(id)))).status).toBe(200);
+            expect((await control.fetch(await finalizeRequest(publication(id)))).status).toBe(200);
+        }
+        current = 'public-pending';
+        holdFinality = true;
+        expect((await control.fetch(await finalizeRequest(publication(current)))).status).toBe(202);
+        env.LIVEPEER_OPERATOR_MUTATIONS_ENABLED = 'false';
+        expect((await control.fetch(await finalizeRequest(publication(current)))).status).toBe(202);
+        expect(rpc.mock.calls.filter(([, init]) => JSON.parse(String(init?.body)).method === 'tx')).toHaveLength(6);
+        published.add(current);
+        expect((await control.fetch(await finalizeRequest(publication(current)))).status).toBe(200);
+        expect(rpc.mock.calls.filter(([, init]) => JSON.parse(String(init?.body)).method === 'send_tx')).toHaveLength(3);
+    });
+
     it('reports operator mutations ready only with an exact job scope', async () => {
         const ready = await handler.fetch(
             new Request('https://bridge.youtick.net/__health'),
@@ -487,8 +561,12 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
     it('ACKs a verified webhook after Queue processing without blocking ingress on the job object', async () => {
         let now = 1_785_600_000_000;
         vi.spyOn(Date, 'now').mockImplementation(() => now);
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
         const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-        const objectFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true }));
+        const objectFetch = vi.fn(async (_request: Request) => {
+            now += 800;
+            return Response.json({ accepted: true });
+        });
         const send = vi.fn<(message: unknown, options?: unknown) => Promise<void>>(async () => undefined);
         const env = createEnv({
             LIVEPEER_WEBHOOK_QUEUE_ENABLED: 'true',
@@ -539,8 +617,38 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             details: {
                 outcome: 'ACK',
                 queueLagMs: 250,
+                processingMs: 800,
             },
         });
+    });
+
+    it('delivers public Queue messages in bounded batches using the isolated DLQ policy', async () => {
+        const releases: Array<() => void> = [];
+        const objectFetch = vi.fn(() => new Promise<Response>((resolve) => {
+            releases.push(() => resolve(Response.json({ accepted: true })));
+        }));
+        const env = createEnv({
+            VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_WEBHOOK_QUEUE_ENABLED: 'true',
+            LIVEPEER_WEBHOOK_QUEUE_DLQ: 'youtick-livepeer-events-dlq-public-testnet',
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'job-id' })),
+                get: vi.fn(() => ({ fetch: objectFetch })),
+            } as unknown as DurableObjectNamespace,
+        });
+        const raw = new TextEncoder().encode(JSON.stringify(webhook()));
+        const messages = Array.from({ length: 11 }, (_, index) => ({
+            body: { schema: 'youtick.livepeer-webhook-queue.v1', network: 'testnet', contract_id: CONTRACT_ID,
+                job_id: `job-${index}`, generation: 1, enqueued_at_ms: String(Date.now()),
+                raw_body_base64: btoa(String.fromCharCode(...raw)) },
+            ack: vi.fn(), retry: vi.fn(),
+        }));
+        const delivery = handler.queue({ messages } as unknown as MessageBatch<unknown>, env);
+        await vi.waitFor(() => expect(objectFetch).toHaveBeenCalledTimes(10));
+        releases.slice(0, 10).forEach((release) => release());
+        await vi.waitFor(() => expect(objectFetch).toHaveBeenCalledTimes(11));
+        releases[10]();
+        await delivery;
+        expect(messages.every((message) => message.ack.mock.calls.length === 1 && message.retry.mock.calls.length === 0)).toBe(true);
     });
 
     it('retries a valid Queue webhook when the job object is temporarily unavailable', async () => {
@@ -587,6 +695,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             details: {
                 outcome: 'RETRY',
                 queueLagMs: 500,
+                processingMs: expect.any(Number),
             },
         });
     });
@@ -796,6 +905,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
     );
 
     it('recovers when a ready asset.updated follows an early asset.ready read', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
         const testState = createState();
         testState.values.set('job:v1', jobRecord());
         const operatorFetch = vi.fn(async (request: Request) => (
@@ -839,6 +949,17 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
 
         expect(recovered.status).toBe(200);
         expect(testState.values.get('job:v1')).toMatchObject({ state: 'ONCHAIN_PUBLISHED' });
+        const transitions = info.mock.calls.map(([value]) => JSON.parse(String(value)))
+            .filter((entry) => entry.event === 'state_transition');
+        expect(transitions).toContainEqual({
+            event: 'state_transition',
+            details: expect.objectContaining({
+                fromState: 'PROCESSING', toState: 'READY_VERIFIED',
+                clock: 'server_observation', observedStateMs: expect.any(Number),
+            }),
+        });
+        expect(JSON.stringify(transitions)).not.toContain('job-001');
+        expect(JSON.stringify(transitions)).not.toContain(ASSET_ID);
         expect(assetReads).toBe(2);
         expect(operatorFetch.mock.calls.filter(([request]) => (
             new URL(request.url).pathname === '/internal/finalize'

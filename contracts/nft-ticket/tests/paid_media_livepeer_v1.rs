@@ -65,6 +65,187 @@ fn start_public_beta(contract: &mut Contract) {
     contract.unpause_new_purchases();
 }
 
+fn public_upload_contract() -> (Contract, PaidJobRequest, SponsoredUploadQuote, Vec<u8>) {
+    // Static fixture signed with a public test seed, not a deployed signing key.
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("public-upload-quote.json")).unwrap();
+    testing_env!(context("market.testnet").build());
+    let contract = Contract::new_public_testnet(MarketInitConfig {
+        platform_account_id: account("platform.testnet"),
+        bridge_account_id: account("bridge.testnet"),
+        takedown_authority_id: account("governance.testnet"),
+        admin_account_id: account("admin.testnet"),
+        guardian_account_id: account("guardian.testnet"),
+        quote_public_key: serde_json::from_value(fixture["public_key"].clone()).unwrap(),
+        quote_key_version: 1,
+        near_operational_reserve: U128(1_000_000_000_000_000_000_000_000),
+    });
+    let signature: Base64VecU8 = serde_json::from_value(fixture["signature"].clone()).unwrap();
+    (
+        contract,
+        serde_json::from_value(fixture["request"].clone()).unwrap(),
+        serde_json::from_value(fixture["quote"].clone()).unwrap(),
+        signature.0,
+    )
+}
+
+#[test]
+fn public_upload_starts_closed_and_accepts_only_an_exact_signed_five_gb_job() {
+    let (mut contract, request, quote, signature) = public_upload_contract();
+    let policy = contract.get_public_upload_policy().unwrap();
+    assert_eq!(policy.market_contract_id, account("market.testnet"));
+    assert_eq!(policy.max_source_bytes, U128(5_000_000_000));
+    assert_eq!(policy.job_ttl_ms, U64(86_400_000));
+    assert!(policy.signed_quote_required);
+    assert!(contract.get_governance_state().new_purchases_paused);
+    assert!(contract.get_governance_state().bridge_frozen);
+    assert!(contract.get_public_testnet_beta_state().is_none());
+    testing_env!(context("admin.testnet").build());
+    must_fail(|| {
+        contract.start_public_testnet_beta();
+    });
+    testing_env!(context(TESTNET_USDC).build());
+    assert!(matches!(
+        contract.ft_on_transfer(
+            request.creator_id.clone(),
+            quote.total_fee_usdc,
+            sponsored_message_with_signature(&request, quote.clone(), &signature)
+        ),
+        PromiseOrValue::Value(U128(1_600_000))
+    ));
+    assert!(contract.get_media_job(request.job_id.clone()).is_none());
+    testing_env!(context("admin.testnet").build());
+    contract.unpause_new_purchases();
+    testing_env!(context(TESTNET_USDC).build());
+    let mut unsigned: serde_json::Value = serde_json::from_str(&sponsored_message_with_signature(
+        &request,
+        quote.clone(),
+        &signature,
+    ))
+    .unwrap();
+    unsigned.as_object_mut().unwrap().remove("sponsor_quote");
+    unsigned
+        .as_object_mut()
+        .unwrap()
+        .remove("sponsor_quote_signature");
+    assert!(matches!(
+        contract.ft_on_transfer(
+            request.creator_id.clone(),
+            U128(1_500_000),
+            unsigned.to_string()
+        ),
+        PromiseOrValue::Value(U128(1_500_000))
+    ));
+    must_fail(|| {
+        contract.create_paid_job(request.clone());
+    });
+    let mut forged = request.clone();
+    forged.expected_source_bytes = U128(5_000_000_001);
+    must_fail(|| {
+        contract.ft_on_transfer(
+            forged.creator_id.clone(),
+            quote.total_fee_usdc,
+            sponsored_message_with_signature(&forged, quote.clone(), &signature),
+        );
+    });
+    assert!(contract.get_media_job(request.job_id.clone()).is_none());
+    let message = sponsored_message_with_signature(&request, quote.clone(), &signature);
+    assert!(matches!(
+        contract.ft_on_transfer(
+            request.creator_id.clone(),
+            quote.total_fee_usdc,
+            message.clone()
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+    assert!(matches!(
+        contract.ft_on_transfer(request.creator_id.clone(), quote.total_fee_usdc, message),
+        PromiseOrValue::Value(U128(1_600_000))
+    ));
+    assert_eq!(contract.get_platform_balance(), U128(1_600_000));
+    assert!(contract
+        .get_public_testnet_beta_job(request.job_id.clone())
+        .is_none());
+    testing_env!(context("admin.testnet").build());
+    contract.unfreeze_bridge();
+    testing_env!(context("bridge.testnet").build());
+    let mut publication = submission(
+        &request.job_id,
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "public_playback",
+    );
+    publication.expected_source_bytes = request.expected_source_bytes;
+    publication.verified_source_bytes = request.expected_source_bytes;
+    publication.profile_config_sha256 = request.profile_config_sha256;
+    contract.finalize_livepeer_publication(publication);
+    let mut later = context("creator.testnet");
+    later.block_timestamp((1_785_589_300_000 + 15 * 86_400_000) * 1_000_000);
+    testing_env!(later.build());
+    assert!(contract.has_entitlement(request.creator_id, request.job_id));
+}
+
+#[test]
+fn public_upload_key_and_finalize_cannot_extend_the_original_deadline() {
+    let (mut contract, request, quote, signature) = public_upload_contract();
+    testing_env!(context("admin.testnet").build());
+    contract.unpause_new_purchases();
+    contract.unfreeze_bridge();
+    testing_env!(context(TESTNET_USDC).build());
+    contract.ft_on_transfer(
+        request.creator_id.clone(),
+        quote.total_fee_usdc,
+        sponsored_message_with_signature(&request, quote, &signature),
+    );
+    let job = contract.get_media_job(request.job_id.clone()).unwrap();
+    let deadline = job.created_at_ms + 86_400_000;
+    testing_env!(context("creator.testnet").build());
+    must_fail(|| {
+        contract.replace_upload_key(
+            request.job_id.clone(),
+            UPLOAD_KEY.to_string(),
+            U64(deadline + 1),
+        );
+    });
+    contract.replace_upload_key(
+        request.job_id.clone(),
+        UPLOAD_KEY.to_string(),
+        U64(deadline),
+    );
+    must_fail(|| {
+        contract.restart_paid_job(
+            request.job_id.clone(),
+            request.expected_source_bytes,
+            request.profile_id.clone(),
+            request.profile_config_sha256.clone(),
+        );
+    });
+    let mut expired = context("bridge.testnet");
+    expired.block_timestamp(deadline * 1_000_000);
+    testing_env!(expired.build());
+    let mut publication = submission(
+        &request.job_id,
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "public_playback",
+    );
+    publication.expected_source_bytes = request.expected_source_bytes;
+    publication.verified_source_bytes = request.expected_source_bytes;
+    publication.profile_config_sha256 = request.profile_config_sha256;
+    must_fail(|| {
+        contract.finalize_livepeer_publication(publication);
+    });
+    assert_eq!(
+        contract
+            .get_media_job(request.job_id)
+            .unwrap()
+            .created_at_ms,
+        job.created_at_ms
+    );
+}
+
 fn near_request() -> PaidJobRequest {
     PaidJobRequest {
         creator_id: account("creator.testnet"),

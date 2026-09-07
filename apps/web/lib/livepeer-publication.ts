@@ -3,6 +3,7 @@ import { APP_CONFIG, FEATURE_FLAGS, GAS_CONSTANTS, NEAR_CONFIG } from '@/lib/con
 import { getProvider, viewContract } from '@/lib/near';
 import { signAndSendWithSignlessProvision } from '@/lib/signless-access-key';
 import type { WalletInstance } from '@/lib/types';
+import { measureVideoOperation, observeVideoState } from '@/lib/video-measurements';
 
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const PLAYBACK_ID_PATTERN = /^[A-Za-z0-9_-]{6,128}$/;
@@ -23,6 +24,16 @@ export type LivepeerMediaJob = {
     creator_id: string;
     status: 'Authorized' | 'Published';
     upload_public_key: string;
+    generation?: number;
+    created_at_ms?: number;
+    upload_key_expires_at_ms?: string;
+    expected_source_bytes?: string;
+    title?: string;
+    price_usdc?: string;
+    profile_id?: string;
+    profile_config_sha256?: string;
+    fee_asset?: string;
+    fee_quote_hash?: string;
 };
 
 export async function readLivepeerMediaJob(jobId: string): Promise<LivepeerMediaJob | null> {
@@ -44,11 +55,30 @@ export async function readLivepeerMediaJob(jobId: string): Promise<LivepeerMedia
         || !job.upload_public_key.startsWith('ed25519:')) {
         throw new Error('invalid_livepeer_media_job');
     }
+    if (FEATURE_FLAGS.publicTestnetVideoV1 && (job.generation !== 1
+        || !Number.isSafeInteger(job.created_at_ms) || Number(job.created_at_ms) <= 0
+        || typeof job.expected_source_bytes !== 'string' || !/^[1-9][0-9]*$/.test(job.expected_source_bytes)
+        || BigInt(job.expected_source_bytes) > 5_000_000_000n
+        || typeof job.upload_key_expires_at_ms !== 'string' || !/^[1-9][0-9]{12,15}$/.test(job.upload_key_expires_at_ms)
+        || job.fee_asset !== 'USDC' || typeof job.fee_quote_hash !== 'string' || !/^[0-9a-f]{64}$/.test(job.fee_quote_hash)
+        || typeof job.title !== 'string' || new TextEncoder().encode(job.title).length > 200
+        || typeof job.price_usdc !== 'string' || !/^[1-9][0-9]{0,38}$/.test(job.price_usdc)
+        || job.profile_id !== 'paid-media-livepeer-v1' || typeof job.profile_config_sha256 !== 'string'
+        || !/^[0-9a-f]{64}$/.test(job.profile_config_sha256))) {
+        throw new Error('invalid_livepeer_media_job');
+    }
     return {
         job_id: jobId,
         creator_id: job.creator_id,
         status: job.status as LivepeerMediaJob['status'],
         upload_public_key: job.upload_public_key,
+        ...(FEATURE_FLAGS.publicTestnetVideoV1 ? {
+            generation: 1, created_at_ms: Number(job.created_at_ms),
+            upload_key_expires_at_ms: String(job.upload_key_expires_at_ms),
+            expected_source_bytes: String(job.expected_source_bytes), title: String(job.title),
+            price_usdc: String(job.price_usdc), profile_id: String(job.profile_id),
+            profile_config_sha256: String(job.profile_config_sha256), fee_asset: 'USDC', fee_quote_hash: String(job.fee_quote_hash),
+        } : {}),
     };
 }
 
@@ -57,24 +87,27 @@ export async function waitForAuthorizedLivepeerJob(
     accountId: string,
     uploadPublicKey: string,
 ): Promise<void> {
-    for (const delay of [0, 1_000, 2_000, 4_000, 8_000, 16_000]) {
-        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-        try {
-            const job = await readLivepeerMediaJob(jobId);
-            if (job
-                && job.creator_id === accountId
-                && job.upload_public_key === uploadPublicKey) return;
-        } catch {
-            // Final state can lag briefly after the wallet returns.
+    return measureVideoOperation('payment_finality', async () => {
+        for (const delay of [0, 1_000, 2_000, 4_000, 8_000, 16_000]) {
+            if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+            try {
+                const job = await readLivepeerMediaJob(jobId);
+                if (job
+                    && job.creator_id === accountId
+                    && job.upload_public_key === uploadPublicKey) return;
+            } catch {
+                // Final state can lag briefly after the wallet returns.
+            }
         }
-    }
-    throw new Error('livepeer_job_pending');
+        throw new Error('livepeer_job_pending');
+    });
 }
 
 export async function readLivepeerUploadProgress(jobId: string, creatorId?: string): Promise<{
     job: LivepeerMediaJob;
     publication: LivepeerPublication | null;
     expired: boolean;
+    deadlineAtMs?: number;
 }> {
     const job = await readLivepeerMediaJob(jobId);
     if (!job) throw new Error('livepeer_job_missing');
@@ -82,6 +115,11 @@ export async function readLivepeerUploadProgress(jobId: string, creatorId?: stri
         throw new Error('livepeer_job_creator_mismatch');
     }
     const publication = await readLivepeerPublication(jobId);
+    if (FEATURE_FLAGS.publicTestnetVideoV1) {
+        const deadlineAtMs = Number(job.created_at_ms) + 86_400_000;
+        if (!Number.isSafeInteger(deadlineAtMs)) throw new Error('invalid_livepeer_deadline');
+        return { job, publication, deadlineAtMs, expired: !publication && Date.now() >= deadlineAtMs };
+    }
     if (publication || !FEATURE_FLAGS.publicTestnetBeta) {
         return { job, publication, expired: false };
     }
@@ -172,7 +210,9 @@ export async function readLivepeerPublication(jobId: string): Promise<LivepeerPu
         { publication_id: jobId },
     );
     if (value === null) return null;
-    return parseLivepeerPublication(value, jobId);
+    const publication = parseLivepeerPublication(value, jobId);
+    observeVideoState('PUBLICATION_OBSERVED', publication.published_at_ms);
+    return publication;
 }
 
 export async function hasLivepeerEntitlement(accountId: string, jobId: string): Promise<boolean> {

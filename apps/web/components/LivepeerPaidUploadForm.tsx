@@ -1,5 +1,7 @@
 'use client';
 
+import { startVideoMeasurement } from '@/lib/video-measurements';
+
 import React from 'react';
 import Link from 'next/link';
 import { CheckCircle2, Loader2, Upload } from 'lucide-react';
@@ -43,6 +45,7 @@ import {
     parseLivepeerPriceUsdc,
     preflightLivepeerUpload,
     prepareCreatorFeePaymentOptions,
+    prepareLivepeerUploadResume,
     readLivepeerUploadDraft,
     readRememberedLivepeerUploadJob,
     rememberLivepeerUploadJob,
@@ -52,6 +55,7 @@ import {
     validateLivepeerSourceFile,
     writeLivepeerUploadDraft,
     type CreatorFeeAsset,
+    type LivepeerUploadIntent,
     type SignedNearCreatorFeeQuote,
     type SponsoredUploadQuoteSummary,
 } from '@/lib/livepeer-upload';
@@ -83,6 +87,8 @@ export function LivepeerPaidUploadForm() {
     const [status, setStatus] = React.useState<string | null>(null);
     const [error, setError] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState(false);
+    const [resumeAvailable, setResumeAvailable] = React.useState(false);
+    const operation = React.useRef<AbortController | null>(null);
     const [uploadStage, setUploadStage] = React.useState<UploadStage>('draft');
     const [failedStep, setFailedStep] = React.useState<number | null>(null);
     const [uploadProgress, setUploadProgress] = React.useState(0);
@@ -106,8 +112,8 @@ export function LivepeerPaidUploadForm() {
         queryKey: ['livepeerUploadPublication', accountId, jobId],
         queryFn: async () => {
             if (!jobId) throw new Error('livepeer_job_missing');
-            const progress = await readLivepeerUploadProgress(jobId);
-            if (progress.publication || progress.expired || !FEATURE_FLAGS.publicTestnetBeta) {
+            const progress = await readLivepeerUploadProgress(jobId, accountId || undefined);
+            if (progress.publication || progress.expired || !(FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1)) {
                 return { ...progress, providerState: null };
             }
             if (!file || !accountId) throw new Error('livepeer_upload_status_unavailable');
@@ -146,6 +152,16 @@ export function LivepeerPaidUploadForm() {
     }, [file]);
 
     React.useEffect(() => {
+        const abort = () => operation.current?.abort();
+        window.addEventListener('pagehide', abort);
+        return () => { abort(); window.removeEventListener('pagehide', abort); };
+    }, []);
+
+    React.useEffect(() => {
+        operation.current?.abort();
+        operation.current = null;
+        setBusy(false);
+        setResumeAvailable(false);
         fileSelectionVersion.current += 1;
         const trackedJobId = accountId
             ? new URL(window.location.href).searchParams.get('job') || readRememberedLivepeerUploadJob(accountId)
@@ -190,6 +206,10 @@ export function LivepeerPaidUploadForm() {
     }, [accountId, jobId, moveUploadStage, publicationPollingEnabled, publicationQuery.data, publicationQuery.isError]);
 
     const selectFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        operation.current?.abort();
+        operation.current = null;
+        setBusy(false);
+        setResumeAvailable(false);
         const selectionVersion = ++fileSelectionVersion.current;
         const selected = event.target.files?.[0] || null;
         setError(null);
@@ -212,6 +232,8 @@ export function LivepeerPaidUploadForm() {
         if (selectionVersion !== fileSelectionVersion.current) return;
         setJobId(draft?.jobId || null);
         if (draft) {
+            setResumeAvailable(Boolean(FEATURE_FLAGS.publicTestnetVideoV1
+                && (draft.stage !== 'payment_pending' || draft.paymentAttempted || draft.keyReplacementPending)));
             setTitle(draft.title);
             setPrice(draft.price);
             moveUploadStage(restoreUploadStage(draft.stage));
@@ -220,15 +242,20 @@ export function LivepeerPaidUploadForm() {
 
     const preparePayment = async () => {
         if (!accountId || !file || fileError || !title.trim() || !rightsAccepted) return;
+        if (operation.current) return;
+        const controller = new AbortController();
+        operation.current = controller;
         setBusy(true);
         setError(null);
         setFailedStep(null);
         moveUploadStage('draft');
         moveUploadStage('preflight');
         setStatus('Checking payment options…');
+        let finishPreparation: ReturnType<typeof startVideoMeasurement> | undefined;
         try {
             parseLivepeerPriceUsdc(price);
             const activeJobId = jobId || createLivepeerJobId();
+            finishPreparation = startVideoMeasurement('payment_preparation', file.size);
             setJobId(activeJobId);
             writeLivepeerUploadDraft(accountId, {
                 schema: 'youtick.livepeer-ui-draft.v2',
@@ -241,6 +268,7 @@ export function LivepeerPaidUploadForm() {
                 sourceLastModified: file.lastModified,
                 sourceFingerprintSha256: await fingerprintLivepeerSource(file),
             });
+            controller.signal.throwIfAborted();
             await preflightLivepeerUpload({
                 accountId,
                 jobId: activeJobId,
@@ -248,7 +276,7 @@ export function LivepeerPaidUploadForm() {
                 expectedSourceBytes: file.size,
             });
             const wallet = await getWallet();
-            if (FEATURE_FLAGS.publicTestnetBeta
+            if ((FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1)
                 && typeof wallet.signDelegateActions !== 'function') {
                 throw new Error('sponsored_upload_wallet_unsupported');
             }
@@ -273,21 +301,28 @@ export function LivepeerPaidUploadForm() {
             if (!options.selected && !multiAssetPaymentsEnabled) {
                 throw new Error('creator_fee_balance_or_gas_insufficient');
             }
+            controller.signal.throwIfAborted();
             setPayment({ ...options, sponsoredUsdc });
             setPaymentAsset(options.selected);
             setSponsorQuote(null);
             moveUploadStage('payment_required');
             setStatus(null);
+            finishPreparation('completed');
         } catch (reason) {
+            if (controller.signal.aborted) return;
+            finishPreparation?.('failed');
             setFailedStep(0);
             setError(uploadErrorMessage(reason, false));
         } finally {
-            setBusy(false);
+            if (operation.current === controller) { operation.current = null; setBusy(false); }
         }
     };
 
     const start = async () => {
         if (!accountId || !file || fileError || !title.trim() || !rightsAccepted || !jobId || !payment || !paymentAsset) return;
+        if (operation.current) return;
+        const controller = new AbortController();
+        operation.current = controller;
         setBusy(true);
         setError(null);
         setFailedStep(null);
@@ -305,12 +340,18 @@ export function LivepeerPaidUploadForm() {
                 throw new Error('near_creator_fee_quote_expired');
             }
             const existingJob = await readLivepeerMediaJob(jobId);
+            controller.signal.throwIfAborted();
             if (existingJob?.status === 'Published') {
                 clearLivepeerUploadDraft(accountId);
                 clearLivepeerJobSessionKey(accountId, jobId);
                 moveUploadStage('published');
                 setStatus('Publication ready.');
                 return;
+            }
+            controller.signal.throwIfAborted();
+            if (FEATURE_FLAGS.publicTestnetVideoV1 && existingJob) {
+                setResumeAvailable(true);
+                throw new Error('livepeer_resume_required');
             }
             setStatus('Checking upload availability…');
             await preflightLivepeerUpload({
@@ -319,6 +360,7 @@ export function LivepeerPaidUploadForm() {
                 generation: 1,
                 expectedSourceBytes: file.size,
             });
+            controller.signal.throwIfAborted();
             availabilityConfirmed = true;
             moveUploadStage('payment_pending');
             setStatus('Authorizing the paid job…');
@@ -372,14 +414,18 @@ export function LivepeerPaidUploadForm() {
                 asset: paymentAsset,
                 nearQuote: payment.nearQuote,
                 allowSponsoredUsdc: payment.sponsoredUsdc && !matchingCheckout,
+                signal: controller.signal,
                 onSponsoredQuote: async (quote) => {
+                    controller.signal.throwIfAborted();
                     setSponsorQuote(quote);
                     setStatus(`Confirm the ${formatMicroUsdc(quote.totalFeeUsdc)} USDC total in your wallet.`);
                     await new Promise<void>((resolve) => setTimeout(resolve, 0));
                 },
             });
+            controller.signal.throwIfAborted();
             setStatus('Waiting for the payment to finalize…');
             await waitForAuthorizedLivepeerJob(jobId, accountId, uploadPublicKey);
+            controller.signal.throwIfAborted();
             advanceLivepeerUploadDraftStage(accountId, jobId, 'authorized');
             moveUploadStage('authorized');
             if (convertedCheckout) {
@@ -397,44 +443,101 @@ export function LivepeerPaidUploadForm() {
                 expectedSourceBytes: file.size,
                 sourceFingerprintSha256: await fingerprintLivepeerSource(file),
                 sourceType: source.sourceType,
+                signal: controller.signal,
             });
-            advanceLivepeerUploadDraftStage(accountId, jobId, 'upload_ready');
-            moveUploadStage('upload_ready');
-            setStatus('Uploading directly to Livepeer…');
-            advanceLivepeerUploadDraftStage(accountId, jobId, 'uploading');
-            moveUploadStage('uploading');
-            await uploadLivepeerSource(file, intent, {
-                onProgress: (sent, total) => setUploadProgress(
-                    total > 0 ? Math.min(99, Math.max(0, Math.floor((sent / total) * 100))) : 0,
-                ),
-                heartbeat: () => heartbeatLivepeerUploadLease({ accountId, intent }),
-            });
-            advanceLivepeerUploadDraftStage(accountId, jobId, 'provider_processing');
-            setUploadProgress(100);
-            moveUploadStage('provider_processing');
-            setStatus('Livepeer is processing the upload…');
+            await transfer(intent, controller);
         } catch (reason) {
+            if (controller.signal.aborted) return;
             if (convertedCheckout && accountId && file && payment) {
                 updateActivePaymentCheckoutState(accountId, {
                     purpose: { type: 'upload', expected_source_bytes: String(file.size) },
                     requiredUsdcMicro: payment.usdcFee,
                 }, 'usdc_final');
             }
+            if (FEATURE_FLAGS.publicTestnetVideoV1 && file) {
+                const draft = await readLivepeerUploadDraft(accountId, file);
+                if (!controller.signal.aborted && draft?.paymentAttempted) setResumeAvailable(true);
+            }
+            if (controller.signal.aborted) return;
             setFailedStep(activeStep);
             setStatus(null);
             setError(uploadErrorMessage(reason, availabilityConfirmed));
         } finally {
-            setBusy(false);
+            if (operation.current === controller) { operation.current = null; setBusy(false); }
+        }
+    };
+
+    const transfer = async (intent: LivepeerUploadIntent, controller: AbortController) => {
+        if (!file || !accountId || !jobId) throw new Error('livepeer_job_missing');
+        controller.signal.throwIfAborted();
+        advanceLivepeerUploadDraftStage(accountId, jobId, 'upload_ready');
+        moveUploadStage('upload_ready');
+        advanceLivepeerUploadDraftStage(accountId, jobId, 'uploading');
+        moveUploadStage('uploading');
+        setStatus('Uploading directly to Livepeer…');
+        await uploadLivepeerSource(file, intent, {
+            signal: controller.signal,
+            onProgress: (sent, total) => {
+                if (!controller.signal.aborted) setUploadProgress(total > 0 ? Math.min(99, Math.floor(sent / total * 100)) : 0);
+            },
+            heartbeat: () => heartbeatLivepeerUploadLease({ accountId, intent, signal: controller.signal }),
+        });
+        controller.signal.throwIfAborted();
+        advanceLivepeerUploadDraftStage(accountId, jobId, 'provider_processing');
+        setUploadProgress(100);
+        setResumeAvailable(false);
+        moveUploadStage('provider_processing');
+        setStatus('Upload complete. Waiting for Livepeer processing…');
+    };
+
+    const resume = async () => {
+        if (!accountId || !jobId || !file || operation.current) return;
+        const controller = new AbortController();
+        operation.current = controller;
+        setBusy(true);
+        setError(null);
+        setFailedStep(null);
+        setStatus('Checking your existing upload…');
+        try {
+            const result = await prepareLivepeerUploadResume(await getWallet(), { accountId, jobId, file, signal: controller.signal });
+            controller.signal.throwIfAborted();
+            moveUploadStage('draft');
+            if ('state' in result) {
+                moveUploadStage('provider_processing');
+                setResumeAvailable(false);
+                await publicationQuery.refetch();
+            } else {
+                moveUploadStage('authorized');
+                moveUploadStage('intent_pending');
+                await transfer(result, controller);
+            }
+        } catch (reason) {
+            if (controller.signal.aborted) return;
+            if (reason instanceof Error && reason.message === 'livepeer_already_published') {
+                moveUploadStage('published');
+                setResumeAvailable(false);
+                clearLivepeerUploadDraft(accountId);
+                clearLivepeerJobSessionKey(accountId, jobId);
+                setStatus('Publication ready.');
+            } else {
+                setError(uploadErrorMessage(reason, true));
+                setStatus(null);
+            }
+        } finally {
+            if (operation.current === controller) { operation.current = null; setBusy(false); }
         }
     };
 
     const cancel = async () => {
-        if (!accountId || !jobId || uploadStage !== 'authorized') return;
+        if (!accountId || !jobId || uploadStage !== 'authorized' || operation.current) return;
+        const controller = new AbortController();
+        operation.current = controller;
         setBusy(true);
         setError(null);
         setStatus('Cancelling the upload job…');
         try {
-            await cancelLivepeerUpload({ accountId, jobId, generation: 1 });
+            await cancelLivepeerUpload({ accountId, jobId, generation: 1, signal: controller.signal });
+            controller.signal.throwIfAborted();
             clearLivepeerJobSessionKey(accountId, jobId);
             clearLivepeerUploadDraft(accountId);
             setJobId(null);
@@ -446,10 +549,11 @@ export function LivepeerPaidUploadForm() {
             moveUploadStage('draft');
             setStatus('Upload job cancelled. The technical-pilot fee is non-refundable.');
         } catch (reason) {
+            if (controller.signal.aborted) return;
             setStatus(null);
             setError(reason instanceof Error ? reason.message : 'Upload job could not be cancelled.');
         } finally {
-            setBusy(false);
+            if (operation.current === controller) { operation.current = null; setBusy(false); }
         }
     };
 
@@ -482,7 +586,8 @@ export function LivepeerPaidUploadForm() {
             <Card>
                 <CardHeader>
                     <CardTitle>Publication</CardTitle>
-                    <CardDescription>MP4, MOV, AVI, WebM, WMV, MKV or FLV; maximum {FEATURE_FLAGS.publicTestnetBeta ? '1 GB' : '20 GB'} and minimum ticket price 2 USDC.</CardDescription>
+                    <CardDescription>MP4, MOV, AVI, WebM, WMV, MKV or FLV; maximum {FEATURE_FLAGS.publicTestnetVideoV1 ? '5 GB' : FEATURE_FLAGS.publicTestnetBeta ? '1 GB' : '20 GB'} and minimum ticket price 2 USDC.</CardDescription>
+                    {FEATURE_FLAGS.publicTestnetVideoV1 && <p className="text-sm text-zinc-400">Use free test USDC for uploads and tickets, and test NEAR for network fees. <a className="underline" href="/terms#test-tokens" target="_blank" rel="noreferrer">Get test tokens</a>, then check payment options again.</p>}
                 </CardHeader>
                 <CardContent className="space-y-5">
                     <Input type="file" accept={LIVEPEER_SOURCE_ACCEPT} disabled={busy || (uploaded && !publicationExpired)} onChange={selectFile} />
@@ -506,10 +611,10 @@ export function LivepeerPaidUploadForm() {
                             <span className="absolute bottom-3 left-3 rounded-full bg-black/70 px-3 py-1 text-xs text-white">Cover preview</span>
                         </div>
                     )}
-                    <Input aria-label="Title" placeholder="Title" maxLength={200} value={title} disabled={busy || uploaded} onChange={(event) => setTitle(event.target.value)} />
-                    <Input aria-label="Ticket price in USDC" type="number" min="2" step="0.000001" value={price} disabled={busy || uploaded} onChange={(event) => setPrice(event.target.value)} />
+                    <Input aria-label="Title" placeholder="Title" maxLength={200} value={title} disabled={busy || uploaded || resumeAvailable} onChange={(event) => setTitle(event.target.value)} />
+                    <Input aria-label="Ticket price in USDC" type="number" min="2" step="0.000001" value={price} disabled={busy || uploaded || resumeAvailable} onChange={(event) => setPrice(event.target.value)} />
                     <label className="flex items-start gap-3 text-sm">
-                        <input type="checkbox" checked={rightsAccepted} disabled={busy || uploaded} onChange={(event) => setRightsAccepted(event.target.checked)} />
+                        <input type="checkbox" checked={rightsAccepted} disabled={busy || uploaded || resumeAvailable} onChange={(event) => setRightsAccepted(event.target.checked)} />
                         <span>I own the rights required to publish this video.</span>
                     </label>
 
@@ -586,6 +691,13 @@ export function LivepeerPaidUploadForm() {
                         <Button asChild className="w-full"><Link href={`/watch?job=${encodeURIComponent(jobId)}`}>Open publication</Link></Button>
                     ) : publicationExpired ? (
                         <Button className="w-full" disabled>Publication deadline passed</Button>
+                    ) : resumeAvailable ? (
+                        <div className="space-y-2">
+                            <Button className="w-full" disabled={busy} onClick={() => void resume()}>
+                                {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Resume / check existing upload
+                            </Button>
+                            <p className="text-xs text-zinc-400">Use the same file. A wallet approval and NEAR network fee may be needed; your upload payment is not charged again.</p>
+                        </div>
                     ) : uploaded ? (
                         <Button className="w-full" disabled>
                             {!publicationQuery.isError && !providerFailed && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -665,13 +777,23 @@ export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; 
 function fileValidationMessage(error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type'): string {
     if (error === 'empty_file') return 'Choose a non-empty video file.';
     if (error === 'source_limit_exceeded') {
-        return `Choose a video file no larger than ${FEATURE_FLAGS.publicTestnetBeta ? '1 GB' : '20 GB'}.`;
+        return `Choose a video file no larger than ${FEATURE_FLAGS.publicTestnetVideoV1 ? '5 GB' : FEATURE_FLAGS.publicTestnetBeta ? '1 GB' : '20 GB'}.`;
     }
     return 'Choose an MP4, MOV, AVI, WebM, WMV, MKV or FLV video file.';
 }
 
 function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): string {
     const code = reason instanceof Error ? reason.message : '';
+    if (code === 'livepeer_resume_required') return 'This job is already paid. Resume the existing upload.';
+    if (code === 'livepeer_resume_file_mismatch') return 'Select the same original file to resume this upload.';
+    if (code === 'livepeer_key_replacement_pending') return 'The previous wallet action is not confirmed. Check it before trying this upload again.';
+    if (code === 'livepeer_payment_pending' || code === 'livepeer_job_missing') return 'Payment is not confirmed yet. Check your wallet; no new payment was started.';
+    if (code === 'livepeer_wallet_account_mismatch') return 'Reconnect the wallet account that paid for this upload.';
+    if (code === 'livepeer_draft_unavailable') return 'Recovery information could not be saved in this browser. Check browser storage before continuing.';
+    if (code === 'livepeer_wallet_rejected') return 'Wallet approval was cancelled. You can check this upload again.';
+    if (code === 'livepeer_resume_in_progress') return 'This upload is being recovered in another tab. Wait for it to finish.';
+    if (code === 'livepeer_resume_browser_unsupported') return 'Use a current Chrome or Edge browser to resume this upload.';
+    if (code === 'provider_recovery_not_ready') return 'The original upload source is unavailable. No new upload was created.';
     if (code === 'livepeer_upload_expired') return UPLOAD_EXPIRED_MESSAGE;
     if (code === 'livepeer_upload_status_unavailable') {
         return 'Publication status could not be confirmed. Recovery has not been started.';
@@ -690,16 +812,19 @@ function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): st
     if (code === 'creator_fee_payment_options_changed') {
         return 'Payment options changed. Check payment options again.';
     }
+    if (FEATURE_FLAGS.publicTestnetVideoV1 && code === 'creator_fee_balance_or_gas_insufficient') {
+        return 'You need enough test USDC and NEAR. Use Get test tokens, then check payment options again.';
+    }
     if (code === 'sponsor_balance_insufficient') {
         return 'Your USDC balance is below the quoted upload and gas-sponsor total.';
     }
     if (code === 'sponsored_upload_wallet_unsupported') {
-        return 'This testnet beta requires a Meteor wallet that supports one-step sponsored approval.';
+        return 'This testnet requires a Meteor wallet that supports one-step sponsored approval.';
     }
     if (code === 'livepeer_upload_key_recovery_unavailable') {
         return 'This upload key is unavailable. Keep the existing job; no new payment or key change has been started.';
     }
-    return code || 'Upload failed.';
+    return 'The upload could not continue. Keep the original file and check this job before retrying.';
 }
 
 function formatYoctoNear(value: string): string {

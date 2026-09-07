@@ -1,3 +1,4 @@
+import { mediaProfiles } from './media-provider';
 import { dependencyFetch } from './dependency-fetch';
 import type { MediaProvider, VerifiedAsset, VerifyReadyAssetInput } from './media-provider';
 
@@ -14,6 +15,7 @@ export async function verifyLivepeerReadyAsset(
     input: VerifyReadyAssetInput,
     dependencies: VerificationDependencies,
 ): Promise<VerifiedAsset> {
+    const expectedProfiles = mediaProfiles(input.profileConfigSha256);
     const asset = await provider.readAsset(input.assetId);
     const playback = await provider.readPlayback(input.playbackId);
     if (asset.id !== input.assetId
@@ -63,6 +65,13 @@ export async function verifyLivepeerReadyAsset(
     }
     for (const hlsUrl of new Set([livepeerHlsUrl(input.playbackId), ...hlsUrls])) {
         await requireHlsPlaybackDenied(hlsUrl);
+    }
+    if (expectedProfiles.length > 1) {
+        if (!dependencies.signPlaybackToken) throw new Error('runtime_not_configured');
+        const token = await dependencies.signPlaybackToken(input.playbackId);
+        for (const hlsUrl of new Set([livepeerHlsUrl(input.playbackId), ...hlsUrls])) {
+            await verifyAdaptiveHls(hlsUrl, token, expectedProfiles);
+        }
     }
     for (const mp4Url of mp4Urls) {
         await requireAnonymousPlaybackDenied(mp4Url);
@@ -175,12 +184,14 @@ async function requireAnonymousPlaybackDenied(url: string): Promise<void> {
     try {
         response = await dependencyFetch('livepeer_media', 'asset_anonymous_probe', url, {
             method: 'GET',
+            headers: { Range: 'bytes=0-0' },
             redirect: 'manual',
             signal: AbortSignal.timeout(5_000),
         });
     } catch {
         throw new Error('provider_unavailable');
     }
+    await response.body?.cancel();
     if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
     if (![401, 403].includes(response.status)) throw new Error('provider_playback_exposed');
 }
@@ -248,4 +259,74 @@ async function fetchVttReferences(vttUrl: string, token: string): Promise<string
         // Fall through to the stable provider mismatch below.
     }
     throw new Error('provider_playback_mismatch');
+}
+
+// Probe both renditions and bounded media samples; this is not a whole-video playback test.
+export async function verifyAdaptiveHls(
+    masterUrl: string, token: string, profiles: { width: number; height: number }[],
+): Promise<void> {
+    const master = await authorizedHls(masterUrl, token);
+    // This profile has two muxed variants; unverified alternate audio/I-frame playlists stay closed.
+    if (master.some((line) => /(?:^|[:,])URI=/.test(line))) throw new Error('provider_playback_mismatch');
+    const variants = master.flatMap((line, index) => {
+        if (!line.startsWith('#EXT-X-STREAM-INF:')) return [];
+        const resolution = /(?:^|,)RESOLUTION=(\d+)x(\d+)(?:,|$)/.exec(line.slice(18));
+        if (!resolution || !master[index + 1] || master[index + 1].startsWith('#')) {
+            throw new Error('provider_playback_mismatch');
+        }
+        return [{ width: Number(resolution[1]), height: Number(resolution[2]), url: hlsReference(masterUrl, master[index + 1]) }];
+    });
+    if (variants.length !== profiles.length || new Set(variants.map((variant) => variant.url)).size !== profiles.length
+        || profiles.some((profile) => !variants.some((variant) => variant.width === profile.width && variant.height === profile.height))) {
+        throw new Error('provider_playback_mismatch');
+    }
+    for (const variant of variants) {
+        await requireHlsPlaybackDenied(variant.url);
+        const media = await authorizedHls(variant.url, token);
+        if (media.some((line) => line.startsWith('#EXT-X-STREAM-INF:')) || !media.includes('#EXT-X-ENDLIST')) {
+            throw new Error('provider_playback_mismatch');
+        }
+        const segments = media.filter((line) => !line.startsWith('#'));
+        if (!segments.length) throw new Error('provider_playback_mismatch');
+        // ponytail: first/last segments plus keys/maps; full 120-minute delivery belongs to the approved browser canary.
+        const references = new Set([segments[0], segments[segments.length - 1],
+            ...media.flatMap((line) => [...line.matchAll(/(?:^|[:,])URI="([^"]+)"/g)].map((match) => match[1])),
+        ]);
+        if (references.size > 16) throw new Error('provider_playback_mismatch');
+        for (const reference of references) await requireAnonymousPlaybackDenied(hlsReference(variant.url, reference));
+    }
+}
+
+function hlsReference(parent: string, reference: string): string {
+    const url = vttReferenceUrl(parent, reference);
+    if (new URL(url).search || new URL(url).hash) throw new Error('provider_playback_mismatch');
+    return url;
+}
+
+async function authorizedHls(url: string, token: string): Promise<string[]> {
+    if (!validPlaybackUrl(url)) throw new Error('provider_playback_mismatch');
+    let response: Response;
+    try {
+        response = await dependencyFetch('livepeer_media', 'hls_authorized_probe', url, {
+            headers: { 'Livepeer-Jwt': token }, redirect: 'manual', signal: AbortSignal.timeout(5_000),
+        });
+    } catch { throw new Error('provider_unavailable'); }
+    if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
+    if (response.status !== 200 || !response.body) throw new Error('provider_playback_mismatch');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let body = '';
+    let bytes = 0;
+    try {
+        for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            bytes += chunk.value.byteLength;
+            if (bytes > 512 * 1024) throw new Error('provider_playback_mismatch');
+            body += decoder.decode(chunk.value, { stream: true });
+        }
+        body += decoder.decode();
+    } finally { await reader.cancel(); }
+    if (hlsManifestKind(body) !== 'playable') throw new Error('provider_playback_mismatch');
+    return body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }

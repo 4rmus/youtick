@@ -117,3 +117,15 @@ test('successful canary deletes the asset and returns only redacted identity evi
     const serialized = JSON.stringify(receipt);
     assert.doesNotMatch(serialized, /asset-123|playback-123|project-123|token=secret|test-api-key/);
 });
+
+test('canary sends adaptive renditions only for the exact adaptive profile', async () => {
+    let calls = 0;
+    const fetchImpl = async (_url, init) => {
+        calls += 1;
+        assert.deepEqual(JSON.parse(init.body).profiles.map((profile) => profile.height), [360, 720]);
+        return Response.json(createResponse());
+    };
+    await requestUpload(API_KEY, 'adaptive', fetchImpl, '28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2');
+    await assert.rejects(() => requestUpload(API_KEY, 'bad', fetchImpl, 'a'.repeat(64)), /provider_canary_profile_invalid/);
+    assert.equal(calls, 1);
+});

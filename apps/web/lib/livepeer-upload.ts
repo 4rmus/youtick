@@ -1,3 +1,4 @@
+import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { Upload, type DetailedError } from 'tus-js-client';
 import {
     KeyPair,
@@ -15,11 +16,12 @@ import {
 import { base64Encode, hexEncode } from '@/lib/crypto/codec';
 import { getProvider, viewContract } from '@/lib/near';
 import type { WalletInstance } from '@/lib/types';
+import { readLivepeerUploadProgress, waitForAuthorizedLivepeerJob } from '@/lib/livepeer-publication';
 import type { UploadRecoveryStage } from '@/lib/livepeer-upload-state';
+import { measureVideoOperation, observeVideoState } from '@/lib/video-measurements';
 
 const LIVEPEER_TUS_ORIGIN = 'https://origin.livepeer.com';
 const PROFILE_ID = 'paid-media-livepeer-v1';
-const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
 const LIVEPEER_SESSION_STORAGE_PREFIX = 'youtick:livepeer-job-session:';
 const LIVEPEER_DRAFT_STORAGE_PREFIX = 'youtick:livepeer-ui-draft:';
 const LIVEPEER_LAST_JOB_STORAGE_PREFIX = 'youtick:livepeer-last-job:';
@@ -69,6 +71,9 @@ export type LivepeerUploadIntent = {
 export type LivepeerUploadDraft = {
     schema: 'youtick.livepeer-ui-draft.v2';
     stage: UploadRecoveryStage;
+    paymentAttempted?: boolean;
+    keyReplacementPending?: boolean;
+    keyReplacementFingerprint?: string;
     jobId: string;
     title: string;
     price: string;
@@ -242,67 +247,77 @@ export function readRememberedLivepeerUploadJob(accountId: string): string | nul
     }
 }
 
-export function writeLivepeerUploadDraft(accountId: string, draft: LivepeerUploadDraft): void {
-    validateJobSessionIdentity(accountId, draft.jobId);
-    if (!isLivepeerUploadDraft(draft)) throw new Error('invalid_livepeer_draft');
-    const storageKey = `${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`;
-    let stage = draft.stage;
-    try {
-        const existing = JSON.parse(sessionStorage.getItem(storageKey) || 'null') as unknown;
-        if (isLivepeerUploadDraft(existing)
-            && existing.jobId === draft.jobId
-            && existing.sourceFingerprintSha256 === draft.sourceFingerprintSha256
-            && LIVEPEER_RECOVERY_STAGE_ORDER[existing.stage] > LIVEPEER_RECOVERY_STAGE_ORDER[stage]) {
-            stage = existing.stage;
-        }
-    } catch {
-        // The new valid draft replaces malformed session-only UI state.
-    }
-    sessionStorage.setItem(storageKey, JSON.stringify({ ...draft, stage }));
+function draftStorage(accountId: string) {
+    return FEATURE_FLAGS.publicTestnetVideoV1
+        ? { storage: localStorage, key: `${LIVEPEER_DRAFT_STORAGE_PREFIX}${NEAR_NETWORK}:${NEAR_CONFIG.marketContractId}:${accountId}` }
+        : { storage: sessionStorage, key: `${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}` };
 }
 
-export async function readLivepeerUploadDraft(accountId: string, file: File): Promise<LivepeerUploadDraft | null> {
-    const storageKey = `${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`;
-    const raw = sessionStorage.getItem(storageKey);
-    if (!raw) return null;
+function readStoredUploadDraft(accountId: string): LivepeerUploadDraft | null {
     try {
-        const draft = JSON.parse(raw) as LivepeerUploadDraft;
-        validateJobSessionIdentity(accountId, draft.jobId);
-        if (!isLivepeerUploadDraft(draft)) throw new Error('invalid_livepeer_draft');
-        return draft.sourceBytes === file.size
-            && draft.sourceName === file.name
-            && draft.sourceLastModified === file.lastModified
-            && draft.sourceFingerprintSha256 === await fingerprintLivepeerSource(file)
-            ? draft
-            : null;
+        const { storage, key } = draftStorage(accountId);
+        const value: unknown = JSON.parse(storage.getItem(key) || 'null');
+        if (!isLivepeerUploadDraft(value)) return null;
+        return value;
     } catch {
-        sessionStorage.removeItem(storageKey);
         return null;
     }
 }
 
-export function clearLivepeerUploadDraft(accountId: string): void {
-    sessionStorage.removeItem(`${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`);
+export function writeLivepeerUploadDraft(accountId: string, draft: LivepeerUploadDraft): void {
+    validateJobSessionIdentity(accountId, draft.jobId);
+    if (!isLivepeerUploadDraft(draft)) throw new Error('invalid_livepeer_draft');
+    const { storage, key } = draftStorage(accountId);
+    const previous = readStoredUploadDraft(accountId);
+    const existing = previous?.jobId === draft.jobId
+        && previous.sourceFingerprintSha256 === draft.sourceFingerprintSha256 ? previous : null;
+    const stage = existing && LIVEPEER_RECOVERY_STAGE_ORDER[existing.stage] > LIVEPEER_RECOVERY_STAGE_ORDER[draft.stage]
+        ? existing.stage : draft.stage;
+    // Persist only public job/file metadata. Never spread a caller's capabilities into localStorage.
+    const encoded = JSON.stringify({
+        schema: draft.schema, stage, jobId: draft.jobId, title: draft.title, price: draft.price,
+        sourceBytes: draft.sourceBytes, sourceName: draft.sourceName, sourceLastModified: draft.sourceLastModified,
+        sourceFingerprintSha256: draft.sourceFingerprintSha256,
+        ...((draft.paymentAttempted ?? existing?.paymentAttempted) ? { paymentAttempted: true } : {}),
+        ...((draft.keyReplacementPending ?? existing?.keyReplacementPending) ? {
+            keyReplacementPending: true,
+            keyReplacementFingerprint: draft.keyReplacementFingerprint ?? existing?.keyReplacementFingerprint,
+        } : {}),
+    });
+    try {
+        storage.setItem(key, encoded);
+        if (storage.getItem(key) !== encoded) throw new Error('storage_write_failed');
+    } catch {
+        throw new Error('livepeer_draft_unavailable');
+    }
 }
 
-export function advanceLivepeerUploadDraftStage(
-    accountId: string,
-    jobId: string,
-    stage: UploadRecoveryStage,
-): void {
+export async function readLivepeerUploadDraft(accountId: string, file: File): Promise<LivepeerUploadDraft | null> {
+    const draft = readStoredUploadDraft(accountId);
+    if (!draft) return null;
+    return draft.sourceBytes === file.size && draft.sourceName === file.name
+        && draft.sourceLastModified === file.lastModified
+        && draft.sourceFingerprintSha256 === await fingerprintLivepeerSource(file) ? draft : null;
+}
+
+export function clearLivepeerUploadDraft(accountId: string): void {
+    const { storage, key } = draftStorage(accountId);
+    storage.removeItem(key);
+}
+
+function setUploadDraftFlag(accountId: string, jobId: string, flag: 'paymentAttempted' | 'keyReplacementPending', value: boolean): void {
+    const draft = readStoredUploadDraft(accountId);
+    if (!draft || draft.jobId !== jobId) throw new Error('livepeer_draft_unavailable');
+    writeLivepeerUploadDraft(accountId, { ...draft, [flag]: value });
+    if (flag === 'paymentAttempted' && value) rememberLivepeerUploadJob(accountId, jobId);
+}
+
+export function advanceLivepeerUploadDraftStage(accountId: string, jobId: string, stage: UploadRecoveryStage): void {
     validateJobSessionIdentity(accountId, jobId);
-    const storageKey = `${LIVEPEER_DRAFT_STORAGE_PREFIX}${accountId}`;
-    const raw = sessionStorage.getItem(storageKey);
-    if (!raw) return;
-    try {
-        const draft = JSON.parse(raw) as unknown;
-        if (!isLivepeerUploadDraft(draft) || draft.jobId !== jobId) throw new Error('invalid');
-        if (LIVEPEER_RECOVERY_STAGE_ORDER[stage] <= LIVEPEER_RECOVERY_STAGE_ORDER[draft.stage]) return;
-        sessionStorage.setItem(storageKey, JSON.stringify({ ...draft, stage }));
-        if (stage !== 'payment_pending') rememberLivepeerUploadJob(accountId, jobId);
-    } catch {
-        sessionStorage.removeItem(storageKey);
-    }
+    const draft = readStoredUploadDraft(accountId);
+    if (!draft || draft.jobId !== jobId || LIVEPEER_RECOVERY_STAGE_ORDER[stage] <= LIVEPEER_RECOVERY_STAGE_ORDER[draft.stage]) return;
+    writeLivepeerUploadDraft(accountId, { ...draft, stage });
+    if (stage !== 'payment_pending') rememberLivepeerUploadJob(accountId, jobId);
 }
 
 export async function fingerprintLivepeerSource(file: File): Promise<string> {
@@ -331,6 +346,10 @@ function isLivepeerUploadDraft(value: unknown): value is LivepeerUploadDraft {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const draft = value as Record<string, unknown>;
     return draft.schema === 'youtick.livepeer-ui-draft.v2'
+        && (draft.paymentAttempted === undefined || typeof draft.paymentAttempted === 'boolean')
+        && (draft.keyReplacementPending === undefined || typeof draft.keyReplacementPending === 'boolean')
+        && (draft.keyReplacementFingerprint === undefined || (typeof draft.keyReplacementFingerprint === 'string'
+            && /^[0-9a-f]{64}$/.test(draft.keyReplacementFingerprint)))
         && typeof draft.stage === 'string'
         && Object.hasOwn(LIVEPEER_RECOVERY_STAGE_ORDER, draft.stage)
         && typeof draft.jobId === 'string'
@@ -372,10 +391,16 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
     asset?: CreatorFeeAsset;
     nearQuote?: SignedNearCreatorFeeQuote;
     allowSponsoredUsdc?: boolean;
+    signal?: AbortSignal;
     onSponsoredQuote?: (quote: SponsoredUploadQuoteSummary) => void | Promise<void>;
 }): Promise<string> {
     requireFeature();
+    input.signal?.throwIfAborted();
     const asset = input.asset ?? 'USDC';
+    if (FEATURE_FLAGS.publicTestnetVideoV1 && (asset !== 'USDC' || !FEATURE_FLAGS.enableSponsoredLivepeerUploads
+        || input.allowSponsoredUsdc === false || !wallet.signDelegateActions)) {
+        throw new Error('sponsored_upload_wallet_unsupported');
+    }
     if (asset === 'NEAR') requireNearCreatorFee();
     validateJobSessionIdentity(input.accountId, input.jobId);
     const title = input.title.trim();
@@ -390,6 +415,10 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
     const publicKey = keyPair.getPublicKey().toString();
     const uploadKeyExpiresAtMs = existingSession?.uploadKeyExpiresAtMs
         ?? String(Date.now() + 24 * 60 * 60 * 1000);
+    const existingChainJob = await reconcilePaidJob(input.jobId);
+    const profileHash = existingChainJob
+        ? storedProfileHash(existingChainJob)
+        : FEATURE_FLAGS.publicTestnetVideoV1 ? await currentPublicProfile() : profiles.legacy.hash;
     const request = {
         creator_id: input.accountId,
         job_id: input.jobId,
@@ -397,7 +426,7 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
         price_usdc: input.priceUsdc,
         expected_source_bytes: String(input.expectedSourceBytes),
         profile_id: PROFILE_ID,
-        profile_config_sha256: PROFILE_CONFIG_SHA256,
+        profile_config_sha256: profileHash,
         upload_public_key: publicKey,
         upload_key_expires_at_ms: uploadKeyExpiresAtMs,
     };
@@ -432,12 +461,12 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
     };
     if (asset === 'NEAR' && !input.nearQuote) throw new Error('near_creator_fee_quote_required');
 
-    const existingChainJob = await reconcilePaidJob(input.jobId);
     if (existingChainJob) {
         if (exactPaidJob(existingChainJob, request, asset)) return publicKey;
         if (!samePaidJob(existingChainJob, request, asset)) {
             throw new Error('livepeer_paid_job_conflict');
         }
+        if (FEATURE_FLAGS.publicTestnetVideoV1) throw new Error('livepeer_resume_required');
         if (FEATURE_FLAGS.publicTestnetBeta) throw new Error('livepeer_upload_key_recovery_unavailable');
         if (!existingSession) {
             persistLivepeerJobSessionKey(
@@ -448,7 +477,8 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
             );
         }
         try {
-            await wallet.signAndSendTransaction({
+            input.signal?.throwIfAborted();
+            await measureVideoOperation('wallet_transaction', () => wallet.signAndSendTransaction({
                 receiverId: NEAR_CONFIG.marketContractId,
                 actions: [actions.functionCall(
                     'replace_upload_key',
@@ -460,7 +490,7 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
                     GAS_CONSTANTS.mediumGas,
                     0n,
                 )],
-            });
+            }));
             return publicKey;
         } catch (error) {
             const chainJob = await reconcilePaidJob(input.jobId).catch(() => undefined);
@@ -471,6 +501,10 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
             throw error;
         }
     }
+    if (FEATURE_FLAGS.publicTestnetVideoV1 && readStoredUploadDraft(input.accountId)?.paymentAttempted) {
+        throw new Error('livepeer_payment_pending');
+    }
+    input.signal?.throwIfAborted();
     if (!existingSession) {
         persistLivepeerJobSessionKey(
             input.accountId,
@@ -480,7 +514,7 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
         );
     }
     try {
-        if (asset === 'USDC' && existingSession?.sponsoredDelegateBase64) {
+        if (asset === 'USDC' && existingSession?.sponsoredDelegateBase64 && !FEATURE_FLAGS.publicTestnetVideoV1) {
             await submitSponsoredUploadRelay(
                 input.accountId,
                 input.jobId,
@@ -490,15 +524,20 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
             && FEATURE_FLAGS.enableSponsoredLivepeerUploads
             && input.allowSponsoredUsdc !== false
             && wallet.signDelegateActions) {
-            const sponsoredQuote = await requestSponsoredUploadQuote(request);
+            const sponsoredQuote = await measureVideoOperation('sponsored_quote', () => (
+                requestSponsoredUploadQuote(request)
+            ));
             await input.onSponsoredQuote?.({
                 uploadFeeUsdc: sponsoredQuote.quote.upload_fee_usdc,
                 sponsorFeeUsdc: sponsoredQuote.quote.sponsor_fee_usdc,
                 totalFeeUsdc: sponsoredQuote.quote.total_fee_usdc,
             });
-            await signAndRelaySponsoredUpload(wallet, request, sponsoredQuote);
+            await signAndRelaySponsoredUpload(wallet, request, sponsoredQuote, input.signal);
         } else {
-            await wallet.signAndSendTransaction(transaction);
+            input.signal?.throwIfAborted();
+            await measureVideoOperation('wallet_transaction', () => (
+                wallet.signAndSendTransaction(transaction)
+            ));
         }
         return publicKey;
     } catch (error) {
@@ -578,10 +617,12 @@ async function signAndRelaySponsoredUpload(
     wallet: WalletInstance,
     request: Record<string, string>,
     signedQuote: SignedSponsoredUploadQuote,
+    signal?: AbortSignal,
 ): Promise<void> {
     if (!wallet.signDelegateActions) throw new Error('sponsored_upload_wallet_unsupported');
     const quote = signedQuote.quote;
-    const signed = await wallet.signDelegateActions({
+    signal?.throwIfAborted();
+    const signed = await measureVideoOperation('wallet_signature', () => wallet.signDelegateActions!({
         blockHeightTtl: 200,
         delegateActions: [{
             receiverId: NEAR_CONFIG.usdcContractId,
@@ -602,7 +643,7 @@ async function signAndRelaySponsoredUpload(
                 1n,
             )],
         }],
-    });
+    }));
     if (!Array.isArray(signed.signedDelegateActions)
         || signed.signedDelegateActions.length !== 1
         || typeof signed.signedDelegateActions[0] !== 'string'
@@ -614,6 +655,7 @@ async function signAndRelaySponsoredUpload(
         request.job_id,
         signed.signedDelegateActions[0],
     );
+    signal?.throwIfAborted();
     await submitSponsoredUploadRelay(
         request.creator_id,
         request.job_id,
@@ -626,34 +668,40 @@ async function submitSponsoredUploadRelay(
     jobId: string,
     signedDelegateBase64: string,
 ): Promise<void> {
-    const response = await fetch(bridgeRoute('/v1/sponsored-upload-relays'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ signed_delegate_base64: signedDelegateBase64 }),
-        cache: 'no-store',
-    });
-    const value = await readJson(response);
-    if (!response.ok) {
-        const code = typeof value.error === 'string'
-            ? value.error
-            : `livepeer_control_http_${response.status}`;
-        if (code === 'invalid_sponsored_upload_relay'
-            || code === 'sponsor_relay_failed') {
-            clearSponsoredDelegate(accountId, jobId);
+    return measureVideoOperation('payment_relay', async () => {
+        if (FEATURE_FLAGS.publicTestnetVideoV1) setUploadDraftFlag(accountId, jobId, 'paymentAttempted', true);
+        const response = await fetch(bridgeRoute('/v1/sponsored-upload-relays'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ signed_delegate_base64: signedDelegateBase64 }),
+            cache: 'no-store',
+        });
+        const value = await readJson(response);
+        if (!response.ok) {
+            const code = typeof value.error === 'string'
+                ? value.error
+                : `livepeer_control_http_${response.status}`;
+            if (code === 'invalid_sponsored_upload_relay'
+                || code === 'sponsor_relay_failed') {
+                clearSponsoredDelegate(accountId, jobId);
+            }
+            const reason = code === 'invalid_sponsored_upload_relay'
+                && typeof value.reason === 'string'
+                && SPONSORED_RELAY_REJECTION_REASONS.has(value.reason)
+                ? value.reason
+                : '';
+            if (FEATURE_FLAGS.publicTestnetVideoV1 && response.status === 400 && reason) {
+                setUploadDraftFlag(accountId, jobId, 'paymentAttempted', false);
+            }
+            throw new Error(reason ? `${code}:${reason}` : code);
         }
-        const reason = code === 'invalid_sponsored_upload_relay'
-            && typeof value.reason === 'string'
-            && SPONSORED_RELAY_REJECTION_REASONS.has(value.reason)
-            ? value.reason
-            : '';
-        throw new Error(reason ? `${code}:${reason}` : code);
-    }
-    if (value.accepted !== true
-        || typeof value.relayed !== 'boolean'
-        || value.job_id !== jobId
-        || (value.tx_hash !== null && typeof value.tx_hash !== 'string')) {
-        throw new Error('invalid_sponsored_upload_relay');
-    }
+        if (value.accepted !== true
+            || typeof value.relayed !== 'boolean'
+            || value.job_id !== jobId
+            || (value.tx_hash !== null && typeof value.tx_hash !== 'string')) {
+            throw new Error('invalid_sponsored_upload_relay');
+        }
+    });
 }
 
 async function parseSponsoredUploadQuote(
@@ -753,25 +801,27 @@ export async function prepareCreatorFeePaymentOptions(input: {
     usdcFee: string;
     nearQuote: SignedNearCreatorFeeQuote | undefined;
 }> {
-    if (!/^[1-9][0-9]*$/.test(input.gasReserveYocto)) {
-        throw new Error('creator_fee_gas_reserve_not_configured');
-    }
-    const usdcFee = livepeerUploadFeeUsdc(input.expectedSourceBytes);
-    const requiredUsdcFee = input.gasSponsoredUsdc
-        ? (BigInt(usdcFee) + SPONSORED_UPLOAD_FEE_USDC).toString()
-        : usdcFee;
-    const balances = await readCreatorFeeBalances(input.accountId);
-    const nearQuote = FEATURE_FLAGS.enableLivepeerNearCreatorFee
-        ? await requestNearCreatorFeeQuote(input).catch(() => undefined)
-        : undefined;
-    const selection = selectCreatorFeeAsset({
-        ...balances,
-        usdcFee: requiredUsdcFee,
-        nearFeeYocto: nearQuote?.quote.fee_near_yocto,
-        gasReserveYocto: input.gasReserveYocto,
-        gasSponsoredUsdc: input.gasSponsoredUsdc,
-    });
-    return { ...selection, usdcFee, nearQuote };
+    return measureVideoOperation('payment_options', async () => {
+        if (!/^[1-9][0-9]*$/.test(input.gasReserveYocto)) {
+            throw new Error('creator_fee_gas_reserve_not_configured');
+        }
+        const usdcFee = livepeerUploadFeeUsdc(input.expectedSourceBytes);
+        const requiredUsdcFee = input.gasSponsoredUsdc
+            ? (BigInt(usdcFee) + SPONSORED_UPLOAD_FEE_USDC).toString()
+            : usdcFee;
+        const balances = await readCreatorFeeBalances(input.accountId);
+        const nearQuote = FEATURE_FLAGS.enableLivepeerNearCreatorFee
+            ? await requestNearCreatorFeeQuote(input).catch(() => undefined)
+            : undefined;
+        const selection = selectCreatorFeeAsset({
+            ...balances,
+            usdcFee: requiredUsdcFee,
+            nearFeeYocto: nearQuote?.quote.fee_near_yocto,
+            gasReserveYocto: input.gasReserveYocto,
+            gasSponsoredUsdc: input.gasSponsoredUsdc,
+        });
+        return { ...selection, usdcFee, nearQuote };
+    }, input.expectedSourceBytes);
 }
 
 export function sponsoredUploadPaymentOptionsChanged(
@@ -902,12 +952,14 @@ type UploadIntentInput = {
     expectedSourceBytes: number;
     sourceFingerprintSha256: string;
     sourceType: LivepeerSourceType;
-    recovery?: 'reconcile';
+    recovery?: 'reconcile' | 'resume';
+    signal?: AbortSignal;
 };
 
 export type LivepeerUploadStatus = { job_id: string; generation: number; state: string };
 
 export function requestLivepeerUploadIntent(input: UploadIntentInput & { recovery: 'reconcile' }): Promise<LivepeerUploadStatus>;
+export function requestLivepeerUploadIntent(input: UploadIntentInput & { recovery: 'resume' }): Promise<LivepeerUploadIntent | LivepeerUploadStatus>;
 export function requestLivepeerUploadIntent(input: UploadIntentInput & { recovery?: never }): Promise<LivepeerUploadIntent>;
 export async function requestLivepeerUploadIntent(input: UploadIntentInput): Promise<LivepeerUploadIntent | LivepeerUploadStatus> {
     requireFeature();
@@ -932,7 +984,8 @@ export async function requestLivepeerUploadIntent(input: UploadIntentInput): Pro
         source_fingerprint_sha256: input.sourceFingerprintSha256,
         source_type: input.sourceType,
         profile_id: PROFILE_ID,
-        profile_config_sha256: PROFILE_CONFIG_SHA256,
+        profile_config_sha256: FEATURE_FLAGS.publicTestnetVideoV1
+            ? storedProfileHash(await reconcilePaidJob(input.jobId)) : profiles.legacy.hash,
         ...(input.recovery ? { recovery: input.recovery } : {}),
     };
     const bodySha256 = await sha256Hex(canonicalJson(body));
@@ -962,26 +1015,109 @@ export async function requestLivepeerUploadIntent(input: UploadIntentInput): Pro
         },
         body: JSON.stringify({ body, envelope }),
         cache: 'no-store',
+        signal: input.signal,
     });
     const value = await readJson(response);
     if (!response.ok) {
         throw new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`);
     }
-    if (input.recovery === 'reconcile') {
+    if (input.recovery === 'reconcile' || (input.recovery === 'resume' && value.schema !== 'youtick.livepeer-upload-intent.v2')) {
         if (value.job_id !== input.jobId || value.generation !== input.generation
             || typeof value.state !== 'string'
             || !['UPLOAD_READY', 'UPLOADING', 'PROCESSING', 'READY_VERIFIED', 'FINALIZE_QUEUED',
                 'FINALIZE_RETRY', 'ONCHAIN_PUBLISHED', 'PROVIDER_FAILED', 'UPLOAD_EXPIRED'].includes(value.state)) {
             throw new Error('livepeer_upload_status_unavailable');
         }
+        observeVideoState(value.state);
         return { job_id: input.jobId, generation: input.generation, state: value.state };
     }
-    return parseIntent(value, input);
+    const intent = parseIntent(value, input);
+    if (input.recovery === 'resume' && intent.created) throw new Error('invalid_livepeer_upload_intent');
+    return intent;
+}
+
+export async function prepareLivepeerUploadResume(wallet: WalletInstance, input: {
+    accountId: string; jobId: string; file: File; signal?: AbortSignal;
+}): Promise<LivepeerUploadIntent | LivepeerUploadStatus> {
+    requireFeature();
+    if (!FEATURE_FLAGS.publicTestnetVideoV1) throw new Error('livepeer_resume_unavailable');
+    validateJobSessionIdentity(input.accountId, input.jobId);
+    if (!globalThis.navigator?.locks) throw new Error('livepeer_resume_browser_unsupported');
+    return navigator.locks.request(livepeerJobSessionStorageKey(input.accountId, input.jobId), { ifAvailable: true }, async (lock) => {
+        if (!lock) throw new Error('livepeer_resume_in_progress');
+        input.signal?.throwIfAborted();
+        const draft = await readLivepeerUploadDraft(input.accountId, input.file);
+        if (!draft || draft.jobId !== input.jobId) throw new Error('livepeer_resume_file_mismatch');
+        const source = validateLivepeerSourceFile(input.file);
+        if (!source.ok) throw new Error(source.error);
+        const progress = await readLivepeerUploadProgress(input.jobId, input.accountId);
+        if (progress.publication) throw new Error('livepeer_already_published');
+        if (progress.expired || !progress.deadlineAtMs) throw new Error('livepeer_upload_expired');
+        const request = {
+            creator_id: input.accountId, job_id: input.jobId, title: draft.title,
+            price_usdc: parseLivepeerPriceUsdc(draft.price), expected_source_bytes: String(input.file.size),
+            profile_id: PROFILE_ID, profile_config_sha256: storedProfileHash(progress.job),
+        };
+        if (!samePaidJob(progress.job, request, 'USDC')) throw new Error('livepeer_paid_job_conflict');
+        let session = loadLivepeerJobSessionKey(input.accountId, input.jobId);
+        if (session?.keyPair.getPublicKey().toString() !== progress.job.upload_public_key
+            || Number(progress.job.upload_key_expires_at_ms) <= Date.now()) {
+            if (draft.keyReplacementPending
+                && await sha256Hex(progress.job.upload_public_key) !== draft.keyReplacementFingerprint) {
+                throw new Error('livepeer_key_replacement_pending');
+            }
+            const accounts = await wallet.getAccounts?.();
+            if (accounts?.[0]?.accountId !== input.accountId) throw new Error('livepeer_wallet_account_mismatch');
+            input.signal?.throwIfAborted();
+            const keyPair = KeyPair.fromRandom('ed25519');
+            const publicKey = keyPair.getPublicKey().toString();
+            const expiresAtMs = String(progress.deadlineAtMs);
+            const keyReplacementFingerprint = await sha256Hex(publicKey);
+            input.signal?.throwIfAborted();
+            persistLivepeerJobSessionKey(input.accountId, input.jobId, keyPair, expiresAtMs);
+            // A public-key digest can reconcile a closed tab; neither key nor capability is persisted.
+            writeLivepeerUploadDraft(input.accountId, { ...draft, keyReplacementPending: true, keyReplacementFingerprint });
+            let rejected = false;
+            try {
+                await measureVideoOperation('wallet_transaction', () => wallet.signAndSendTransaction({
+                    receiverId: NEAR_CONFIG.marketContractId,
+                    actions: [actions.functionCall('replace_upload_key', {
+                        job_id: input.jobId, new_public_key: publicKey, expires_at_ms: expiresAtMs,
+                    }, GAS_CONSTANTS.mediumGas, 0n)],
+                }));
+            } catch (error) {
+                rejected = typeof error === 'object' && error !== null && 'code' in error && error.code === 4001;
+            }
+            input.signal?.throwIfAborted();
+            if (!rejected) await waitForAuthorizedLivepeerJob(input.jobId, input.accountId, publicKey).catch(() => undefined);
+            const current = await readLivepeerUploadProgress(input.jobId, input.accountId);
+            if (current.publication) throw new Error('livepeer_already_published');
+            if (current.job.upload_public_key !== publicKey || current.job.upload_key_expires_at_ms !== expiresAtMs) {
+                if (rejected) {
+                    setUploadDraftFlag(input.accountId, input.jobId, 'keyReplacementPending', false);
+                    clearLivepeerJobSessionKey(input.accountId, input.jobId);
+                    throw new Error('livepeer_wallet_rejected');
+                }
+                throw new Error('livepeer_key_replacement_pending');
+            }
+            if (current.expired) throw new Error('livepeer_upload_expired');
+            session = loadLivepeerJobSessionKey(input.accountId, input.jobId);
+        }
+        if (!session) throw new Error('livepeer_session_key_missing');
+        setUploadDraftFlag(input.accountId, input.jobId, 'keyReplacementPending', false);
+        input.signal?.throwIfAborted();
+        return requestLivepeerUploadIntent({
+            accountId: input.accountId, jobId: input.jobId, generation: 1,
+            expectedSourceBytes: input.file.size, sourceType: source.sourceType,
+            sourceFingerprintSha256: draft.sourceFingerprintSha256, recovery: 'resume', signal: input.signal,
+        });
+    });
 }
 
 export async function heartbeatLivepeerUploadLease(input: {
     accountId: string;
     intent: LivepeerUploadIntent;
+    signal?: AbortSignal;
 }): Promise<string> {
     requireFeature();
     validateJobSessionIdentity(input.accountId, input.intent.job_id);
@@ -1017,6 +1153,7 @@ export async function heartbeatLivepeerUploadLease(input: {
         headers: { 'Content-Type': 'application/json', 'X-Youtick-Signature': signature },
         body: JSON.stringify({ body, envelope }),
         cache: 'no-store',
+        signal: input.signal,
     });
     const value = await readJson(response);
     if (!response.ok) {
@@ -1041,6 +1178,7 @@ export async function cancelLivepeerUpload(input: {
     accountId: string;
     jobId: string;
     generation: number;
+    signal?: AbortSignal;
 }): Promise<void> {
     requireFeature();
     validateJobSessionIdentity(input.accountId, input.jobId);
@@ -1074,6 +1212,7 @@ export async function cancelLivepeerUpload(input: {
         headers: { 'Content-Type': 'application/json', 'X-Youtick-Signature': signature },
         body: JSON.stringify({ body, envelope }),
         cache: 'no-store',
+        signal: input.signal,
     });
     const value = await readJson(response);
     if (!response.ok) {
@@ -1155,12 +1294,14 @@ export async function uploadLivepeerSource(
         )),
         onSuccess: () => resolveUpload(),
     });
+    let finished = false;
     const abort = () => {
-        void upload.abort(false).finally(() => rejectUpload(new Error('livepeer_upload_aborted')));
+        if (finished) return;
+        void upload.abort(false).catch(() => undefined).finally(() => rejectUpload(new Error('livepeer_upload_aborted')));
     };
     let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
     const scheduleHeartbeat = () => {
-        if (!options?.heartbeat) return;
+        if (finished || !options?.heartbeat) return;
         heartbeatTimer = setTimeout(() => {
             void options.heartbeat!().catch(() => undefined).finally(scheduleHeartbeat);
         }, intent.heartbeat_interval_ms);
@@ -1168,9 +1309,12 @@ export async function uploadLivepeerSource(
     options?.signal?.addEventListener('abort', abort, { once: true });
     try {
         scheduleHeartbeat();
-        upload.start();
-        await completion;
+        await measureVideoOperation('source_transfer', async () => {
+            upload.start();
+            await completion;
+        }, file.size);
     } finally {
+        finished = true;
         if (heartbeatTimer) clearTimeout(heartbeatTimer);
         options?.signal?.removeEventListener('abort', abort);
     }
@@ -1252,7 +1396,9 @@ function validateJobSessionIdentity(accountId: string, jobId: string): void {
 }
 
 function livepeerJobSessionStorageKey(accountId: string, jobId: string): string {
-    return `${LIVEPEER_SESSION_STORAGE_PREFIX}${accountId}:${jobId}`;
+    return FEATURE_FLAGS.publicTestnetVideoV1
+        ? `${LIVEPEER_SESSION_STORAGE_PREFIX}${NEAR_NETWORK}:${NEAR_CONFIG.marketContractId}:${accountId}:${jobId}`
+        : `${LIVEPEER_SESSION_STORAGE_PREFIX}${accountId}:${jobId}`;
 }
 
 function persistLivepeerJobSessionKey(
@@ -1440,4 +1586,26 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
         // Mapped below.
     }
     throw new Error('invalid_livepeer_control_response');
+}
+
+function storedProfileHash(job: Record<string, unknown> | null): string {
+    const hash = job?.profile_config_sha256;
+    if (job?.profile_id !== PROFILE_ID || !Object.values(profiles).some((entry) => entry.hash === hash)) {
+        throw new Error('livepeer_paid_job_conflict');
+    }
+    return hash as string;
+}
+
+async function currentPublicProfile(): Promise<string> {
+    const policy = await viewContract<Record<string, unknown>>(getProvider(), NEAR_CONFIG.marketContractId, 'get_public_upload_policy');
+    const entries = policy?.profiles;
+    const expected = Array.isArray(entries) && entries.length === 1 ? [profiles.legacy] : [profiles.adaptive, profiles.legacy];
+    if (policy?.environment !== 'public-testnet' || policy.network !== NEAR_NETWORK
+        || policy.market_contract_id !== NEAR_CONFIG.marketContractId || policy.version !== 1
+        || policy.max_source_bytes !== '5000000000' || policy.job_ttl_ms !== '86400000'
+        || policy.signed_quote_required !== true || !Array.isArray(entries) || entries.length !== expected.length
+        || entries.some((entry, index) => entry?.profile_id !== PROFILE_ID || entry?.profile_config_sha256 !== expected[index].hash)) {
+        throw new Error('deployment_binding_mismatch');
+    }
+    return expected[0].hash;
 }

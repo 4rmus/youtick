@@ -39,7 +39,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
     const entitlementQuery = useQuery({
         queryKey: ['livepeerEntitlement', accountId, jobId],
         queryFn: () => hasLivepeerEntitlement(accountId!, jobId),
-        enabled: Boolean(accountId && publicationQuery.data),
+        enabled: Boolean(accountId && jobId),
         staleTime: 15_000,
     });
     const paymentPurpose = React.useMemo(() => ({

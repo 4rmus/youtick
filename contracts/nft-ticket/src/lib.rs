@@ -37,6 +37,14 @@ const PUBLIC_TESTNET_BETA_TOTAL_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const PUBLIC_TESTNET_BETA_JOB_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
 const PUBLIC_TESTNET_BETA_START_RUNWAY_BYTES: u128 = 100_000;
 const PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES: u128 = 25_000;
+const PUBLIC_UPLOAD_POLICY_KEY: &[u8] = b"youtick:market:public-upload-policy:v1";
+const PUBLIC_UPLOAD_CREATOR_PREFIX: &[u8] = b"youtick:market:public-upload-creator:v1:";
+const PUBLIC_UPLOAD_MAX_SOURCE_BYTES: u128 = 5_000_000_000;
+const LEGACY_UPLOAD_PROFILE_HASH: &str =
+    "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77";
+
+const PUBLIC_UPLOAD_PROFILE_HASH: &str =
+    "28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2";
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -203,6 +211,33 @@ pub struct PublicTestnetBetaJob {
     pub deadline_at_ms: U64,
 }
 
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicUploadProfile {
+    pub profile_id: String,
+    pub profile_config_sha256: String,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicUploadPolicy {
+    pub version: u32,
+    pub environment: String,
+    pub network: String,
+    pub market_contract_id: AccountId,
+    pub max_source_bytes: U128,
+    pub job_ttl_ms: U64,
+    pub signed_quote_required: bool,
+    pub profiles: Vec<PublicUploadProfile>,
+}
+
+#[near(serializers = [borsh])]
+struct PublicUploadCreator {
+    day: u64,
+    count: u32,
+    latest_job_id: String,
+}
+
 #[near(serializers = [json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarketInitConfig {
@@ -352,6 +387,41 @@ pub struct Contract {
 #[near]
 impl Contract {
     #[init]
+    pub fn new_public_testnet(config: MarketInitConfig) -> Self {
+        let mut contract = Self::new(config);
+        require!(
+            contract.network_id() == "testnet",
+            "Public upload is testnet only"
+        );
+        require!(
+            contract.public_testnet_beta_state().is_none(),
+            "Public beta state exists"
+        );
+        write_raw(
+            PUBLIC_UPLOAD_POLICY_KEY,
+            &PublicUploadPolicy {
+                version: 1,
+                environment: "public-testnet".to_string(),
+                network: "testnet".to_string(),
+                market_contract_id: env::current_account_id(),
+                max_source_bytes: U128(PUBLIC_UPLOAD_MAX_SOURCE_BYTES),
+                job_ttl_ms: U64(PUBLIC_TESTNET_BETA_JOB_TTL_MS),
+                signed_quote_required: true,
+                profiles: [PUBLIC_UPLOAD_PROFILE_HASH, LEGACY_UPLOAD_PROFILE_HASH]
+                    .iter()
+                    .map(|hash| PublicUploadProfile {
+                        profile_id: PROFILE.to_string(),
+                        profile_config_sha256: hash.to_string(),
+                    })
+                    .collect(),
+            },
+        );
+        env::storage_write(NEW_PURCHASES_PAUSED_KEY, &[1]);
+        contract.bridge_frozen = true;
+        contract
+    }
+
+    #[init]
     pub fn new(config: MarketInitConfig) -> Self {
         let MarketInitConfig {
             platform_account_id,
@@ -473,6 +543,10 @@ impl Contract {
     pub fn start_public_testnet_beta(&mut self) -> PublicTestnetBetaState {
         self.assert_admin();
         require!(
+            self.get_public_upload_policy().is_none(),
+            "Public upload cannot start a legacy beta"
+        );
+        require!(
             self.network_id() == "testnet",
             "Public beta is testnet only"
         );
@@ -591,6 +665,10 @@ impl Contract {
 
     pub fn create_paid_job(&mut self, request: PaidJobRequest) -> MediaJob {
         require!(
+            self.get_public_upload_policy().is_none(),
+            "Public upload requires a sponsored quote"
+        );
+        require!(
             self.public_testnet_beta_state().is_none(),
             "Public beta requires a sponsored upload quote"
         );
@@ -646,6 +724,10 @@ impl Contract {
         quote: CreatorFeeQuote,
         quote_signature: Base64VecU8,
     ) -> PromiseOrValue<MediaJob> {
+        require!(
+            self.get_public_upload_policy().is_none(),
+            "Public upload requires sponsored USDC"
+        );
         require!(
             self.public_testnet_beta_state().is_none(),
             "Native NEAR upload is disabled for public beta"
@@ -717,6 +799,17 @@ impl Contract {
             "Published media jobs cannot replace upload keys"
         );
         assert_upload_key(&new_public_key, expires_at_ms.0);
+        if self.get_public_upload_policy().is_some() {
+            let deadline = self.require_public_upload_job(&job);
+            require!(
+                env::block_timestamp_ms() < deadline,
+                "Public upload deadline expired"
+            );
+            require!(
+                expires_at_ms.0 <= deadline,
+                "Upload key exceeds public upload deadline"
+            );
+        }
         if let Some(marker) = self.public_testnet_beta_job(&job_id) {
             require!(
                 expires_at_ms.0 <= marker.deadline_at_ms.0,
@@ -778,6 +871,10 @@ impl Contract {
         profile_id: String,
         profile_config_sha256: String,
     ) -> MediaJob {
+        require!(
+            self.get_public_upload_policy().is_none(),
+            "Public upload jobs cannot restart"
+        );
         let mut job = self.media_jobs.get(&job_id).expect("Media job not found");
         require!(
             self.public_testnet_beta_job(&job_id).is_none(),
@@ -853,6 +950,13 @@ impl Contract {
             return existing;
         }
 
+        if self.get_public_upload_policy().is_some() {
+            let deadline = self.require_public_upload_job(&job);
+            require!(
+                env::block_timestamp_ms() < deadline,
+                "Public upload deadline expired"
+            );
+        }
         if self.public_testnet_beta_state().is_some() {
             require!(
                 self.active_public_testnet_beta().is_some(),
@@ -1109,7 +1213,8 @@ impl Contract {
             if public_beta.is_some() && self.active_public_testnet_beta().is_none() {
                 return PromiseOrValue::Value(amount);
             }
-            if public_beta.is_some() && quote.is_none() {
+            let public_upload = self.get_public_upload_policy().is_some();
+            if (public_beta.is_some() || public_upload) && quote.is_none() {
                 return PromiseOrValue::Value(amount);
             }
             let (expected_fee, quote_hash) = quote.as_ref().map_or((expected_fee, None), |quote| {
@@ -1136,6 +1241,9 @@ impl Contract {
             if self.new_purchases_paused() {
                 return PromiseOrValue::Value(amount);
             }
+            if public_upload {
+                self.admit_public_upload(&request);
+            }
             if public_beta.is_some() {
                 self.admit_public_testnet_beta_job(
                     &request,
@@ -1149,7 +1257,7 @@ impl Contract {
                 .platform_balance
                 .checked_add(amount.0)
                 .expect("Platform balance overflow");
-            if public_beta.is_some() {
+            if public_beta.is_some() || public_upload {
                 self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
             }
             return PromiseOrValue::Value(U128(0));
@@ -1487,6 +1595,10 @@ impl Contract {
         self.public_testnet_beta_state()
     }
 
+    pub fn get_public_upload_policy(&self) -> Option<PublicUploadPolicy> {
+        read_raw(PUBLIC_UPLOAD_POLICY_KEY)
+    }
+
     pub fn get_public_testnet_beta_job(&self, job_id: String) -> Option<PublicTestnetBetaJob> {
         read_raw(&public_testnet_beta_job_key(&job_id))
     }
@@ -1517,6 +1629,70 @@ impl Contract {
 impl Contract {
     fn public_testnet_beta_state(&self) -> Option<PublicTestnetBetaState> {
         read_raw(PUBLIC_TESTNET_BETA_STATE_KEY)
+    }
+
+    fn require_public_upload_job(&self, job: &MediaJob) -> u64 {
+        require!(
+            job.generation == 1 && job.fee_asset == FeeAsset::Usdc && job.fee_quote_hash.is_some(),
+            "Invalid public upload job"
+        );
+        require!(
+            job.expected_source_bytes.0 <= PUBLIC_UPLOAD_MAX_SOURCE_BYTES
+                && job.profile_id == PROFILE
+                && [PUBLIC_UPLOAD_PROFILE_HASH, LEGACY_UPLOAD_PROFILE_HASH]
+                    .contains(&job.profile_config_sha256.as_str()),
+            "Public upload policy mismatch"
+        );
+        job.created_at_ms
+            .checked_add(PUBLIC_TESTNET_BETA_JOB_TTL_MS)
+            .expect("Public upload deadline overflow")
+    }
+
+    fn admit_public_upload(&self, request: &PaidJobRequest) {
+        require!(
+            request.expected_source_bytes.0 <= PUBLIC_UPLOAD_MAX_SOURCE_BYTES
+                && request.profile_id == PROFILE
+                && self.get_public_upload_policy().is_some_and(|policy| policy
+                    .profiles
+                    .first()
+                    .is_some_and(
+                        |profile| profile.profile_config_sha256 == request.profile_config_sha256
+                    )),
+            "Public upload policy mismatch"
+        );
+        let now = env::block_timestamp_ms();
+        let deadline = now
+            .checked_add(PUBLIC_TESTNET_BETA_JOB_TTL_MS)
+            .expect("Public upload deadline overflow");
+        require!(
+            request.upload_key_expires_at_ms.0 <= deadline,
+            "Upload key exceeds public upload deadline"
+        );
+        let day = now / (24 * 60 * 60 * 1_000);
+        let key = [PUBLIC_UPLOAD_CREATOR_PREFIX, request.creator_id.as_bytes()].concat();
+        let previous: Option<PublicUploadCreator> = read_raw(&key);
+        let mut count = 0;
+        if let Some(previous) = previous {
+            if let Some(job) = self.media_jobs.get(&previous.latest_job_id) {
+                require!(
+                    job.status == MediaJobStatus::Published
+                        || now >= self.require_public_upload_job(&job),
+                    "Creator already has an active public upload"
+                );
+            }
+            if previous.day == day {
+                count = previous.count;
+            }
+        }
+        require!(count < 2, "Public upload daily limit reached");
+        write_raw(
+            &key,
+            &PublicUploadCreator {
+                day,
+                count: count + 1,
+                latest_job_id: request.job_id.clone(),
+            },
+        );
     }
 
     fn active_public_testnet_beta(&self) -> Option<PublicTestnetBetaState> {
@@ -2393,6 +2569,104 @@ mod tests {
         ));
         testing_env!(exact.build());
         assert_eq!(contract.start_public_testnet_beta().total_job_count, 0);
+    }
+
+    #[test]
+    fn public_upload_keeps_creator_limits_without_the_beta_campaign_limit() {
+        let mut contract = contract();
+        assert!(contract.get_public_upload_policy().is_none());
+        write_raw(
+            PUBLIC_UPLOAD_POLICY_KEY,
+            &PublicUploadPolicy {
+                version: 1,
+                environment: "public-testnet".to_string(),
+                network: "testnet".to_string(),
+                market_contract_id: account("market.testnet"),
+                max_source_bytes: U128(PUBLIC_UPLOAD_MAX_SOURCE_BYTES),
+                job_ttl_ms: U64(PUBLIC_TESTNET_BETA_JOB_TTL_MS),
+                signed_quote_required: true,
+                profiles: [PUBLIC_UPLOAD_PROFILE_HASH, LEGACY_UPLOAD_PROFILE_HASH]
+                    .iter()
+                    .map(|hash| PublicUploadProfile {
+                        profile_id: PROFILE.to_string(),
+                        profile_config_sha256: hash.to_string(),
+                    })
+                    .collect(),
+            },
+        );
+        testing_env!(context(TESTNET_USDC).build());
+        let mut first = public_beta_request(0, "creator.testnet", PUBLIC_UPLOAD_MAX_SOURCE_BYTES);
+        first.profile_config_sha256 = PUBLIC_UPLOAD_PROFILE_HASH.to_string();
+        let mut oversized = first.clone();
+        oversized.expected_source_bytes = U128(PUBLIC_UPLOAD_MAX_SOURCE_BYTES + 1);
+        assert!(std::panic::catch_unwind(|| contract.admit_public_upload(&oversized)).is_err());
+        let mut wrong_profile = first.clone();
+        wrong_profile.profile_config_sha256 = "a".repeat(64);
+        assert!(std::panic::catch_unwind(|| contract.admit_public_upload(&wrong_profile)).is_err());
+        contract.admit_public_upload(&first);
+        let mut job = contract.create_usdc_paid_job(first.clone(), 1_600_000, Some("a".repeat(64)));
+        let mut legacy_job = job.clone();
+        legacy_job.profile_config_sha256 = LEGACY_UPLOAD_PROFILE_HASH.to_string();
+        assert_eq!(
+            contract.require_public_upload_job(&legacy_job),
+            contract.require_public_upload_job(&job)
+        );
+        let mut legacy_request = first.clone();
+        legacy_request.profile_config_sha256 = LEGACY_UPLOAD_PROFILE_HASH.to_string();
+        assert!(
+            std::panic::catch_unwind(|| contract.admit_public_upload(&legacy_request)).is_err()
+        );
+        let mut second = first.clone();
+        second.job_id = "public-second".to_string();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || contract.admit_public_upload(&second)
+        ))
+        .is_err());
+        job.status = MediaJobStatus::Published;
+        contract.media_jobs.insert(&job.job_id, &job);
+        contract.admit_public_upload(&second);
+        let mut job =
+            contract.create_usdc_paid_job(second.clone(), 1_600_000, Some("b".repeat(64)));
+        job.status = MediaJobStatus::Published;
+        contract.media_jobs.insert(&job.job_id, &job);
+        second.job_id = "public-third".to_string();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || contract.admit_public_upload(&second)
+        ))
+        .is_err());
+        for index in 1..12 {
+            let mut request = public_beta_request(index, &format!("creator-{index}.testnet"), 1);
+            request.profile_config_sha256 = PUBLIC_UPLOAD_PROFILE_HASH.to_string();
+            contract.admit_public_upload(&request);
+            contract.create_usdc_paid_job(request, 600_000, Some("a".repeat(64)));
+        }
+        let now = 1_785_589_300_000 + 15 * 86_400_000;
+        let mut later = context(TESTNET_USDC);
+        later.block_timestamp(now * 1_000_000);
+        testing_env!(later.build());
+        second.upload_key_expires_at_ms = U64(now + 86_400_000);
+        contract.admit_public_upload(&second);
+        assert!(contract.public_testnet_beta_state().is_none());
+    }
+
+    #[test]
+    fn public_upload_initializer_rejects_mainnet() {
+        let legacy = contract();
+        let config = MarketInitConfig {
+            platform_account_id: legacy.platform_account_id,
+            bridge_account_id: legacy.active_bridge_account_id,
+            takedown_authority_id: legacy.takedown_authority_id,
+            admin_account_id: legacy.admin_account_id,
+            guardian_account_id: legacy.guardian_account_id,
+            quote_public_key: Base64VecU8(legacy.quote_public_key),
+            quote_key_version: legacy.quote_key_version,
+            near_operational_reserve: U128(legacy.near_operational_reserve),
+        };
+        let mut mainnet = context("market.near");
+        mainnet.current_account_id(account("market.near"));
+        testing_env!(mainnet.build());
+        assert!(std::panic::catch_unwind(|| Contract::new_public_testnet(config)).is_err());
+        assert!(!env::storage_has_key(PUBLIC_UPLOAD_POLICY_KEY));
     }
 
     #[test]

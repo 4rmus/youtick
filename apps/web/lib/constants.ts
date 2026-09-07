@@ -30,12 +30,15 @@ export const NEAR_CONFIG = {
 } as const;
 
 const enableDerivedReadModel = process.env.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL === 'true';
+const publicTestnetVideoV1 = process.env.NEXT_PUBLIC_VIDEO_ENVIRONMENT === 'public-testnet';
+if (publicTestnetVideoV1 && NEAR_NETWORK !== 'testnet') throw new Error('public_testnet_network_mismatch');
 const enablePaidMediaLivepeerV1 = process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 === 'true';
 const enablePlaybackAuthorizerV2 = process.env.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2 === 'true';
 const enableSponsoredLivepeerUploads =
     process.env.NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS === 'true';
 
 export const FEATURE_FLAGS = {
+    publicTestnetVideoV1,
     enablePaidMediaLivepeerV1,
     enablePlaybackAuthorizerV2,
     enablePlaybackShadowV2: process.env.NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2 === 'true',
@@ -43,6 +46,7 @@ export const FEATURE_FLAGS = {
         process.env.NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE === 'true',
     enableSponsoredLivepeerUploads,
     publicTestnetBeta: NEAR_NETWORK === 'testnet'
+        && !publicTestnetVideoV1
         && enablePaidMediaLivepeerV1
         && enablePlaybackAuthorizerV2
         && enableSponsoredLivepeerUploads,
@@ -50,7 +54,7 @@ export const FEATURE_FLAGS = {
 } as const;
 
 export const MEDIA_UPLOAD_POLICY = {
-    paidSourceMaxBytes: 20_000_000_000,
+    paidSourceMaxBytes: publicTestnetVideoV1 ? 5_000_000_000 : 20_000_000_000,
     livepeerTusChunkBytes: 32 * 1024 * 1024,
 } as const;
 

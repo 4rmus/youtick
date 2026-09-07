@@ -4,6 +4,7 @@ import { APP_CONFIG, FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/cons
 import { base64Encode } from '@/lib/crypto/codec';
 import { canonicalDeviceCertificate, ensureDeviceSession } from '@/lib/device-session';
 import type { WalletInstance } from '@/lib/types';
+import { measureVideoOperation } from '@/lib/video-measurements';
 
 const PLAYBACK_ROUTE = '/v1/playback-tokens';
 const PLAYBACK_V2_ROUTE = '/v2/playback-tokens';
@@ -35,6 +36,7 @@ type LivepeerPlaybackSessionCallbacks = {
     onAccess: (access: LivepeerPlaybackAccess) => void;
     onError?: (error: Error) => void;
     renewGrant?: () => Promise<void>;
+    signal?: AbortSignal;
 };
 
 export async function requestLivepeerPlaybackToken(
@@ -43,6 +45,7 @@ export async function requestLivepeerPlaybackToken(
     wallet?: Pick<WalletInstance, 'signMessage'>,
 ): Promise<LivepeerPlaybackToken> {
     requireFeature();
+    signal?.throwIfAborted();
     if (FEATURE_FLAGS.enablePlaybackAuthorizerV2) {
         return requestStatelessPlaybackToken(input, signal, wallet);
     }
@@ -93,6 +96,7 @@ export async function requestLivepeerPlaybackToken(
             // Shadow evidence must never change the legacy playback result.
         }
     }
+    signal?.throwIfAborted();
     const response = await fetch(bridgeRoute(), {
         method: 'POST',
         headers: {
@@ -109,7 +113,7 @@ export async function requestLivepeerPlaybackToken(
     });
     const value = await readJson(response);
     if (!response.ok) {
-        throw new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`);
+        throw Object.assign(new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`), { status: response.status });
     }
     return parsePlaybackToken(value, input.playbackId, 'youtick.livepeer-playback-token.v1');
 }
@@ -121,6 +125,7 @@ async function requestStatelessPlaybackToken(
 ): Promise<LivepeerPlaybackToken> {
     if (!wallet) throw new Error('livepeer_device_wallet_missing');
     const payload = await createStatelessPlaybackRequest(input, wallet);
+    signal?.throwIfAborted();
     const response = await fetch(bridgeRoute(PLAYBACK_V2_ROUTE), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -130,7 +135,7 @@ async function requestStatelessPlaybackToken(
     });
     const value = await readJson(response);
     if (!response.ok) {
-        throw new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`);
+        throw Object.assign(new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`), { status: response.status });
     }
     return parsePlaybackToken(value, input.playbackId, 'youtick.livepeer-playback-token.v2');
 }
@@ -184,33 +189,88 @@ export async function startLivepeerPlaybackSession(
     wallet?: Pick<WalletInstance, 'signMessage'>,
 ): Promise<{ destroy: () => void }> {
     const controller = new AbortController();
-    if (!FEATURE_FLAGS.enablePlaybackAuthorizerV2) await waitForPlayGrantVisibility(input);
-    let access = await requestPlaybackTokenWithRetry(input, controller.signal, wallet);
+    const signal = callbacks.signal ? AbortSignal.any([controller.signal, callbacks.signal]) : controller.signal;
+    let stopped = false;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    callbacks.onAccess(toPlaybackAccess(access));
-
+    let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+    const destroy = () => {
+        if (stopped) return;
+        stopped = true;
+        controller.abort();
+        if (refreshTimer) clearTimeout(refreshTimer);
+        if (expiryTimer) clearTimeout(expiryTimer);
+        signal.removeEventListener('abort', destroy);
+    };
+    signal.addEventListener('abort', destroy, { once: true });
+    const fail = (error: Error) => {
+        if (stopped) return;
+        destroy();
+        callbacks.onError?.(error);
+    };
+    let access: LivepeerPlaybackToken;
+    try {
+        access = await measureVideoOperation('playback_token_initial', async () => {
+            signal.throwIfAborted();
+            if (!FEATURE_FLAGS.enablePlaybackAuthorizerV2) await waitForPlayGrantVisibility(input);
+            return requestPlaybackTokenWithRetry(input, signal, wallet);
+        });
+        signal.throwIfAborted();
+    } catch (error) {
+        destroy();
+        throw error;
+    }
+    const publishAccess = () => {
+        if (expiryTimer) clearTimeout(expiryTimer);
+        expiryTimer = setTimeout(() => fail(new Error('livepeer_playback_token_expired')),
+            Math.max(0, Number(access.expires_at_ms) - Date.now()));
+        callbacks.onAccess(toPlaybackAccess(access));
+    };
+    let failures = 0;
+    const refresh = async () => {
+        if (stopped) return;
+        if (Date.now() >= Number(access.expires_at_ms)) return fail(new Error('livepeer_playback_token_expired'));
+        try {
+            const renewed = await measureVideoOperation('playback_token_renewal', () => (
+                refreshPlaybackAccess(input, signal, callbacks.renewGrant, wallet)
+            ));
+            if (stopped) return;
+            if (Date.now() >= Number(access.expires_at_ms)) return fail(new Error('livepeer_playback_token_expired'));
+            access = renewed;
+            failures = 0;
+            publishAccess();
+            scheduleRefresh();
+        } catch (error) {
+            if (stopped) return;
+            const remaining = Number(access.expires_at_ms) - Date.now();
+            if (remaining <= 0 || !transientPlaybackError(error)) {
+                fail(error instanceof Error ? error : new Error('livepeer_playback_failed'));
+                return;
+            }
+            const retryMs = [1000, 2000, 4000][Math.min(failures++, 2)];
+            // Keep the current player/token until its independent expiry timer fires.
+            if (retryMs < remaining) refreshTimer = setTimeout(() => { void refresh(); }, retryMs);
+        }
+    };
     const scheduleRefresh = () => {
         const delay = Math.max(1_000, Number(access.expires_at_ms) - Date.now() - TOKEN_REFRESH_SKEW_MS);
-        refreshTimer = setTimeout(async () => {
-            try {
-                access = await refreshPlaybackAccess(input, controller.signal, callbacks.renewGrant, wallet);
-                if (controller.signal.aborted) return;
-                callbacks.onAccess(toPlaybackAccess(access));
-                scheduleRefresh();
-            } catch (error) {
-                if (controller.signal.aborted) return;
-                callbacks.onError?.(error instanceof Error ? error : new Error('livepeer_playback_failed'));
-            }
-        }, delay);
+        refreshTimer = setTimeout(refresh, delay);
     };
-    scheduleRefresh();
+    try {
+        publishAccess();
+        scheduleRefresh();
+    } catch (error) {
+        destroy();
+        throw error;
+    }
+    return { destroy };
+}
 
-    return {
-        destroy: () => {
-            controller.abort();
-            if (refreshTimer) clearTimeout(refreshTimer);
-        },
-    };
+function transientPlaybackError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    if (['control_plane_disabled', 'playback_denied', 'livepeer_playback_token_expired'].includes(error.message)) return false;
+    const status = (error as Error & { status?: number }).status;
+    if (status !== undefined) return status === 429 || (status >= 500 && status <= 599);
+    return error instanceof TypeError || ['provider_unavailable', 'playback_authorization_unavailable'].includes(error.message);
 }
 
 export function createLivepeerHlsConfig(readToken: () => string | null) {

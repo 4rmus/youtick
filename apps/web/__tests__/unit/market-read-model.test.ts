@@ -31,7 +31,7 @@ describe('derived Market read client', () => {
         expect(page.nextCursor).toBe('next_cursor');
         expect(fetchMock).toHaveBeenCalledWith(
             'https://read.test/v1/publications?limit=24',
-            { headers: { Accept: 'application/json' } },
+            { headers: { Accept: 'application/json' }, signal: expect.any(AbortSignal) },
         );
     });
 
