@@ -24,6 +24,48 @@ const PAYMENT_ASSET_IDS = new Set([
   "nep141:usdt.tether-token.near",
 ]);
 
+export const PUBLIC_TESTNET_TARGET = Object.freeze({
+  web: Object.freeze({ worker: "youtick-web-public-testnet", domain: "public-testnet.youtick.net" }),
+  bridge: Object.freeze({ worker: "youtick-livepeer-bridge-public-testnet", domain: "bridge-public-testnet.youtick.net" }),
+});
+export const PUBLIC_TESTNET_READ_MODEL = Object.freeze({
+  worker: "youtick-market-read-model-public-testnet", domain: "read-public-testnet.youtick.net",
+});
+
+// One packet drives metadata, deployment and smoke; closed remains the default.
+export function publicTestnetFlags(mode = "closed") {
+  if (!["closed", "acceptance", "drain"].includes(mode)) fail("public_testnet_mode_invalid");
+  const running = mode !== "closed";
+  const accepting = mode === "acceptance";
+  return {
+    NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: String(running),
+    NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2: String(running),
+    NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS: String(accepting),
+    NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: String(running),
+    LIVEPEER_BRIDGE_ENABLED: String(running),
+    LIVEPEER_NEW_UPLOADS_ENABLED: String(accepting),
+    LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: String(running),
+    LIVEPEER_PLAYBACK_V2_ENABLED: String(running),
+    LIVEPEER_PROVIDER_MUTATIONS_ENABLED: String(running),
+    LIVEPEER_OPERATOR_MUTATIONS_ENABLED: String(running),
+    LIVEPEER_WEBHOOK_QUEUE_ENABLED: String(running),
+    LIVEPEER_SPONSORED_UPLOADS_ENABLED: String(accepting),
+    LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: String(accepting),
+  };
+}
+
+export function publicTestnetMode(config) {
+  for (const mode of ["closed", "acceptance", "drain"]) {
+    if (Object.entries(publicTestnetFlags(mode)).every(([key, value]) => (config.web[key] ?? config.bridge[key]) === value)) return mode;
+  }
+  fail("public_testnet_flags_incoherent");
+}
+
+export const PUBLIC_TESTNET_BRIDGE_KEYS = Object.freeze([
+  "VIDEO_ENVIRONMENT", "LIVEPEER_QUEUE_NAME", "LIVEPEER_DLQ_NAME",
+  "MARKET_READ_MODEL_DATABASE_NAME", "MARKET_READ_MODEL_DATABASE_ID", "READ_MODEL_START_BLOCK_HEIGHT",
+]);
+
 const TARGETS = Object.freeze({
   preview: Object.freeze({
     web: Object.freeze({ worker: "youtick-web-preview", domain: "preview.youtick.net" }),
@@ -134,6 +176,8 @@ const CHECKSUM_FILES = Object.freeze([
   RELEASE_FILES.webProduction,
 ]);
 
+const PUBLIC_CHECKSUM_FILES = Object.freeze(["bridge.tar.gz", "read-model.tar.gz", "manifest.json", "public-testnet-config.json", "web-public-testnet.tar.gz"]);
+
 function fail(message) {
   throw new Error(message);
 }
@@ -229,7 +273,7 @@ function normalizeOrigin(value, label) {
 }
 
 function envValue(environment, key) {
-  const name = `${environment.toUpperCase()}_${key}`;
+  const name = `${environment.toUpperCase().replaceAll("-", "_")}_${key}`;
   const value = process.env[name] ?? "";
   if (/\p{Cc}/u.test(value)) fail(`${name} must not contain control characters`);
   if (value !== value.trim()) fail(`${name} must not have leading or trailing whitespace`);
@@ -239,12 +283,13 @@ function envValue(environment, key) {
 }
 
 function buildConfig(environment) {
-  if (!Object.hasOwn(TARGETS, environment)) fail("--environment must be preview or production");
+  if (environment !== "public-testnet" && !Object.hasOwn(TARGETS, environment)) fail("--environment must be preview, production, or public-testnet");
 
   const web = Object.fromEntries(WEB_KEYS.map((key) => [key, envValue(environment, key)]));
   const bridge = Object.fromEntries(BRIDGE_KEYS.map((key) => [key, envValue(environment, key)]));
 
   for (const flag of FALSE_FLAGS) {
+    if (environment === "public-testnet" && flag === "LIVEPEER_WEBHOOK_QUEUE_ENABLED") continue;
     const value = web[flag] ?? bridge[flag];
     if (value !== "false") fail(`${environment.toUpperCase()}_${flag} must be exactly false`);
   }
@@ -362,11 +407,11 @@ function buildConfig(environment) {
       web.NEXT_PUBLIC_MARKET_READ_MODEL_URL,
       "NEXT_PUBLIC_MARKET_READ_MODEL_URL",
     );
-    if (web.NEXT_PUBLIC_MARKET_READ_MODEL_URL !== PREVIEW_READ_MODEL_ORIGIN) {
+    if (web.NEXT_PUBLIC_MARKET_READ_MODEL_URL !== (environment === "public-testnet" ? `https://${PUBLIC_TESTNET_READ_MODEL.domain}` : PREVIEW_READ_MODEL_ORIGIN)) {
       fail(`NEXT_PUBLIC_MARKET_READ_MODEL_URL must be exactly ${PREVIEW_READ_MODEL_ORIGIN}`);
     }
   }
-  if (combinedBeta && derivedReadModel !== "false") {
+  if (environment === "preview" && combinedBeta && derivedReadModel !== "false") {
     fail("PREVIEW public beta requires the canonical NEAR read path");
   }
   const paymentMode = web.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE;
@@ -408,8 +453,8 @@ function buildConfig(environment) {
     fail("NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO must be positive");
   }
 
-  const expectedWebOrigin = `https://${TARGETS[environment].web.domain}`;
-  const expectedBridgeOrigin = `https://${TARGETS[environment].bridge.domain}`;
+  const expectedWebOrigin = `https://${(environment === "public-testnet" ? PUBLIC_TESTNET_TARGET : TARGETS[environment]).web.domain}`;
+  const expectedBridgeOrigin = `https://${(environment === "public-testnet" ? PUBLIC_TESTNET_TARGET : TARGETS[environment]).bridge.domain}`;
   web.NEXT_PUBLIC_APP_URL = normalizeOrigin(web.NEXT_PUBLIC_APP_URL, "NEXT_PUBLIC_APP_URL");
   web.NEXT_PUBLIC_LIVEPEER_BRIDGE_URL = normalizeOrigin(
     web.NEXT_PUBLIC_LIVEPEER_BRIDGE_URL,
@@ -469,13 +514,64 @@ function buildConfig(environment) {
     fail("NEAR_SPONSOR_RELAYER_KEY_EPOCH must be a positive integer");
   }
 
-  return {
+  const config = {
     schemaVersion: 1,
     environment,
-    targets: TARGETS[environment],
+    targets: environment === "public-testnet" ? PUBLIC_TESTNET_TARGET : TARGETS[environment],
     web,
     bridge,
   };
+  if (environment === "public-testnet") {
+    web.NEXT_PUBLIC_VIDEO_ENVIRONMENT = environment;
+    bridge.VIDEO_ENVIRONMENT = environment;
+    for (const key of PUBLIC_TESTNET_BRIDGE_KEYS.filter((key) => key !== "VIDEO_ENVIRONMENT")) {
+      bridge[key] = envValue(environment, key);
+    }
+    validatePublicTestnetConfig(config);
+  }
+  return config;
+}
+
+export function validatePublicTestnetConfig(config) {
+  if (config.environment !== "public-testnet"
+      || JSON.stringify(config.targets) !== JSON.stringify(PUBLIC_TESTNET_TARGET)) fail("public_testnet_target_invalid");
+  const { web, bridge } = config;
+  if (web.NEXT_PUBLIC_VIDEO_ENVIRONMENT !== "public-testnet" || bridge.VIDEO_ENVIRONMENT !== "public-testnet"
+      || web.NEXT_PUBLIC_NEAR_NETWORK !== "testnet" || bridge.NEAR_NETWORK !== "testnet"
+      || web.NEXT_PUBLIC_MARKET_CONTRACT_ID !== bridge.MARKET_CONTRACT_ID
+      || web.NEXT_PUBLIC_ACCESS_CONTRACT_ID !== bridge.ACCESS_CONTRACT_ID) fail("public_testnet_identity_invalid");
+  if (!["", "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af"].includes(web.NEXT_PUBLIC_USDC_CONTRACT_ID)) fail("public_testnet_usdc_invalid");
+  const contracts = [bridge.MARKET_CONTRACT_ID, bridge.ACCESS_CONTRACT_ID];
+  if (new Set(contracts).size !== 2 || contracts.some((id) => !/^[a-z0-9][a-z0-9._-]*\.testnet$/.test(id)
+      || Object.values(PREVIEW_CONTRACT_IDS).includes(id))) fail("public_testnet_contracts_not_isolated");
+  if (web.NEXT_PUBLIC_APP_URL !== `https://${PUBLIC_TESTNET_TARGET.web.domain}`
+      || bridge.ALLOWED_ORIGINS !== web.NEXT_PUBLIC_APP_URL
+      || web.NEXT_PUBLIC_LIVEPEER_BRIDGE_URL !== `https://${PUBLIC_TESTNET_TARGET.bridge.domain}`
+      || bridge.LIVEPEER_JWT_ISSUER !== web.NEXT_PUBLIC_APP_URL) fail("public_testnet_origins_invalid");
+  const mode = publicTestnetMode(config);
+  const packet = publicTestnetFlags(mode);
+  for (const [key, value] of [...Object.entries(web), ...Object.entries(bridge)]) {
+    if ((key.startsWith("NEXT_PUBLIC_ENABLE_") || key.endsWith("_ENABLED")) && value !== (packet[key] ?? "false")) {
+      fail("public_testnet_initial_flags_not_closed");
+    }
+  }
+  if (mode !== "closed") {
+    if (web.NEXT_PUBLIC_MARKET_READ_MODEL_URL !== `https://${PUBLIC_TESTNET_READ_MODEL.domain}`) fail("public_testnet_read_model_origin_invalid");
+    if (!DECIMAL_RE.test(bridge.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS)
+        || !DECIMAL_RE.test(bridge.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS)
+        || BigInt(bridge.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS) > BigInt(bridge.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS)) fail("public_testnet_budget_invalid");
+  }
+  if (mode !== "closed" && (!/^[a-z0-9][a-z0-9._-]*\.testnet$/.test(bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID)
+      || [bridge.MARKET_CONTRACT_ID, bridge.ACCESS_CONTRACT_ID, bridge.NEAR_OPERATOR_ACCOUNT_ID].includes(bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID)
+      || !DECIMAL_RE.test(bridge.NEAR_SPONSOR_RELAYER_KEY_EPOCH))) fail("public_testnet_relayer_invalid");
+  if (web.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE !== "off" || bridge.MULTI_ASSET_PAYMENTS_MODE !== "off"
+      || bridge.LIVEPEER_OPERATOR_JOB_ID !== "" || bridge.LIVEPEER_CREATOR_ALLOWLIST !== "") fail("public_testnet_initial_policy_invalid");
+  if (bridge.LIVEPEER_QUEUE_NAME !== "youtick-livepeer-events-public-testnet"
+      || bridge.LIVEPEER_DLQ_NAME !== "youtick-livepeer-events-dlq-public-testnet"
+      || bridge.MARKET_READ_MODEL_DATABASE_NAME !== "youtick-market-read-model-public-testnet"
+      || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(bridge.MARKET_READ_MODEL_DATABASE_ID || "")
+      || bridge.MARKET_READ_MODEL_DATABASE_ID === "50b1e14f-2b06-444b-98cf-b828f11277ef"
+      || !DECIMAL_RE.test(bridge.READ_MODEL_START_BLOCK_HEIGHT || "")) fail("public_testnet_resources_not_isolated");
 }
 
 function validateConfig(config, environment) {
@@ -484,11 +580,11 @@ function validateConfig(config, environment) {
   assertKeys(config.targets, ["web", "bridge"], "config.targets");
   assertKeys(config.targets.web, ["worker", "domain"], "config.targets.web");
   assertKeys(config.targets.bridge, ["worker", "domain"], "config.targets.bridge");
-  if (JSON.stringify(config.targets) !== JSON.stringify(TARGETS[environment])) fail("config targets are not allowed");
-  assertKeys(config.web, WEB_KEYS, "config.web");
-  assertKeys(config.bridge, BRIDGE_KEYS, "config.bridge");
+  if (JSON.stringify(config.targets) !== JSON.stringify(environment === "public-testnet" ? PUBLIC_TESTNET_TARGET : TARGETS[environment])) fail("config targets are not allowed");
+  assertKeys(config.web, environment === "public-testnet" ? [...WEB_KEYS, "NEXT_PUBLIC_VIDEO_ENVIRONMENT"] : WEB_KEYS, "config.web");
+  assertKeys(config.bridge, environment === "public-testnet" ? [...BRIDGE_KEYS, ...PUBLIC_TESTNET_BRIDGE_KEYS] : BRIDGE_KEYS, "config.bridge");
 
-  const prefix = environment.toUpperCase();
+  const prefix = environment.toUpperCase().replaceAll("-", "_");
   const previous = {};
   for (const [key, value] of [...Object.entries(config.web), ...Object.entries(config.bridge)]) {
     const name = `${prefix}_${key}`;
@@ -547,16 +643,32 @@ async function readCanonicalConfig(path, environment) {
 }
 
 async function commandConfig(options) {
-  assertOnlyOptions(options, ["environment", "output"]);
+  assertOnlyOptions(options, ["environment", "output", "input", "mode"]);
   const environment = option(options, "environment");
   const output = resolve(option(options, "output"));
-  const config = buildConfig(environment);
+  let config;
+  if (options.input) {
+    if (environment !== "public-testnet") fail("input_config_public_only");
+    config = JSON.parse(await readFile(resolve(options.input), "utf8"));
+    validateConfig(config, environment);
+    if (publicTestnetMode(config) !== "closed") fail("public_testnet_base_config_not_closed");
+    const flags = publicTestnetFlags(options.mode ?? "closed");
+    for (const section of [config.web, config.bridge]) {
+      for (const key of Object.keys(section)) if (Object.hasOwn(flags, key)) section[key] = flags[key];
+    }
+    if ((options.mode ?? "closed") !== "closed") config.web.NEXT_PUBLIC_MARKET_READ_MODEL_URL = `https://${PUBLIC_TESTNET_READ_MODEL.domain}`;
+    validateConfig(config, environment);
+  } else {
+    if (options.mode) fail("mode_requires_public_input_config");
+    config = buildConfig(environment);
+  }
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, canonicalJson(config), { flag: "w" });
 }
 
 async function commandManifest(options) {
   const allowed = [
+    "environment",
     "sha",
     "run-id",
     "run-attempt",
@@ -569,6 +681,8 @@ async function commandManifest(options) {
     "preview-config",
     "production-config",
     "output-dir",
+    "web-public-testnet",
+    "public-testnet-config",
   ];
   assertOnlyOptions(options, allowed);
 
@@ -580,14 +694,18 @@ async function commandManifest(options) {
 
   const outputDir = resolve(option(options, "output-dir"));
   await mkdir(outputDir, { recursive: true });
+  const publicOnly = options.environment === "public-testnet";
+  if (options.environment && !publicOnly) fail("standalone_environment_invalid");
   const files = {
-    webPreview: directReleaseFile(option(options, "web-preview"), outputDir, RELEASE_FILES.webPreview, "web preview bundle"),
-    webProduction: directReleaseFile(
-      option(options, "web-production"),
-      outputDir,
-      RELEASE_FILES.webProduction,
-      "web production bundle",
-    ),
+    ...(!publicOnly ? {
+      webPreview: directReleaseFile(option(options, "web-preview"), outputDir, RELEASE_FILES.webPreview, "web preview bundle"),
+      webProduction: directReleaseFile(
+        option(options, "web-production"),
+        outputDir,
+        RELEASE_FILES.webProduction,
+        "web production bundle",
+      ),
+    } : {}),
     bridge: directReleaseFile(option(options, "bridge"), outputDir, RELEASE_FILES.bridge, "Bridge bundle"),
     readModel: directReleaseFile(
       option(options, "read-model"),
@@ -595,50 +713,71 @@ async function commandManifest(options) {
       RELEASE_FILES.readModel,
       "read model bundle",
     ),
-    previewConfig: directReleaseFile(
-      option(options, "preview-config"),
-      outputDir,
-      RELEASE_FILES.previewConfig,
-      "preview config",
-    ),
-    productionConfig: directReleaseFile(
-      option(options, "production-config"),
-      outputDir,
-      RELEASE_FILES.productionConfig,
-      "production config",
-    ),
+    ...(!publicOnly ? {
+      previewConfig: directReleaseFile(
+        option(options, "preview-config"),
+        outputDir,
+        RELEASE_FILES.previewConfig,
+        "preview config",
+      ),
+      productionConfig: directReleaseFile(
+        option(options, "production-config"),
+        outputDir,
+        RELEASE_FILES.productionConfig,
+        "production config",
+      ),
+    } : {}),
   };
 
-  await readCanonicalConfig(files.previewConfig, "preview");
-  await readCanonicalConfig(files.productionConfig, "production");
+  const includePublic = publicOnly || Boolean(options["public-testnet-config"] || options["web-public-testnet"]);
+  if (includePublic) {
+    files.publicTestnetConfig = directReleaseFile(option(options, "public-testnet-config"), outputDir, "public-testnet-config.json", "public testnet config");
+    files.webPublicTestnet = directReleaseFile(option(options, "web-public-testnet"), outputDir, "web-public-testnet.tar.gz", "public testnet web");
+    const isolated = await readCanonicalConfig(files.publicTestnetConfig, "public-testnet");
+    for (const [path, environment] of publicOnly ? [] : [[files.previewConfig, "preview"], [files.productionConfig, "production"]]) {
+      const previous = await readCanonicalConfig(path, environment);
+      if ([previous.bridge.MARKET_CONTRACT_ID, previous.bridge.ACCESS_CONTRACT_ID]
+        .some((id) => [isolated.bridge.MARKET_CONTRACT_ID, isolated.bridge.ACCESS_CONTRACT_ID].includes(id))) fail("public_testnet_contracts_not_isolated");
+    }
+  }
+  if (!publicOnly) {
+    await readCanonicalConfig(files.previewConfig, "preview");
+    await readCanonicalConfig(files.productionConfig, "production");
+  }
 
   const [webLock, bridgeLock, webPreview, webProduction, bridge, readModel, previewConfig, productionConfig] = await Promise.all([
     fileMetadata(resolve(option(options, "web-lock"))),
     fileMetadata(resolve(option(options, "bridge-lock"))),
-    fileMetadata(files.webPreview),
-    fileMetadata(files.webProduction),
+    publicOnly ? null : fileMetadata(files.webPreview),
+    publicOnly ? null : fileMetadata(files.webProduction),
     fileMetadata(files.bridge),
     fileMetadata(files.readModel),
-    fileMetadata(files.previewConfig),
-    fileMetadata(files.productionConfig),
+    publicOnly ? null : fileMetadata(files.previewConfig),
+    publicOnly ? null : fileMetadata(files.productionConfig),
   ]);
 
   const manifest = {
     schemaVersion: 1,
     sha,
     ci: { runId, runAttempt },
-    targets: TARGETS,
+    targets: publicOnly ? { "public-testnet": PUBLIC_TESTNET_TARGET } : includePublic ? { ...TARGETS, "public-testnet": PUBLIC_TESTNET_TARGET } : TARGETS,
     lockfiles: {
       web: { path: "apps/web/package-lock.json", ...webLock },
       bridge: { path: "workers/livepeer-bridge/package-lock.json", ...bridgeLock },
     },
     configs: {
-      preview: { path: RELEASE_FILES.previewConfig, ...previewConfig },
-      production: { path: RELEASE_FILES.productionConfig, ...productionConfig },
+      ...(includePublic ? { "public-testnet": { path: "public-testnet-config.json", ...await fileMetadata(files.publicTestnetConfig) } } : {}),
+      ...(!publicOnly ? {
+        preview: { path: RELEASE_FILES.previewConfig, ...previewConfig },
+        production: { path: RELEASE_FILES.productionConfig, ...productionConfig },
+      } : {}),
     },
     bundles: {
-      webPreview: { path: RELEASE_FILES.webPreview, ...webPreview },
-      webProduction: { path: RELEASE_FILES.webProduction, ...webProduction },
+      ...(includePublic ? { webPublicTestnet: { path: "web-public-testnet.tar.gz", ...await fileMetadata(files.webPublicTestnet) } } : {}),
+      ...(!publicOnly ? {
+        webPreview: { path: RELEASE_FILES.webPreview, ...webPreview },
+        webProduction: { path: RELEASE_FILES.webProduction, ...webProduction },
+      } : {}),
       bridge: { path: RELEASE_FILES.bridge, ...bridge },
       readModel: { path: RELEASE_FILES.readModel, ...readModel },
     },
@@ -646,11 +785,12 @@ async function commandManifest(options) {
 
   const manifestPath = resolve(outputDir, "manifest.json");
   await writeFile(manifestPath, canonicalJson(manifest), { flag: "w" });
+  const checksumFiles = publicOnly ? PUBLIC_CHECKSUM_FILES : includePublic ? [...CHECKSUM_FILES, "public-testnet-config.json", "web-public-testnet.tar.gz"] : CHECKSUM_FILES;
   const checksumPaths = Object.fromEntries(
-    CHECKSUM_FILES.map((name) => [name, resolve(outputDir, name)]),
+    checksumFiles.map((name) => [name, resolve(outputDir, name)]),
   );
   const checksums = await Promise.all(
-    CHECKSUM_FILES.map(async (name) => `${(await fileMetadata(checksumPaths[name])).sha256}  ${name}`),
+    checksumFiles.map(async (name) => `${(await fileMetadata(checksumPaths[name])).sha256}  ${name}`),
   );
   await writeFile(resolve(outputDir, "SHA256SUMS"), `${checksums.join("\n")}\n`, { flag: "w" });
 }
@@ -671,10 +811,13 @@ async function readChecksums(path) {
     if (entries.has(match[2])) fail("SHA256SUMS contains a duplicate path");
     entries.set(match[2], match[1]);
   }
-  if (entries.size !== CHECKSUM_FILES.length || CHECKSUM_FILES.some((name) => !entries.has(name))) {
+  const files = entries.size === PUBLIC_CHECKSUM_FILES.length && entries.has("public-testnet-config.json")
+    ? PUBLIC_CHECKSUM_FILES : entries.has("public-testnet-config.json") || entries.has("web-public-testnet.tar.gz")
+    ? [...CHECKSUM_FILES, "public-testnet-config.json", "web-public-testnet.tar.gz"] : CHECKSUM_FILES;
+  if (entries.size !== files.length || files.some((name) => !entries.has(name))) {
     fail("SHA256SUMS does not contain the exact release file set");
   }
-  const canonical = `${CHECKSUM_FILES.map((name) => `${entries.get(name)}  ${name}`).join("\n")}\n`;
+  const canonical = `${files.map((name) => `${entries.get(name)}  ${name}`).join("\n")}\n`;
   if (text !== canonical) fail("SHA256SUMS is not canonical");
   return entries;
 }
@@ -693,7 +836,7 @@ async function commandVerify(options) {
   );
   await regularFile(checksumPath, "SHA256SUMS");
   const checksums = await readChecksums(checksumPath);
-  for (const name of CHECKSUM_FILES) {
+  for (const name of checksums.keys()) {
     const path = directReleaseFile(resolve(artifactDir, name), artifactDir, name, name);
     const actual = await fileMetadata(path);
     if (actual.sha256 !== checksums.get(name)) fail(`${name} checksum mismatch`);
@@ -711,38 +854,62 @@ async function commandVerify(options) {
   if (manifest.schemaVersion !== 1 || manifest.sha !== expectedSha) fail("manifest SHA does not match the requested SHA");
   assertKeys(manifest.ci, ["runId", "runAttempt"], "manifest.ci");
   if (!DECIMAL_RE.test(manifest.ci.runId) || !DECIMAL_RE.test(manifest.ci.runAttempt)) fail("manifest CI identity is invalid");
-  if (JSON.stringify(manifest.targets) !== JSON.stringify(TARGETS)) fail("manifest targets are not allowed");
+  const includePublic = checksums.has("public-testnet-config.json");
+  const publicOnly = includePublic && checksums.size === PUBLIC_CHECKSUM_FILES.length;
+  const targets = publicOnly ? { "public-testnet": PUBLIC_TESTNET_TARGET } : includePublic ? { ...TARGETS, "public-testnet": PUBLIC_TESTNET_TARGET } : TARGETS;
+  if (JSON.stringify(manifest.targets) !== JSON.stringify(targets)) fail("manifest targets are not allowed");
 
   assertKeys(manifest.lockfiles, ["web", "bridge"], "manifest.lockfiles");
-  assertKeys(manifest.configs, ["preview", "production"], "manifest.configs");
-  assertKeys(manifest.bundles, ["webPreview", "webProduction", "bridge", "readModel"], "manifest.bundles");
+  assertKeys(manifest.configs, [...(publicOnly ? [] : ["preview", "production"]), ...(includePublic ? ["public-testnet"] : [])], "manifest.configs");
+  assertKeys(manifest.bundles, [...(publicOnly ? [] : ["webPreview", "webProduction"]), "bridge", "readModel", ...(includePublic ? ["webPublicTestnet"] : [])], "manifest.bundles");
   validateFileRecord(manifest.lockfiles.web, "apps/web/package-lock.json", "manifest.lockfiles.web");
   validateFileRecord(
     manifest.lockfiles.bridge,
     "workers/livepeer-bridge/package-lock.json",
     "manifest.lockfiles.bridge",
   );
-  validateFileRecord(manifest.configs.preview, RELEASE_FILES.previewConfig, "manifest.configs.preview");
-  validateFileRecord(manifest.configs.production, RELEASE_FILES.productionConfig, "manifest.configs.production");
-  validateFileRecord(manifest.bundles.webPreview, RELEASE_FILES.webPreview, "manifest.bundles.webPreview");
-  validateFileRecord(
-    manifest.bundles.webProduction,
-    RELEASE_FILES.webProduction,
-    "manifest.bundles.webProduction",
-  );
+  if (!publicOnly) {
+    validateFileRecord(manifest.configs.preview, RELEASE_FILES.previewConfig, "manifest.configs.preview");
+    validateFileRecord(manifest.configs.production, RELEASE_FILES.productionConfig, "manifest.configs.production");
+    validateFileRecord(manifest.bundles.webPreview, RELEASE_FILES.webPreview, "manifest.bundles.webPreview");
+    validateFileRecord(
+      manifest.bundles.webProduction,
+      RELEASE_FILES.webProduction,
+      "manifest.bundles.webProduction",
+    );
+  }
   validateFileRecord(manifest.bundles.bridge, RELEASE_FILES.bridge, "manifest.bundles.bridge");
   validateFileRecord(manifest.bundles.readModel, RELEASE_FILES.readModel, "manifest.bundles.readModel");
 
-  await readCanonicalConfig(resolve(artifactDir, RELEASE_FILES.previewConfig), "preview");
-  await readCanonicalConfig(resolve(artifactDir, RELEASE_FILES.productionConfig), "production");
+  if (!publicOnly) {
+    await readCanonicalConfig(resolve(artifactDir, RELEASE_FILES.previewConfig), "preview");
+    await readCanonicalConfig(resolve(artifactDir, RELEASE_FILES.productionConfig), "production");
+  }
+
+  if (includePublic) {
+    validateFileRecord(manifest.configs["public-testnet"], "public-testnet-config.json", "public testnet config");
+    validateFileRecord(manifest.bundles.webPublicTestnet, "web-public-testnet.tar.gz", "public testnet web");
+    const isolated = await readCanonicalConfig(resolve(artifactDir, "public-testnet-config.json"), "public-testnet");
+    for (const environment of publicOnly ? [] : ["preview", "production"]) {
+      const previous = await readCanonicalConfig(resolve(artifactDir, `${environment}-config.json`), environment);
+      if ([previous.bridge.MARKET_CONTRACT_ID, previous.bridge.ACCESS_CONTRACT_ID]
+        .some((id) => [isolated.bridge.MARKET_CONTRACT_ID, isolated.bridge.ACCESS_CONTRACT_ID].includes(id))) fail("public_testnet_contracts_not_isolated");
+    }
+  }
 
   const records = [
+    ...(includePublic ? [
+      [manifest.configs["public-testnet"], resolve(artifactDir, "public-testnet-config.json")],
+      [manifest.bundles.webPublicTestnet, resolve(artifactDir, "web-public-testnet.tar.gz")],
+    ] : []),
     [manifest.lockfiles.web, resolve(option(options, "web-lock"))],
     [manifest.lockfiles.bridge, resolve(option(options, "bridge-lock"))],
+    ...(!publicOnly ? [
     [manifest.configs.preview, resolve(artifactDir, RELEASE_FILES.previewConfig)],
     [manifest.configs.production, resolve(artifactDir, RELEASE_FILES.productionConfig)],
     [manifest.bundles.webPreview, resolve(artifactDir, RELEASE_FILES.webPreview)],
     [manifest.bundles.webProduction, resolve(artifactDir, RELEASE_FILES.webProduction)],
+    ] : []),
     [manifest.bundles.bridge, resolve(artifactDir, RELEASE_FILES.bridge)],
     [manifest.bundles.readModel, resolve(artifactDir, RELEASE_FILES.readModel)],
   ];
@@ -760,7 +927,7 @@ async function main() {
   else fail(`unknown command ${command}`);
 }
 
-main().catch((error) => {
+if (import.meta.main) main().catch((error) => {
   console.error(`release-metadata: ${error.message}`);
   process.exitCode = 1;
 });

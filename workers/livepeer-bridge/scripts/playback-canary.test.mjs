@@ -1195,12 +1195,14 @@ test('playback canary retries TUS visibility after a successful delete', async (
     assert.equal(calls.filter((call) => call.target === 'https://origin.livepeer.com/resource-123' && call.method === 'HEAD').length, 4);
 });
 
-test('playback canary keeps only compact Chrome and Edge evidence', async () => {
+for (const verifyAdaptive of [false, true]) test(`playback canary retains compact quality proof adaptive=${verifyAdaptive}`, async () => {
     const key = keys();
     const { fetchImpl } = providerFetch(key.publicKey);
     const receipt = await runPlaybackCanary({
         apiKey: 'test-api-key-123456',
         mutationsEnabled: true,
+        verifyAdaptive,
+        profileHash: verifyAdaptive ? '28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2' : undefined,
         privateKey: key.privateKey,
         publicKey: key.publicKey,
         fileBytes: new Uint8Array([1, 2, 3, 4]),
@@ -1210,6 +1212,7 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
         readyAttempts: 1,
         correlationId: 'test-correlation',
         browserProbe: async (input) => {
+            assert.equal(input.verifyAdaptive, verifyAdaptive);
             assert.equal(input.hlsUrl, 'https://playback.livepeer.studio/asset/hls/playback-123/index.m3u8');
             assert.equal(new URL(input.hlsUrl).search, '');
             assert.match(input.issueToken(), /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
@@ -1220,6 +1223,7 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
             return {
                 matrix_proven: true,
                 chrome: {
+                    ...(verifyAdaptive ? { adaptive_quality: 'PASS' } : {}),
                     initial_played: true,
                     refreshed_played: true,
                     initial_hls_header_requests: 1,
@@ -1238,6 +1242,7 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
                     ignored: 'not-in-receipt',
                 },
                 edge: {
+                    ...(verifyAdaptive ? { adaptive_quality: 'PASS' } : {}),
                     initial_played: true,
                     refreshed_played: true,
                     initial_hls_header_requests: 1,
@@ -1260,6 +1265,7 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
     assert.equal(receipt.browser_matrix_proven, true);
     assert.deepEqual(receipt.browser, {
         chrome: {
+                    ...(verifyAdaptive ? { adaptive_quality: 'PASS' } : {}),
             initial_played: true,
             refreshed_played: true,
             initial_hls_header_requests: 1,
@@ -1277,6 +1283,7 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
             persistent_storage_empty: true,
         },
         edge: {
+                    ...(verifyAdaptive ? { adaptive_quality: 'PASS' } : {}),
             initial_played: true,
             refreshed_played: true,
             initial_hls_header_requests: 1,
@@ -1294,4 +1301,10 @@ test('playback canary keeps only compact Chrome and Edge evidence', async () => 
             persistent_storage_empty: true,
         },
     });
+});
+
+
+test('adaptive canary fails before provider use when browser proof is absent', async () => {
+    await assert.rejects(() => runPlaybackCanary({ mutationsEnabled: true, verifyAdaptive: true,
+        fetchImpl: () => { throw new Error('provider_must_not_run'); } }), /playback_canary_adaptive_browser_required/);
 });

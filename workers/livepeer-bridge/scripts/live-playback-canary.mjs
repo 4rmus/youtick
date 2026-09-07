@@ -1,3 +1,4 @@
+import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json' with { type: 'json' };
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
@@ -105,6 +106,7 @@ async function runLivePlaybackCanary({
     mutationsEnabled,
     signingKeyMutationsEnabled,
     issuer = 'https://youtick.net',
+    verifyAdaptive = false,
     fileBytes,
     browserPort = 0,
     browserTimeoutMs,
@@ -114,6 +116,7 @@ async function runLivePlaybackCanary({
     browserPreflight = requireDesktopBrowserExecutables,
 }) {
     requireApiKey(apiKey);
+    if (typeof verifyAdaptive !== 'boolean') throw new Error('live_playback_canary_quality_invalid');
     if (!mutationsEnabled) throw new Error('playback_canary_mutations_disabled');
     if (!signingKeyMutationsEnabled) throw new Error('playback_canary_signing_key_mutations_disabled');
 
@@ -139,6 +142,8 @@ async function runLivePlaybackCanary({
         }
         if (!signingKey.valid) throw new Error('live_playback_canary_signing_key_response_invalid');
         receipt = await runPlayback({
+            verifyAdaptive,
+            profileHash: verifyAdaptive ? profiles.adaptive.hash : profiles.legacy.hash,
             apiKey,
             mutationsEnabled,
             privateKey: signingKey.privateKey,
@@ -148,6 +153,7 @@ async function runLivePlaybackCanary({
             fetchImpl,
             browserProbe: (input) => browserCanary({
                 ...input,
+                verifyAdaptive,
                 port: browserPort,
                 timeoutMs: browserTimeoutMs,
             }),
@@ -213,6 +219,7 @@ if (import.meta.main) {
             signingKeyMutationsEnabled: process.env.LIVEPEER_PLAYBACK_CANARY_SIGNING_KEY_MUTATIONS === 'true',
             issuer: process.env.LIVEPEER_PLAYBACK_CANARY_ISSUER || 'https://youtick.net',
             fileBytes,
+            verifyAdaptive: process.env.LIVEPEER_PLAYBACK_CANARY_ADAPTIVE === 'true',
             browserPort: Number(process.env.LIVEPEER_PLAYBACK_CANARY_PORT || 0),
             browserTimeoutMs: Number(process.env.LIVEPEER_PLAYBACK_CANARY_BROWSER_TIMEOUT_MS || 180_000),
         });

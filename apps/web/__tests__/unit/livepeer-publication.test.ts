@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
-    featureFlags: { enablePlaybackAuthorizerV2: false, publicTestnetBeta: false },
+    featureFlags: { enablePlaybackAuthorizerV2: false, publicTestnetBeta: false, publicTestnetVideoV1: false },
     viewContract: vi.fn(),
     send: vi.fn(),
 }));
@@ -57,9 +57,28 @@ describe('Livepeer publication UI boundary', () => {
         state.viewContract.mockReset();
         state.featureFlags.enablePlaybackAuthorizerV2 = false;
         state.featureFlags.publicTestnetBeta = false;
+        state.featureFlags.publicTestnetVideoV1 = false;
     });
 
     afterEach(() => vi.useRealTimers());
+
+    it('uses the original public payment time for expiry and lets a final publication take precedence', async () => {
+        vi.useFakeTimers();
+        const now = Date.now();
+        state.featureFlags.publicTestnetVideoV1 = true;
+        const job = {
+            job_id: 'job-001', creator_id: 'creator.testnet', status: 'Authorized', upload_public_key: 'ed25519:original',
+            generation: 1, created_at_ms: now - 86_400_000, upload_key_expires_at_ms: String(now + 1000),
+            expected_source_bytes: '5000000000', fee_asset: 'USDC', fee_quote_hash: 'a'.repeat(64),
+            title: 'Paid video', price_usdc: '2000001', profile_id: 'paid-media-livepeer-v1', profile_config_sha256: 'b'.repeat(64),
+        };
+        state.viewContract.mockImplementation(async (_provider, _contract, method) => method === 'get_media_job' ? job : null);
+        await expect(readLivepeerUploadProgress('job-001', 'creator.testnet')).resolves.toMatchObject({ expired: true, deadlineAtMs: now });
+        expect(state.viewContract.mock.calls.some((call) => call[2] === 'get_public_testnet_beta_job')).toBe(false);
+        state.viewContract.mockImplementation(async (_provider, _contract, method) => method === 'get_media_job' ? job : PUBLICATION);
+        await expect(readLivepeerUploadProgress('job-001', 'creator.testnet')).resolves.toMatchObject({ expired: false, publication: PUBLICATION });
+        await expect(readLivepeerUploadProgress('job-001', 'other.testnet')).rejects.toThrow('livepeer_job_creator_mismatch');
+    });
 
     it('reads only a publication bound to the requested job', async () => {
         state.viewContract.mockResolvedValueOnce(PUBLICATION);

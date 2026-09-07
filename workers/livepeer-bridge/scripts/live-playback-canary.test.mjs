@@ -130,3 +130,21 @@ test('live playback canary leaves an ambiguously created signing key for manual 
     assert.equal(calls.filter((call) => call.method === 'DELETE').length, 0);
     assert.equal(calls.filter((call) => call.method === 'GET').length, 2);
 });
+
+test('adaptive live canary forwards the exact profile and requests real browser quality evidence', async () => {
+    const key = signingKey();
+    const { fetchImpl } = signingKeyFetch(key);
+    let verified = false;
+    await runLivePlaybackCanary({
+        apiKey: 'test-api-key-123456', mutationsEnabled: true, signingKeyMutationsEnabled: true,
+        fileBytes: new Uint8Array([1]), verifyAdaptive: true, fetchImpl, browserPreflight: skipBrowserPreflight,
+        runPlayback: async (input) => {
+            assert.equal(input.profileHash, '28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2');
+            assert.equal(input.verifyAdaptive, true);
+            await input.browserProbe({ hlsUrl: 'https://playback.livepeer.studio/asset/hls/test/index.m3u8' });
+            return {};
+        },
+        browserCanary: async (input) => { assert.equal(input.verifyAdaptive, true); verified = true; return {}; },
+    });
+    assert.equal(verified, true);
+});

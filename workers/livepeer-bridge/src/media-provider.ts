@@ -1,3 +1,15 @@
+import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
+
+export function mediaProfiles(hash: unknown) {
+    const profile = Object.values(profiles).find((entry) => entry.hash === hash);
+    if (!profile) throw new Error('unsupported_profile');
+    return profile.profiles;
+}
+
+export function supportedProfile(hash: unknown): hash is string {
+    return Object.values(profiles).some((entry) => entry.hash === hash);
+}
+
 export type MediaSourceType = 'mp4' | 'mov' | 'avi' | 'webm' | 'wmv' | 'mkv' | 'flv';
 
 export const MEDIA_SOURCE_FORMATS: Record<MediaSourceType, { filename: string; mime: string }> = {
@@ -14,6 +26,7 @@ export type CreateUploadInput = {
     jobId: string;
     generation: number;
     expectedSourceBytes: string;
+    profileConfigSha256: string;
     sourceType: MediaSourceType;
 };
 
@@ -63,6 +76,7 @@ export type VerifyReadyAssetInput = {
     jobId: string;
     generation: number;
     expectedSourceBytes: string;
+    profileConfigSha256: string;
     assetId: string;
     playbackId: string;
     projectId: string;

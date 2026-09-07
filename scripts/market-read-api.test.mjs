@@ -174,3 +174,29 @@ test('temporary D1 failure returns a bounded 503 without leaking its error', asy
     }]);
     assert.doesNotMatch(JSON.stringify(logs), /token_secret_value/);
 });
+
+test('public Discover response names its canonical Market and rejects a mismatched binding', async () => {
+    const { sqlite, env } = await environment();
+    Object.assign(env, { VIDEO_ENVIRONMENT: 'public-testnet', MARKET_CONTRACT_ID: 'market.testnet' });
+    const response = await marketReadApi(new Request('https://read.test/v1/publications'), env);
+    const page = await response.json();
+    assert.equal(page.network, 'testnet');
+    assert.equal(page.contract_id, 'market.testnet');
+    assert.equal(page.items[0].publication_id, 'pub-c');
+    env.MARKET_CONTRACT_ID = 'other.testnet';
+    assert.equal((await marketReadApi(new Request('https://read.test/v1/publications'), env)).status, 503);
+    sqlite.close();
+});
+
+test('public read-model health carries the serving version and ingestion identity', async () => {
+    const { sqlite, env } = await environment(false);
+    Object.assign(env, { VIDEO_ENVIRONMENT: 'public-testnet', CF_VERSION_METADATA: { id: 'read-version' },
+        READ_MODEL_START_BLOCK_HEIGHT: '100', READ_MODEL_INGESTION_ENABLED: 'false', READ_MODEL_BACKFILL_ENABLED: 'false' });
+    const health = await (await marketReadApi(new Request('https://read.test/__health'), env)).json();
+    assert.equal(health.versionId, 'read-version');
+    assert.equal(health.contractId, 'market.testnet');
+    assert.equal(health.network, 'testnet');
+    assert.equal(health.startBlockHeight, '100');
+    assert.equal(health.ingestionEnabled, false);
+    sqlite.close();
+});

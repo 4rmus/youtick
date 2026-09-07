@@ -190,7 +190,9 @@ export async function fetchNearFinalBlockHeight(env, fetchImpl = fetch) {
 
 function ingestionConfig(env) {
     const startBlockHeight = Number(env.READ_MODEL_START_BLOCK_HEIGHT);
-    if (env.READ_MODEL_NETWORK !== 'testnet'
+    if ((env.VIDEO_ENVIRONMENT === 'public-testnet'
+            && (env.MARKET_CONTRACT_ID !== env.READ_MODEL_CONTRACT_ID || !env.READ_MODEL_CONTRACT_ID?.endsWith('.testnet')))
+        || env.READ_MODEL_NETWORK !== 'testnet'
         || !ACCOUNT_PATTERN.test(env.READ_MODEL_CONTRACT_ID || '')
         || !/^[1-9][0-9]*$/.test(env.READ_MODEL_START_BLOCK_HEIGHT || '')
         || !Number.isSafeInteger(startBlockHeight)
@@ -222,39 +224,41 @@ export const marketReadModelWorker = {
     fetch: marketReadApi,
     scheduled(controller, env, ctx, dependencies = {}) {
         const logger = dependencies.logger ?? console;
-        const isFinalityProbe = controller?.cron === FINALITY_PROBE_CRON;
-        const task = isFinalityProbe
-            ? runNearFinalityProbe({
-                rpcUrl: env.READ_MODEL_NEAR_RPC_URL,
-                fetchImpl: dependencies.fetchImpl,
-                now: dependencies.now,
-            })
-            : ingestMarketReadModelBatch(env, dependencies);
-        const work = task.then(
-            (result) => {
-                logger.log(isFinalityProbe ? result : JSON.stringify(result));
-                return result;
-            },
-            (error) => {
-                const value = error instanceof Error ? error.message : '';
-                const errorCodes = isFinalityProbe
-                    ? FINALITY_ERROR_CODES
-                    : INGESTION_ERROR_CODES;
-                const errorCode = errorCodes.has(value)
-                    ? value
-                    : isFinalityProbe
-                        ? 'near_finality_probe_failed'
-                        : 'read_model_ingestion_failed';
-                const failure = {
-                    schema: isFinalityProbe ? FINALITY_TELEMETRY_SCHEMA : TELEMETRY_SCHEMA,
-                    status: 'failed',
-                    error_code: errorCode,
-                };
-                logger.error(isFinalityProbe ? failure : JSON.stringify(failure));
-                throw new Error(errorCode);
-            },
-        );
-        ctx.waitUntil(work);
+        // Each promise is registered independently: a failed probe cannot skip ingestion.
+        for (const isFinalityProbe of controller?.cron === FINALITY_PROBE_CRON ? [true, false] : [false]) {
+            const task = isFinalityProbe
+                ? runNearFinalityProbe({
+                    rpcUrl: env.READ_MODEL_NEAR_RPC_URL,
+                    fetchImpl: dependencies.fetchImpl,
+                    now: dependencies.now,
+                })
+                : ingestMarketReadModelBatch(env, dependencies);
+            const work = task.then(
+                (result) => {
+                    logger.log(isFinalityProbe ? result : JSON.stringify(result));
+                    return result;
+                },
+                (error) => {
+                    const value = error instanceof Error ? error.message : '';
+                    const errorCodes = isFinalityProbe
+                        ? FINALITY_ERROR_CODES
+                        : INGESTION_ERROR_CODES;
+                    const errorCode = errorCodes.has(value)
+                        ? value
+                        : isFinalityProbe
+                            ? 'near_finality_probe_failed'
+                            : 'read_model_ingestion_failed';
+                    const failure = {
+                        schema: isFinalityProbe ? FINALITY_TELEMETRY_SCHEMA : TELEMETRY_SCHEMA,
+                        status: 'failed',
+                        error_code: errorCode,
+                    };
+                    logger.error(isFinalityProbe ? failure : JSON.stringify(failure));
+                    throw new Error(errorCode);
+                },
+            );
+            ctx.waitUntil(work);
+        }
     },
     async queue(batch, env, _ctx, dependencies = {}) {
         const logger = dependencies.logger ?? console;

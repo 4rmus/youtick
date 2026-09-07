@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -14,17 +14,26 @@ const CLEAN_ENV = Object.fromEntries(
 );
 
 function publicEnv(environment) {
-  const prefix = environment.toUpperCase();
-  const webOrigin = environment === "preview" ? "https://preview.youtick.net" : "https://app.youtick.net";
+  const prefix = environment.toUpperCase().replaceAll("-", "_");
+  const webOrigin = environment === "public-testnet" ? "https://public-testnet.youtick.net"
+    : environment === "preview" ? "https://preview.youtick.net" : "https://app.youtick.net";
   const bridgeOrigin =
-    environment === "preview" ? "https://bridge-preview.youtick.net" : "https://bridge.youtick.net";
-  const marketContractId = environment === "preview"
+    environment === "public-testnet" ? "https://bridge-public-testnet.youtick.net"
+      : environment === "preview" ? "https://bridge-preview.youtick.net" : "https://bridge.youtick.net";
+  const marketContractId = environment === "public-testnet" ? "public-video-market.testnet" : environment === "preview"
     ? "lp-arch-market-v2-260809.youtick-dev-v3.testnet"
     : "paid-media-v1.testnet";
-  const accessContractId = environment === "preview"
+  const accessContractId = environment === "public-testnet" ? "public-video-access.testnet" : environment === "preview"
     ? "lp-arch-access-v2-260809.youtick-dev-v3.testnet"
     : "ticket-access-v1.testnet";
   const values = {
+    ...(environment === "public-testnet" ? {
+      LIVEPEER_QUEUE_NAME: "youtick-livepeer-events-public-testnet",
+      LIVEPEER_DLQ_NAME: "youtick-livepeer-events-dlq-public-testnet",
+      MARKET_READ_MODEL_DATABASE_NAME: "youtick-market-read-model-public-testnet",
+      MARKET_READ_MODEL_DATABASE_ID: "a1111111-2222-3333-4444-555555555555",
+      READ_MODEL_START_BLOCK_HEIGHT: "310000000",
+    } : {}),
     NEXT_PUBLIC_NEAR_NETWORK: "testnet",
     NEXT_PUBLIC_MARKET_CONTRACT_ID: marketContractId,
     NEXT_PUBLIC_ACCESS_CONTRACT_ID: accessContractId,
@@ -38,7 +47,7 @@ function publicEnv(environment) {
     NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL: "false",
     NEXT_PUBLIC_MARKET_READ_MODEL_URL: "",
     NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: "off",
-    NEXT_PUBLIC_USDC_CONTRACT_ID: "usdc.testnet",
+    NEXT_PUBLIC_USDC_CONTRACT_ID: environment === "public-testnet" ? "" : "usdc.testnet",
     NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: "1",
     NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO: "1",
     ALLOWED_ORIGINS: webOrigin,
@@ -139,6 +148,42 @@ function makeRelease() {
   assertSuccess(run(manifestArgs));
   return { artifactDir, webLock, bridgeLock, manifestArgs };
 }
+
+test("public-testnet packages an isolated closed target without changing legacy bundles", () => {
+  const release = makeRelease();
+  const configPath = join(release.artifactDir, "public-testnet-config.json");
+  const bundlePath = join(release.artifactDir, "web-public-testnet.tar.gz");
+  assertSuccess(run(["config", "--environment", "public-testnet", "--output", configPath], publicEnv("public-testnet")));
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  assert.equal(config.web.NEXT_PUBLIC_VIDEO_ENVIRONMENT, "public-testnet");
+  assert.equal(config.bridge.VIDEO_ENVIRONMENT, "public-testnet");
+  assert.equal(config.bridge.LIVEPEER_BRIDGE_ENABLED, "false");
+  assert.equal(config.bridge.MARKET_READ_MODEL_DATABASE_NAME, "youtick-market-read-model-public-testnet");
+  writeFileSync(bundlePath, "public testnet closed bundle\n");
+  assertSuccess(run([...release.manifestArgs, "--public-testnet-config", configPath, "--web-public-testnet", bundlePath]));
+  const manifest = JSON.parse(readFileSync(join(release.artifactDir, "manifest.json"), "utf8"));
+  assert.equal(manifest.targets.preview.web.worker, "youtick-web-preview");
+  assert.equal(manifest.targets["public-testnet"].web.worker, "youtick-web-public-testnet");
+  assertSuccess(run(["verify", "--artifact-dir", release.artifactDir, "--sha", SHA,
+    "--web-lock", release.webLock, "--bridge-lock", release.bridgeLock]));
+});
+
+test("public-testnet rejects open flags and reused beta resources", () => {
+  const root = mkdtempSync(join(tmpdir(), "youtick-public-config-"));
+  for (const override of [
+    { PUBLIC_TESTNET_LIVEPEER_BRIDGE_ENABLED: "true" },
+    { PUBLIC_TESTNET_MARKET_READ_MODEL_DATABASE_ID: "50b1e14f-2b06-444b-98cf-b828f11277ef" },
+    { PUBLIC_TESTNET_LIVEPEER_QUEUE_NAME: "youtick-livepeer-events-testnet" },
+    { PUBLIC_TESTNET_LIVEPEER_DLQ_NAME: "youtick-livepeer-events-dlq-testnet" },
+    { PUBLIC_TESTNET_NEAR_NETWORK: "mainnet", PUBLIC_TESTNET_NEXT_PUBLIC_NEAR_NETWORK: "mainnet" },
+    { PUBLIC_TESTNET_MARKET_CONTRACT_ID: "lp-arch-market-v2-260809.youtick-dev-v3.testnet",
+      PUBLIC_TESTNET_NEXT_PUBLIC_MARKET_CONTRACT_ID: "lp-arch-market-v2-260809.youtick-dev-v3.testnet" },
+  ]) {
+    const result = run(["config", "--environment", "public-testnet", "--output", join(root, "config.json")],
+      { ...publicEnv("public-testnet"), ...override });
+    assert.notEqual(result.status, 0);
+  }
+});
 
 test("workflows keep cumulative Preview release provenance", () => {
   const ci = readFileSync(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
@@ -934,4 +979,40 @@ test("manifest verification detects tampering and SHA mismatch", async (t) => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /traversing path/);
   });
+});
+
+test("public packets build and verify without any Preview or Production artifact", () => {
+  const release = makeRelease();
+  for (const name of ["preview-config.json", "production-config.json", "web-preview.tar.gz", "web-production.tar.gz"]) unlinkSync(join(release.artifactDir, name));
+  const base = join(release.artifactDir, "closed-base.json");
+  const config = join(release.artifactDir, "public-testnet-config.json");
+  const bundle = join(release.artifactDir, "web-public-testnet.tar.gz");
+  assertSuccess(run(["config", "--environment", "public-testnet", "--output", base], {
+    ...publicEnv("public-testnet"), PUBLIC_TESTNET_NEAR_SPONSOR_RELAYER_ACCOUNT_ID: "public-relayer.testnet",
+    PUBLIC_TESTNET_NEAR_SPONSOR_RELAYER_KEY_EPOCH: "1",
+  }));
+  writeFileSync(bundle, "public bundle\n");
+  const args = release.manifestArgs.filter((arg, index, all) => {
+    const omitted = ["--web-preview", "--web-production", "--preview-config", "--production-config"];
+    return !omitted.includes(arg) && !omitted.includes(all[index - 1]);
+  });
+  for (const mode of ["closed", "acceptance", "drain"]) {
+    assertSuccess(run(["config", "--environment", "public-testnet", "--input", base, "--mode", mode, "--output", config]));
+    const packet = JSON.parse(readFileSync(config));
+    assert.equal(packet.bridge.LIVEPEER_NEW_UPLOADS_ENABLED, String(mode === "acceptance"));
+    assert.equal(packet.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED, String(mode !== "closed"));
+    assert.equal(packet.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED, String(mode !== "closed"));
+    assert.equal(packet.bridge.LIVEPEER_WEBHOOK_QUEUE_ENABLED, String(mode !== "closed"));
+    assert.equal(packet.web.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2, String(mode !== "closed"));
+    assert.equal(packet.bridge.LIVEPEER_CREATOR_ALLOWLIST, "");
+    assertSuccess(run([...args, "--environment", "public-testnet", "--public-testnet-config", config, "--web-public-testnet", bundle]));
+    const manifest = JSON.parse(readFileSync(join(release.artifactDir, "manifest.json")));
+    assert.deepEqual(Object.keys(manifest.targets), ["public-testnet"]);
+    assert.deepEqual(Object.keys(manifest.configs), ["public-testnet"]);
+    assertSuccess(run(["verify", "--artifact-dir", release.artifactDir, "--sha", SHA,
+      "--web-lock", release.webLock, "--bridge-lock", release.bridgeLock]));
+    packet.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED = mode === "closed" ? "true" : "false";
+    writeFileSync(config, JSON.stringify(packet, null, 2) + "\n");
+    assert.notEqual(run([...args, "--environment", "public-testnet", "--public-testnet-config", config, "--web-public-testnet", bundle]).status, 0);
+  }
 });

@@ -34,6 +34,12 @@ async function routeMarketReadApi(request, env) {
         return json({
             status: 'ok',
             service: 'market-read-model',
+            ...(env.VIDEO_ENVIRONMENT === 'public-testnet' ? {
+                versionId: env.CF_VERSION_METADATA?.id, network: env.READ_MODEL_NETWORK,
+                contractId: env.READ_MODEL_CONTRACT_ID, startBlockHeight: env.READ_MODEL_START_BLOCK_HEIGHT,
+                ingestionEnabled: env.READ_MODEL_INGESTION_ENABLED === 'true',
+                backfillEnabled: env.READ_MODEL_BACKFILL_ENABLED === 'true',
+            } : {}),
             stage: env.READ_MODEL_ENABLED === 'true' ? 'ENABLED' : 'DISABLED',
         });
     }
@@ -97,6 +103,7 @@ async function publicationList(request, env, url, creator) {
     const page = rows.slice(0, limit);
     const last = page.at(-1);
     return cachedJson(request, {
+        ...(env.VIDEO_ENVIRONMENT === 'public-testnet' ? { network: env.READ_MODEL_NETWORK, contract_id: env.READ_MODEL_CONTRACT_ID } : {}),
         schema: creator ? 'youtick.creator-publications.v1' : 'youtick.publications.v1',
         watermark,
         ...(creator ? { creator_id: creator } : {}),
@@ -122,6 +129,7 @@ async function publicationDetail(request, env, publicationId) {
     const publication = detailResult.results?.[0];
     if (!publication) return json({ error: 'not_found' }, 404);
     return cachedJson(request, {
+        ...(env.VIDEO_ENVIRONMENT === 'public-testnet' ? { network: env.READ_MODEL_NETWORK, contract_id: env.READ_MODEL_CONTRACT_ID } : {}),
         schema: 'youtick.publication-detail.v1',
         watermark,
         publication,
@@ -137,6 +145,9 @@ function watermarkStatement(env) {
 
 function validEnv(env) {
     return env.READ_MODEL_ENABLED === 'true'
+        && (env.VIDEO_ENVIRONMENT !== 'public-testnet'
+            || (env.READ_MODEL_NETWORK === 'testnet' && env.READ_MODEL_CONTRACT_ID === env.MARKET_CONTRACT_ID
+                && env.MARKET_CONTRACT_ID?.endsWith('.testnet')))
         && env.MARKET_READ_MODEL
         && ['testnet', 'mainnet'].includes(env.READ_MODEL_NETWORK)
         && ACCOUNT_PATTERN.test(env.READ_MODEL_CONTRACT_ID || '')

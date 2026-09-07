@@ -1,3 +1,4 @@
+import { publicTestnetFlags, PUBLIC_TESTNET_READ_MODEL } from './release-metadata.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash, scryptSync } from 'node:crypto';
@@ -58,6 +59,10 @@ const TARGETS = {
         web: { worker: 'youtick-web', domain: 'app.youtick.net' },
         bridge: { worker: 'youtick-livepeer-bridge', domain: 'bridge.youtick.net' },
     },
+    'public-testnet': {
+        web: { worker: 'youtick-web-public-testnet', domain: 'public-testnet.youtick.net' },
+        bridge: { worker: 'youtick-livepeer-bridge-public-testnet', domain: 'bridge-public-testnet.youtick.net' },
+    },
 };
 const READ_MODEL_WORKER = 'youtick-market-read-model-testnet';
 const PREVIEW_READ_MODEL_ORIGIN = 'https://read-preview.youtick.net';
@@ -99,9 +104,10 @@ function makeConfig(target) {
         environment: target,
         targets: structuredClone(expected),
         web: {
+            ...(target === 'public-testnet' ? { NEXT_PUBLIC_VIDEO_ENVIRONMENT: target, NEXT_PUBLIC_USDC_CONTRACT_ID: '' } : {}),
             NEXT_PUBLIC_NEAR_NETWORK: 'testnet',
-            NEXT_PUBLIC_MARKET_CONTRACT_ID: 'market.testnet',
-            NEXT_PUBLIC_ACCESS_CONTRACT_ID: 'access.testnet',
+            NEXT_PUBLIC_MARKET_CONTRACT_ID: target === 'public-testnet' ? 'public-video-market.testnet' : 'market.testnet',
+            NEXT_PUBLIC_ACCESS_CONTRACT_ID: target === 'public-testnet' ? 'public-video-access.testnet' : 'access.testnet',
             NEXT_PUBLIC_APP_URL: `https://${expected.web.domain}`,
             NEXT_PUBLIC_LIVEPEER_BRIDGE_URL: `https://${expected.bridge.domain}`,
             NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1: 'false',
@@ -114,7 +120,15 @@ function makeConfig(target) {
             NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE: 'off',
         },
         bridge: {
-            ACCESS_CONTRACT_ID: 'access.testnet',
+            ...(target === 'public-testnet' ? {
+                VIDEO_ENVIRONMENT: target,
+                LIVEPEER_QUEUE_NAME: 'youtick-livepeer-events-public-testnet',
+                LIVEPEER_DLQ_NAME: 'youtick-livepeer-events-dlq-public-testnet',
+                MARKET_READ_MODEL_DATABASE_NAME: 'youtick-market-read-model-public-testnet',
+                MARKET_READ_MODEL_DATABASE_ID: 'a1111111-2222-3333-4444-555555555555',
+                READ_MODEL_START_BLOCK_HEIGHT: '310000000',
+            } : {}),
+            ACCESS_CONTRACT_ID: target === 'public-testnet' ? 'public-video-access.testnet' : 'access.testnet',
             ALLOWED_ORIGINS: `https://${expected.web.domain}`,
             CREATOR_FEE_QUOTE_KEY_VERSION: '1',
             LIVEPEER_API_TOKEN_NAME: 'release-token',
@@ -139,7 +153,7 @@ function makeConfig(target) {
             LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'false',
             LIVEPEER_PAID_MEDIA_OPERATOR_ID: 'operator.testnet',
             LIVEPEER_PROJECT_ID: 'project-id',
-            MARKET_CONTRACT_ID: 'market.testnet',
+            MARKET_CONTRACT_ID: target === 'public-testnet' ? 'public-video-market.testnet' : 'market.testnet',
             NEAR_NETWORK: 'testnet',
             NEAR_OPERATOR_ACCOUNT_ID: 'bridge.testnet',
             NEAR_OPERATOR_KEY_EPOCH: '1',
@@ -288,13 +302,15 @@ function makeRelease(t, target = 'preview') {
         schemaVersion: 1,
         sha: SHA,
         ci: { runId: '1', runAttempt: '1' },
-        targets: structuredClone(TARGETS),
+        targets: structuredClone(target === 'public-testnet' ? TARGETS : { preview: TARGETS.preview, production: TARGETS.production }),
         lockfiles: { web: emptyRecord, bridge: emptyRecord },
         configs: {
+            ...(target === 'public-testnet' ? { 'public-testnet': record(configPath) } : {}),
             preview: target === 'preview' ? record(configPath) : emptyRecord,
             production: target === 'production' ? record(configPath) : emptyRecord,
         },
         bundles: {
+            ...(target === 'public-testnet' ? { webPublicTestnet: record(webPath) } : {}),
             webPreview: target === 'preview' ? record(webPath) : emptyRecord,
             webProduction: target === 'production' ? record(webPath) : emptyRecord,
             bridge: record(bridgePath),
@@ -417,6 +433,26 @@ if (args[0] === 'versions' && args[1] === 'upload') {
     failed(code);
   }
   const text = configText();
+  if (worker === 'youtick-market-read-model-public-testnet') {
+    const config = JSON.parse(text);
+    if (config.vars.READ_MODEL_CONTRACT_ID !== 'public-video-market.testnet'
+        || config.vars.MARKET_CONTRACT_ID !== config.vars.READ_MODEL_CONTRACT_ID
+        || config.vars.READ_MODEL_START_BLOCK_HEIGHT !== '310000000'
+        || config.vars.READ_MODEL_INGESTION_ENABLED !== String(state.publicMode && state.publicMode !== 'closed' || false) || config.vars.READ_MODEL_ENABLED !== String(state.publicMode && state.publicMode !== 'closed' || false)
+        || config.triggers.crons.join() !== '* * * * *'
+        || config.d1_databases[0].database_id !== 'a1111111-2222-3333-4444-555555555555'
+        || text.includes('50b1e14f-2b06-444b-98cf-b828f11277ef') || config.workers_dev !== false) {
+      throw new Error('public read model binding mismatch');
+    }
+  }
+  if (worker === 'youtick-livepeer-bridge-public-testnet'
+      && (!text.includes('queue = "youtick-livepeer-events-public-testnet"')
+        || !text.includes('database_id = "a1111111-2222-3333-4444-555555555555"')
+        || !text.includes('namespace_id = "5003"')
+        || text.includes('50b1e14f-2b06-444b-98cf-b828f11277ef')
+        || text.includes('queues.consumers'))) {
+    throw new Error('public testnet resource binding mismatch');
+  }
   if (worker === 'youtick-livepeer-bridge-preview'
       && (!text.includes('[[queues.producers]]')
         || !text.includes('binding = "LIVEPEER_EVENTS"')
@@ -446,7 +482,7 @@ if (args[0] === 'versions' && args[1] === 'upload') {
   }
   const id = worker.includes('web')
     ? 'web-new'
-    : worker === 'youtick-market-read-model-testnet' ? 'read-model-new' : 'bridge-new';
+    : worker.startsWith('youtick-market-read-model-') ? 'read-model-new' : 'bridge-new';
   output({
     type: 'version-upload',
     version: 1,
@@ -521,7 +557,8 @@ function makeFakeWrangler(release, state) {
         for (const worker of Object.keys(state.workers)) {
             const target = Object.values(TARGETS)
                 .flatMap((environment) => Object.values(environment))
-                .find((entry) => entry.worker === worker);
+                .find((entry) => entry.worker === worker)
+                ?? (worker === PUBLIC_TESTNET_READ_MODEL.worker ? PUBLIC_TESTNET_READ_MODEL : null);
             if (!target) continue;
             state.domains[target.domain] = {
                 id: `domain-${worker}`,
@@ -549,6 +586,16 @@ function makeFakeWrangler(release, state) {
         });
         if (current.failApiStatus) {
             return response(current.failApiStatus, { success: false, result: null });
+        }
+        if (url.pathname === `/client/v4/accounts/${ACCOUNT_ID}/queues` && method === 'GET') {
+            const name = url.searchParams.get('name');
+            return response(200, { success: true, result: [{ queue_name: name,
+                queue_id: name.includes('dlq') ? '5'.repeat(32) : '4'.repeat(32) }] });
+        }
+        if (url.pathname === `/client/v4/accounts/${ACCOUNT_ID}/queues/${'4'.repeat(32)}/consumers` && method === 'GET') {
+            return response(200, { success: true, result: current.queueMissing ? [] : [{ type: 'worker',
+                script_name: TARGETS['public-testnet'].bridge.worker, dead_letter_queue: 'youtick-livepeer-events-dlq-public-testnet',
+                settings: { batch_size: 10, max_concurrency: 1, max_retries: 3, max_wait_time_ms: 5000 } }] });
         }
         if (url.pathname === `/client/v4/accounts/${ACCOUNT_ID}/workers/domains` && method === 'GET') {
             let result = Object.values(current.domains);
@@ -750,18 +797,18 @@ function deployFixture(
     smokeFn = async () => ({ ok: true }),
     {
         target = 'preview', rollbackTest = 'false', zoneId = ZONE_ID,
-        nearRpcUrl = NEAR_RPC_URL, oneClickApiKey = ONECLICK_API_KEY,
-        livepeerApiKey = target === 'preview' ? LIVEPEER_API_KEY : undefined,
-        livepeerWebhookSecret = target === 'preview' ? LIVEPEER_WEBHOOK_SECRET : undefined,
-        livepeerJwtPrivateKey = target === 'preview' ? LIVEPEER_JWT_PRIVATE_KEY : undefined,
-        paidMediaOperatorToken = target === 'preview'
+        nearRpcUrl = NEAR_RPC_URL, oneClickApiKey = target === 'public-testnet' ? null : ONECLICK_API_KEY,
+        livepeerApiKey = target !== 'production' ? LIVEPEER_API_KEY : undefined,
+        livepeerWebhookSecret = target !== 'production' ? LIVEPEER_WEBHOOK_SECRET : undefined,
+        livepeerJwtPrivateKey = target !== 'production' ? LIVEPEER_JWT_PRIVATE_KEY : undefined,
+        paidMediaOperatorToken = target !== 'production'
             ? LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN
             : undefined,
-        nearOperatorPrivateKey = target === 'preview' ? NEAR_OPERATOR_PRIVATE_KEY : undefined,
-        creatorFeeQuotePrivateKey = target === 'preview'
+        nearOperatorPrivateKey = target !== 'production' ? NEAR_OPERATOR_PRIVATE_KEY : undefined,
+        creatorFeeQuotePrivateKey = target !== 'production'
             ? CREATOR_FEE_QUOTE_PRIVATE_KEY
             : undefined,
-        nearSponsorRelayerPrivateKey = target === 'preview'
+        nearSponsorRelayerPrivateKey = target !== 'production'
             ? NEAR_SPONSOR_RELAYER_PRIVATE_KEY
             : undefined,
         sleepFn,
@@ -793,10 +840,10 @@ function deployFixture(
         sleepFn,
     }), {
         oneClickApiKey,
-        previewCredentials: target === 'preview',
-        sponsorCredentials: target === 'preview'
-            && JSON.parse(readFileSync(release.configPath, 'utf8'))
-                .bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
+        previewCredentials: target !== 'production',
+        sponsorCredentials: target !== 'production'
+            && (JSON.parse(readFileSync(release.configPath, 'utf8')).bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true'
+                || (target === 'public-testnet' && JSON.parse(readFileSync(release.configPath, 'utf8')).bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED === 'true')),
     });
 }
 
@@ -846,6 +893,28 @@ test('read-model artifact writer emits one route-free finality-probe-only config
     assert.doesNotMatch(text, /\bqueues\b|READ_MODEL_NEAR_RPC_URL/);
     assert.equal(statSync(output).mode & 0o777, 0o600);
     await assert.rejects(writeReadModelArtifactWrangler(output), /EEXIST/);
+});
+
+test('public-testnet uses isolated closed Workers and never touches beta read-model resources', async (t) => {
+    const target = 'public-testnet';
+    const release = makeRelease(t, target);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS[target].web.worker]: { traffic: [{ version_id: 'web-old', percentage: 100 }] },
+            [TARGETS[target].bridge.worker]: { traffic: [{ version_id: 'bridge-old', percentage: 100 }] },
+        },
+        uploadFailures: {},
+    });
+    const receipt = await deployFixture(release, fake, async () => ({ ok: true }), { target });
+    assert.equal(receipt.environment, target);
+    assert.equal(receipt.web.worker, TARGETS[target].web.worker);
+    assert.equal(receipt.bridge.worker, TARGETS[target].bridge.worker);
+    assert.equal(receipt.readModel.worker, 'youtick-market-read-model-public-testnet');
+    assert.equal(calls(fake).some((args) => args.includes(READ_MODEL_WORKER)), false);
+    assert.equal(calls(fake).some((args) => args.includes('--env')), false);
+    assert.ok(calls(fake).some((args) => args.includes('VIDEO_ENVIRONMENT:public-testnet')));
+    assert.ok(calls(fake).some((args) => args.includes('LIVEPEER_BRIDGE_ENABLED:false')));
+    assert.equal(JSON.stringify(secretCalls(fake)).includes('ONECLICK_API_KEY'), false);
 });
 
 test('Preview release keeps the Queue consumer detached and bootstraps the dark read model', async (t) => {
@@ -2142,4 +2211,71 @@ test('Cloudflare governance preflight fails before any Wrangler mutation', async
         await assert.rejects(deployFixture(release, fake), /worker_domain_record_invalid/);
         assert.deepEqual(calls(fake), []);
     });
+});
+
+
+function publicModeRelease(t, mode) {
+    const release = makeRelease(t, 'public-testnet');
+    const config = JSON.parse(readFileSync(release.configPath));
+    const flags = publicTestnetFlags(mode);
+    for (const section of [config.web, config.bridge]) {
+        for (const key of Object.keys(section)) if (key in flags) section[key] = flags[key];
+    }
+    config.web.NEXT_PUBLIC_MARKET_READ_MODEL_URL = `https://${PUBLIC_TESTNET_READ_MODEL.domain}`;
+    Object.assign(config.bridge, { LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '5000000',
+        LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '1000000',
+        NEAR_SPONSOR_RELAYER_ACCOUNT_ID: 'public-relayer.testnet', NEAR_SPONSOR_RELAYER_KEY_EPOCH: '1' });
+    writeFileSync(release.configPath, canonicalJson(config));
+    release.manifest.targets = { 'public-testnet': TARGETS['public-testnet'] };
+    release.manifest.configs = { 'public-testnet': record(release.configPath) };
+    delete release.manifest.bundles.webPreview;
+    delete release.manifest.bundles.webProduction;
+    writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+    return release;
+}
+
+for (const mode of ['acceptance', 'drain', 'closed']) test(`public ${mode} keeps the three workers isolated and verifies the exact packet`, async (t) => {
+    const release = publicModeRelease(t, mode);
+    const fake = makeFakeWrangler(release, { publicMode: mode, workers: {
+        [TARGETS['public-testnet'].web.worker]: { traffic: [{ version_id: 'web-old', percentage: 100 }] },
+        [TARGETS['public-testnet'].bridge.worker]: { traffic: [{ version_id: 'bridge-old', percentage: 100 }] },
+        [PUBLIC_TESTNET_READ_MODEL.worker]: { traffic: [{ version_id: 'read-model-old', percentage: 100 }] },
+    } });
+    const smokeInputs = [];
+    const receipt = await deployFixture(release, fake, async (input) => { smokeInputs.push(input); return { ok: true }; }, { target: 'public-testnet' });
+    assert.equal(receipt.mode, mode);
+    assert.equal(receipt.readModel.worker, PUBLIC_TESTNET_READ_MODEL.worker);
+    assert.equal(smokeInputs.at(-1).publicTestnetMode, mode);
+    assert.equal(smokeInputs.at(-1).expectedReadModel.enabled, mode !== 'closed');
+    assert.equal(smokeInputs.at(-1).expectedPublicBetaRateLimitReady, true);
+    assert.equal(smokeInputs.at(-1).expectedUploadReady, mode === 'acceptance');
+    assert.ok(calls(fake).every((args) => !args.includes(READ_MODEL_WORKER)));
+    assert.ok(fake.apiCalls.filter((call) => call.path.includes('/queues')).every((call) => call.method === 'GET'));
+});
+
+test('public activation requires an already closed deployment and provisioned queue consumer', async (t) => {
+    const release = publicModeRelease(t, 'acceptance');
+    for (const queueMissing of [true, false]) {
+        const fake = makeFakeWrangler(release, { publicMode: 'acceptance', queueMissing, workers: {} });
+        await assert.rejects(() => deployFixture(release, fake, async () => ({}), { target: 'public-testnet' }),
+            queueMissing ? /public_queue_consumer_unproven/ : /public_testnet_closed_bootstrap_required/);
+        assert.equal(calls(fake).some((args) => ['deploy', 'versions'].includes(args[0])), false);
+    }
+});
+
+for (const mode of ['closed', 'drain']) test(`failed public ${mode} does not silently restore an accepting version`, async (t) => {
+    const release = publicModeRelease(t, mode);
+    const fake = makeFakeWrangler(release, { publicMode: mode, workers: {
+        [TARGETS['public-testnet'].web.worker]: { traffic: [{ version_id: 'web-open', percentage: 100 }] },
+        [TARGETS['public-testnet'].bridge.worker]: { traffic: [{ version_id: 'bridge-open', percentage: 100 }] },
+        [PUBLIC_TESTNET_READ_MODEL.worker]: { traffic: [{ version_id: 'read-model-open', percentage: 100 }] },
+    } });
+    let probes = 0;
+    await assert.rejects(() => deployFixture(release, fake, async () => {
+        if (++probes === 1) throw new Error('closing_smoke_failed');
+        return {};
+    }, { target: 'public-testnet' }), /closing_smoke_failed/);
+    const state = JSON.parse(readFileSync(fake.statePath));
+    assert.equal(state.workers[TARGETS['public-testnet'].bridge.worker].traffic[0].version_id, 'bridge-new');
+    assert.equal(existsSync(release.receipt), false);
 });

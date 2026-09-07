@@ -707,7 +707,7 @@ async function cleanupCanary({
     return { cleanup, errors };
 }
 
-function browserEvidence(value) {
+function browserEvidence(value, verifyAdaptive = false) {
     if (!value || typeof value !== 'object' || value.matrix_proven !== true) {
         throw new Error('playback_canary_browser_matrix_failed');
     }
@@ -715,6 +715,7 @@ function browserEvidence(value) {
     for (const browser of ['chrome', 'edge']) {
         const result = value[browser];
         if (!result || typeof result !== 'object'
+            || (verifyAdaptive && result.adaptive_quality !== 'PASS')
             || result.initial_played !== true
             || result.refreshed_played !== true
             || !Number.isSafeInteger(result.initial_hls_header_requests)
@@ -739,6 +740,7 @@ function browserEvidence(value) {
             throw new Error('playback_canary_browser_matrix_failed');
         }
         evidence[browser] = {
+            ...(verifyAdaptive ? { adaptive_quality: result.adaptive_quality } : {}),
             initial_played: true,
             refreshed_played: true,
             initial_hls_header_requests: result.initial_hls_header_requests,
@@ -767,6 +769,8 @@ function withRecovery(error, recovery) {
 }
 
 export async function runPlaybackCanary({
+    profileHash,
+    verifyAdaptive = false,
     apiKey,
     mutationsEnabled,
     privateKey,
@@ -782,6 +786,7 @@ export async function runPlaybackCanary({
     browserProbe,
 }) {
     if (!mutationsEnabled) throw new Error('playback_canary_mutations_disabled');
+    if (verifyAdaptive && typeof browserProbe !== 'function') throw new Error('playback_canary_adaptive_browser_required');
     requireCanarySource(fileBytes);
     requireIssuer(issuer);
     verifySigningKeyPair(privateKey, publicKey, issuer);
@@ -797,7 +802,7 @@ export async function runPlaybackCanary({
         inventoryBefore = await listAssets(apiKey, fetchImpl);
         let create;
         try {
-            create = await requestUpload(apiKey, correlationId, fetchImpl);
+            create = await requestUpload(apiKey, correlationId, fetchImpl, profileHash);
         } catch (error) {
             try {
                 assetId = await findCanaryAsset(apiKey, correlationId, fetchImpl);
@@ -880,6 +885,7 @@ export async function runPlaybackCanary({
 
         const browser = browserProbe
             ? browserEvidence(await browserProbe({
+                verifyAdaptive,
                 hlsUrl: urls.hls,
                 issueToken: (kind = 'correct') => {
                     if (kind === 'malformed') return 'malformed.jwt';
@@ -897,11 +903,12 @@ export async function runPlaybackCanary({
                         expiresAt: browserIssuedAt + 120,
                     });
                 },
-            }))
+            }), verifyAdaptive)
             : null;
 
         receipt = {
             schema: 'youtick.livepeer-playback-canary.v1',
+            ...(profileHash ? { profile_config_sha256: profileHash } : {}),
             correlation_id: correlationId,
             source_bytes: fileBytes.byteLength,
             source_sha256: sha256(fileBytes),

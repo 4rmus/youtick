@@ -834,3 +834,43 @@ test('release smoke bounds and diagnoses override version propagation', async ()
     assert.equal(healthRequests, 6);
     assert.deepEqual(delays, [1_000, 2_000, 4_000, 8_000, 15_000]);
 });
+
+for (const mode of ['closed', 'acceptance', 'drain']) test(`public ${mode} checks independent provider/operator readiness and read-model identity`, async () => {
+    const enabled = mode !== 'closed';
+    const accepting = mode === 'acceptance';
+    const health = { status: 'ok', versionId: 'bridge-current', stage: enabled ? 'ENABLED' : 'DISABLED',
+        providerMutationEnabled: enabled, operatorMutationEnabled: enabled, newUploadReady: accepting,
+        playbackReady: enabled, playbackV2Ready: enabled, playbackShadowV2Ready: false,
+        sponsoredUploadQuoteReady: accepting, sponsoredUploadRelayReady: accepting,
+        webhookQueueReady: enabled, publicBetaRateLimitReady: true };
+    let readVersion = 'read-current';
+    const fetchImpl = async (input, init) => {
+        const url = new URL(input);
+        const headers = new Headers(init.headers);
+        if (url.hostname === 'read.test') return Response.json({ status: 'ok', versionId: readVersion,
+            network: 'testnet', contractId: 'public-video.testnet', startBlockHeight: '100',
+            ingestionEnabled: enabled, backfillEnabled: false, stage: enabled ? 'ENABLED' : 'DISABLED' });
+        if (url.pathname === '/__health') return Response.json(health);
+        if (url.pathname === '/api/near-rpc') return Response.json({ jsonrpc: '2.0', result: {} });
+        if (init.method === 'OPTIONS') {
+            const allowed = headers.get('Origin') === 'https://web.test';
+            return new Response(null, { status: allowed ? 204 : 403,
+                headers: allowed ? { 'Access-Control-Allow-Origin': 'https://web.test' } : {} });
+        }
+        if (init.method === 'POST') return Response.json({ error: 'control_plane_disabled' }, { status: 503,
+            headers: (url.pathname.startsWith('/v1/operations/') || url.pathname === '/v1/livepeer-webhooks') ? {} : { 'Access-Control-Allow-Origin': 'https://web.test' } });
+        return new Response('<html>Ready</html>', { headers: { 'Content-Type': 'text/html' } });
+    };
+    const options = { webUrl: 'https://web.test', bridgeUrl: 'https://bridge.test',
+        allowedOrigin: 'https://web.test', deniedOrigin: 'https://denied.test', fetchImpl,
+        expectedBridgeVersion: 'bridge-current', expectedBridgeEnabled: enabled,
+        expectedUploadReady: accepting, expectedPlaybackReady: enabled, expectedSponsoredUploadReady: accepting,
+        expectedPublicBetaRateLimitReady: true, publicTestnetMode: mode, browserRunner: async () => ({}),
+        expectedReadModel: { url: 'https://read.test', versionId: 'read-current', contractId: 'public-video.testnet', startBlockHeight: '100', enabled } };
+    await runReleaseSmoke(options);
+    readVersion = 'wrong-version';
+    await assert.rejects(() => runReleaseSmoke(options), /release_smoke_read_model_mismatch/);
+    readVersion = 'read-current';
+    health.operatorMutationEnabled = !enabled;
+    await assert.rejects(() => runReleaseSmoke(options), /release_smoke_bridge_not_/);
+});

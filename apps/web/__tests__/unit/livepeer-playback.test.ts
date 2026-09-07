@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KeyPair } from 'near-api-js';
 
 const state = vi.hoisted(() => ({
@@ -74,12 +75,96 @@ async function sha256(value: string): Promise<string> {
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+function playbackTimers() {
+    vi.useFakeTimers();
+    // Keep real SHA-256 values, but settle in microtasks instead of a native crypto thread.
+    vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (_algorithm, data) => (
+        Uint8Array.from(createHash('sha256').update(new Uint8Array(data as ArrayBuffer)).digest()).buffer
+    ));
+}
+
 describe('Livepeer browser playback', () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
         state.isSessionGrantVisible.mockReset().mockResolvedValue(true);
         await installGrant();
+    });
+
+    afterEach(() => vi.useRealTimers());
+
+    it('retains access through a temporary renewal failure and retries before expiry', async () => {
+        playbackTimers();
+        const now = Date.now();
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(Response.json(tokenResponse('initial.token.signature', now + 35_000)))
+            .mockRejectedValueOnce(new TypeError('offline'))
+            .mockResolvedValueOnce(Response.json(tokenResponse('renewed.token.signature', now + 180_000)));
+        vi.stubGlobal('fetch', fetchMock);
+        const onAccess = vi.fn();
+        const onError = vi.fn();
+        const session = await startLivepeerPlaybackSession(INPUT, { onAccess, onError });
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(onAccess).toHaveBeenCalledOnce();
+        expect(onError).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(onAccess).toHaveBeenCalledTimes(2);
+        expect(onAccess).toHaveBeenLastCalledWith(expect.objectContaining({ token: 'renewed.token.signature' }));
+        session.destroy();
+        await vi.advanceTimersByTimeAsync(200_000);
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(onError).not.toHaveBeenCalled();
+    });
+
+    it.each([[401, 'provider_unavailable'], [403, 'provider_unavailable'], [503, 'control_plane_disabled']])(
+        'stops immediately for authoritative denial %s/%s instead of treating it as a network retry', async (status, code) => {
+            playbackTimers();
+            const fetchMock = vi.fn()
+                .mockResolvedValueOnce(Response.json(tokenResponse('initial.token.signature', Date.now() + 31_000)))
+                .mockResolvedValueOnce(Response.json({ error: code }, { status: Number(status) }));
+            vi.stubGlobal('fetch', fetchMock);
+            const onError = vi.fn();
+            const session = await startLivepeerPlaybackSession(INPUT, { onAccess: vi.fn(), onError });
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(onError).toHaveBeenCalledOnce();
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(onError).toHaveBeenCalledOnce();
+            session.destroy();
+        },
+    );
+
+    it('expires even when renewal hangs and never restores access from a late response', async () => {
+        playbackTimers();
+        let respond!: (value: Response) => void;
+        let signal: AbortSignal | undefined;
+        vi.stubGlobal('fetch', vi.fn()
+            .mockResolvedValueOnce(Response.json(tokenResponse('initial.token.signature', Date.now() + 31_000)))
+            .mockImplementationOnce((_url, init) => {
+                signal = init.signal;
+                return new Promise<Response>((resolve) => { respond = resolve; });
+            }));
+        const onAccess = vi.fn();
+        const onError = vi.fn();
+        const session = await startLivepeerPlaybackSession(INPUT, { onAccess, onError });
+        await vi.advanceTimersByTimeAsync(31_000);
+        expect(signal?.aborted).toBe(true);
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'livepeer_playback_token_expired' }));
+        respond(Response.json(tokenResponse('late.token.signature')));
+        await vi.runAllTimersAsync();
+        expect(onAccess).toHaveBeenCalledOnce();
+        expect(onError).toHaveBeenCalledOnce();
+        session.destroy();
+    });
+
+    it('does not start access requests after the owning component has cancelled', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        await expect(startLivepeerPlaybackSession(INPUT, { signal: controller.signal, onAccess: vi.fn() }))
+            .rejects.toMatchObject({ name: 'AbortError' });
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('requests tokens with the in-memory Play grant and never persists the JWT', async () => {
@@ -133,6 +218,7 @@ describe('Livepeer browser playback', () => {
     });
 
     it('adds the latest in-memory JWT only to allowlisted HLS requests', async () => {
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
         let refresh: (() => Promise<void>) | undefined;
         vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback) => {
             refresh = callback as () => Promise<void>;
@@ -174,6 +260,10 @@ describe('Livepeer browser playback', () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
         config.xhrSetup(xhr, 'https://playback.livepeer.studio/asset/hls/playback_001/index.m3u8');
         expect(setRequestHeader).toHaveBeenLastCalledWith('Livepeer-Jwt', 'second.token.signature');
+        const phases = log.mock.calls.map(([value]) => JSON.parse(String(value)))
+            .filter((entry) => entry.outcome === 'completed').map((entry) => entry.phase);
+        expect(phases).toEqual(['playback_token_initial', 'playback_token_renewal']);
+        expect(JSON.stringify(log.mock.calls)).not.toContain('token.signature');
         session.destroy();
     });
 

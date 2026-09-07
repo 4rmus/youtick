@@ -1,3 +1,4 @@
+import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json' with { type: 'json' };
 import { createHash, randomUUID } from 'node:crypto';
 
 const LIVEPEER_API_BASE = 'https://livepeer.studio/api';
@@ -30,8 +31,10 @@ async function readJson(response, code) {
     return body;
 }
 
-export async function requestUpload(apiKey, correlationId, fetchImpl = fetch) {
+export async function requestUpload(apiKey, correlationId, fetchImpl = fetch, profileHash = profiles.legacy.hash) {
     requireApiKey(apiKey);
+    const selected = Object.values(profiles).find((entry) => entry.hash === profileHash);
+    if (!selected) throw new Error('provider_canary_profile_invalid');
     const response = await fetchImpl(`${LIVEPEER_API_BASE}/asset/request-upload`, {
         method: 'POST',
         headers: {
@@ -42,17 +45,7 @@ export async function requestUpload(apiKey, correlationId, fetchImpl = fetch) {
             name: `youtick-paid-media-canary-${correlationId}`,
             playbackPolicy: { type: 'jwt' },
             creatorId: { type: 'unverified', value: correlationId },
-            profiles: [{
-                name: '720p',
-                width: 1280,
-                height: 720,
-                bitrate: 3_000_000,
-                fps: 30,
-                fpsDen: 1,
-                gop: '2',
-                profile: 'H264Baseline',
-                encoder: 'H.264',
-            }],
+            profiles: selected.profiles,
         }),
         signal: AbortSignal.timeout(20_000),
     });

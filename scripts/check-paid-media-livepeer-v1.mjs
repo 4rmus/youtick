@@ -8,6 +8,16 @@ const protocolDir = resolve(root, "protocol/paid-media-livepeer-v1");
 const schema = readJson(resolve(protocolDir, "schema.json"));
 const vectors = readJson(resolve(protocolDir, "golden-vectors.json"));
 
+const profiles = readJson(resolve(protocolDir, "profiles.json"));
+const sortedJson = (value) => JSON.stringify(value, (_key, entry) =>
+  entry && typeof entry === "object" && !Array.isArray(entry)
+    ? Object.fromEntries(Object.entries(entry).sort(([left], [right]) => left.localeCompare(right))) : entry);
+assert(profiles.legacy.hash === vectors.upload_intent.body.profile_config_sha256, "legacy profile drift");
+assert(profiles.adaptive.hash === createHash("sha256").update(sortedJson({ profiles: profiles.adaptive.profiles })).digest("hex"), "adaptive profile hash drift");
+assert(JSON.stringify(profiles.adaptive.profiles[1]) === JSON.stringify(profiles.legacy.profiles[0]), "legacy 720p settings drift");
+const marketSource = readFileSync(resolve(root, "contracts/nft-ticket/src/lib.rs"), "utf8");
+for (const profile of Object.values(profiles)) assert(marketSource.includes(`"${profile.hash}"`), "Market profile hash drift");
+
 validate(schema, vectors, "$", schema);
 
 const messageFields = [

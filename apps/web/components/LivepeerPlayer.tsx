@@ -18,6 +18,7 @@ import { ensureSessionGrant } from '@/lib/access-grants';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import { recordVideoPlaybackEvents, startVideoMeasurement } from '@/lib/video-measurements';
 import {
     createLivepeerHlsConfig,
     startLivepeerPlaybackSession,
@@ -48,6 +49,8 @@ export function LivepeerPlayer({
     const [hlsConfig] = useState(() => createLivepeerHlsConfig(() => tokenRef.current));
 
     useEffect(() => {
+        const finishPreparation = startVideoMeasurement('playback_preparation');
+        const controller = new AbortController();
         let disposed = false;
         let destroy: (() => void) | undefined;
         tokenRef.current = null;
@@ -56,17 +59,20 @@ export function LivepeerPlayer({
         setError(null);
 
         const ensurePlayGrant = async () => {
+            const wallet = await getWallet();
+            controller.signal.throwIfAborted();
             const grant = await ensureSessionGrant({
                 accountId,
                 scope: 'Play',
                 resourceId: jobId,
-                wallet: await getWallet(),
+                wallet,
             });
             if (!grant) throw new Error('livepeer_play_grant_missing');
         };
 
         const preparePlayback = async () => {
             const wallet = await getWallet();
+            controller.signal.throwIfAborted();
             if (!FEATURE_FLAGS.enablePlaybackAuthorizerV2) await ensurePlayGrant();
             return wallet;
         };
@@ -75,12 +81,14 @@ export function LivepeerPlayer({
             .then(preparePlayback)
             .then((wallet) => {
                 if (disposed) throw new Error('livepeer_playback_cancelled');
+                finishPreparation('completed');
                 return startLivepeerPlaybackSession({
                     accountId,
                     jobId,
                     generation,
                     playbackId,
                 }, {
+                    signal: controller.signal,
                     renewGrant: ensurePlayGrant,
                     onAccess: (access) => {
                         if (disposed) return;
@@ -104,6 +112,7 @@ export function LivepeerPlayer({
                 else destroy = session.destroy;
             })
             .catch((nextError) => {
+                finishPreparation('failed');
                 if (disposed) return;
                 tokenRef.current = null;
                 setAccessToken(null);
@@ -114,7 +123,9 @@ export function LivepeerPlayer({
             });
 
         return () => {
+            finishPreparation('cancelled');
             disposed = true;
+            controller.abort();
             tokenRef.current = null;
             destroy?.();
         };
@@ -165,7 +176,9 @@ export function LivepeerPlayer({
             playbackId={playbackId}
             jwt={accessToken}
             preload="metadata"
+            videoQuality="auto"
             storage={null}
+            onPlaybackEvents={(events) => recordVideoPlaybackEvents(events)}
         >
             <Player.Container className="relative overflow-hidden bg-black">
                 <Player.Video

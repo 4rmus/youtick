@@ -1,6 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import profiles from '../../../../protocol/paid-media-livepeer-v1/profiles.json';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const tus = vi.hoisted(() => ({
+    autoComplete: true,
+    abort: vi.fn(),
     instances: [] as Array<{
         options: Record<string, unknown>;
         started: boolean;
@@ -15,7 +18,10 @@ const featureFlags = vi.hoisted(() => ({
     enableLivepeerNearCreatorFee: true,
     enableSponsoredLivepeerUploads: false,
     publicTestnetBeta: false,
+    publicTestnetVideoV1: false,
 }));
+
+vi.mock('@/lib/signless-access-key', () => ({ signAndSendWithSignlessProvision: vi.fn() }));
 
 vi.mock('@/lib/near', () => ({
     getProvider: () => ({ query: near.query }),
@@ -34,10 +40,10 @@ vi.mock('tus-js-client', () => ({
 
         start() {
             this.started = true;
-            (this.options.onSuccess as (() => void) | undefined)?.();
+            if (tus.autoComplete) (this.options.onSuccess as (() => void) | undefined)?.();
         }
 
-        async abort() {}
+        async abort(terminate: boolean) { tus.abort(terminate); }
     },
 }));
 
@@ -71,6 +77,7 @@ import {
     parseLivepeerPriceUsdc,
     preflightLivepeerUpload,
     prepareCreatorFeePaymentOptions,
+    prepareLivepeerUploadResume,
     livepeerUploadFeeUsdc,
     requestLivepeerUploadIntent,
     requestNearCreatorFeeQuote,
@@ -184,18 +191,200 @@ async function provisionJobSession(
     });
 }
 
+async function publicResumeFixture() {
+    featureFlags.publicTestnetVideoV1 = true;
+    featureFlags.enableSponsoredLivepeerUploads = true;
+    const file = new File(['resume-source'], 'resume.mp4', { type: 'video/mp4', lastModified: 123 });
+    const job = {
+        job_id: 'job-001', creator_id: 'creator.testnet', generation: 1, status: 'Authorized',
+        created_at_ms: Date.now() - 1000, upload_public_key: 'ed25519:original',
+        upload_key_expires_at_ms: String(Date.now() + 60_000), expected_source_bytes: String(file.size),
+        title: 'Paid video', price_usdc: '2000001', profile_id: 'paid-media-livepeer-v1',
+        profile_config_sha256: '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77',
+        fee_asset: 'USDC', fee_quote_hash: 'a'.repeat(64),
+    };
+    writeLivepeerUploadDraft('creator.testnet', {
+        schema: 'youtick.livepeer-ui-draft.v2', stage: 'uploading', paymentAttempted: true,
+        jobId: job.job_id, title: job.title, price: '2.000001', sourceBytes: file.size,
+        sourceName: file.name, sourceLastModified: file.lastModified,
+        sourceFingerprintSha256: await fingerprintLivepeerSource(file),
+    });
+    near.viewContract.mockImplementation(async (_provider, _contract, method) => method === 'get_media_job' ? job : null);
+    vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, run: (lock: object | null) => unknown) => run({}) } });
+    const wallet = { ...createWallet(), getAccounts: vi.fn().mockResolvedValue([{ accountId: job.creator_id }]) };
+    wallet.signAndSendTransaction.mockImplementation(async ({ actions }) => {
+        const action = actions[0] as { methodName: string; args: { new_public_key: string; expires_at_ms: string } };
+        expect(action.methodName).toBe('replace_upload_key');
+        job.upload_public_key = action.args.new_public_key;
+        job.upload_key_expires_at_ms = action.args.expires_at_ms;
+        return {};
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => Response.json({ ...INTENT, expected_source_bytes: String(file.size), created: false }));
+    vi.stubGlobal('fetch', fetchMock);
+    return { file, job, wallet, fetchMock, input: { accountId: job.creator_id, jobId: job.job_id, file } };
+}
+
 describe('Livepeer browser upload', () => {
     beforeEach(() => {
         tus.instances.length = 0;
+        tus.autoComplete = true;
+        tus.abort.mockClear();
         vi.restoreAllMocks();
         featureFlags.enableLivepeerNearCreatorFee = true;
         featureFlags.enableSponsoredLivepeerUploads = false;
         featureFlags.publicTestnetBeta = false;
-        near.viewContract.mockReset().mockResolvedValue(null);
+        featureFlags.publicTestnetVideoV1 = false;
+        near.viewContract.mockReset().mockImplementation(policyView);
         sessionStorage.clear();
         localStorage.clear();
         delete process.env.NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO;
         delete process.env.NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO;
+    });
+
+    afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+    it('recovers the same file after tab closure with one key approval and no second payment', async () => {
+        const { file, job, wallet, fetchMock, input } = await publicResumeFixture();
+        sessionStorage.clear();
+        expect(await readLivepeerUploadDraft('creator.testnet', file)).not.toBeNull();
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).resolves.toMatchObject({ created: false, tus_endpoint: INTENT.tus_endpoint });
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
+        expect(job.upload_key_expires_at_ms).toBe(String(job.created_at_ms + 86_400_000));
+        const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+        expect(body.body.recovery).toBe('resume');
+        expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith('/v1/upload-intents'))).toBe(true);
+        await prepareLivepeerUploadResume(wallet as never, input);
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
+        const saved = Array.from({ length: localStorage.length }, (_, i) => localStorage.getItem(localStorage.key(i)!));
+        expect(JSON.stringify(saved)).not.toMatch(/ed25519:|tus_endpoint|secretKey|signedDelegate|origin.livepeer/);
+        expect(await readLivepeerUploadDraft('other.testnet', file)).toBeNull();
+    });
+
+    it('blocks wrong files, accounts, expiry and another recovery tab before wallet approval', async () => {
+        const { job, wallet, input, fetchMock } = await publicResumeFixture();
+        await expect(prepareLivepeerUploadResume(wallet as never, { ...input,
+            file: new File(['wrong-source!'], input.file.name, { type: 'video/mp4', lastModified: 123 }) }))
+            .rejects.toThrow('livepeer_resume_file_mismatch');
+        wallet.getAccounts.mockResolvedValue([{ accountId: 'other.testnet' }]);
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).rejects.toThrow('livepeer_wallet_account_mismatch');
+        job.created_at_ms = Date.now() - 86_400_000;
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).rejects.toThrow('livepeer_upload_expired');
+        vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, run: (lock: null) => unknown) => run(null) } });
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).rejects.toThrow('livepeer_resume_in_progress');
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('does not repeat an uncertain key change and can reconcile it after session loss', async () => {
+        vi.useFakeTimers();
+        const { job, wallet, input } = await publicResumeFixture();
+        wallet.signAndSendTransaction.mockRejectedValue(new Error('lost wallet response'));
+        const first = expect(prepareLivepeerUploadResume(wallet as never, input)).rejects.toThrow('livepeer_key_replacement_pending');
+        await vi.waitFor(() => expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce());
+        await vi.runAllTimersAsync();
+        await first;
+        const action = wallet.signAndSendTransaction.mock.calls[0][0].actions[0] as { args: { new_public_key: string; expires_at_ms: string } };
+        sessionStorage.clear();
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).rejects.toThrow('livepeer_key_replacement_pending');
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
+        job.upload_public_key = action.args.new_public_key;
+        job.upload_key_expires_at_ms = action.args.expires_at_ms;
+        wallet.signAndSendTransaction.mockImplementation(async ({ actions }) => {
+            const next = actions[0] as typeof action;
+            job.upload_public_key = next.args.new_public_key;
+            job.upload_key_expires_at_ms = next.args.expires_at_ms;
+            return {};
+        });
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).resolves.toMatchObject({ created: false });
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(2); // one fresh approval only after the former key is final
+    });
+
+    it('never turns an unconfirmed public payment into a second payment attempt', async () => {
+        const { wallet, input } = await publicResumeFixture();
+        near.viewContract.mockImplementation(policyView);
+        const sponsored = { ...wallet, signDelegateActions: vi.fn() };
+        await expect(authorizeLivepeerPaidJob(sponsored as never, {
+            accountId: input.accountId, jobId: input.jobId, title: 'Paid video', priceUsdc: '2000001', expectedSourceBytes: input.file.size,
+        })).rejects.toThrow('livepeer_payment_pending');
+        expect(sponsored.signDelegateActions).not.toHaveBeenCalled();
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])('records a public payment attempt only at relay submission; definitive rejection=%s', async (rejected) => {
+        featureFlags.publicTestnetVideoV1 = true;
+        featureFlags.enableSponsoredLivepeerUploads = true;
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
+        const file = new File(['video'], 'video.mp4', { type: 'video/mp4', lastModified: 123 });
+        writeLivepeerUploadDraft('creator.testnet', { schema: 'youtick.livepeer-ui-draft.v2', stage: 'payment_pending',
+            jobId: 'job-public-payment', title: 'Paid video', price: '2.000001', sourceBytes: file.size,
+            sourceName: file.name, sourceLastModified: file.lastModified, sourceFingerprintSha256: await fingerprintLivepeerSource(file) });
+        const wallet = createSponsoredWallet();
+        wallet.signDelegateActions.mockImplementation(async () => {
+            expect((await readLivepeerUploadDraft('creator.testnet', file))?.paymentAttempted).not.toBe(true);
+            return { signedDelegateActions: ['A'.repeat(64)] };
+        });
+        const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+            if (url.endsWith('/v1/sponsored-upload-quotes')) {
+                const request = JSON.parse(String(init.body)).request;
+                expect(request.profile_config_sha256).toBe(profiles.adaptive.hash);
+                return sponsoredQuoteResponse(request);
+            }
+            expect((await readLivepeerUploadDraft('creator.testnet', file))?.paymentAttempted).toBe(true);
+            return rejected
+                ? Response.json({ error: 'invalid_sponsored_upload_relay', reason: 'access_key' }, { status: 400 })
+                : Response.json({ accepted: true, relayed: false, job_id: 'job-public-payment', tx_hash: null });
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const authorize = () => authorizeLivepeerPaidJob(wallet as never, { accountId: 'creator.testnet',
+            jobId: 'job-public-payment', title: 'Paid video', priceUsdc: '2000001', expectedSourceBytes: file.size });
+        if (rejected) await expect(authorize()).rejects.toThrow('invalid_sponsored_upload_relay:access_key');
+        else await expect(authorize()).resolves.toMatch(/^ed25519:/);
+        expect(Boolean((await readLivepeerUploadDraft('creator.testnet', file))?.paymentAttempted)).toBe(!rejected);
+        if (!rejected) await expect(authorize()).rejects.toThrow('livepeer_payment_pending');
+        expect(wallet.signDelegateActions).toHaveBeenCalledOnce();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+    });
+
+    it('lets a user retry a definitively rejected key approval without treating it as an uncertain transaction', async () => {
+        const { wallet, input } = await publicResumeFixture();
+        wallet.signAndSendTransaction.mockRejectedValueOnce(Object.assign(new Error('rejected'), { code: 4001 }));
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).rejects.toThrow('livepeer_wallet_rejected');
+        expect((await readLivepeerUploadDraft(input.accountId, input.file))?.keyReplacementPending).not.toBe(true);
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).resolves.toMatchObject({ created: false });
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not resurrect the heartbeat when its in-flight promise settles after upload completion', async () => {
+        vi.useFakeTimers();
+        tus.autoComplete = false;
+        let release!: () => void;
+        const heartbeat = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+        const file = new File(['video'], 'video.mp4', { type: 'video/mp4' });
+        const transfer = uploadLivepeerSource(file, { ...INTENT, expected_source_bytes: '5' }, { heartbeat });
+        await vi.advanceTimersByTimeAsync(INTENT.heartbeat_interval_ms);
+        expect(heartbeat).toHaveBeenCalledOnce();
+        (tus.instances[0].options.onSuccess as () => void)();
+        await transfer;
+        release();
+        await vi.advanceTimersByTimeAsync(INTENT.heartbeat_interval_ms * 2);
+        expect(heartbeat).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('aborts a transfer without deleting its TUS resource or scheduling more heartbeats', async () => {
+        vi.useFakeTimers();
+        tus.autoComplete = false;
+        const controller = new AbortController();
+        const heartbeat = vi.fn();
+        const transfer = uploadLivepeerSource(new File(['video'], 'video.mp4', { type: 'video/mp4' }),
+            { ...INTENT, expected_source_bytes: '5' }, { signal: controller.signal, heartbeat });
+        const rejected = expect(transfer).rejects.toThrow('livepeer_upload_aborted');
+        controller.abort();
+        await rejected;
+        await vi.advanceTimersByTimeAsync(INTENT.heartbeat_interval_ms * 2);
+        expect(tus.abort).toHaveBeenCalledWith(false);
+        expect(heartbeat).not.toHaveBeenCalled();
     });
 
     it('keeps only a scoped job bookmark when the upload tab closes', async () => {
@@ -530,6 +719,7 @@ describe('Livepeer browser upload', () => {
     });
 
     it('uses one sequential 32 MiB TUS stream and does not retry an offset conflict', async () => {
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
         const sourceBytes = 80 * 1024 * 1024;
         const file = new File([new Uint8Array(sourceBytes)], 'video.mp4', { type: 'video/mp4' });
         const onProgress = vi.fn();
@@ -546,6 +736,11 @@ describe('Livepeer browser upload', () => {
         expect(instance.options.storeFingerprintForResuming).toBe(false);
         expect(instance.options.chunkSize).toBe(32 * 1024 * 1024);
         expect(instance.options.parallelUploads).toBe(1);
+        expect(log.mock.calls.map(([value]) => JSON.parse(String(value))))
+            .toContainEqual(expect.objectContaining({
+                phase: 'source_transfer', outcome: 'completed', sourceBytes, durationMs: expect.any(Number),
+            }));
+        expect(JSON.stringify(log.mock.calls)).not.toContain(INTENT.tus_endpoint);
         expect(file.size % Number(instance.options.chunkSize)).toBe(16 * 1024 * 1024);
         (instance.options.onProgress as (uploaded: number, total: number) => void)(12, 34);
         expect(onProgress).toHaveBeenCalledWith(12, 34);
@@ -817,13 +1012,13 @@ describe('Livepeer browser upload', () => {
     });
 
     it('keeps the same local key after an ambiguous wallet failure', async () => {
-        vi.spyOn(Date, 'now')
-            .mockReturnValueOnce(1_785_589_300_000)
-            .mockReturnValueOnce(1_785_589_301_000);
+        let now = 1_785_589_300_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
         const wallet = createWallet();
         wallet.signAndSendTransaction.mockRejectedValueOnce(new Error('wallet rejected authorization'));
 
         await expect(provisionJobSession(wallet)).rejects.toThrow('wallet rejected authorization');
+        now += 1000;
         await expect(provisionJobSession(wallet)).resolves.toMatch(/^ed25519:/);
         const messages = wallet.signAndSendTransaction.mock.calls.map(([transaction]) => JSON.parse(
             ((transaction.actions[0] as { args: { msg: string } }).args.msg),
@@ -1161,3 +1356,11 @@ describe('Livepeer browser upload', () => {
         expect(tus.instances).toHaveLength(0);
     });
 });
+
+function policyView(_provider: unknown, _contract: unknown, method: string) {
+    return method === 'get_public_upload_policy' ? {
+        version: 1, environment: 'public-testnet', network: 'testnet', market_contract_id: 'paid-media-livepeer-v1.testnet',
+        max_source_bytes: '5000000000', job_ttl_ms: '86400000', signed_quote_required: true,
+        profiles: [profiles.adaptive, profiles.legacy].map((profile) => ({ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: profile.hash })),
+    } : null;
+}

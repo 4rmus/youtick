@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { getProvider, viewContract } from '@/lib/near';
-import { NEAR_CONFIG } from '@/lib/constants';
+import { NEAR_CONFIG, FEATURE_FLAGS } from '@/lib/constants';
 
 type BetaState = {
     ends_at_ms: string;
@@ -12,7 +12,8 @@ type BetaState = {
 
 export function PublicTestnetBetaBanner() {
     const beta = useQuery({
-        queryKey: ['publicTestnetBetaState'],
+        queryKey: ['publicTestnetBetaState', NEAR_CONFIG.marketContractId],
+        enabled: !FEATURE_FLAGS.publicTestnetVideoV1,
         queryFn: () => viewContract<BetaState | null>(
             getProvider(),
             NEAR_CONFIG.marketContractId,
@@ -21,6 +22,13 @@ export function PublicTestnetBetaBanner() {
         retry: false,
         refetchInterval: 60_000,
     });
+    if (FEATURE_FLAGS.publicTestnetVideoV1) return (
+        <aside className="border-b border-amber-400/30 bg-amber-400/10 px-4 py-2 text-center text-xs text-amber-100">
+            <strong>Public Testnet</strong> · test tokens have no real value · 5 GB/file ·
+            {' '}2 uploads/UTC day · 1 active upload/account · 10 active uploads overall ·
+            {' '}24-hour publication deadline · <Link className="underline" href="/terms">Terms and test tokens</Link>
+        </aside>
+    );
     const remaining = !beta.data
         ? beta.isLoading ? 'checking beta time' : 'beta time unavailable'
         : beta.data.closed_at_ms === null

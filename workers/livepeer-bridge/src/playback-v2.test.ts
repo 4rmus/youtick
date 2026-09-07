@@ -88,7 +88,7 @@ async function playbackRequest(overrides?: {
     requestOrigin?: string;
     requestSignature?: string;
     certificateSignature?: string;
-}): Promise<{ request: Request; walletPublicKey: string }> {
+}): Promise<{ request: Request; walletPublicKey: string; accountId: string; renew: () => Promise<Request> }> {
     const now = Date.now();
     const accountId = overrides?.accountId ?? ACCOUNT_ID;
     const origin = overrides?.origin ?? ORIGIN;
@@ -116,25 +116,24 @@ async function playbackRequest(overrides?: {
         generation: 1,
         playback_id: PLAYBACK_ID,
     };
-    const requestEnvelope = {
-        domain: 'youtick.playback-request',
-        version: '1',
-        network: 'testnet',
-        contract_id: MARKET_ID,
-        account_id: accountId,
-        origin,
-        request_nonce: base64Url(crypto.getRandomValues(new Uint8Array(32))),
-        request_expires_at_ms: String(now + 5 * 60 * 1000),
-        body_sha256: await sha256(canonicalJson(body)),
-        certificate_sha256: await sha256(canonicalJson(certificate)),
-    };
-    const deviceSignature = deviceKey.sign(
-        new TextEncoder().encode(canonicalPlaybackRequest(requestEnvelope)),
-    ).signature;
-    const requestSignature = overrides?.requestSignature ?? base64(deviceSignature);
-    return {
-        walletPublicKey: walletKey.getPublicKey().toString(),
-        request: new Request('https://bridge.youtick.net/v2/playback-tokens', {
+    const renew = async () => {
+        const requestEnvelope = {
+            domain: 'youtick.playback-request',
+            version: '1',
+            network: 'testnet',
+            contract_id: MARKET_ID,
+            account_id: accountId,
+            origin,
+            request_nonce: base64Url(crypto.getRandomValues(new Uint8Array(32))),
+            request_expires_at_ms: String(Date.now() + 5 * 60 * 1000),
+            body_sha256: await sha256(canonicalJson(body)),
+            certificate_sha256: await sha256(canonicalJson(certificate)),
+        };
+        const deviceSignature = deviceKey.sign(
+            new TextEncoder().encode(canonicalPlaybackRequest(requestEnvelope)),
+        ).signature;
+        const requestSignature = overrides?.requestSignature ?? base64(deviceSignature);
+        return new Request('https://bridge.youtick.net/v2/playback-tokens', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Origin: overrides?.requestOrigin ?? origin },
             body: JSON.stringify({
@@ -148,18 +147,21 @@ async function playbackRequest(overrides?: {
                 request: requestEnvelope,
                 request_signature: requestSignature,
             }),
-        }),
+        });
     };
+    return { request: await renew(), walletPublicKey: walletKey.getPublicKey().toString(), accountId, renew };
 }
 
 function playbackRpc(input: {
     walletPublicKey: string;
+    accountId?: string;
     accessKeyExists?: boolean;
     accessKeyPermission?: unknown;
     availability?: string;
     entitlement?: boolean;
     playbackId?: string;
     betaState?: unknown;
+    publicUploadPolicy?: unknown;
 }) {
     return vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
         const rpc = JSON.parse(String(init?.body)) as {
@@ -174,7 +176,7 @@ function playbackRpc(input: {
         };
         if (rpc.params.request_type === 'view_access_key') {
             expect(rpc.params.finality).toBe('final');
-            expect(rpc.params.account_id).toBe(ACCOUNT_ID);
+            expect(rpc.params.account_id).toBe(input.accountId ?? ACCOUNT_ID);
             expect(rpc.params.public_key).toBe(input.walletPublicKey);
             if (input.accessKeyExists === false) return Response.json({ error: { cause: 'UNKNOWN_ACCESS_KEY' } });
             return Response.json({
@@ -195,7 +197,9 @@ function playbackRpc(input: {
         if (rpc.params.method_name === 'get_public_testnet_beta_state') {
             return rpcResult(input.betaState);
         }
-        expect(rpc.params.block_id).toBe(BLOCK_HASH);
+        if (rpc.params.method_name === 'get_public_upload_policy') return rpcResult(input.publicUploadPolicy);
+        if (rpc.params.block_id) expect(rpc.params.block_id).toBe(BLOCK_HASH);
+        else expect(rpc.params.finality).toBe('final');
         expect(rpc.params.method_name).toBe('has_entitlement');
         return rpcResult(input.entitlement ?? true);
     });
@@ -338,6 +342,67 @@ describe('stateless playback v2', () => {
         expect(dependencies.provider).toHaveBeenCalledOnce();
     });
 
+    it('counts the beta policy read for initial, cached and fresh renewal requests', async () => {
+        let now = Date.now();
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const { env } = await createEnv();
+        Object.assign(env, {
+            LIVEPEER_NEW_UPLOADS_ENABLED: 'true',
+            LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'true',
+            LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'true',
+            LIVEPEER_OPERATOR_JOB_ID: '',
+            LIVEPEER_SPONSORED_UPLOADS_ENABLED: 'true',
+            LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true',
+            LIVEPEER_CREATOR_ALLOWLIST: '*',
+            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '20000000',
+            LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '2000000',
+            PUBLIC_BETA_RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) } as RateLimit,
+        });
+        const signed = await playbackRequest();
+        const dependencies = playbackDependencies({
+            ...signed, betaState: { version: 1, ends_at_ms: String(now + 86400000), closed_at_ms: null },
+        });
+        vi.stubGlobal('fetch', dependencies.fetcher);
+        const initial = await handler.fetch(signed.request, env);
+        expect(initial.status).toBe(200);
+        expect((await handler.fetch(await signed.renew(), env)).status).toBe(200);
+        expect(dependencies.rpc).toHaveBeenCalledTimes(5);
+        now += 150_000;
+        const renewed = await handler.fetch(await signed.renew(), env);
+        expect(renewed.status).toBe(200);
+        expect((await renewed.json() as { token: string }).token)
+            .not.toBe((await initial.json() as { token: string }).token);
+        const measurements = info.mock.calls.map(([value]) => JSON.parse(String(value)))
+            .filter((entry) => entry.event === 'stateless_playback_authorization_completed');
+        expect(measurements.map(({ details }) => [details.cacheResult, details.rpcCalls, details.policyRpcCalls]))
+            .toEqual([['MISS', 4, 1], ['HIT', 1, 1], ['MISS', 3, 1]]);
+        expect(dependencies.rpc).toHaveBeenCalledTimes(8);
+    });
+
+    it('checks the public policy while uploads are closed without reading a legacy beta deadline', async () => {
+        const { env } = await createEnv();
+        Object.assign(env, {
+            VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_NEW_UPLOADS_ENABLED: 'false',
+            LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'false',
+            PUBLIC_BETA_RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) } as RateLimit,
+        });
+        const signed = await playbackRequest();
+        const dependencies = playbackDependencies({ ...signed, publicUploadPolicy: {
+            version: 1, environment: 'public-testnet', network: 'testnet', market_contract_id: MARKET_ID,
+            max_source_bytes: '5000000000', job_ttl_ms: '86400000', signed_quote_required: true,
+            profiles: [{ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: PROFILE_HASH }],
+        } });
+        vi.stubGlobal('fetch', dependencies.fetcher);
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        expect((await handler.fetch(signed.request, env)).status).toBe(200);
+        expect((await handler.fetch(await signed.renew(), env)).status).toBe(200);
+        expect(dependencies.rpc).toHaveBeenCalledTimes(5);
+        const completed = info.mock.calls.map(([value]) => JSON.parse(String(value)))
+            .filter((entry) => entry.event === 'stateless_playback_authorization_completed');
+        expect(completed.map((entry) => entry.details.rpcCalls)).toEqual([4, 1]);
+    });
+
     it.each([
         ['expired certificate', { certificateExpiresAtMs: Date.now() - 1 }, undefined, 403, 'playback_denied'],
         ['wrong origin', { requestOrigin: 'https://other.example' }, undefined, 400, 'protocol_binding_mismatch'],
@@ -387,7 +452,7 @@ describe('stateless playback v2', () => {
         expect(response.status).toBe(503);
         expect(errorLog.mock.calls.map(([value]) => JSON.parse(String(value)))).toContainEqual({
             event: 'stateless_playback_request_failed',
-            details: { code: 'playback_authorization_unavailable', httpCode: 503 },
+            details: { code: 'playback_authorization_unavailable', httpCode: 503, latencyMs: expect.any(Number) },
         });
     });
 
@@ -504,6 +569,10 @@ describe('stateless playback v2', () => {
             infoLog.mockRestore();
             const benchmark = JSON.stringify({
                 benchmark: 'playback_v2_warm_local',
+                evidenceClass: 'LOCAL_TEST',
+                distinctAccounts: 1,
+                concurrency: 50,
+                mediaDelivery: 'EXTERNAL_NOT_RUN',
                 requests: latencies.length,
                 p95Ms: Number(p95.toFixed(3)),
                 errors,
@@ -520,6 +589,65 @@ describe('stateless playback v2', () => {
         },
         120_000,
     );
+
+    it.runIf(loadTestEnabled)('measures 1k distinct local identities without claiming media capacity', async () => {
+        let now = Date.now();
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const { env, idFromName } = await createEnv();
+        const identities = await Promise.all(Array.from({ length: 1000 }, (_, i) => (
+            playbackRequest({ accountId: `viewer-${i}.testnet` })
+        )));
+        const rpcByAccount = new Map(identities.map((identity) => [identity.accountId, playbackRpc(identity)]));
+        const firstRpc = rpcByAccount.get(identities[0].accountId)!;
+        const external = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+            if (String(url).startsWith('https://livepeer.studio/api/playback/')) {
+                return Response.json({ type: 'vod', meta: { playbackPolicy: { type: 'jwt' }, source: [] } });
+            }
+            const { params } = JSON.parse(String(init?.body));
+            const accountId = params.request_type === 'view_access_key' ? params.account_id
+                : params.method_name === 'has_entitlement'
+                    ? JSON.parse(atob(params.args_base64)).account_id : identities[0].accountId;
+            return (rpcByAccount.get(accountId) ?? firstRpc)(url, init);
+        });
+        vi.stubGlobal('fetch', external);
+        const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        expect(new Set(identities.map((identity) => identity.walletPublicKey)).size).toBe(1000);
+
+        for (const scenario of ['initial', 'short_repeat', 'renewal_after_150s']) {
+            if (scenario === 'renewal_after_150s') now += 150_000;
+            const requests = await Promise.all(identities.map((identity) => identity.renew()));
+            info.mockClear();
+            external.mockClear();
+            const latencies: number[] = [];
+            const responses = await Promise.all(requests.map(async (request) => {
+                const started = performance.now();
+                const response = await handler.fetch(request, env);
+                latencies.push(performance.now() - started);
+                return response;
+            }));
+            const completed = info.mock.calls.map(([value]) => JSON.parse(String(value)))
+                .filter((entry) => entry.event === 'stateless_playback_authorization_completed');
+            const errors = responses.filter((response) => response.status !== 200).length;
+            const ordered = latencies.sort((a, b) => a - b);
+            const rpcCalls = completed.reduce((sum, entry) => sum + entry.details.rpcCalls, 0);
+            const providerCalls = completed.reduce((sum, entry) => sum + entry.details.providerCalls, 0);
+            const report = {
+                benchmark: 'playback_v2_distinct_local', scenario, evidenceClass: 'LOCAL_TEST',
+                distinctAccounts: identities.length, concurrency: requests.length, requests: requests.length,
+                p95Ms: Number(ordered[Math.ceil(ordered.length * 0.95) - 1].toFixed(3)),
+                errors, cacheHits: completed.filter((entry) => entry.details.cacheResult === 'HIT').length,
+                rpcCalls, providerCalls, cacheRecords: playbackAuthorizationCacheRecordCount(),
+                mediaDelivery: 'EXTERNAL_NOT_RUN', expiryClock: 'SIMULATED',
+            };
+            (globalThis as unknown as { process: { stdout: { write: (value: string) => void } } })
+                .process.stdout.write(`${JSON.stringify(report)}\n`);
+            expect(errors).toBe(0);
+            expect(completed).toHaveLength(1000);
+            expect(rpcCalls + providerCalls).toBe(external.mock.calls.length);
+            expect(playbackAuthorizationCacheRecordCount()).toBeLessThanOrEqual(1024);
+        }
+        expect(idFromName).not.toHaveBeenCalled();
+    }, 120_000);
 
     it('is fail-closed unless the independent v2 gate is enabled', async () => {
         const { env } = await createEnv();

@@ -1,4 +1,4 @@
-import { APP_CONFIG, FEATURE_FLAGS } from '@/lib/constants';
+import { APP_CONFIG, FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
 import {
     parseLivepeerPublication,
     type LivepeerPublication,
@@ -53,7 +53,8 @@ async function readPublicationPage(
     if (cursor) query.searchParams.set('cursor', cursor);
     const page = await requestJson(query);
     const watermark = parseWatermark(page.watermark);
-    if (page.schema !== schema
+    if ((FEATURE_FLAGS.publicTestnetVideoV1 && (page.network !== NEAR_NETWORK || page.contract_id !== NEAR_CONFIG.marketContractId))
+        || page.schema !== schema
         || (creatorId !== null && page.creator_id !== creatorId)
         || !Array.isArray(page.items) || page.items.length > limit
         || !(page.next_cursor === null
@@ -81,7 +82,7 @@ async function readPublicationPage(
 
 async function requestJson(path: string | URL): Promise<Record<string, unknown>> {
     const url = path instanceof URL ? path : new URL(path, requireReadModelOrigin());
-    const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+    const response = await fetch(url.toString(), { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(2_500) });
     if (!response.ok) throw new Error('market_read_model_unavailable');
     try {
         const value: unknown = await response.json();

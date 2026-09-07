@@ -1,0 +1,45 @@
+{
+  "legacy": {
+    "hash": "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77",
+    "profiles": [
+      {
+        "name": "720p",
+        "width": 1280,
+        "height": 720,
+        "bitrate": 3000000,
+        "fps": 30,
+        "fpsDen": 1,
+        "gop": "2",
+        "profile": "H264Baseline",
+        "encoder": "H.264"
+      }
+    ]
+  },
+  "adaptive": {
+    "hash": "28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2",
+    "profiles": [
+      {
+        "name": "360p",
+        "width": 640,
+        "height": 360,
+        "bitrate": 800000,
+        "fps": 30,
+        "fpsDen": 1,
+        "gop": "2",
+        "profile": "H264Baseline",
+        "encoder": "H.264"
+      },
+      {
+        "name": "720p",
+        "width": 1280,
+        "height": 720,
+        "bitrate": 3000000,
+        "fps": 30,
+        "fpsDen": 1,
+        "gop": "2",
+        "profile": "H264Baseline",
+        "encoder": "H.264"
+      }
+    ]
+  }
+}

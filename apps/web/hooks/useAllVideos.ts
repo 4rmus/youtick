@@ -1,5 +1,5 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { FEATURE_FLAGS } from '@/lib/constants';
+import { FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
 import {
     readLivepeerPublications,
     readLivepeerPublicationsCount,
@@ -53,7 +53,7 @@ export async function fetchDiscoverPage(page: PageParam): Promise<Page> {
 
 export function useAllVideos() {
     const query = useInfiniteQuery({
-        queryKey: ['livepeerPublications', FEATURE_FLAGS.enableDerivedReadModel ? 'derived' : 'near'],
+        queryKey: ['livepeerPublications', NEAR_NETWORK, NEAR_CONFIG.marketContractId, FEATURE_FLAGS.enableDerivedReadModel ? 'derived' : 'near'],
         initialPageParam: { source: 'auto' } as PageParam,
         queryFn: ({ pageParam }) => fetchDiscoverPage(pageParam),
         getNextPageParam: (page) => page.nextPageParam,

@@ -9,6 +9,10 @@ const BROWSER_EXECUTABLES = {
     edge: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
 };
 const TERMINAL_BROWSER_STATES = ['pass', 'fail'];
+const NETWORK_PROFILES = {
+    normal: { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 },
+    slow: { offline: false, latency: 150, downloadThroughput: 200_000, uploadThroughput: 100_000 },
+};
 
 const CLIENT_SOURCE = `import Hls from '/hls.mjs';
 
@@ -27,6 +31,7 @@ function failureCode(error) {
     if (message === 'canary_playback_url_invalid') return 'canary_invalid_provider_url';
     if (message === 'canary_autoplay_blocked') return 'canary_autoplay_blocked';
     if (/^canary_playback_start_[A-Za-z]+$/.test(message)) return message;
+    if (/^canary_quality_[a-z_]+$/.test(message)) return message;
     if (message === 'canary_request_failed') return 'canary_local_control';
     return 'canary_unknown';
 }
@@ -96,16 +101,24 @@ async function json(path, init) {
     return response.json();
 }
 
-async function playOnce(hlsUrl, token) {
+async function playOnce(hlsUrl, token, verifyAdaptive = false) {
     return new Promise((resolve, reject) => {
+        const startedAt = performance.now();
+        let firstFrameMs = null;
+        const frameCallback = video.requestVideoFrameCallback(() => {
+            firstFrameMs = performance.now() - startedAt;
+        });
         let headerRequests = 0;
         let completed = false;
         let hls;
         let lastHlsFailure = 'canary_hls_other_none';
+        let qualityStage = 0;
+        let switchedAt = 0;
         const stop = (error) => {
             if (completed) return;
             completed = true;
             clearTimeout(timeout);
+            video.cancelVideoFrameCallback(frameCallback);
             video.removeEventListener('timeupdate', onTimeUpdate);
             video.removeEventListener('canplay', onCanPlay);
             hls?.destroy();
@@ -113,10 +126,20 @@ async function playOnce(hlsUrl, token) {
             video.removeAttribute('src');
             video.load();
             if (error) reject(error);
-            else resolve({ headerRequests, played: true });
+            else resolve({ headerRequests, played: true, firstFrameMs, adaptiveVerified: verifyAdaptive && qualityStage === 2 });
         };
         const onTimeUpdate = () => {
-            if (video.currentTime >= 1) stop();
+            if (!verifyAdaptive) { if (video.currentTime >= 1) stop(); return; }
+            if (qualityStage === 0 && video.currentTime >= 1 && video.videoHeight === 360) {
+                switchedAt = video.currentTime;
+                qualityStage = 1;
+                hls.currentLevel = hls.levels.findIndex((level) => level.height === 720);
+            } else if (qualityStage === 1 && video.currentTime >= switchedAt + 1 && video.videoHeight === 720) {
+                qualityStage = 2;
+                hls.currentLevel = -1;
+                if (!hls.autoLevelEnabled) return stop(new Error('canary_quality_auto_failed'));
+                stop();
+            }
         };
         const onCanPlay = () => {
             video.muted = true;
@@ -135,6 +158,12 @@ async function playOnce(hlsUrl, token) {
                 xhr.setRequestHeader('Livepeer-Jwt', token);
                 headerRequests += 1;
             },
+        });
+        if (verifyAdaptive) hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (![360, 720].every((height) => hls.levels.some((level) => level.height === height))) {
+                return stop(new Error('canary_quality_renditions_missing'));
+            }
+            hls.currentLevel = hls.levels.findIndex((level) => level.height === 360);
         });
         hls.on(Hls.Events.ERROR, (_event, data) => {
             lastHlsFailure = hlsFailureCode(data);
@@ -208,15 +237,18 @@ async function run() {
     const expired = await json('/token?kind=expired', { method: 'POST' });
     const expiredPlayback = await denyOnce(config.hls_url, expired.token);
     const first = await json('/token', { method: 'POST' });
-    const firstPlayback = await playOnce(config.hls_url, first.token);
+    const firstPlayback = await playOnce(config.hls_url, first.token, config.verify_adaptive === true);
     await delay(1_100);
     const refreshed = await json('/token', { method: 'POST' });
     if (refreshed.token === first.token) throw new Error('canary_refresh_not_rotated');
     const refreshedPlayback = await playOnce(config.hls_url, refreshed.token);
     return {
         browser,
+        adaptive_quality_verified: firstPlayback.adaptiveVerified,
         initial_played: firstPlayback.played,
         refreshed_played: refreshedPlayback.played,
+        initial_first_frame_ms: firstPlayback.firstFrameMs,
+        short_repeat_first_frame_ms: refreshedPlayback.firstFrameMs,
         initial_hls_header_requests: firstPlayback.headerRequests,
         refreshed_hls_header_requests: refreshedPlayback.headerRequests,
         anonymous_denied: anonymous.denied,
@@ -298,6 +330,8 @@ function validReport(value) {
         && ['chrome', 'edge'].includes(value.browser)
         && typeof value.initial_played === 'boolean'
         && typeof value.refreshed_played === 'boolean'
+        && Number.isFinite(value.initial_first_frame_ms) && value.initial_first_frame_ms >= 0
+        && Number.isFinite(value.short_repeat_first_frame_ms) && value.short_repeat_first_frame_ms >= 0
         && Number.isSafeInteger(value.initial_hls_header_requests)
         && value.initial_hls_header_requests >= 0
         && Number.isSafeInteger(value.refreshed_hls_header_requests)
@@ -329,8 +363,14 @@ function validFailureCode(value) {
 
 function compactReport(value) {
     return {
+        adaptive_quality: value.adaptive_quality_verified === true ? 'PASS' : 'EXTERNAL_NOT_RUN',
         initial_played: value.initial_played,
         refreshed_played: value.refreshed_played,
+        initial_first_frame_ms: value.initial_first_frame_ms,
+        short_repeat_first_frame_ms: value.short_repeat_first_frame_ms,
+        playback_scenario: 'short_repeat_new_player',
+        token_renewal: 'EXTERNAL_NOT_RUN',
+        long_playback: 'EXTERNAL_NOT_RUN',
         initial_hls_header_requests: value.initial_hls_header_requests,
         refreshed_hls_header_requests: value.refreshed_hls_header_requests,
         anonymous_denied: value.anonymous_denied,
@@ -368,7 +408,7 @@ function close(server) {
     return new Promise((resolve) => server.close(resolve));
 }
 
-async function runDesktopBrowser({ browser, url, timeoutMs }) {
+async function runDesktopBrowser({ browser, url, timeoutMs, networkProfile }) {
     let instance;
     try {
         const { chromium } = await import('@playwright/test');
@@ -378,6 +418,9 @@ async function runDesktopBrowser({ browser, url, timeoutMs }) {
             args: ['--autoplay-policy=no-user-gesture-required'],
         });
         const page = await instance.newPage();
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send('Network.enable');
+        await cdp.send('Network.emulateNetworkConditions', NETWORK_PROFILES[networkProfile]);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
         await page.waitForFunction(
             (states) => states.includes(document.body.dataset.state || ''),
@@ -417,6 +460,8 @@ export async function runLivepeerHlsBrowserCanary({
     host = '127.0.0.1',
     port = 0,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    networkProfile = 'normal',
+    verifyAdaptive = false,
     onReady,
     browserRunner = runDesktopBrowser,
 }) {
@@ -424,6 +469,7 @@ export async function runLivepeerHlsBrowserCanary({
     if (!validCanonicalHlsUrl(hlsUrl)) throw new Error('browser_canary_hls_url_invalid');
     if (host !== '127.0.0.1') throw new Error('browser_canary_host_invalid');
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error('browser_canary_timeout_invalid');
+    if (!Object.hasOwn(NETWORK_PROFILES, networkProfile)) throw new Error('browser_canary_network_profile_invalid');
 
     const hlsSource = await readFile(new URL('../node_modules/hls.js/dist/hls.mjs', import.meta.url));
     const challenges = new Map([
@@ -447,7 +493,7 @@ export async function runLivepeerHlsBrowserCanary({
                 return;
             }
             if (request.method === 'GET' && url.pathname === '/config' && authorized) {
-                json(response, 200, { hls_url: hlsUrl });
+                json(response, 200, { hls_url: hlsUrl, ...(verifyAdaptive ? { verify_adaptive: true } : {}) });
                 return;
             }
             if (request.method === 'POST' && url.pathname === '/token' && authorized) {
@@ -490,8 +536,9 @@ export async function runLivepeerHlsBrowserCanary({
                 browser,
                 url: `${baseUrl}/?browser=${browser}&challenge=${challenge}`,
                 timeoutMs,
+                networkProfile,
             });
-            if (!validReport(result) || result.browser !== browser) {
+            if (!validReport(result) || result.browser !== browser || (verifyAdaptive && result.adaptive_quality_verified !== true)) {
                 throw new Error('browser_canary_matrix_failed');
             }
             reports[browser] = compactReport(result);
@@ -517,7 +564,7 @@ export async function runLivepeerHlsBrowserCanary({
             || !edge.persistent_storage_empty) {
             throw new Error('browser_canary_matrix_failed');
         }
-        return { matrix_proven: true, chrome, edge };
+        return { matrix_proven: true, network_profile: networkProfile, network_conditions: NETWORK_PROFILES[networkProfile], chrome, edge };
     } finally {
         await close(server);
     }

@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import process from 'node:process';
 import { runReleaseSmoke } from './release-smoke.mjs';
+import { PUBLIC_TESTNET_TARGET, PUBLIC_TESTNET_BRIDGE_KEYS, PUBLIC_TESTNET_READ_MODEL, publicTestnetMode, validatePublicTestnetConfig } from './release-metadata.mjs';
 
 const WRANGLER_VERSION = '4.90.0';
 const GIT_SHA_RE = /^[a-f0-9]{40}$/;
@@ -43,6 +44,7 @@ const TARGETS = Object.freeze({
         web: Object.freeze({ worker: 'youtick-web', domain: 'app.youtick.net' }),
         bridge: Object.freeze({ worker: 'youtick-livepeer-bridge', domain: 'bridge.youtick.net' }),
     }),
+    'public-testnet': PUBLIC_TESTNET_TARGET,
 });
 
 const ALL_TARGETS = Object.freeze({
@@ -51,6 +53,7 @@ const ALL_TARGETS = Object.freeze({
 });
 
 const READ_MODEL_TARGET = Object.freeze({ worker: 'youtick-market-read-model-testnet' });
+const PUBLIC_READ_MODEL_TARGET = PUBLIC_TESTNET_READ_MODEL;
 const PREVIEW_READ_MODEL_ORIGIN = 'https://read-preview.youtick.net';
 
 function transientWebPropagationError(error) {
@@ -376,13 +379,17 @@ async function readRelease(artifactDir, target, sha) {
     if (manifest.schemaVersion !== 1 || manifest.sha !== sha || !GIT_SHA_RE.test(manifest.sha || '')) {
         fail('manifest_sha_invalid');
     }
-    if (!sameJson(manifest.targets, ALL_TARGETS)) fail('manifest_targets_invalid');
+    const publicOnly = Object.keys(manifest.configs ?? {}).join() === 'public-testnet';
+    const expectedTargets = publicOnly ? { 'public-testnet': PUBLIC_TESTNET_TARGET } : manifest.configs?.['public-testnet']
+        ? { ...ALL_TARGETS, 'public-testnet': PUBLIC_TESTNET_TARGET } : ALL_TARGETS;
+    if (!sameJson(manifest.targets, expectedTargets)
+        || (target === 'public-testnet' && !manifest.configs?.['public-testnet'])) fail('manifest_targets_invalid');
     scanForbiddenTargets(manifest.targets);
 
     const configRecord = manifest.configs?.[target];
     const configName = `${target}-config.json`;
     const configPath = await verifyRecord(artifactDir, configRecord, configName, `${target}_config`);
-    const webKey = target === 'preview' ? 'webPreview' : 'webProduction';
+    const webKey = target === 'public-testnet' ? 'webPublicTestnet' : target === 'preview' ? 'webPreview' : 'webProduction';
     const webName = `web-${target}.tar.gz`;
     const webArchive = await verifyRecord(artifactDir, manifest.bundles?.[webKey], webName, 'web_bundle');
     const bridgeArchive = await verifyRecord(
@@ -408,7 +415,9 @@ async function readRelease(artifactDir, target, sha) {
     if (config.schemaVersion !== 1 || config.environment !== target) fail('target_config_identity_invalid');
     if (!sameJson(config.targets, TARGETS[target])) fail('target_config_targets_invalid');
     scanForbiddenTargets(config);
+    if (target === 'public-testnet') validatePublicTestnetConfig(config);
     for (const [section, flag] of FALSE_FLAGS) {
+        if (target === 'public-testnet' && flag === 'LIVEPEER_WEBHOOK_QUEUE_ENABLED') continue;
         if (config[section]?.[flag] !== 'false') fail(`${flag.toLowerCase()}_not_false`);
     }
     const baseCanaryFlags = [
@@ -515,10 +524,10 @@ async function readRelease(artifactDir, target, sha) {
         fail('next_public_enable_derived_read_model_invalid');
     }
     if (derivedReadModel === 'true'
-        && config.web?.NEXT_PUBLIC_MARKET_READ_MODEL_URL !== PREVIEW_READ_MODEL_ORIGIN) {
+        && config.web?.NEXT_PUBLIC_MARKET_READ_MODEL_URL !== (target === 'public-testnet' ? `https://${PUBLIC_TESTNET_READ_MODEL.domain}` : PREVIEW_READ_MODEL_ORIGIN)) {
         fail('next_public_market_read_model_url_invalid');
     }
-    if (combinedBeta && derivedReadModel !== 'false') {
+    if (target === 'preview' && combinedBeta && derivedReadModel !== 'false') {
         fail('preview_public_beta_derived_read_model_enabled');
     }
     const paymentMode = config.web?.NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE;
@@ -530,7 +539,8 @@ async function readRelease(artifactDir, target, sha) {
     if (combinedBeta && paymentMode !== 'off') {
         fail('preview_public_beta_multi_asset_payments_enabled');
     }
-    assertExactKeys(config.bridge, BRIDGE_PUBLIC_KEYS, 'bridge_public_config');
+    assertExactKeys(config.bridge, target === 'public-testnet'
+        ? [...BRIDGE_PUBLIC_KEYS, ...PUBLIC_TESTNET_BRIDGE_KEYS] : BRIDGE_PUBLIC_KEYS, 'bridge_public_config');
     for (const [key, value] of Object.entries(config.bridge)) {
         if (typeof value !== 'string' || /[\0\r\n]/.test(value)) fail(`bridge_var_${key.toLowerCase()}_invalid`);
     }
@@ -609,12 +619,15 @@ export async function writeReadModelArtifactWrangler(outputPath) {
     await writeFile(resolve(outputPath), READ_MODEL_ARTIFACT_WRANGLER, { flag: 'wx', mode: 0o600 });
 }
 
-async function writeSanitizedConfigs(extracted, target) {
+async function writeSanitizedConfigs(extracted, target, config) {
     const expected = TARGETS[target];
     const webBootstrap = join(extracted.web, 'wrangler.bootstrap.json');
     const bridgeBootstrap = join(extracted.bridge, 'wrangler.bootstrap.toml');
     const bridgeCandidate = join(extracted.bridge, 'wrangler.candidate.toml');
-    const webRateLimits = target === 'preview' ? [
+    const webRateLimits = target === 'public-testnet' ? [
+        { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '5001', simple: { limit: 60, period: 60 } },
+        { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '5002', simple: { limit: 10, period: 60 } },
+    ] : target === 'preview' ? [
         { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '1001', simple: { limit: 60, period: 60 } },
         { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '1002', simple: { limit: 10, period: 60 } },
     ] : [
@@ -660,7 +673,7 @@ async function writeSanitizedConfigs(extracted, target) {
         '',
         '[[ratelimits]]',
         'name = "PUBLIC_BETA_RATE_LIMITER"',
-        'namespace_id = "3001"',
+        target === 'public-testnet' ? 'namespace_id = "5003"' : 'namespace_id = "3001"',
         'simple = { limit = 30, period = 60 }',
         '',
         '[[durable_objects.bindings]]',
@@ -674,12 +687,42 @@ async function writeSanitizedConfigs(extracted, target) {
     ].join('\n'), { mode: 0o600 });
     await writeFile(
         bridgeCandidate,
-        `${BRIDGE_ARTIFACT_WRANGLER}${target === 'preview'
+        `${target === 'public-testnet' ? BRIDGE_ARTIFACT_WRANGLER.replace('namespace_id = "3001"', 'namespace_id = "5003"') : BRIDGE_ARTIFACT_WRANGLER}${target === 'preview'
             ? `${BRIDGE_PREVIEW_QUEUE_PRODUCER}${BRIDGE_PREVIEW_D1_BINDING}`
-            : ''}`,
+            : target === 'public-testnet' ? [
+                '', '[[queues.producers]]', 'binding = "LIVEPEER_EVENTS"',
+                `queue = "${config.bridge.LIVEPEER_QUEUE_NAME}"`,
+                '', '[[d1_databases]]', 'binding = "MARKET_READ_MODEL"',
+                `database_name = "${config.bridge.MARKET_READ_MODEL_DATABASE_NAME}"`,
+                `database_id = "${config.bridge.MARKET_READ_MODEL_DATABASE_ID}"`, '',
+            ].join('\n') : ''}`,
         { mode: 0o600 },
     );
-    return { webBootstrap, bridgeBootstrap, bridgeCandidate };
+    let readModelCandidate;
+    if (target === 'public-testnet') {
+        readModelCandidate = join(extracted.readModel, 'wrangler.candidate.json');
+        await writeFile(readModelCandidate, canonicalJson({
+            name: PUBLIC_READ_MODEL_TARGET.worker, main: 'worker.js',
+            compatibility_date: '2026-08-10', compatibility_flags: ['nodejs_compat'],
+            workers_dev: false, preview_urls: false,
+            triggers: { crons: ['* * * * *'] },
+            version_metadata: { binding: 'CF_VERSION_METADATA' },
+            observability: { enabled: true, head_sampling_rate: 1 },
+            vars: {
+                VIDEO_ENVIRONMENT: 'public-testnet', MARKET_CONTRACT_ID: config.bridge.MARKET_CONTRACT_ID,
+                READ_MODEL_ENABLED: String(publicTestnetMode(config) !== 'closed'), READ_MODEL_INGESTION_ENABLED: String(publicTestnetMode(config) !== 'closed'),
+                READ_MODEL_BACKFILL_ENABLED: 'false', READ_MODEL_BACKFILL_CONTINUE_ENABLED: 'false',
+                READ_MODEL_NETWORK: 'testnet', READ_MODEL_CONTRACT_ID: config.bridge.MARKET_CONTRACT_ID,
+                READ_MODEL_START_BLOCK_HEIGHT: config.bridge.READ_MODEL_START_BLOCK_HEIGHT,
+                READ_MODEL_MAX_BLOCKS_PER_RUN: '180', READ_MODEL_WEB_ORIGIN: `https://${expected.web.domain}`,
+                READ_MODEL_NEAR_RPC_URL: 'https://test.rpc.fastnear.com',
+            },
+            d1_databases: [{ binding: 'MARKET_READ_MODEL',
+                database_name: config.bridge.MARKET_READ_MODEL_DATABASE_NAME,
+                database_id: config.bridge.MARKET_READ_MODEL_DATABASE_ID, migrations_dir: 'd1' }],
+        }), { mode: 0o600 });
+    }
+    return { webBootstrap, bridgeBootstrap, bridgeCandidate, readModelCandidate };
 }
 
 function runProcess(command, args, { cwd, env = process.env, echo = false } = {}) {
@@ -889,18 +932,18 @@ function assertTraffic(actual, expected, label) {
 }
 
 function componentArgs(component, target, extracted, releaseConfig, sanitized, bridgeSecretsFile) {
-    const expected = component === 'readModel' ? READ_MODEL_TARGET : TARGETS[target][component];
+    const expected = component === 'readModel' ? (target === 'public-testnet' ? PUBLIC_READ_MODEL_TARGET : READ_MODEL_TARGET) : TARGETS[target][component];
     const config = component === 'web'
-        ? join(extracted, 'wrangler.jsonc')
+        ? target === 'public-testnet' ? sanitized.webBootstrap : join(extracted, 'wrangler.jsonc')
         : component === 'bridge'
             ? sanitized.bridgeCandidate
-            : join(extracted, 'wrangler.toml');
+            : sanitized.readModelCandidate ?? join(extracted, 'wrangler.toml');
     const entry = join(
         extracted,
         component === 'web' ? '.open-next/worker.js' : component === 'bridge' ? 'index.js' : 'worker.js',
     );
     const base = ['--config', config, '--name', expected.worker];
-    if (component === 'web') base.push('--env', target);
+    if (component === 'web' && target !== 'public-testnet') base.push('--env', target);
     const bootstrapConfig = component === 'web'
         ? sanitized.webBootstrap
         : component === 'bridge'
@@ -908,7 +951,8 @@ function componentArgs(component, target, extracted, releaseConfig, sanitized, b
             : config;
     const bootstrapBase = ['--config', bootstrapConfig, '--name', expected.worker];
     const vars = component === 'bridge'
-        ? BRIDGE_PUBLIC_KEYS.flatMap((key) => ['--var', `${key}:${releaseConfig.bridge[key]}`])
+        ? (target === 'public-testnet' ? [...BRIDGE_PUBLIC_KEYS, ...PUBLIC_TESTNET_BRIDGE_KEYS] : BRIDGE_PUBLIC_KEYS)
+            .flatMap((key) => ['--var', `${key}:${releaseConfig.bridge[key]}`])
         : [];
     const uploadMode = component === 'web' ? [] : ['--no-bundle'];
     const secrets = component === 'bridge' ? ['--secrets-file', bridgeSecretsFile] : [];
@@ -1105,6 +1149,28 @@ function createCloudflareApi(fetchImpl, accountId, apiToken) {
     };
 }
 
+function domainTargets(target) {
+    return target === 'public-testnet' ? { ...TARGETS[target], readModel: PUBLIC_TESTNET_READ_MODEL } : TARGETS[target];
+}
+
+async function requirePublicQueue(api, accountId, config) {
+    const names = [config.bridge.LIVEPEER_QUEUE_NAME, config.bridge.LIVEPEER_DLQ_NAME];
+    const queues = [];
+    for (const name of names) {
+        const records = await api(`/accounts/${accountId}/queues?name=${encodeURIComponent(name)}`);
+        const matches = Array.isArray(records) ? records.filter((entry) => entry.queue_name === name) : [];
+        if (matches.length !== 1 || !/^[a-f0-9]{32}$/.test(matches[0].queue_id)) fail('public_queue_binding_unproven');
+        queues.push(matches[0]);
+    }
+    if (queues[0].queue_id === queues[1].queue_id) fail('public_queue_binding_unproven');
+    const consumers = await api(`/accounts/${accountId}/queues/${queues[0].queue_id}/consumers`);
+    const consumer = consumers?.[0];
+    if (!Array.isArray(consumers) || consumers.length !== 1 || consumer.type !== 'worker'
+        || consumer.script_name !== PUBLIC_TESTNET_TARGET.bridge.worker || consumer.dead_letter_queue !== names[1]
+        || consumer.settings?.batch_size !== 10 || consumer.settings?.max_concurrency !== 1
+        || consumer.settings?.max_retries !== 3 || consumer.settings?.max_wait_time_ms !== 5000) fail('public_queue_consumer_unproven');
+}
+
 function validDomainRecord(record) {
     return record && typeof record.id === 'string' && VERSION_RE.test(record.id)
         && typeof record.hostname === 'string'
@@ -1125,8 +1191,8 @@ async function listDomains(api, accountId, filter, value) {
 }
 
 async function inspectDomainBindings(api, accountId, zoneId, target, phase) {
-    const expected = TARGETS[target];
-    const targetWorkers = new Set([expected.web.worker, expected.bridge.worker]);
+    const expected = domainTargets(target);
+    const targetWorkers = new Set(Object.values(expected).map((entry) => entry.worker));
     for (const root of ['youtick.net', 'www.youtick.net']) {
         const records = await listDomains(api, accountId, 'hostname', root);
         if (records.some((record) => targetWorkers.has(record.service)
@@ -1137,7 +1203,7 @@ async function inspectDomainBindings(api, accountId, zoneId, target, phase) {
 
     const states = {};
     const zoneIds = new Set();
-    for (const component of ['web', 'bridge']) {
+    for (const component of Object.keys(expected)) {
         const wanted = expected[component];
         const [byHostname, byWorker] = await Promise.all([
             listDomains(api, accountId, 'hostname', wanted.domain),
@@ -1190,9 +1256,9 @@ async function reconcileCreatedDomains(
     api, accountId, zoneId, target, beforeStates, attempted, created,
 ) {
     const known = new Set(created.map((domain) => domain.id));
-    for (const component of ['bridge', 'web']) {
+    for (const component of Object.keys(domainTargets(target)).reverse()) {
         if (beforeStates[component] !== 'missing' || !attempted.has(component)) continue;
-        const domain = await exactTargetDomain(api, accountId, zoneId, TARGETS[target][component]);
+        const domain = await exactTargetDomain(api, accountId, zoneId, domainTargets(target)[component]);
         if (domain && !known.has(domain.id)) {
             created.push(domain);
             known.add(domain.id);
@@ -1201,8 +1267,8 @@ async function reconcileCreatedDomains(
 }
 
 async function attachDomains(api, accountId, zoneId, target, states, attempted, created) {
-    const expected = TARGETS[target];
-    for (const component of ['bridge', 'web']) {
+    const expected = domainTargets(target);
+    for (const component of Object.keys(domainTargets(target)).reverse()) {
         if (states[component] === 'attached') continue;
         const wanted = expected[component];
         const [byHostname, byWorker] = await Promise.all([
@@ -1298,8 +1364,8 @@ function routeHostname(pattern) {
 }
 
 async function verifyClassicRoutes(api, zoneIds, target) {
-    const expected = TARGETS[target];
-    const targetWorkers = new Set([expected.web.worker, expected.bridge.worker]);
+    const expected = domainTargets(target);
+    const targetWorkers = new Set(Object.values(expected).map((entry) => entry.worker));
     for (const zoneId of zoneIds) {
         const routes = await api(`/zones/${zoneId}/workers/routes`);
         for (const route of routes) {
@@ -1309,7 +1375,7 @@ async function verifyClassicRoutes(api, zoneIds, target) {
             }
             const hostname = routeHostname(route.pattern);
             if (targetWorkers.has(route.script)
-                || [expected.web.domain, expected.bridge.domain].includes(hostname)
+                || Object.values(expected).some((entry) => entry.domain === hostname)
                 || (['youtick.net', 'www.youtick.net'].includes(hostname)
                     && route.script === 'youtick-livepeer-bridge-c3-4ea2011')) {
                 fail('worker_classic_route_forbidden');
@@ -1424,9 +1490,10 @@ export async function deployRelease({
     const receiptOutput = resolve(receiptValue || '');
     const repoRoot = await realpath(resolve(repoValue));
     const release = await readRelease(artifactDir, target, sha);
-    const oneClickApiKey = validateOneClickApiKey(oneClickApiKeyValue, true);
+    const oneClickApiKey = target === 'public-testnet' ? null : validateOneClickApiKey(oneClickApiKeyValue, true);
+    const publicMode = target === 'public-testnet' ? publicTestnetMode(release.config) : null;
     const sponsorCanary = release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true';
-    const previewSecrets = target === 'preview' ? {
+    const previewSecrets = target !== 'production' ? {
         LIVEPEER_API_KEY: validatePreviewSecret(livepeerApiKeyValue, 'livepeer_api_key'),
         LIVEPEER_WEBHOOK_SECRET: validatePreviewSecret(
             livepeerWebhookSecretValue,
@@ -1446,7 +1513,7 @@ export async function deployRelease({
             'near_operator_private_key',
             /^ed25519:[1-9A-HJ-NP-Za-km-z]{80,100}$/,
         ),
-        ...(sponsorCanary ? {
+        ...((sponsorCanary || publicMode === 'drain') ? {
             CREATOR_FEE_QUOTE_PRIVATE_KEY: validatePreviewSecret(
                 creatorFeeQuotePrivateKeyValue,
                 'creator_fee_quote_private_key',
@@ -1489,9 +1556,10 @@ export async function deployRelease({
             join(extracted.readModel, 'wrangler.toml'),
             extracted.readModel,
         );
-        const sanitized = await writeSanitizedConfigs(extracted, target);
+        const sanitized = await writeSanitizedConfigs(extracted, target, release.config);
         if (!/^[a-f0-9]{32}$/.test(cloudflareZoneId || '')) fail('cloudflare_zone_id_invalid');
         const api = createCloudflareApi(cloudflareFetch, cloudflareAccountId, cloudflareApiToken);
+        if (publicMode === 'acceptance') await requirePublicQueue(api, cloudflareAccountId, release.config);
         const beforeDomains = await inspectDomainBindings(
             api,
             cloudflareAccountId,
@@ -1499,6 +1567,7 @@ export async function deployRelease({
             target,
             'before',
         );
+        if (publicMode && publicMode !== 'closed' && Object.values(beforeDomains.states).some((state) => state !== 'attached')) fail('public_testnet_closed_bootstrap_required');
         await verifyClassicRoutes(api, [cloudflareZoneId], target);
         const accountSubdomain = await accountWorkersDevSubdomain(api, cloudflareAccountId);
 
@@ -1511,7 +1580,7 @@ export async function deployRelease({
         const runByComponent = {
             web: await makeWranglerRunner(binaries.web, tempRoot, { echo: echoWrangler, label: 'web' }),
             bridge: await makeWranglerRunner(binaries.bridge, tempRoot, { echo: echoWrangler, label: 'bridge' }),
-            ...(target === 'preview' ? {
+            ...(['preview', 'public-testnet'].includes(target) ? {
                 readModel: await makeWranglerRunner(
                     binaries.readModel ?? binaries.bridge,
                     tempRoot,
@@ -1526,7 +1595,7 @@ export async function deployRelease({
             bridge: componentArgs(
                 'bridge', target, extracted.bridge, release.config, sanitized, bridgeSecretsFile,
             ),
-            ...(target === 'preview' ? {
+            ...(['preview', 'public-testnet'].includes(target) ? {
                 readModel: componentArgs(
                     'readModel', target, extracted.readModel, release.config, sanitized, bridgeSecretsFile,
                 ),
@@ -1541,7 +1610,7 @@ export async function deployRelease({
                 component: 'bridge', target, sha, run: runByComponent.bridge, args: argsByComponent.bridge,
                 bootstrapAllowed: beforeDomains.states.bridge === 'missing',
             }),
-            ...(target === 'preview' ? {
+            ...(['preview', 'public-testnet'].includes(target) ? {
                 readModel: await prepareComponent({
                     component: 'readModel', target, sha,
                     run: runByComponent.readModel,
@@ -1595,32 +1664,42 @@ export async function deployRelease({
                 `YouTick ${target} candidate ${sha}`,
             );
 
-            await smokeFn(smokeInput(target, candidateWebUrl, {
-                bridgeUrl: candidateBridgeUrl,
-                expectedBridgeVersion: prepared.bridge.previous,
-                expectedBridgeEnabled: null,
-                expectedSponsoredUploadReady: null,
-                bridgeBootstrap: prepared.bridge.bootstrap,
-                includePlaybackV2: false,
-                includeProviderAssetDelete: false,
-            }));
-            await smokeFn(smokeInput(target, candidateWebUrl, {
-                bridgeUrl: candidateBridgeUrl,
-                overrideWorker: TARGETS[target].bridge.worker,
-                overrideVersion: prepared.bridge.candidate,
-                expectedBridgeVersion: prepared.bridge.candidate,
-                expectedBridgeEnabled: release.config.bridge.LIVEPEER_BRIDGE_ENABLED === 'true',
-                expectedUploadReady:
-                    release.config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED === 'true',
-                expectedPlaybackReady:
-                    release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true',
-                expectedSponsoredUploadReady:
-                    release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
-                expectedPublicBetaRateLimitReady:
-                    release.config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED === 'true'
-                    && release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true'
-                    && release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
-            }));
+            // Closing must still apply when the old backend is unhealthy; never reopen on failed verification.
+            if (!publicMode || publicMode === 'acceptance') {
+                await smokeFn(smokeInput(target, candidateWebUrl, {
+                    bridgeUrl: candidateBridgeUrl,
+                    expectedBridgeVersion: prepared.bridge.previous,
+                    expectedBridgeEnabled: null,
+                    ...(publicMode ? { publicTestnetMode: 'observe',
+                        ...(beforeDomains.states.readModel === 'attached' ? { expectedReadModel: {
+                            url: `https://${PUBLIC_TESTNET_READ_MODEL.domain}`, versionId: prepared.readModel.previous,
+                            contractId: release.config.bridge.MARKET_CONTRACT_ID, startBlockHeight: release.config.bridge.READ_MODEL_START_BLOCK_HEIGHT, enabled: null,
+                        } } : {}),
+                    } : {}),
+                    expectedSponsoredUploadReady: null,
+                    bridgeBootstrap: prepared.bridge.bootstrap,
+                    includePlaybackV2: false,
+                    includeProviderAssetDelete: false,
+                }));
+                await smokeFn(smokeInput(target, candidateWebUrl, {
+                    bridgeUrl: candidateBridgeUrl,
+                    overrideWorker: TARGETS[target].bridge.worker,
+                    overrideVersion: prepared.bridge.candidate,
+                    expectedBridgeVersion: prepared.bridge.candidate,
+                    expectedBridgeEnabled: release.config.bridge.LIVEPEER_BRIDGE_ENABLED === 'true',
+                    expectedUploadReady:
+                        release.config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED === 'true',
+                    expectedPlaybackReady:
+                        release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true',
+                    expectedSponsoredUploadReady:
+                        release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
+                    expectedPublicBetaRateLimitReady:
+                        (target === 'public-testnet' || release.config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED === 'true'
+                        && release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true'
+                        && release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true'),
+                    ...(publicMode ? { publicTestnetMode: publicMode } : {}),
+                }));
+            }
 
             promotionStarted = true;
             if (prepared.readModel) {
@@ -1680,6 +1759,7 @@ export async function deployRelease({
                     'read_model_promoted',
                 );
             }
+            if (publicMode === 'acceptance') await requirePublicQueue(api, cloudflareAccountId, release.config);
             await runPostPromotionSmoke(
                 smokeFn,
                 smokeInput(target, `https://${TARGETS[target].web.domain}`, {
@@ -1692,9 +1772,14 @@ export async function deployRelease({
                     expectedSponsoredUploadReady:
                         release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
                     expectedPublicBetaRateLimitReady:
-                        release.config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED === 'true'
+                        target === 'public-testnet' || release.config.bridge.LIVEPEER_NEW_UPLOADS_ENABLED === 'true'
                         && release.config.bridge.LIVEPEER_PLAYBACK_V2_ENABLED === 'true'
                         && release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true',
+                    ...(publicMode ? { publicTestnetMode: publicMode, expectedReadModel: {
+                        url: `https://${PUBLIC_TESTNET_READ_MODEL.domain}`, versionId: prepared.readModel.candidate,
+                        contractId: release.config.bridge.MARKET_CONTRACT_ID,
+                        startBlockHeight: release.config.bridge.READ_MODEL_START_BLOCK_HEIGHT, enabled: publicMode !== 'closed',
+                    } } : {}),
                 }),
                 sleepFn,
             );
@@ -1725,7 +1810,7 @@ export async function deployRelease({
                     recoveryErrors.push(cleanupError);
                 }
             }
-            if (promotionStarted) {
+            if (promotionStarted && (!publicMode || publicMode === 'acceptance')) {
                 try {
                     await restorePrevious(runByComponent, argsByComponent, prepared, sha);
                 } catch (rollbackError) {
@@ -1742,6 +1827,7 @@ export async function deployRelease({
             schemaVersion: 1,
             sha,
             environment: target,
+            ...(publicMode ? { mode: publicMode } : {}),
             manifestSha256: release.manifestHash,
             web: {
                 worker: TARGETS[target].web.worker,
@@ -1759,7 +1845,10 @@ export async function deployRelease({
             },
             ...(prepared.readModel ? {
                 readModel: {
-                    worker: READ_MODEL_TARGET.worker,
+                    worker: argsByComponent.readModel.expected.worker,
+                    ...(publicMode ? { domain: PUBLIC_TESTNET_READ_MODEL.domain,
+                        contractId: release.config.bridge.MARKET_CONTRACT_ID,
+                        startBlockHeight: release.config.bridge.READ_MODEL_START_BLOCK_HEIGHT } : {}),
                     previousVersionId: prepared.readModel.previous,
                     versionId: prepared.readModel.candidate,
                     bootstrap: prepared.readModel.bootstrap,
@@ -1790,7 +1879,7 @@ async function main(args = process.argv.slice(2)) {
         return;
     }
     if (args.length !== 5 || args[0] !== 'deploy') {
-        throw new Error('usage: cloudflare-release.mjs <write-bridge-wrangler <output>|write-read-model-wrangler <output>|deploy <preview|production> <sha> <artifact-dir> <receipt-output>>');
+        throw new Error('usage: cloudflare-release.mjs <write-bridge-wrangler <output>|write-read-model-wrangler <output>|deploy <preview|production|public-testnet> <sha> <artifact-dir> <receipt-output>>');
     }
     await deployRelease({
         target: args[1],
