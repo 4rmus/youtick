@@ -1,6 +1,6 @@
 # Public Testnet Video V1 — kontrollü kabul hazırlığı
 
-7 Eylül 2026 · `VIDEO_CONTROLLED_ACCEPTANCE_PREFLIGHT`
+7 Eylül 2026 · `VIDEO_PUBLIC_TESTNET_BOOTSTRAP_PREFLIGHT` sırasında güncellendi
 
 **Hazırlık: COMPLETED_WITH_WARNINGS. Canlı kabul: BLOCKED / NO_GO.**
 Bu belge işlem veya harcama onayı değildir. İlk gerçek test tanımlıdır; aşağıdaki kaynak ve canlı önkoşullar kapanmadan çalıştırılmaz. Yeni özellik, servis sağlayıcı değişimi veya kapasite refaktörü önerilmez.
@@ -9,14 +9,14 @@ Bu belge işlem veya harcama onayı değildir. İlk gerçek test tanımlıdır; 
 
 | Konu | Doğrulanan durum | Canlı teste geçiş şartı |
 |---|---|---|
-| Çalışma alanı | HEAD `d2d3b035ac1e3afa348f353b014339ab46290e16`, branch `agent/closed-preview-bootstrap-smoke`, kullanıcı/önceki gate değişiklikleri mevcut. Son kalite gate'inin 31 dosya hash'i aynı. | Yalnız bu video çalışmasının farkı güncel main üzerinde korunarak bütünleştirilmeli; exact commit/artifact/çalışan sürüm bağı kurulmalı. Bu dirty checkout doğrudan yayın adayı değil. |
-| GitHub | Salt okunur kontrol: main `d1b75ab4e6ded6a58d72344df13e473ac7f880e7`; [CI 34115478261](https://github.com/4rmus/youtick/actions/runs/34115478261) ve [Deploy Preview 34116569878](https://github.com/4rmus/youtick/actions/runs/34116569878) success. | Bunlar bu yerel video farkının CI/runtime kanıtı değildir. Bu gate canlı endpoint/version okumadı. |
-| Yayın yolu | `VIDEO_PUBLIC_TESTNET_RELEASE_SOURCE` ile ayrı public artifact, korumalı workflow ve closed/acceptance/drain matrisi kaynakta tamamlandı; yerel testler geçti. | Exact main/CI entegrasyonu ve gerçek GitHub environment/vars/secrets kurulumu bekliyor; workflow çalıştırılmadı. |
+| Çalışma alanı | Dirty checkout korunuyor. 61 dosyalık video paketi izole çalışma alanında bütünleştirildi; [PR #179](https://github.com/4rmus/youtick/pull/179) main'e alındı. Korunmuş adayın 61/61 dosyası receipt ile eşleşir. | Entegrasyon tekrarlanmaz. Yeni değişiklikler exact main'den ayrı hazırlanır; dirty checkout doğrudan yayın adayı değildir. |
+| GitHub | Main `28a572803ce79a81b9e893f65b1f1d5b166622f2`; [CI 34155062768](https://github.com/4rmus/youtick/actions/runs/34155062768) 13/13 success; Market artifact/imza doğrulanmış. Preview deploy skipped, `DEPLOY_PREVIEW_ENABLED=false`. | Bu, video kaynak kodunun CI kanıtıdır; yeni public-testnet runtime ve canlı kullanıcı kabulü değildir. |
+| Yayın yolu | Ayrı public artifact, korumalı workflow ve closed/acceptance/drain matrisi PR #179 ile yayımlandı. Access artifact saklama/imzalama farkı ayrıca yerelde tamamlandı; 14/14 güvenlik testi geçti. | Gerçek `public-testnet` environment/vars/secrets ve kaynak kurulumu yok; workflow çalıştırılmadı. Yeni farkın Git/CI yayını ve Market/Access bootstrap yürütme yolu eksik. |
 | Kalite | Live canary `LIVEPEER_PLAYBACK_CANARY_ADAPTIVE=true` ile adaptive hash ve `verifyAdaptive: true` seçeneğini uçtan uca iletiyor; iki tarayıcı için PASS zorunlu ve raporda korunuyor. | Gerçek medya testi yapılmadı. Bu teşhis CLI'si ayrıca 80 MiB geçerli MP4, provider asset ve signing-key oluşturma/silme izinleri ister; S dosyasıyla normal kullanıcı akışının yerine geçmez. |
-| Provider | Runbook'ta `LIVEPEER_PROCESSING_UNBLOCK` açık. Önceki 5 Eylül kanıtı teslim sonrası waiting gösteriyor; güncel çözüm/proje durumu bu gate'te okunmadı. | Destek/çözüm kanıtı ve güncel proje/task okuması. Genel yeşil durum sayfası veya eski ready asset yeterli değil. Yeni ücretli deneme otomatik yapılmaz. |
-| Fatura | Resmî fiyat sayfası okundu; hesaba özel güncel plan/kota/fatura görülmedi. | Hesap koşulları, kalan kota, çıktı sayısının ücret hesabı ve saklama süresi salt okunur doğrulanmalı. |
+| Provider | 7 Eylül 19:56 UTC snapshot'ında 13/13 asset ready; tümü JWT ve yalnız 720p. Eski waiting kaydı güncel durum sayılmaz. | Yeni 360p+720p işleme, süreler ve normal kullanıcı akışı hâlâ kanıtlanmadı. Hazır eski asset yeni kabul yerine geçmez. |
+| Fatura | Bağlı Livepeer hesap ekranı Growth planını gösterir. Fatura dönemi/tutarı ve kalan kota doğrulanamadı; boş dönemle gelen sıfır sayaçlar kullanılmaz. | İki çıktının ücret hesabı, saklama süresi, kota ve onaylı gerçek kullanım bütçesi gerekli. |
 
-Önceki gate'lerin sonuçları yeni test koşusu olarak sunulmaz. Kaynak/test başarısı `LOCAL_STATIC / LOCAL_TEST`; güncel CI ve deploy kayıtları yalnız yukarıdaki ayrı SHA içindir. Provider ve yeni ortamın çalışması `UNPROVEN` durumundadır.
+Önceki gate'lerin sonuçları yeni test koşusu olarak sunulmaz. Kaynak/test başarısı `LOCAL_STATIC / LOCAL_TEST`; main CI yalnız yukarıdaki SHA içindir. Yeni ortamın çalışması ve gerçek kabul `UNPROVEN` durumundadır. İmzalı Market manifestinin eski beta hedefi ve `CODE_UPDATE_ONLY` sınırı korunur; binary provenance'ı yeni hesap kurma yetkisi değildir.
 
 ## 2. Yeni ortamın doldurulacak işlem kimliği
 
@@ -46,8 +46,8 @@ Yerelde ffmpeg ile üretilen desen + ton, H.264 Constrained Baseline 1280×720/3
 | L — uzun | 120 dakika, ≤5.000.000.000 bayt; tam çözümleme ve hash gerekli | Henüz üretilmedi/seçilmedi; EXTERNAL_NOT_RUN |
 | B — gerçek sınır | Tam 5.000.000.000 baytlık geçerli, oynatılabilir kaynak | Henüz hazırlanmadı; L bu boyuttaysa tek dosya yeterli. Yerel sayı/boş dosya testi gerçek 5 GB aktarım kanıtı değildir. |
 
-- `small-60s.mp4`: SHA-256 `67d6477e9f81d478dad012e33f12f49abfe0ade9e401f3f44e4b635fd5a4e8fd`.
-- `medium-10m.mp4`: SHA-256 `40fcd876e157e0e1663f5deace4cfcbf10988815f3cb4604d8acd053ac007382`.
+- [small-60s.mp4](/Users/arair/works/youtick-lp/tmp/video-controlled-acceptance-preflight-20260907/media/small-60s.mp4): SHA-256 `67d6477e9f81d478dad012e33f12f49abfe0ade9e401f3f44e4b635fd5a4e8fd`.
+- [medium-10m.mp4](/Users/arair/works/youtick-lp/tmp/video-controlled-acceptance-preflight-20260907/media/medium-10m.mp4): SHA-256 `40fcd876e157e0e1663f5deace4cfcbf10988815f3cb4604d8acd053ac007382`.
 
 Örneklerin manifesti ve üretim/çözümleme logları `tmp/video-controlled-acceptance-preflight-20260907/` içindedir. Uzun/sınır örnekleri ilk küçük akış geçmeden hazırlanıp gönderilmez. Ek MOV/WebM/MKV örnekleri seçildiğinde aynı metadata kaydı gerekir.
 
@@ -98,7 +98,7 @@ Sıcak token p95 **<500 ms** korunur. Mevcut yerel farklı-kimlik koşuları yak
 
 | Paket | Somutlaştırılacak sınır / sonuç |
 |---|---|
-| Kaynak entegrasyonu | Exact dosya listesi ve korunmuş fark; güncel main, commit/PR/CI/merge eylemleri ayrı açık onayla. Bu preflight bunları yapmadı. |
+| Kaynak entegrasyonu | Tamamlandı: PR #179, main `28a5728`, CI `34155062768`. Önceki onaylar uygulanmıştır. Bundan sonraki kaynak farkının Git yayını için yeni exact paket gerekir. |
 | Ayrı kaynak/Market kurulumu | Tam hesap, D1 UUID, Queue, domain ve key public kimlikleri; max NEAR/storage, initializer argümanları ve WASM hash; kesinleşmiş kurulum bloğu. Belirsiz sonuçta yeniden init yok. |
 | Kapalı yayın/açma/kapatma | Korumalı workflow adı ve exact artifact; tam bayrak matrisi, Queue consumer/read-model/domain adımları, Market pause/unpause ve doğrulanmış kapalı dönüş sürümü. Dashboard/CLI ile workflow atlanmaz. |
 | Küçük ücretli deney | Yukarıdaki S dosyası hash'i, gerçek A/C/D hesapları, tek upload/bilet, onaylı ek bütçe ve kapatma sınırları. Aynı onay M/L/yük testi yetkisi olmaz. |
@@ -106,7 +106,7 @@ Sıcak token p95 **<500 ms** korunur. Mevcut yerel farklı-kimlik koşuları yak
 
 ## 8. Tamamlanan yayın kaynağının kullanım sınırı
 
-`deploy-public-testnet.yml` yalnız elle çağrılır ve main geçmişindeki exact SHA için başarılı push CI ister. Önce tek public Web/Bridge/read-model artifact'i ve SBOM/provenance üretilir; ayar matrisi review özeti olarak gösterilir. `DEPLOY_PUBLIC_TESTNET_ENABLED` açık değilse deploy yapılmaz. Deploy işi `public-testnet` environment'ına bağlıdır ve gerçek required-reviewers kuralını ayrıca denetler; artifact doğrulaması olmadan Cloudflare sırları kullanılmaz. Bu dosya GitHub'a yayımlanmadı.
+`deploy-public-testnet.yml` yalnız elle çağrılır ve main geçmişindeki exact SHA için başarılı push CI ister. Önce tek public Web/Bridge/read-model artifact'i ve SBOM/provenance üretilir; ayar matrisi review özeti olarak gösterilir. `DEPLOY_PUBLIC_TESTNET_ENABLED` açık değilse deploy yapılmaz. Deploy işi `public-testnet` environment'ına bağlıdır ve gerçek required-reviewers kuralını ayrıca denetler; artifact doğrulaması olmadan Cloudflare sırları kullanılmaz. Dosya PR #179 ile GitHub'a yayımlandı; public-testnet workflow'u çalıştırılmadı.
 
 | Mod | Yeni yükleme/teklif/relay | Provider/operator, izleme | Discover/ingestion | Webhook Queue |
 |---|---|---|---|---|
@@ -124,8 +124,25 @@ Read-model sürüm/ağ/Market/başlangıç bloğu/ingestion durumu health üzeri
 
 Kapatma eski backend'in sağlık kontrolüne bağımlı bırakılmaz; önce kapalı/drain sürümü uygulanır, sonra doğrulanır. Son kontrolde hata olursa önceki açık sürüme otomatik dönülmez ve başarılı receipt üretilmez; operatör durumu uzlaştırır. Kabul açılışında hata olursa mevcut geri dönüş mekanizması çalışır. Bu kurallar fiziksel servis/ağ kesintisinde “kesin kapandı” garantisi değildir.
 
-## 9. Entegrasyon kaydı
+## 9. Bootstrap işlem paketi
 
-61 dosyalık video paketi `d1b75ab4e6ded6a58d72344df13e473ac7f880e7` main tabanında ayrı yerel çalışma alanına birleştirildi. #178 yükleme durumunu sekmeler arasında salt okunur izleme düzeltmesi korunur. Deploy işi paket kanıtlarını okumak için yalnız `attestations: read` alır; yazma/imzalama yetkisi build işinde kalır. Yerel test ve derleme kanıtı gerçek CI veya çalışan sürüm kanıtı sayılmaz.
+`VIDEO_PUBLIC_TESTNET_BOOTSTRAP_PREFLIGHT` ve `VIDEO_PUBLIC_TESTNET_BOOTSTRAP_ARTIFACT_SOURCE`: **COMPLETED_WITH_WARNINGS**. İlk video paketinin entegrasyonu, PR, merge ve main CI tamamlandı; yeniden yapılmaz.
 
-**Tek sonraki gate: `VIDEO_PUBLIC_TESTNET_PR`.** Exact dosya listesi/patch ve test kanıtıyla ayrı branch'e tek commit, push ve taslak PR için onay. Merge/deploy ve bütün provider/ekonomik işlemler kapsam dışındadır. Canlı kabul hâlâ NO_GO; kaynak kurulumu, provider çözümü ve hesaba özel maliyet kanıtı bekleniyor.
+**Hazır Git paketi:** kaynak `28a572803ce79a81b9e893f65b1f1d5b166622f2`; izole aday `tmp/video-public-testnet-bootstrap-source-20260907/candidate`. Yalnız `.github/workflows/ci.yml`, `scripts/ci-security.test.mjs` ve bu iki mimari belge. Mevcut contract retention işi Access çıktısını da saklar; eski Market manifesti/işlem hedefi değişmez. `node --test scripts/ci-security.test.mjs`: **14/14 PASS**, yanlış SHA/run/attempt, değiştirilmiş WASM ve eksik ABI reddi dahil. Gerçek CI veya deploy çalıştırılmadı.
+
+Önerilen yayın: `feat/public-testnet-bootstrap-artifact-20260907` branch'inde tek commit, normal push ve main hedefli PR. Yalnız aynı onaylı diff üzerinde zorunlu CI ve inceleme engelleri kapandığında normal squash merge; admin bypass, force push, manuel CI tekrar koşusu veya deploy yok. Main hareket ederse diff yeniden karşılaştırılır. Patch, dosya hash'leri ve onay kapsamı `tmp/video-public-testnet-bootstrap-source-20260907/` altında saklanır. Bu yeni Git paketi için önceki PR #179 onayları kullanılamaz.
+
+**Fonlama tamamlandı:** kullanıcının faucet yönlendirmesiyle mevcut `youtick-dev-v3.testnet` hesabına resmî faucet'ten bir kez 5 test NEAR geldi. Kesinleşmiş blok `267545791` toplam `5096045917506722899999998` yoctoNEAR gösterir. Bu izin yalnız ücretsiz test NEAR edinimidir; yeni hesap/anahtar/deploy/USDC veya provider izni değildir. Kanıt: `tmp/video-public-testnet-resume-20260907/faucet-funding.json`.
+
+| Sonraki kurulum parçası | Somut hedef / eksik alan |
+|---|---|
+| Market | Öneri `video-market-v1-260907.youtick-dev-v3.testnet`; `new_public_testnet(config)`; yalnız kod için 3,47252 NEAR alt sınırı. Kesin roller, quote public key, reserve, toplam funding/gas sınırı ve korumalı create+deploy+init yolu gerekli. |
+| Access | Öneri `video-access-v1-260907.youtick-dev-v3.testnet`; mevcut `new(owner_id, market_contract_id)`. Exact imzalı Access byte'ları, owner ve funding sınırı gerekli. Mevcut initializer grant issuance açık başlar; Market/Bridge kapalı olması Access'in paused olduğu anlamına gelmez. |
+| Operator / relayer | Öneri `video-operator-v1-260907.youtick-dev-v3.testnet` / `video-relayer-v1-260907.youtick-dev-v3.testnet`; yeni ayrı anahtarların public kimlikleri, sonlu izinleri ve bütçesi gerekli. Anahtar üretilmedi. |
+| Yönetim | Admin/guardian/platform/takedown ve Access owner kimlikleri kesinleşmeli; yalnız envanterde görüldükleri için eski beta kimlikleri sessizce kopyalanmaz. |
+| GitHub | `public-testnet` environment; önerilen reviewer mevcut repo sahibi `4rmus` (`157231908`), protected-branch politikası ve kapalı `DEPLOY_PUBLIC_TESTNET_ENABLED=false`. Environment/ayar oluşturulmadı, secret kopyalanmadı. |
+| Cloudflare | Yeni D1 `youtick-market-read-model-public-testnet`, Queue/DLQ ve üç Worker/domain; Bölüm 2'deki exact adlar. D1 UUID kurulumdan alınacak, uydurulmayacak. DNS API yetkisi ayrıca doğrulanmalı. |
+
+Sıra: hesap/anahtar/bütçe kararları → onaylı kaynak/Market/Access kurulum paketi ve D1 migration → korumalı ilk `closed` yayın → ayrı consumer bağlama → onaylı küçük kullanıcı kabulü. NEAR hesabı ilk kurulumunda create/fund/key ve sözleşme için deploy+init mümkünse tek atomik batch'te bağlanır; belirsiz gönderimde ikinci create/init yapılmaz. Yeni kurulum için eski `CODE_UPDATE_ONLY` manifesti değiştirilmez. Kesin hesap ve anahtarlar olmadan genel bir bootstrap çatısı veya canlı komut üretilmez.
+
+**Tek sonraki gate: `VIDEO_PUBLIC_TESTNET_BOOTSTRAP_ARTIFACT_INTEGRATION` — hazır dört dosyalık Git paketinin onayı.** Gerçek kurulum ve kabul matrisi `BLOCKED / NOT_COMPLETE`; faucet başarısı bu şartları kapatmaz.

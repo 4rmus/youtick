@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const workflows = [
     'ci.yml',
@@ -96,6 +100,7 @@ test('testnet Market code update stays exact-main, one-shot and protected', asyn
     assert.match(ci, /github\.event_name == 'push'/);
     assert.match(ci, /github\.ref == 'refs\/heads\/main'/);
     assert.match(ci, /Attest exact Market runtime provenance/);
+    assert.match(ci, /name: Retain exact Market runtime artifact\n/);
     assert.match(ci, /retention-days: 30/);
     assert.match(ci.slice(ci.indexOf('  ci-gate:')), /\n      - market-runtime-artifact\n/);
 
@@ -131,6 +136,49 @@ test('testnet Market code update stays exact-main, one-shot and protected', asyn
     assert.match(parsedPolicy.max_deploy_cost_yocto, /^[1-9][0-9]*$/);
     assert.match(parsedPolicy.expected_bridge_key.allowance, /^[1-9][0-9]*$/);
     assert.equal(Object.hasOwn(parsedPolicy, 'rpc_url'), false);
+});
+
+test('Access artifacts retain same-run provenance and reject altered or incomplete bytes', async () => {
+    const source = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const shellStep = (name) => source.split(`- name: ${name}\n`)[1]
+        .split(/\n      - /)[0].split('run: |\n')[1].replace(/^          /gm, '').trim();
+    const packageStep = shellStep('Package exact Access runtime artifact');
+    const verifyStep = shellStep('Verify same-run Access runtime candidate');
+    const directory = await mkdtemp(join(tmpdir(), 'access-runtime-'));
+    const env = {
+        ...process.env, RUNNER_TEMP: directory, GITHUB_WORKSPACE: directory,
+        GITHUB_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1',
+    };
+    const run = (script, overrides = {}) => execFileSync('bash', ['-euo', 'pipefail', '-c', script], {
+        cwd: directory, env: { ...env, ...overrides }, stdio: 'pipe',
+    });
+    try {
+        const contract = join(directory, 'contracts/access-control');
+        await mkdir(join(contract, 'target/near'), { recursive: true });
+        await writeFile(join(contract, 'target/near/youtick_access_control.wasm'), '\0asm');
+        await writeFile(join(contract, 'target/near/youtick_access_control_abi.json'), '{}');
+        await writeFile(join(contract, 'Cargo.lock'), '# test lockfile\n');
+        run(packageStep);
+        run(verifyStep);
+        assert.throws(() => run(verifyStep, { GITHUB_SHA: 'b'.repeat(40) }));
+        assert.throws(() => run(verifyStep, { GITHUB_RUN_ID: '124' }));
+        assert.throws(() => run(verifyStep, { GITHUB_RUN_ATTEMPT: '2' }));
+        await writeFile(join(directory, 'access-runtime/youtick_access_control.wasm'), 'changed');
+        assert.throws(() => run(verifyStep));
+        run(packageStep);
+        await rm(join(directory, 'access-runtime/youtick_access_control_abi.json'));
+        assert.throws(() => run(verifyStep));
+    } finally {
+        await rm(directory, { recursive: true, force: true });
+    }
+    const retained = source.slice(source.indexOf('\n  market-runtime-artifact:'), source.indexOf('\n  protocol:'));
+    assert.match(retained, /github\.event_name == 'push'/);
+    assert.match(retained, /github\.ref == 'refs\/heads\/main'/);
+    assert.match(retained, /needs\.contracts\.result == 'success'/);
+    assert.match(retained, /name: access-runtime-candidate-\$\{\{ github\.sha \}\}/);
+    assert.match(retained, /subject-checksums: \$\{\{ runner\.temp \}\}\/access-runtime\/SHA256SUMS/);
+    assert.match(retained, /name: access-contract-\$\{\{ github\.sha \}\}[\s\S]*retention-days: 30/);
+    assert.ok(retained.indexOf('Verify same-run Access') < retained.indexOf('Attest exact Access'));
 });
 
 test('web CI verifies the immutable sponsored-wallet executor', async () => {
