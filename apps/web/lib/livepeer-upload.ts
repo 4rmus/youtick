@@ -22,6 +22,7 @@ const PROFILE_ID = 'paid-media-livepeer-v1';
 const PROFILE_CONFIG_SHA256 = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
 const LIVEPEER_SESSION_STORAGE_PREFIX = 'youtick:livepeer-job-session:';
 const LIVEPEER_DRAFT_STORAGE_PREFIX = 'youtick:livepeer-ui-draft:';
+const LIVEPEER_LAST_JOB_STORAGE_PREFIX = 'youtick:livepeer-last-job:';
 const LIVEPEER_SOURCE_FINGERPRINT_WINDOW_BYTES = 1024 * 1024;
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -219,6 +220,28 @@ export function createLivepeerJobId(): string {
     return `lp-${crypto.randomUUID()}`;
 }
 
+export function rememberLivepeerUploadJob(accountId: string, jobId: string): void {
+    validateJobSessionIdentity(accountId, jobId);
+    try {
+        // ponytail: one bookmark per account; add history only for multiple pending jobs.
+        // Only a public job ID is persisted; upload keys remain session-only.
+        localStorage.setItem(`${LIVEPEER_LAST_JOB_STORAGE_PREFIX}${NEAR_NETWORK}:${NEAR_CONFIG.marketContractId}:${accountId}`, jobId);
+    } catch {
+        // Status links still work when browser storage is unavailable.
+    }
+}
+
+export function readRememberedLivepeerUploadJob(accountId: string): string | null {
+    try {
+        const jobId = localStorage.getItem(`${LIVEPEER_LAST_JOB_STORAGE_PREFIX}${NEAR_NETWORK}:${NEAR_CONFIG.marketContractId}:${accountId}`);
+        if (!jobId) return null;
+        validateJobSessionIdentity(accountId, jobId);
+        return jobId;
+    } catch {
+        return null;
+    }
+}
+
 export function writeLivepeerUploadDraft(accountId: string, draft: LivepeerUploadDraft): void {
     validateJobSessionIdentity(accountId, draft.jobId);
     if (!isLivepeerUploadDraft(draft)) throw new Error('invalid_livepeer_draft');
@@ -276,6 +299,7 @@ export function advanceLivepeerUploadDraftStage(
         if (!isLivepeerUploadDraft(draft) || draft.jobId !== jobId) throw new Error('invalid');
         if (LIVEPEER_RECOVERY_STAGE_ORDER[stage] <= LIVEPEER_RECOVERY_STAGE_ORDER[draft.stage]) return;
         sessionStorage.setItem(storageKey, JSON.stringify({ ...draft, stage }));
+        if (stage !== 'payment_pending') rememberLivepeerUploadJob(accountId, jobId);
     } catch {
         sessionStorage.removeItem(storageKey);
     }

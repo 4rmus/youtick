@@ -44,6 +44,8 @@ import {
     preflightLivepeerUpload,
     prepareCreatorFeePaymentOptions,
     readLivepeerUploadDraft,
+    readRememberedLivepeerUploadJob,
+    rememberLivepeerUploadJob,
     requestLivepeerUploadIntent,
     sponsoredUploadPaymentOptionsChanged,
     uploadLivepeerSource,
@@ -76,6 +78,7 @@ export function LivepeerPaidUploadForm() {
     const [title, setTitle] = React.useState('');
     const [price, setPrice] = React.useState('2.00');
     const [jobId, setJobId] = React.useState<string | null>(null);
+    const [trackedUpload, setTrackedUpload] = React.useState<{ accountId: string; jobId: string } | null>(null);
     const [rightsAccepted, setRightsAccepted] = React.useState(false);
     const [status, setStatus] = React.useState<string | null>(null);
     const [error, setError] = React.useState<string | null>(null);
@@ -144,6 +147,10 @@ export function LivepeerPaidUploadForm() {
 
     React.useEffect(() => {
         fileSelectionVersion.current += 1;
+        const trackedJobId = accountId
+            ? new URL(window.location.href).searchParams.get('job') || readRememberedLivepeerUploadJob(accountId)
+            : null;
+        setTrackedUpload(accountId && trackedJobId ? { accountId, jobId: trackedJobId } : null);
         setJobId(null);
         setStatus(null);
         setError(null);
@@ -456,6 +463,14 @@ export function LivepeerPaidUploadForm() {
                 <p className="mt-2 text-zinc-400">The browser sends the source directly to Livepeer. NEAR records payment and publication state.</p>
             </div>
 
+            {!jobId && accountId && trackedUpload?.accountId === accountId && (
+                <LivepeerUploadStatus accountId={accountId} jobId={trackedUpload.jobId} />
+            )}
+            {jobId && (
+                <Link className="text-sm underline" href={`/upload?job=${encodeURIComponent(jobId)}`}>
+                    Upload status link — bookmark to return later
+                </Link>
+            )}
             {uploaded && (
                 <Alert>
                     <CheckCircle2 className="h-4 w-4" />
@@ -601,6 +616,50 @@ function formatMicroUsdc(value: string): string {
     const amount = BigInt(value);
     const fraction = (amount % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
     return `${amount / 1_000_000n}.${fraction.padEnd(2, '0')}`;
+}
+
+export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; jobId: string }) {
+    const query = useQuery({
+        queryKey: ['livepeerSavedUpload', accountId, jobId],
+        queryFn: async () => {
+            const progress = await readLivepeerUploadProgress(jobId, accountId);
+            rememberLivepeerUploadJob(accountId, jobId);
+            return progress;
+        },
+        retry: false,
+        refetchInterval: (query) => query.state.data?.publication
+            ? false
+            : publicationPollIntervalMs(query.state.dataUpdateCount + query.state.fetchFailureCount),
+        refetchIntervalInBackground: false,
+    });
+    const progress = query.isError ? undefined : query.data;
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>Your upload</CardTitle>
+                <CardDescription role="status" aria-live="polite">
+                    {query.isError ? 'This upload could not be verified for this account.'
+                        : !progress ? 'Checking upload status…'
+                            : progress.publication ? 'Publication ready.'
+                                : progress.expired ? UPLOAD_EXPIRED_MESSAGE
+                                    : 'Payment confirmed. Publication is still pending.'}
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+                {progress?.publication ? (
+                    <Button asChild><Link href={`/watch?job=${encodeURIComponent(jobId)}`}>Open publication</Link></Button>
+                ) : (
+                    <p className="text-sm text-muted-foreground">
+                        {progress && !progress.expired && 'Livepeer processing details are unavailable in this view. '}
+                        No new payment or upload has been started.
+                    </p>
+                )}
+                <Link className="text-sm underline" href={`/upload?job=${encodeURIComponent(jobId)}`}>
+                    Upload status link — bookmark to return later
+                </Link>
+            </CardContent>
+        </Card>
+    );
 }
 
 function fileValidationMessage(error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type'): string {

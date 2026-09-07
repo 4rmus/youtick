@@ -75,6 +75,8 @@ import {
     requestLivepeerUploadIntent,
     requestNearCreatorFeeQuote,
     readLivepeerUploadDraft,
+    readRememberedLivepeerUploadJob,
+    rememberLivepeerUploadJob,
     sponsoredUploadPaymentOptionsChanged,
     uploadLivepeerSource,
     validateLivepeerSourceFile,
@@ -191,8 +193,41 @@ describe('Livepeer browser upload', () => {
         featureFlags.publicTestnetBeta = false;
         near.viewContract.mockReset().mockResolvedValue(null);
         sessionStorage.clear();
+        localStorage.clear();
         delete process.env.NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO;
         delete process.env.NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO;
+    });
+
+    it('keeps only a scoped job bookmark when the upload tab closes', async () => {
+        const wallet = createWallet();
+        await provisionJobSession(wallet);
+        rememberLivepeerUploadJob('creator.testnet', 'job-001');
+        expect(localStorage.length).toBe(1);
+        expect(localStorage.getItem(localStorage.key(0)!)).toBe('job-001');
+        expect(localStorage.key(0)).toContain('testnet:paid-media-livepeer-v1.testnet:creator.testnet');
+        sessionStorage.clear();
+        expect(readRememberedLivepeerUploadJob('creator.testnet')).toBe('job-001');
+        expect(readRememberedLivepeerUploadJob('another.testnet')).toBeNull();
+        rememberLivepeerUploadJob('creator.testnet', 'job-002');
+        expect(localStorage.length).toBe(1);
+        expect(readRememberedLivepeerUploadJob('creator.testnet')).toBe('job-002');
+        localStorage.setItem(localStorage.key(0)!, 'https://example.com/invalid');
+        expect(readRememberedLivepeerUploadJob('creator.testnet')).toBeNull();
+    });
+
+    it('does not interrupt an upload when browser bookmarks are unavailable', () => {
+        const storage = globalThis.localStorage;
+        Object.assign(globalThis, { localStorage: {
+            setItem: () => { throw new Error('Storage blocked'); },
+            getItem: () => { throw new Error('Storage blocked'); },
+        } });
+        try {
+            expect(() => rememberLivepeerUploadJob('creator.testnet', 'job-001')).not.toThrow();
+            expect(readRememberedLivepeerUploadJob('creator.testnet')).toBeNull();
+            expect(() => rememberLivepeerUploadJob('creator.testnet', 'bad/job')).toThrow();
+        } finally {
+            Object.assign(globalThis, { localStorage: storage });
+        }
     });
 
     it('signs the locked upload-intent envelope and retains its session key for heartbeats', async () => {
@@ -469,7 +504,9 @@ describe('Livepeer browser upload', () => {
         writeLivepeerUploadDraft('creator.testnet', draft);
 
         await expect(readLivepeerUploadDraft('creator.testnet', file)).resolves.toEqual(draft);
+        expect(readRememberedLivepeerUploadJob('creator.testnet')).toBeNull();
         advanceLivepeerUploadDraftStage('creator.testnet', 'job-001', 'upload_ready');
+        expect(readRememberedLivepeerUploadJob('creator.testnet')).toBe('job-001');
         advanceLivepeerUploadDraftStage('creator.testnet', 'job-001', 'authorized');
         await expect(readLivepeerUploadDraft('creator.testnet', file)).resolves.toEqual({
             ...draft,

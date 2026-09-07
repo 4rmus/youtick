@@ -71,13 +71,16 @@ export async function waitForAuthorizedLivepeerJob(
     throw new Error('livepeer_job_pending');
 }
 
-export async function readLivepeerUploadProgress(jobId: string): Promise<{
+export async function readLivepeerUploadProgress(jobId: string, creatorId?: string): Promise<{
     job: LivepeerMediaJob;
     publication: LivepeerPublication | null;
     expired: boolean;
 }> {
     const job = await readLivepeerMediaJob(jobId);
     if (!job) throw new Error('livepeer_job_missing');
+    if (creatorId !== undefined && job.creator_id !== creatorId) {
+        throw new Error('livepeer_job_creator_mismatch');
+    }
     const publication = await readLivepeerPublication(jobId);
     if (publication || !FEATURE_FLAGS.publicTestnetBeta) {
         return { job, publication, expired: false };
