@@ -240,6 +240,16 @@ describe('Livepeer publication UI boundary', () => {
         vi.useRealTimers();
     });
 
+    it('rejects another creator before reading their upload progress', async () => {
+        state.viewContract.mockResolvedValueOnce({
+            job_id: 'job-001', creator_id: 'another.testnet', status: 'Authorized',
+            upload_public_key: 'ed25519:11111111111111111111111111111111',
+        });
+        await expect(readLivepeerUploadProgress('job-001', 'creator.testnet'))
+            .rejects.toThrow('livepeer_job_creator_mismatch');
+        expect(state.viewContract).toHaveBeenCalledTimes(1);
+    });
+
     it('composes upload progress reads outside the UI component', async () => {
         const job = {
             job_id: 'job-001',
@@ -249,7 +259,7 @@ describe('Livepeer publication UI boundary', () => {
         } as const;
         state.viewContract.mockResolvedValueOnce(job).mockResolvedValueOnce(null);
 
-        await expect(readLivepeerUploadProgress('job-001')).resolves.toEqual({
+        await expect(readLivepeerUploadProgress('job-001', 'creator.testnet')).resolves.toEqual({
             job,
             publication: null,
             expired: false,
