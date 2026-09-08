@@ -593,9 +593,9 @@ function makeFakeWrangler(release, state) {
                 queue_id: name.includes('dlq') ? '5'.repeat(32) : '4'.repeat(32) }] });
         }
         if (url.pathname === `/client/v4/accounts/${ACCOUNT_ID}/queues/${'4'.repeat(32)}/consumers` && method === 'GET') {
-            return response(200, { success: true, result: current.queueMissing ? [] : [{ type: 'worker',
+            return response(200, { success: true, result: current.queueConsumers ?? (current.queueMissing ? [] : [{ type: 'worker',
                 script_name: TARGETS['public-testnet'].bridge.worker, dead_letter_queue: 'youtick-livepeer-events-dlq-public-testnet',
-                settings: { batch_size: 10, max_concurrency: 1, max_retries: 3, max_wait_time_ms: 5000 } }] });
+                settings: { batch_size: 10, max_concurrency: 1, max_retries: 3, max_wait_time_ms: 5000 } }]) });
         }
         if (url.pathname === `/client/v4/accounts/${ACCOUNT_ID}/workers/domains` && method === 'GET') {
             let result = Object.values(current.domains);
@@ -2328,3 +2328,31 @@ for (const scenario of ['unrelated host', 'existing domain', 'TLS failure', 'per
         assert.equal(state.workers[TARGETS['public-testnet'].bridge.worker].traffic[0].version_id, 'bridge-new');
     });
 }
+
+
+for (const [name, fields, accepted] of [
+    ['live script field', { script: TARGETS['public-testnet'].bridge.worker }, true],
+    ['documented script_name', { script_name: TARGETS['public-testnet'].bridge.worker }, true],
+    ['matching fields', { script: TARGETS['public-testnet'].bridge.worker, script_name: TARGETS['public-testnet'].bridge.worker }, true],
+    ['conflicting fields', { script: 'wrong-worker', script_name: TARGETS['public-testnet'].bridge.worker }, false],
+    ['wrong worker', { script: 'wrong-worker' }, false],
+    ['missing fields', {}, false],
+    ['null field', { script: TARGETS['public-testnet'].bridge.worker, script_name: null }, false],
+]) test(`public queue consumer identity handles ${name}`, async (t) => {
+    const release = publicModeRelease(t, 'acceptance');
+    const workers = Object.fromEntries([
+        TARGETS['public-testnet'].web.worker, TARGETS['public-testnet'].bridge.worker,
+        PUBLIC_TESTNET_READ_MODEL.worker,
+    ].map((worker) => [worker, { traffic: [{ version_id: 'previous', percentage: 100 }] }]));
+    const fake = makeFakeWrangler(release, { publicMode: 'acceptance', workers, queueConsumers: [{
+        type: 'worker', ...fields, dead_letter_queue: 'youtick-livepeer-events-dlq-public-testnet',
+        settings: { batch_size: 10, max_concurrency: 1, max_retries: 3, max_wait_time_ms: 5000 },
+    }] });
+    const deploy = () => deployFixture(release, fake, async () => ({}), { target: 'public-testnet' });
+    if (accepted) {
+        assert.equal((await deploy()).mode, 'acceptance');
+    } else {
+        await assert.rejects(deploy, /public_queue_consumer_unproven/);
+        assert.deepEqual(calls(fake), []);
+    }
+});

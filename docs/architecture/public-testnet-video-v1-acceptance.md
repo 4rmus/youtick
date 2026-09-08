@@ -226,3 +226,37 @@ Smoke `fetch failed` ve cleanup hatası sonrasında API hedef custom domain say�
 Aynı gate içinde B04-R düzeltmesi yalnız yeni eklenen domain'in ENOTFOUND durumunu mevcut sınırlı beklemeyle kontrol eder. Beş yeni regresyon: eski kodda ilgili iki hata; düzeltmeden sonra yayın/smoke toplam 100/100 LOCAL_TEST PASS. TLS ve ilgisiz/mevcut domain hataları tekrar edilmez; deneme tükenmesi başarı değildir. Bu kaynak kanıtı canlı sonucu değiştirmez.
 
 Tek sonraki adım `tmp/video-public-testnet-closed-release-recovery-20260908/report.md` içindeki exact dört dosyalık Git yayını ve bir yeni korumalı closed deploy onayı. B04 kapsamındaki token/key/secret/migration işleri tamamlandı; tekrarlanmaz. Gerçek medya/ödeme/oynatma, büyük dosya ve kapasite kabulü hâlâ ayrıca açıktır.
+
+### B04-R onayı ve yayın ilerlemesi — 8 Eylül 2026
+
+Kullanıcı B04-R'nin exact dört dosyalık Git yayını, kontroller sonrası merge ve tek yeni korumalı closed deploy kapsamını açıkça onayladı. `2d866881` patch'i değişmeden `09e1356b019327fcd6dbb6b30aa051ec33b28a03` / [PR #182](https://github.com/4rmus/youtick/pull/182) ile yayımlandı. PR CI `34208344041` SUCCESS; inceleme/çakışma engeli ve açık PR CodeQL bulgusu yok. Squash main **`a1139aea1394c1c9f501d1c6c3e3f53c87f20da7`**, onaylı aynı tree ile doğrulandı. Bypass veya manuel CI tekrarı yapılmadı.
+
+**Aktif gate hâlâ `VIDEO_PUBLIC_TESTNET_CLOSED_RELEASE`, B04-R IN_PROGRESS.** Otomatik main CI `34209568717` çalışıyor. Önceki B04-R onay bekleme kaydı kapanmıştır; yeni main CI geçmeden deploy anahtarı açılmaz. Mevcut dokuz secret, aynı kapalı config, üç Worker sürümü, kapalı Bridge ve consumer 0 durumu yeniden doğrulandı. Bu ara kayıt canlı yayın PASS değildir. Güncel kanıt `tmp/video-public-testnet-closed-release-recovery-20260908/execution/`.
+
+### B04-R terminal sonuç — kapalı yayın PASS
+
+**`VIDEO_PUBLIC_TESTNET_CLOSED_RELEASE`: PASS / CI + PROVIDER + PREVIEW (public-testnet kapalı runtime).** Main `a1139aea1394c1c9f501d1c6c3e3f53c87f20da7`; otomatik main CI `34209568717` SUCCESS (7 başarılı, değişmeyen alanlarda 5 beklenen skip). [Korumalı yayın 34210642070](https://github.com/4rmus/youtick/actions/runs/34210642070) tek dispatch/attempt 1 ve normal reviewer onayıyla SUCCESS. Altı release dosyasının imzası exact yeni koşu/source/manifest hash'iyle doğrulandı. Aynı kapalı config `090dd2345eb9bf33be95dacd68eca6ddd2ace26c496635b3a16faca06e5373e7` kullanıldı.
+
+Üç gerçek sürüm, source etiketi ve %100 trafik Cloudflare API ile eşleşti: Web `de625440-b74d-4508-ad6a-6bf0deef1701`, Bridge `68434d08-4d60-4df1-ac8b-31c4d56bc632`, read-model `2ddec14f-cb8a-44cf-9a68-3104031285db`. Üç hedef custom domain doğru Worker/zone'a bağlı. Public Web root 200; Bridge ve read-model health 200/DISABLED. Read-model doğru Market ve başlangıç bloğu 267602885, ingestion/backfill false. Workflow ve bağımsız root-before/after karşılaştırması eşit. Yayın receipt'i indirildi/doğrulandı; deploy anahtarı tekrar false.
+
+Token, anahtar ve D1 migration tekrar oluşturulmadı/uygulanmadı; üç mevcut Worker güncellendi (`bootstrap=false`). Önceki B04 başarısız denemesi tarihsel olarak korunur; kapalı yayın engeli bu yeni gerçek kanıtla kapanmıştır. Kanıt `tmp/video-public-testnet-closed-release-recovery-20260908/execution/receipt.json`.
+
+**Aktif gate: `VIDEO_PUBLIC_TESTNET_QUEUE_CONSUMER_PREFLIGHT`.** Mevcut Queue producer 1, consumer 0; ayrı consumer bağlama paketi hazırlanır. Kapalı yayın gerçek medya/ödeme/Discover/kapasite kabulü değildir. Ana plan NOT_COMPLETE.
+
+### B05 consumer hazırlığı
+
+**`VIDEO_PUBLIC_TESTNET_QUEUE_CONSUMER_PREFLIGHT`: COMPLETED_WITH_WARNINGS / LOCAL_STATIC + PROVIDER.** Ana Queue ve DLQ ad/ID'leri doğrulandı; iki consumer listesi boş, anlık backlog ikisinde de 0 mesaj / 0 bayt. Mevcut release kontrolü ve Wrangler 4.90.0 payload'ı aynı ayarları kullanır: batch 10, concurrency 1, retries 3, batch timeout 5000 ms.
+
+Kapalı Bridge consumer yolu mesajı retry eder; bu yüzden yalnız iki kuyruğun boşluğu işlem anında da doğrulanırsa bağlantı yapılacak. Consumer bağlamak için worker deploy, yeni anahtar veya uygulama kodu gerekmez. Mesaj gönderme/çekme/purge ve kabul açılışı pakette yoktur. Tam paket `tmp/video-public-testnet-queue-consumer-preflight-20260908/report.md` ve `action-package.json`.
+
+**Aktif gate: `VIDEO_PUBLIC_TESTNET_QUEUE_CONSUMER_BINDING` — B05 onayı bekleniyor.** B04-R onayı consumer bağlamayı kapsamıyordu. Yeni consumer henüz oluşturulmadı; gerçek mesaj teslimi ve medya kabulü UNPROVEN. Genel plan NOT_COMPLETE.
+
+### B05 consumer bağlantısı ve bulunan API uyumsuzluğu — 8 Eylül 2026
+
+**`VIDEO_PUBLIC_TESTNET_QUEUE_CONSUMER_BINDING`: COMPLETED_WITH_WARNINGS / PROVIDER.** B05 açıkça onaylandı; tek consumer `43139219af604e29a9588e9c878f9d32`, yeni Bridge `youtick-livepeer-bridge-public-testnet` için oluşturuldu. Batch 10, concurrency 1, retries 3 ve max_wait_time_ms 5000 gerçek yanıtta eşleşti; sağlayıcının retry_delay değeri 0. İki kuyruk önce/sonra 0 mesaj / 0 bayt; DLQ consumer yok. Bridge aynı `68434d08-4d60-4df1-ac8b-31c4d56bc632` sürümünde DISABLED, iki deploy anahtarı false. Mesaj veya yeniden deploy işlemi yok. Kanıt `tmp/video-public-testnet-queue-consumer-run-20260908/receipt.json`.
+
+Canlı consumer listesi Worker adını **`script`** alanında döndürüyor; mevcut release kontrolü yalnız `script_name` beklediğinden doğru bağlantıyı reddediyor. Bağlantı yeniden oluşturulmaz veya ayarları değiştirilmez. Aynı gate içinde dört satırlık yerel düzeltme, desteklenen iki alanın mevcut olanlarının tamamını doğru Worker'a eşit tutar; eksik/null/yanlış/çelişkili adları reddeder. Diğer kimlik/DLQ/ayar kontrolleri değişmedi.
+
+**Yerel uyum kanıtı:** yedi regresyonda eski kodun iki hatası görüldü; düzeltme sonrası mevcut yayın/smoke testleri **107/107 PASS**. Üç gerçek salt-okunur GET yanıtının aynı kaydı mevcut main kontrolünde reddedildi, yerel düzeltilmiş kontrolünde kabul edildi. Bu, canlı callback/mesaj işleme veya yeni GitHub source kanıtı değildir.
+
+**Tek kalan adım: B05-R exact dört dosyalık kaynak yayını onayı.** `tmp/video-public-testnet-queue-consumer-compat-20260908/report.md` ve `action-package.json` hazır. Commit/push/PR, zorunlu kontroller sonrası squash merge ve yeni otomatik main CI doğrulaması istenir; consumer/deploy/secret/NEAR/media işlemi içermez. B05 bağlantı onayı bu yeni Git yayınını kapsamıyordu. Ana görev BLOCKED / NOT_COMPLETE; mevcut kapalı yayın korunur.
