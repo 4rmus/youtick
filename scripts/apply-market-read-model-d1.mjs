@@ -40,7 +40,10 @@ export async function applyFinalMarketBlockBatch(db, rawBlocks) {
     const blocks = rawBlocks.map(normalizeFinalMarketBlock);
     if (blocks.some((block, index) => block.network !== blocks[0].network
         || block.contract_id !== blocks[0].contract_id
-        || block.block_height !== blocks[0].block_height + index)) {
+        || (index > 0 && (block.prev_block_height === undefined
+            ? block.block_height !== blocks[index - 1].block_height + 1
+            : block.prev_block_height !== blocks[index - 1].block_height
+                || block.prev_block_hash !== blocks[index - 1].block_hash)))) {
         throw new Error('non_contiguous_d1_block_batch');
     }
     return db.batch(blocks.flatMap((block) => finalBlockStatements(db, block)));
@@ -78,15 +81,19 @@ function finalBlockStatements(db, block) {
         ]));
         statements.push(...projectionStatements(db, record, data));
     }
+    const linked = block.prev_block_height !== undefined;
     statements.push(bound(db, `
         INSERT INTO finality_watermarks (
             network, contract_id, block_height, block_hash, updated_at_ms
-        ) VALUES (?, ?, ?, ?, ?)
+            ${linked ? ', prev_block_height, prev_block_hash' : ''}
+        ) VALUES (?, ?, ?, ?, ? ${linked ? ', ?, ?' : ''})
         ON CONFLICT (network, contract_id) DO UPDATE SET
             block_height = excluded.block_height,
             block_hash = excluded.block_hash,
+            ${linked ? 'prev_block_height = excluded.prev_block_height, prev_block_hash = excluded.prev_block_hash,' : ''}
             updated_at_ms = MAX(finality_watermarks.updated_at_ms, excluded.updated_at_ms)
-    `, [block.network, block.contract_id, block.block_height, block.block_hash, Date.now()]));
+    `, [block.network, block.contract_id, block.block_height, block.block_hash, Date.now(),
+        ...(linked ? [block.prev_block_height, block.prev_block_hash] : [])]));
     return statements;
 }
 
@@ -105,6 +112,13 @@ function normalizeFinalMarketBlock(value) {
         || typeof value.block_hash !== 'string'
         || !/^[A-Za-z0-9_-]{32,128}$/.test(value.block_hash)
         || !Array.isArray(value.events)) {
+        throw new Error('invalid_d1_final_block');
+    }
+    if ((value.prev_block_height !== undefined || value.prev_block_hash !== undefined)
+        && (!Number.isSafeInteger(value.prev_block_height) || value.prev_block_height < 0
+            || value.prev_block_height >= value.block_height
+            || typeof value.prev_block_hash !== 'string'
+            || !/^[A-Za-z0-9_-]{32,128}$/.test(value.prev_block_hash))) {
         throw new Error('invalid_d1_final_block');
     }
     const events = normalizeFinalMarketEvents(value.events);
