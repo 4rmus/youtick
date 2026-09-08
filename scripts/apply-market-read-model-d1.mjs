@@ -4,6 +4,7 @@ import {
 } from './rebuild-market-read-model.mjs';
 
 export const MAX_FINAL_EVENTS_PER_BATCH = 16;
+export const MAX_FINAL_BLOCKS_PER_BATCH = 8;
 
 export async function applyFinalMarketEventBatch(db, rawRecords) {
     const records = normalizeFinalMarketEvents(rawRecords);
@@ -29,7 +30,23 @@ export async function applyFinalMarketEventBatch(db, rawRecords) {
 }
 
 export async function applyFinalMarketBlock(db, rawBlock) {
-    const block = normalizeFinalMarketBlock(rawBlock);
+    return db.batch(finalBlockStatements(db, normalizeFinalMarketBlock(rawBlock)));
+}
+
+export async function applyFinalMarketBlockBatch(db, rawBlocks) {
+    if (!Array.isArray(rawBlocks) || rawBlocks.length < 1 || rawBlocks.length > MAX_FINAL_BLOCKS_PER_BATCH) {
+        throw new Error('invalid_d1_block_batch_size');
+    }
+    const blocks = rawBlocks.map(normalizeFinalMarketBlock);
+    if (blocks.some((block, index) => block.network !== blocks[0].network
+        || block.contract_id !== blocks[0].contract_id
+        || block.block_height !== blocks[0].block_height + index)) {
+        throw new Error('non_contiguous_d1_block_batch');
+    }
+    return db.batch(blocks.flatMap((block) => finalBlockStatements(db, block)));
+}
+
+function finalBlockStatements(db, block) {
     const records = block.events;
 
     const statements = [];
@@ -70,7 +87,7 @@ export async function applyFinalMarketBlock(db, rawBlock) {
             block_hash = excluded.block_hash,
             updated_at_ms = MAX(finality_watermarks.updated_at_ms, excluded.updated_at_ms)
     `, [block.network, block.contract_id, block.block_height, block.block_hash, Date.now()]));
-    return db.batch(statements);
+    return statements;
 }
 
 function normalizeFinalMarketBlock(value) {

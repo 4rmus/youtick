@@ -1,4 +1,5 @@
 import { fetchNeardataMarketBlock } from '../scripts/fetch-neardata-market-block.mjs';
+import { applyFinalMarketBlockBatch, MAX_FINAL_BLOCKS_PER_BATCH } from '../scripts/apply-market-read-model-d1.mjs';
 import { runNearFinalityProbe } from '../workers/livepeer-bridge/scripts/near-finality-canary.mjs';
 import {
     nextMarketReadModelBlockHeight,
@@ -15,6 +16,8 @@ const BACKFILL_MESSAGE_SCHEMA = 'youtick.read-model-backfill-message.v1';
 const FINALITY_PROBE_CRON = '* * * * *';
 const FINALITY_TELEMETRY_SCHEMA = 'youtick.near-finality-probe.v1';
 const INGESTION_ERROR_CODES = new Set([
+    'invalid_d1_block_batch_size',
+    'non_contiguous_d1_block_batch',
     'd1_final_block_event_limit_exceeded',
     'invalid_d1_event_batch_size',
     'invalid_d1_final_block',
@@ -76,17 +79,41 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
 
     let last;
     let blockCount = 0;
-    while (blockCount < MAX_BLOCKS_PER_RUN && nextBlockHeight <= finalBlockHeight) {
-        last = await runMarketReadModelOnce(env.MARKET_READ_MODEL, config, fetchBlock);
-        blockCount += 1;
-        nextBlockHeight = last.block_height + 1;
+    const isPublic = env.VIDEO_ENVIRONMENT === 'public-testnet';
+    const now = dependencies.now ?? Date.now;
+    const sleep = dependencies.sleepFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const started = now();
+    let lastFetchAt = started - 350;
+    const limit = isPublic ? 150 : MAX_BLOCKS_PER_RUN;
+    while (blockCount < limit && nextBlockHeight <= finalBlockHeight) {
+        if (!isPublic) {
+            last = await runMarketReadModelOnce(env.MARKET_READ_MODEL, config, fetchBlock);
+            blockCount += 1;
+            nextBlockHeight = last.block_height + 1;
+            continue;
+        }
+        const blocks = [];
+        while (blocks.length < MAX_FINAL_BLOCKS_PER_BATCH && blockCount + blocks.length < limit
+            && nextBlockHeight + blocks.length <= finalBlockHeight && now() - started < 50_000) {
+            await sleep(Math.max(0, 350 - (now() - lastFetchAt)));
+            if (now() - started >= 50_000) break;
+            lastFetchAt = now();
+            blocks.push(await fetchBlock({ network: config.network, contractId: config.contractId,
+                blockHeight: nextBlockHeight + blocks.length }));
+        }
+        if (!blocks.length) break;
+        await applyFinalMarketBlockBatch(env.MARKET_READ_MODEL, blocks);
+        const block = blocks.at(-1);
+        last = { block_height: block.block_height, block_hash: block.block_hash, event_count: block.events.length };
+        blockCount += blocks.length;
+        nextBlockHeight = block.block_height + 1;
     }
     return {
         schema: TELEMETRY_SCHEMA,
         status: nextBlockHeight <= finalBlockHeight ? 'catching_up' : 'applied',
         block_count: blockCount,
         final_block_height: finalBlockHeight,
-        remaining_blocks: Math.max(0, finalBlockHeight - last.block_height),
+        remaining_blocks: Math.max(0, finalBlockHeight - nextBlockHeight + 1),
         ...last,
     };
 }
