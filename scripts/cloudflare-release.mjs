@@ -80,14 +80,16 @@ function transientWebPropagationError(error) {
     return hasPropagationSignal;
 }
 
-async function runPostPromotionSmoke(smokeFn, input, sleepFn) {
+async function runPostPromotionSmoke(smokeFn, input, sleepFn, createdDomains) {
     for (let attempt = 0; attempt < POST_PROMOTION_SMOKE_RETRY_DELAYS_MS.length; attempt += 1) {
         const delay = POST_PROMOTION_SMOKE_RETRY_DELAYS_MS[attempt];
         if (delay) await sleepFn(delay);
         try {
             return await smokeFn(input);
         } catch (error) {
-            if (!transientWebPropagationError(error)
+            const pendingDns = error?.cause?.code === 'ENOTFOUND'
+                && createdDomains.some((domain) => domain.hostname === error.cause.hostname);
+            if ((!transientWebPropagationError(error) && !pendingDns)
                 || attempt === POST_PROMOTION_SMOKE_RETRY_DELAYS_MS.length - 1) throw error;
         }
     }
@@ -1782,6 +1784,7 @@ export async function deployRelease({
                     } } : {}),
                 }),
                 sleepFn,
+                createdDomains,
             );
             rollbackPerformed = target === 'production' && rollbackTest === 'true'
                 ? await runProductionRollbackTest({

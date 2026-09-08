@@ -192,3 +192,39 @@ Workflow yalnız exact current main ve başarılı aynı-SHA CI'ın iki sözleş
 - 10 test NEAR, işlem öncesi ücret/bakiye kontrolü ve durdurma eşiğidir; NEAR transaction'ında zincirin uyguladığı `maxFee` alanı değildir. Yeni bütçe, parent secret aktarımı ve kurulum onayı henüz yoktur.
 
 **Tek sonraki gate: `VIDEO_PUBLIC_TESTNET_BOOTSTRAP_RELEASE_AND_RUN` — B03 somut paketinin onayı.** Önce yerel kaynak paketi yayımlanıp yeni main CI doğrulanmalı. Ardından yalnız onaylı dört yeni hesap için parent anahtarı geçici olarak korumalı GitHub environment'a aktarılıp bu workflow yürütülebilir. Altı yeni private anahtar yerelde kalır. Web/Bridge yayını, provider ve gerçek medya kabulü bu gate'in kapsamına girmez. Ana görev `BLOCKED / NOT_COMPLETE` durumundadır.
+
+## 12. B03 uygulaması — 8 Eylül 2026
+
+**`VIDEO_PUBLIC_TESTNET_BOOTSTRAP_RELEASE_AND_RUN`: PASS.** Kullanıcı yeniden sunulan tam B03 paketini açıkça onayladı. Bu onay exact Git yayını, mevcut parent imza anahtarının yalnız korumalı GitHub `public-testnet` environment'ına geçici aktarımı/kaldırılması ve dört testnet kurulum batch'ini kapsar; aynı kapsam için tekrar onay gerekmez.
+
+Onaylı `7dea189c` patch'i değişmeden commit `16c9f2c8e45799aedb5d85f5a9cc9a2871ca9623` ve [PR #181](https://github.com/4rmus/youtick/pull/181) olarak yayımlandı. PR CI `34189840713` geçti; inceleme engeli ve açık PR CodeQL alert'i yok. Squash main **`33d7d12f780b26401b1385ad1db80db63e0adc03`**, incelenmiş aynı tree ile doğrulandı. [Main CI 34190657882](https://github.com/4rmus/youtick/actions/runs/34190657882) 13/13 başarılı; yedi imza ve iki gerçek WASM hash'i eşleşti.
+
+**B03 sonuç: PASS / gerçek NEAR testnet kanıtı.** [Korumalı bootstrap 34191910269](https://github.com/4rmus/youtick/actions/runs/34191910269) attempt 1, normal environment reviewer onayıyla geçti. Dört yeni hesap, exact key setleri, iki sözleşmenin zincirden okunan kod byte'ları ve dört FINAL transaction ayrı salt-okunur sorgularla doğrulandı. Market kapalı ve publication sayısı 0; Access gerçek initializer durumu (`paused=false`, `grant_issuance_enabled=true`) ile doğrulandı. Market'in gerçek init bloğu **267602885**.
+
+Toplam parent debit **9,2351909110796079 test NEAR**; bunun 9,2'si transfer, 0,0351909110796079'u ücret/oluşturma maliyeti. Parent bakiye **0,860855006427115 test NEAR**. Geçici GitHub parent secret'ı terminal koşu sonrası kaldırıldı ve API'den yokluğu doğrulandı; altı yeni private key yerelde kaldı. Güncel işlem/transaction kimlikleri: `tmp/video-public-testnet-bootstrap-run-20260908/receipt.json` ve `independent-chain-verification.json`.
+
+**Sonraki hazırlık: `VIDEO_PUBLIC_TESTNET_CLOSED_RELEASE_PREFLIGHT`.** Gerçek Market/Access, D1/Queue ve başlangıç bloğuyla kapalı yayın paketi Bölüm 13’te hazırlandı. Bu servisler, DNS/migration/consumer ve medya kabulü hâlâ kurulmuş veya geçmiş sayılmaz; ana görev `NOT_COMPLETE` durumundadır.
+
+## 13. B04 kapalı yayın hazırlığı — 8 Eylül 2026
+
+**`VIDEO_PUBLIC_TESTNET_CLOSED_RELEASE_PREFLIGHT`: COMPLETED_WITH_WARNINGS / LOCAL_STATIC / PROVIDER.** Mevcut main `33d7d12f` ve CI `34190657882` için yeni kaynak değişikliği gerekmiyor. Gerçek hesaplar, D1/Queue ve Market init bloğu 267602885 config taslağına işlendi; dört mevcut migration hash'i kaydedildi. Tek eksik alan yeni Livepeer public JWT anahtarıdır; mevcut config doğrulayıcısı placeholder'ı doğru şekilde reddetti. Tam config veya canlı yayın PASS değildir.
+
+Kullanıcı `youtick-public-testnet-deploy-v1` Cloudflare tokenını oluşturdu; adı ve oluşturulma başarı ekranı doğrulandı. Yeniden token oluşturulmaz. Henüz GitHub'a secret aktarımı, yeni Livepeer anahtarı, D1 migration veya Worker yayını yapılmadı. Eski JWT private anahtarları güncel Preview public key ile eşleşmediğinden B04 tek yeni Livepeer imzalama anahtarı içerir.
+
+**Aktif gate: `VIDEO_PUBLIC_TESTNET_CLOSED_RELEASE` — B04 onaylandı, yürütülüyor.** Paket mevcut token ve gerekli runtime secret'larının korumalı GitHub ortamına aktarımı, tek yeni Livepeer imzalama anahtarı, dört migration ve mevcut korumalı workflow üzerinden üç servisin kapalı yayınıdır. Queue producer/D1 bağlantıları dahildir; consumer ve medya işlemleri dahil değildir. B03 yeniden yürütülmez; önceki bölümlerdeki B03 onay/kurulum bekleme kayıtları tarihsel olup Bölüm 12 ile kapanmıştır.
+
+Somut paket/kanıt: `tmp/video-public-testnet-closed-release-preflight-20260908/report.md`, `b04-action-package.json`, `receipt.json`. B04 kullanıcı tarafından açıkça onaylandı; paket kapsamındaki işlemler aynı onayla yürür. Genel plan `NOT_COMPLETE`; kapalı yayın dahi gerçek video kabulünün yerine geçmez.
+
+B04 yürütme: yeni Livepeer key `e92e1518-9575-49e6-be7b-f6b6eef37945` kayıt/private→public kontrolü geçti; eski iki key korundu. Dokuz GitHub environment secret metadata'sı doğrulandı. Kapalı canonical config SHA256 `090dd2345eb9bf33be95dacd68eca6ddd2ace26c496635b3a16faca06e5373e7`. Yeni D1 üzerinde dört migration ve contiguous-watermark trigger doğrulandı. [Kapalı yayın 34206345769](https://github.com/4rmus/youtick/actions/runs/34206345769) tek dispatch/attempt 1 ile başlatıldı; henüz deploy/health PASS değildir. Kanıt: `tmp/video-public-testnet-closed-release-run-20260908/`.
+
+## 14. B04 başarısız yayın ve B04-R hazırlığı — 8 Eylül 2026
+
+**`VIDEO_PUBLIC_TESTNET_CLOSED_RELEASE`: FAILED / canlı kabul eksik.** B04 açık kullanıcı onayıyla uygulandı; [34206345769](https://github.com/4rmus/youtick/actions/runs/34206345769) tek dispatch/attempt 1, prepare SUCCESS, deploy FAILURE. Canonical kapalı config, dokuz GitHub secret metadata'sı, yeni Livepeer imza anahtarı, dört gerçek D1 migration ve altı exact-SHA imzalı release dosyası doğrulandı. Bu alt işler tamamlandı ve yeniden yapılmayacak.
+
+Üç Worker'ın exact source `33d7d12f` aday sürümleri %100 trafikte: Web `7f100827-c89f-490e-9d26-0c794dbe0e7e`, Bridge `f4934d1b-a9d2-4e06-b099-6812f1faed62`, read-model `90cb3424-31be-42a2-b623-64816a982f7f`. Bridge workers.dev health 200/DISABLED, işlem bayrakları false; Web workers.dev root 200. Queue producer 1, consumer 0.
+
+Yayın sonrası smoke `fetch failed`, ardından cleanup `cloudflare_release_domain_cleanup_failed` verdi. API uzlaştırması hedef üç custom domain'in artık olmadığını doğruladı; üç public adres ENOTFOUND. Özgün runner cause kodu loglanmadığından ilk DNS yayılımı yalnız olası nedendir. Read-model public health, son public smoke, release receipt ve root-before/after karşılaştırması tamamlanmadı. Deploy anahtarı terminal koşu sonrasında tekrar **false**. Kanıt: `tmp/video-public-testnet-closed-release-run-20260908/receipt.json`.
+
+**Aynı gate içinde B04-R yerel hazırlığı: COMPLETED_WITH_WARNINGS / LOCAL_TEST.** İzole checkout'ta yayın koduna yalnız o koşuda eklenen domain'in ENOTFOUND hatasını mevcut en fazla 7 deneme/60 saniye toplam bekleme ile tekrar kontrol etme eklendi. Yeni deploy veya provider isteği tekrarlanmaz. İlgisiz domain, önceden bağlı domain ve TLS hatası tekrar edilmez; kalıcı hata sonrası başarı yazılmaz ve kapalı mod yeniden açılmaz. Beş regresyonda iki ilgili senaryo eski kodda başarısızdı; düzeltme sonrası mevcut yayın/smoke testleri **100/100 PASS**. Orijinal uygulama değişiklikleri korunur.
+
+**Tek sonraki adım: B04-R exact dört dosyalık Git yayın paketi ve yeni main CI doğrulaması sonrası bir yeni korumalı closed deploy için onay.** Mevcut token/anahtarlar/config/D1 ve üç Worker yeniden oluşturulmaz. Paket: `tmp/video-public-testnet-closed-release-recovery-20260908/report.md`. Genel plan BLOCKED / NOT_COMPLETE; önceki B04 IN_PROGRESS kayıtlarının güncel sonucu bu bölümdür.
