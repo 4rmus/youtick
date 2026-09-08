@@ -157,3 +157,24 @@ test('fetches only the exact network and height with a bounded response', async 
         '{}', { headers: { 'Content-Length': String(16 * 1024 * 1024 + 1) } },
     )), /neardata_unavailable/);
 });
+
+test('public null is a missing height, while every actual block requires a predecessor', async () => {
+    const input = { ...expected, requirePredecessor: true };
+    assert.equal(await fetchNeardataMarketBlock(input, async () => Response.json(null)), null);
+    await assert.rejects(() => fetchNeardataMarketBlock(expected, async () => Response.json(null)), /invalid_neardata_block/);
+    assert.throws(() => parseNeardataMarketBlock(block(), input), /invalid_neardata_block/);
+    const linked = block();
+    linked.block.header.prev_height = HEIGHT - 2;
+    linked.block.header.prev_hash = RECEIPT_ID;
+    const parsed = parseNeardataMarketBlock(linked, input);
+    assert.equal(parsed.prev_block_height, HEIGHT - 2);
+    assert.equal(parsed.prev_block_hash, RECEIPT_ID);
+    for (const invalid of [{ prev_height: HEIGHT }, { prev_height: -1 }, { prev_hash: 'invalid' }]) {
+        assert.throws(() => parseNeardataMarketBlock({ ...linked,
+            block: { header: { ...linked.block.header, ...invalid } } }, input), /invalid_neardata_block/);
+    }
+    for (const value of [{}, [], false]) {
+        await assert.rejects(() => fetchNeardataMarketBlock(input, async () => Response.json(value)), /invalid_neardata_block/);
+    }
+    await assert.rejects(() => fetchNeardataMarketBlock(input, async () => new Response('null', { status: 503 })), /neardata_unavailable/);
+});

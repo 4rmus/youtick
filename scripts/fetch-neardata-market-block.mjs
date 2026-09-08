@@ -68,7 +68,9 @@ export async function fetchNeardataMarketBlock(input, fetchImpl = fetch) {
     } catch {
         throw new Error('invalid_neardata_block');
     }
-    return parseNeardataMarketBlock(value, { network, contractId, blockHeight });
+    if (value === null && input.requirePredecessor === true) return null;
+    return parseNeardataMarketBlock(value, { network, contractId, blockHeight,
+        requirePredecessor: input.requirePredecessor });
 }
 
 export function parseNeardataMarketBlock(value, expected) {
@@ -80,6 +82,12 @@ export function parseNeardataMarketBlock(value, expected) {
         || typeof header.timestamp_nanosec !== 'string'
         || !/^[1-9][0-9]{15,24}$/.test(header.timestamp_nanosec)
         || !Array.isArray(value.shards)) {
+        throw new Error('invalid_neardata_block');
+    }
+    if (expected.requirePredecessor === true
+        && (!Number.isSafeInteger(header.prev_height) || header.prev_height < 0
+            || header.prev_height >= header.height
+            || typeof header.prev_hash !== 'string' || !HASH_PATTERN.test(header.prev_hash))) {
         throw new Error('invalid_neardata_block');
     }
     const blockTimestampMs = String(BigInt(header.timestamp_nanosec) / 1_000_000n);
@@ -173,6 +181,9 @@ export function parseNeardataMarketBlock(value, expected) {
         finality: 'final',
         block_height: header.height,
         block_hash: header.hash,
+        ...(expected.requirePredecessor === true ? {
+            prev_block_height: header.prev_height, prev_block_hash: header.prev_hash,
+        } : {}),
         events,
     };
 }

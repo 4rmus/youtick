@@ -85,7 +85,9 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
     const started = now();
     let lastFetchAt = started - 350;
     const limit = isPublic ? 150 : MAX_BLOCKS_PER_RUN;
-    while (blockCount < limit && nextBlockHeight <= finalBlockHeight) {
+    let scanHeight = nextBlockHeight;
+    let requestCount = 0;
+    while ((isPublic ? requestCount : blockCount) < limit && nextBlockHeight <= finalBlockHeight) {
         if (!isPublic) {
             last = await runMarketReadModelOnce(env.MARKET_READ_MODEL, config, fetchBlock);
             blockCount += 1;
@@ -93,14 +95,24 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
             continue;
         }
         const blocks = [];
-        while (blocks.length < MAX_FINAL_BLOCKS_PER_BATCH && blockCount + blocks.length < limit
-            && nextBlockHeight + blocks.length <= finalBlockHeight && now() - started < 50_000) {
+        while (blocks.length < MAX_FINAL_BLOCKS_PER_BATCH && requestCount < limit
+            && scanHeight <= finalBlockHeight && now() - started < 50_000) {
             await sleep(Math.max(0, 350 - (now() - lastFetchAt)));
             if (now() - started >= 50_000) break;
             lastFetchAt = now();
-            blocks.push(await fetchBlock({ network: config.network, contractId: config.contractId,
-                blockHeight: nextBlockHeight + blocks.length }));
+            const block = await fetchBlock({ network: config.network, contractId: config.contractId,
+                blockHeight: scanHeight, requirePredecessor: true });
+            requestCount += 1;
+            if (block === null) {
+                if (scanHeight === config.startBlockHeight) throw new Error('invalid_neardata_block');
+            } else {
+                if (block.block_height !== scanHeight || block.prev_block_height === undefined
+                    || block.prev_block_hash === undefined) throw new Error('invalid_neardata_block');
+                blocks.push(block);
+            }
+            scanHeight += 1;
         }
+        // ponytail: no durable scan cursor; a gap exceeding one run's budget waits for operator review.
         if (!blocks.length) break;
         await applyFinalMarketBlockBatch(env.MARKET_READ_MODEL, blocks);
         const block = blocks.at(-1);
@@ -154,7 +166,8 @@ export async function ingestMarketReadModelBackfill(env, body, dependencies = {}
     const result = await ingestEnabledMarketReadModelBatch(env, dependencies, config);
     const telemetry = { ...result, schema: BACKFILL_TELEMETRY_SCHEMA };
     if (result.remaining_blocks > 0 && continuationEnabled) {
-        const continuationBlockHeight = result.block_height + 1;
+        const continuationBlockHeight = result.block_height === undefined
+            ? nextBlockHeight : result.block_height + 1;
         await sendBackfillMessage(queue, continuationBlockHeight);
         return { ...telemetry, next_block_height: continuationBlockHeight };
     }

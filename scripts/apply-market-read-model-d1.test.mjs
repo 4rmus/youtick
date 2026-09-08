@@ -34,12 +34,13 @@ function event(blockHeight, eventName, idempotencyKey, data, eventIndex = 0) {
     };
 }
 
-async function database() {
+async function database(linked = false) {
     const sqlite = new DatabaseSync(':memory:');
     sqlite.exec(await readFile(new URL('../read-model/d1/0001_initial.sql', import.meta.url), 'utf8'));
     sqlite.exec(await readFile(new URL('../read-model/d1/0002_contiguous_watermark.sql', import.meta.url), 'utf8'));
     sqlite.exec(await readFile(new URL('../read-model/d1/0003_upload_job_archives.sql', import.meta.url), 'utf8'));
     sqlite.exec(await readFile(new URL('../read-model/d1/0004_operator_outbox_archives.sql', import.meta.url), 'utf8'));
+    if (linked) sqlite.exec(await readFile(new URL('../read-model/d1/0005_predecessor_watermark.sql', import.meta.url), 'utf8'));
     return {
         sqlite,
         prepare(sql) {
@@ -94,6 +95,11 @@ function emptyBlock(height) {
         block_height: height, block_hash: `block_hash_${String(height).padStart(24, '0')}`, events: [] };
 }
 
+function linkedBlock(height, previousHeight = height - 1) {
+    return { ...emptyBlock(height), prev_block_height: previousHeight,
+        prev_block_hash: emptyBlock(previousHeight).block_hash };
+}
+
 function publicIngestionEnv(db) {
     return { VIDEO_ENVIRONMENT: 'public-testnet', MARKET_CONTRACT_ID: 'market.testnet',
         READ_MODEL_INGESTION_ENABLED: 'true', READ_MODEL_NETWORK: 'testnet',
@@ -139,7 +145,7 @@ test('a later conflicting event rolls back the entire block batch', async () => 
 });
 
 test('public ingestion paces sequential fetches and reduces D1 round trips without skipping blocks', async () => {
-    const db = await database();
+    const db = await database(true);
     await applyFinalMarketBlock(db, emptyBlock(99));
     let now = 0;
     let reads = 0;
@@ -151,7 +157,7 @@ test('public ingestion paces sequential fetches and reduces D1 round trips witho
     db.batch = (statements) => { sizes.push(statements.length); now += 100; return batch(statements); };
     const result = await ingestMarketReadModelBatch(publicIngestionEnv(db), {
         now: () => now, sleepFn: async (ms) => { now += ms; }, fetchFinalHeight: async () => 119,
-        fetchBlock: async ({ blockHeight }) => { requested.push({ height: blockHeight, at: now }); now += 20; return emptyBlock(blockHeight); },
+        fetchBlock: async ({ blockHeight }) => { requested.push({ height: blockHeight, at: now }); now += 20; return linkedBlock(blockHeight); },
     });
     assert.deepEqual(requested.map(r => r.height), Array.from({ length: 20 }, (_, i) => 100 + i));
     assert(requested.slice(1).every((r, i) => r.at - requested[i].at >= 350));
@@ -164,12 +170,12 @@ test('public ingestion paces sequential fetches and reduces D1 round trips witho
 });
 
 test('slow public ingestion stops starting fetches after its time budget and resumes from committed state', async () => {
-    const db = await database();
+    const db = await database(true);
     await applyFinalMarketBlock(db, emptyBlock(99));
     let now = 0;
     const requested = [];
     const deps = { now: () => now, sleepFn: async (ms) => { now += ms; }, fetchFinalHeight: async () => 300,
-        fetchBlock: async ({ blockHeight }) => { requested.push(blockHeight); now += 8_000; return emptyBlock(blockHeight); } };
+        fetchBlock: async ({ blockHeight }) => { requested.push(blockHeight); now += 8_000; return linkedBlock(blockHeight); } };
     const first = await ingestMarketReadModelBatch(publicIngestionEnv(db), deps);
     assert.equal(first.block_count, 7);
     assert.equal(first.block_height, 106);
@@ -181,28 +187,28 @@ test('slow public ingestion stops starting fetches after its time budget and res
 });
 
 test('public fetch failure leaves only whole committed chunks and retries the first missing block', async () => {
-    const db = await database();
+    const db = await database(true);
     await applyFinalMarketBlock(db, emptyBlock(99));
     let now = 0;
     const deps = { now: () => now, sleepFn: async (ms) => { now += ms; }, fetchFinalHeight: async () => 119,
-        fetchBlock: async ({ blockHeight }) => { if (blockHeight === 110) throw new Error('neardata_unavailable'); return emptyBlock(blockHeight); } };
+        fetchBlock: async ({ blockHeight }) => { if (blockHeight === 110) throw new Error('neardata_unavailable'); return linkedBlock(blockHeight); } };
     await assert.rejects(() => ingestMarketReadModelBatch(publicIngestionEnv(db), deps), /neardata_unavailable/);
     assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 107);
     const requested = [];
     const result = await ingestMarketReadModelBatch(publicIngestionEnv(db), { ...deps,
-        fetchBlock: async ({ blockHeight }) => { requested.push(blockHeight); return emptyBlock(blockHeight); } });
+        fetchBlock: async ({ blockHeight }) => { requested.push(blockHeight); return linkedBlock(blockHeight); } });
     assert.equal(requested[0], 108);
     assert.equal(result.block_height, 119);
     db.sqlite.close();
 });
 
 test('public ingestion keeps a request cap even when its clock does not advance', async () => {
-    const db = await database();
+    const db = await database(true);
     await applyFinalMarketBlock(db, emptyBlock(99));
     let requested = 0;
     const result = await ingestMarketReadModelBatch(publicIngestionEnv(db), {
         now: () => 0, sleepFn: async () => {}, fetchFinalHeight: async () => 999,
-        fetchBlock: async ({ blockHeight }) => { requested += 1; return emptyBlock(blockHeight); },
+        fetchBlock: async ({ blockHeight }) => { requested += 1; return linkedBlock(blockHeight); },
     });
     assert.equal(requested, 150);
     assert.equal(result.block_height, 249);
@@ -1016,7 +1022,7 @@ test('final-height RPC is bounded and requires the exact final block response', 
 });
 
 test('public minute tick ingests from its configured Market start even when finality fails', async () => {
-    const db = await database();
+    const db = await database(true);
     const requested = [];
     const waits = [];
     const env = {
@@ -1030,8 +1036,8 @@ test('public minute tick ingests from its configured Market start even when fina
         fetchFinalHeight: async () => 300000001,
         fetchBlock: async (input) => {
             requested.push(input);
-            return { schema: 'youtick.market-final-block.v1', network: input.network, contract_id: input.contractId,
-                finality: 'final', block_height: input.blockHeight, block_hash: 'block_hash_000000000000300000001', events: [] };
+            return { schema: 'youtick.market-final-block.v1', ...linkedBlock(input.blockHeight),
+                network: input.network, contract_id: input.contractId };
         },
         logger: { log() {}, error() {} },
     };
@@ -1043,4 +1049,94 @@ test('public minute tick ingests from its configured Market start even when fina
     assert.deepEqual(requested.map((entry) => [entry.contractId, entry.blockHeight]), [['public-video.testnet', 300000001]]);
     await assert.rejects(() => ingestMarketReadModelBatch({ ...env, READ_MODEL_CONTRACT_ID: 'old-beta.testnet' }, dependencies), /invalid_read_model_ingestion_config/);
     db.sqlite.close();
+});
+
+test('linked migration preserves the anchor and rejects gaps without its exact predecessor', async () => {
+    const db = await database();
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const before = { ...db.sqlite.prepare('SELECT * FROM finality_watermarks').get() };
+    db.sqlite.exec(await readFile(new URL('../read-model/d1/0005_predecessor_watermark.sql', import.meta.url), 'utf8'));
+    assert.deepEqual({ ...db.sqlite.prepare('SELECT * FROM finality_watermarks').get() },
+        { ...before, prev_block_height: null, prev_block_hash: null });
+    await applyFinalMarketBlock(db, emptyBlock(100)); // Existing writer still works before adopting links.
+    const block = { ...linkedBlock(102, 100), events: [event(102, 'publication_finalized', 'linked-final', {
+        account_id: 'creator.testnet', publication_id: 'linked-job', generation: 1, amount: '2000000',
+        playback_id: 'linked_playback', title: 'Linked video', availability: 'ACTIVE', published_at_ms: '1785600000102',
+    })] };
+    await assert.rejects(() => applyFinalMarketBlock(db, { ...block,
+        prev_block_hash: emptyBlock(98).block_hash }), /non_contiguous_finality_watermark/);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM publications').get().n, 0);
+    await applyFinalMarketBlock(db, block);
+    await applyFinalMarketBlock(db, block); // Exact replay stays idempotent.
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM publications').get().n, 1);
+    for (const bad of [linkedBlock(104, 101), { ...linkedBlock(104, 102), prev_block_hash: emptyBlock(101).block_hash },
+        emptyBlock(103), { ...linkedBlock(104, 102), prev_block_hash: null }]) {
+        await assert.rejects(() => applyFinalMarketBlock(db, bad));
+    }
+    assert.throws(() => db.sqlite.exec('UPDATE finality_watermarks SET block_height=105'), /non_contiguous_finality_watermark/);
+    assert.throws(() => db.sqlite.exec('UPDATE finality_watermarks SET block_height=103, prev_block_height=NULL, prev_block_hash=NULL'), /non_contiguous_finality_watermark/);
+    await assert.rejects(() => applyFinalMarketBlockBatch(db, [linkedBlock(104, 102), linkedBlock(107, 105)]), /non_contiguous_d1_block_batch/);
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 102);
+    db.sqlite.close();
+});
+
+test('public ingestion crosses missing heights only through actual linked blocks and keeps projections atomic', async () => {
+    const db = await database(true);
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const requested = [];
+    let now = 0;
+    const deps = { now: () => now, sleepFn: async ms => { now += ms; }, fetchFinalHeight: async () => 104,
+        fetchBlock: async ({ blockHeight, requirePredecessor }) => {
+            assert.equal(requirePredecessor, true);
+            requested.push({ height: blockHeight, at: now });
+            if ([101, 102].includes(blockHeight)) return null;
+            return { ...linkedBlock(blockHeight, blockHeight === 103 ? 100 : blockHeight - 1),
+                events: blockHeight === 100 ? [authorized] : [] };
+        } };
+    const result = await ingestMarketReadModelBatch(publicIngestionEnv(db), deps);
+    assert.equal(result.block_count, 3);
+    assert.equal(result.block_height, 104);
+    assert.equal(result.remaining_blocks, 0);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM media_jobs').get().n, 1);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM chain_events').get().n, 1);
+    assert.deepEqual(requested.map(x => x.height), [100, 101, 102, 103, 104]);
+    assert(requested.slice(1).every((r, i) => r.at - requested[i].at >= 350));
+    // A missing response for a REAL block cannot hide its events: successor links to that omitted block.
+    await assert.rejects(() => ingestMarketReadModelBatch(publicIngestionEnv(db), { ...deps,
+        fetchFinalHeight: async () => 107,
+        fetchBlock: async ({ blockHeight }) => blockHeight === 106 ? null : linkedBlock(blockHeight),
+    }), /non_contiguous_d1_block_batch/);
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 104);
+    db.sqlite.close();
+});
+
+test('unconfirmed null tails never advance the watermark or escape the public request budget', async () => {
+    const db = await database(true);
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    let requests = 0;
+    const deps = { now: () => 0, sleepFn: async () => {}, fetchFinalHeight: async () => 300,
+        fetchBlock: async () => { requests += 1; return null; } };
+    const result = await ingestMarketReadModelBatch(publicIngestionEnv(db), deps);
+    assert.equal(requests, 150);
+    assert.equal(result.block_count, 0);
+    assert.equal(result.status, 'catching_up');
+    assert.equal(result.remaining_blocks, 201);
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 99);
+    const continuations = [];
+    const backfill = await ingestMarketReadModelBackfill({ ...publicIngestionEnv(db),
+        READ_MODEL_BACKFILL_ENABLED: 'true', READ_MODEL_BACKFILL_CONTINUE_ENABLED: 'true',
+        READ_MODEL_BACKFILL_QUEUE: { send: async message => continuations.push(message) },
+    }, { schema: 'youtick.read-model-backfill-message.v1', next_block_height: 100 }, deps);
+    assert.equal(backfill.next_block_height, 100);
+    assert.deepEqual(continuations, [{ schema: 'youtick.read-model-backfill-message.v1', next_block_height: 100 }]);
+    const heights = [];
+    await ingestMarketReadModelBatch(publicIngestionEnv(db), { ...deps, fetchFinalHeight: async () => 101,
+        fetchBlock: async ({ blockHeight }) => { heights.push(blockHeight); return blockHeight === 100 ? null : linkedBlock(101, 99); } });
+    assert.deepEqual(heights, [100, 101]);
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 101);
+    db.sqlite.close();
+    const fresh = await database(true);
+    await assert.rejects(() => ingestMarketReadModelBatch(publicIngestionEnv(fresh), deps), /invalid_neardata_block/);
+    assert.equal(fresh.sqlite.prepare('SELECT count(*) AS n FROM finality_watermarks').get().n, 0);
+    fresh.sqlite.close();
 });
