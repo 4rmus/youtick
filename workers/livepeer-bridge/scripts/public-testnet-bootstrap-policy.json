@@ -1,0 +1,94 @@
+{
+  "schema": "youtick.public-testnet-bootstrap.v1",
+  "operation": "FRESH_ACCOUNT_CREATE_DEPLOY_INIT",
+  "network": "testnet",
+  "rpc_url": "https://test.rpc.fastnear.com",
+  "parent": {
+    "account_id": "youtick-dev-v3.testnet",
+    "public_key": "ed25519:5quMufkQZk6ebWRoW7hQhrw17b3VMWBU6UrV7JFXA33N"
+  },
+  "roles": {
+    "platform": "youtick-dev-v3.testnet",
+    "admin": "lp-arch-admin-260809.youtick-dev-v3.testnet",
+    "access_owner": "lp-arch-admin-260809.youtick-dev-v3.testnet",
+    "guardian": "lp-arch-guardian-260809.youtick-dev-v3.testnet",
+    "takedown": "lp-arch-guardian-260809.youtick-dev-v3.testnet"
+  },
+  "governance_public_keys": {
+    "admin": "ed25519:B4NvVpKrSaJq5STWMLbRuQvfUnWcNzrn2hUymo4YJHfw",
+    "guardian": "ed25519:55ANg3regdHCVo8F2WZZ5w1YBVp3EDDzSvDYqxLtig4P"
+  },
+  "quote": {
+    "public_key": "ed25519:HdPBv74UEaHnnPnkQNQaTtNPg6c3rzR1hSViHmhLfkiV",
+    "public_key_base64": "9wz8/GBL3XSpZmaQD4XLnqbYG7SWpiXWgTyQ+uL1+ZI=",
+    "version": 1
+  },
+  "operational_reserve_yocto": "100000000000000000000000",
+  "initialization_gas": "100000000000000",
+  "max_parent_debit_yocto": "10000000000000000000000000",
+  "max_upfront_fees_yocto": "800000000000000000000000",
+  "expected_protocol_version": 85,
+  "wasm_sha256": {
+    "market": "2fd3a0727e7f70dd9715a7f01e2cfab8afc3124ff155858a385a3dde536cfdc0",
+    "access": "e0c69bd3d0f665f64d5253bfc065f3943f827789a583102aa7ae86b24fee7a2a"
+  },
+  "accounts": [
+    {
+      "role": "operator",
+      "account_id": "video-operator-v1-260907.youtick-dev-v3.testnet",
+      "funding_yocto": "200000000000000000000000",
+      "keys": [
+        {
+          "public_key": "ed25519:BoPDXMe2zg7rdha1yRfeDsJK3yvvQJBUogaE2Qg5EBdx",
+          "permission": "FullAccess"
+        },
+        {
+          "public_key": "ed25519:2D73h6d2q1GnnDBX7y9R5k8QG55PtaVVA7wm9vRroerS",
+          "permission": {
+            "FunctionCall": {
+              "receiver_id": "video-market-v1-260907.youtick-dev-v3.testnet",
+              "method_names": [
+                "finalize_livepeer_publication",
+                "suspend_livepeer_sales"
+              ],
+              "allowance": "100000000000000000000000"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "relayer",
+      "account_id": "video-relayer-v1-260907.youtick-dev-v3.testnet",
+      "funding_yocto": "1000000000000000000000000",
+      "keys": [
+        {
+          "public_key": "ed25519:65MtcjQbegbxTNtV2o6ecS9i3LJK2uQQTqmPwbkA69dZ",
+          "permission": "FullAccess"
+        }
+      ]
+    },
+    {
+      "role": "market",
+      "account_id": "video-market-v1-260907.youtick-dev-v3.testnet",
+      "funding_yocto": "5000000000000000000000000",
+      "keys": [
+        {
+          "public_key": "ed25519:DgvpZKz9JixHMh2MENjNwZGrHXGo4P4EwF9LBiKNEikd",
+          "permission": "FullAccess"
+        }
+      ]
+    },
+    {
+      "role": "access",
+      "account_id": "video-access-v1-260907.youtick-dev-v3.testnet",
+      "funding_yocto": "3000000000000000000000000",
+      "keys": [
+        {
+          "public_key": "ed25519:5vP1jen76tuyJ3ZyxBzPAxaPMmZuWrmuPri8Y7v2rsbA",
+          "permission": "FullAccess"
+        }
+      ]
+    }
+  ]
+}
