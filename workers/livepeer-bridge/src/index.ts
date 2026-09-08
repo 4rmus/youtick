@@ -7335,7 +7335,7 @@ function validWebhookQueuePolicy(env: Env): boolean {
         && env.LIVEPEER_WEBHOOK_QUEUE_BATCH_TIMEOUT_SECONDS === '5'
         && env.LIVEPEER_WEBHOOK_QUEUE_MAX_RETRIES === '3'
         && env.LIVEPEER_WEBHOOK_QUEUE_MAX_CONCURRENCY === '1'
-        && env.LIVEPEER_WEBHOOK_QUEUE_RETENTION_SECONDS === '345600'
+        && env.LIVEPEER_WEBHOOK_QUEUE_RETENTION_SECONDS === (isPublicTestnetEnvironment(env) ? '86400' : '345600')
         && env.LIVEPEER_WEBHOOK_QUEUE_DLQ === (isPublicTestnetEnvironment(env)
             ? 'youtick-livepeer-events-dlq-public-testnet' : 'youtick-livepeer-events-dlq-testnet');
 }
