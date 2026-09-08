@@ -2279,3 +2279,52 @@ for (const mode of ['closed', 'drain']) test(`failed public ${mode} does not sil
     assert.equal(state.workers[TARGETS['public-testnet'].bridge.worker].traffic[0].version_id, 'bridge-new');
     assert.equal(existsSync(release.receipt), false);
 });
+
+
+test('new public domains wait for DNS propagation without repeating deployment', async (t) => {
+    const release = publicModeRelease(t, 'closed');
+    const workers = Object.fromEntries([
+        TARGETS['public-testnet'].web.worker, TARGETS['public-testnet'].bridge.worker,
+        PUBLIC_TESTNET_READ_MODEL.worker,
+    ].map((worker) => [worker, { traffic: [{ version_id: 'previous', percentage: 100 }] }]));
+    const fake = makeFakeWrangler(release, { publicMode: 'closed', workers, domains: {} });
+    const hosts = [TARGETS['public-testnet'].web.domain, TARGETS['public-testnet'].bridge.domain, PUBLIC_TESTNET_READ_MODEL.domain];
+    const delays = [];
+    let probes = 0;
+    const receipt = await deployFixture(release, fake, async () => {
+        const hostname = hosts[probes++];
+        if (hostname) throw new TypeError('fetch failed', { cause: Object.assign(new Error('DNS pending'), { code: 'ENOTFOUND', hostname }) });
+        return {};
+    }, { target: 'public-testnet', sleepFn: async (delay) => delays.push(delay) });
+    assert.equal(receipt.mode, 'closed');
+    assert.equal(probes, 4);
+    assert.deepEqual(delays, [1_000, 2_000, 4_000]);
+    assert.equal(fake.apiCalls.filter((call) => call.method === 'PUT' && call.path.endsWith('/workers/domains')).length, 3);
+    assert.equal(fake.apiCalls.filter((call) => call.method === 'DELETE').length, 0);
+});
+
+for (const scenario of ['unrelated host', 'existing domain', 'TLS failure', 'persistent DNS']) {
+    test(`new public domain DNS retry stops for ${scenario}`, async (t) => {
+        const release = publicModeRelease(t, 'closed');
+        const workers = Object.fromEntries([
+            TARGETS['public-testnet'].web.worker, TARGETS['public-testnet'].bridge.worker,
+            PUBLIC_TESTNET_READ_MODEL.worker,
+        ].map((worker) => [worker, { traffic: [{ version_id: 'previous', percentage: 100 }] }]));
+        const fake = makeFakeWrangler(release, { publicMode: 'closed', workers,
+            ...(scenario === 'existing domain' ? {} : { domains: {} }) });
+        const delays = [];
+        let probes = 0;
+        const error = new TypeError('fetch failed', { cause: Object.assign(new Error('network failure'), {
+            code: scenario === 'TLS failure' ? 'CERT_HAS_EXPIRED' : 'ENOTFOUND',
+            hostname: scenario === 'unrelated host' ? 'unrelated.invalid' : TARGETS['public-testnet'].web.domain,
+        }) });
+        await assert.rejects(deployFixture(release, fake, async () => { probes += 1; throw error; },
+            { target: 'public-testnet', sleepFn: async (delay) => delays.push(delay) }), /fetch failed/);
+        assert.equal(probes, scenario === 'persistent DNS' ? 7 : 1);
+        assert.deepEqual(delays, scenario === 'persistent DNS' ? [1_000, 2_000, 4_000, 8_000, 15_000, 30_000] : []);
+        assert.equal(existsSync(release.receipt), false);
+        const state = JSON.parse(readFileSync(fake.statePath));
+        if (scenario !== 'existing domain') assert.deepEqual(state.domains, {});
+        assert.equal(state.workers[TARGETS['public-testnet'].bridge.worker].traffic[0].version_id, 'bridge-new');
+    });
+}
