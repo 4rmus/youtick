@@ -422,6 +422,13 @@ if (args[0] === 'deployments' && args[1] === 'status') {
   }
   const current = state.workers[worker];
   if (!current) failed(10007);
+  if (state.staleTraffic?.[worker]?.remaining > 0) {
+    const stale = state.staleTraffic[worker];
+    stale.remaining -= 1;
+    save();
+    process.stdout.write(JSON.stringify({ versions: stale.traffic }));
+    process.exit(0);
+  }
   process.stdout.write(JSON.stringify({ versions: current.traffic }));
   process.exit(0);
 }
@@ -449,6 +456,12 @@ if (args[0] === 'versions' && args[1] === 'upload') {
       && (!text.includes('queue = "youtick-livepeer-events-public-testnet"')
         || !text.includes('database_id = "a1111111-2222-3333-4444-555555555555"')
         || !text.includes('namespace_id = "5003"')
+        || !text.includes('LIVEPEER_WEBHOOK_QUEUE_BATCH_SIZE = "10"')
+        || !text.includes('LIVEPEER_WEBHOOK_QUEUE_BATCH_TIMEOUT_SECONDS = "5"')
+        || !text.includes('LIVEPEER_WEBHOOK_QUEUE_MAX_RETRIES = "3"')
+        || !text.includes('LIVEPEER_WEBHOOK_QUEUE_MAX_CONCURRENCY = "1"')
+        || !text.includes('LIVEPEER_WEBHOOK_QUEUE_RETENTION_SECONDS = "86400"')
+        || !text.includes('LIVEPEER_WEBHOOK_QUEUE_DLQ = "youtick-livepeer-events-dlq-public-testnet"')
         || text.includes('50b1e14f-2b06-444b-98cf-b828f11277ef')
         || text.includes('queues.consumers'))) {
     throw new Error('public testnet resource binding mismatch');
@@ -536,6 +549,10 @@ if (args[0] === 'versions' && args[1] === 'deploy') {
       return { version_id, percentage: Number(percentage) };
     });
   state.noDeployments = state.noDeployments?.filter((name) => name !== worker);
+  if (state.staleAfterDeploy?.[worker] && traffic.length === 1) {
+    state.staleTraffic ??= {};
+    state.staleTraffic[worker] = { traffic: state.workers[worker].traffic, remaining: state.staleAfterDeploy[worker] };
+  }
   state.workers[worker] = { traffic };
   save();
   output({ type: 'version-deploy', version: 1, worker_name: worker });
@@ -2280,6 +2297,26 @@ for (const mode of ['closed', 'drain']) test(`failed public ${mode} does not sil
     assert.equal(existsSync(release.receipt), false);
 });
 
+
+for (const staleReads of [1, 5]) test(`public drain bounds stale traffic reads (${staleReads}) without repeating deployment`, async (t) => {
+    const release = publicModeRelease(t, 'drain');
+    const bridge = TARGETS['public-testnet'].bridge.worker;
+    const workers = Object.fromEntries([
+        TARGETS['public-testnet'].web.worker, bridge, PUBLIC_TESTNET_READ_MODEL.worker,
+    ].map((worker) => [worker, { traffic: [{ version_id: 'previous', percentage: 100 }] }]));
+    const fake = makeFakeWrangler(release, { publicMode: 'drain', workers, staleAfterDeploy: { [bridge]: staleReads } });
+    const deploy = () => deployFixture(release, fake, async () => ({}), { target: 'public-testnet' });
+    if (staleReads === 1) {
+        assert.equal((await deploy()).mode, 'drain');
+    } else {
+        await assert.rejects(deploy, /youtick-livepeer-bridge-public-testnet_traffic_invalid/);
+        assert.equal(existsSync(release.receipt), false);
+    }
+    assert.equal(JSON.parse(readFileSync(fake.statePath, 'utf8')).staleTraffic[bridge].remaining, 0);
+    const promotions = calls(fake).filter(args => args[0] === 'versions' && args[1] === 'deploy'
+        && args[args.indexOf('--name') + 1] === bridge && args.includes('bridge-new@100'));
+    assert.equal(promotions.length, 1);
+});
 
 test('new public domains wait for DNS propagation without repeating deployment', async (t) => {
     const release = publicModeRelease(t, 'closed');

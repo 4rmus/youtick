@@ -558,6 +558,33 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(objectFetch).toHaveBeenCalledTimes(2);
     });
 
+    it.each([
+        ['public-testnet', '86400', true],
+        ['public-testnet', '345600', false],
+        ['public-testnet', undefined, false],
+        [undefined, '345600', true],
+        [undefined, '86400', false],
+    ] as const)('checks webhook queue retention for %s / %s', async (environment, retention, ready) => {
+        const policy = {
+            version: 1, environment: 'public-testnet', network: 'testnet', market_contract_id: CONTRACT_ID,
+            max_source_bytes: '5000000000', job_ttl_ms: '86400000', signed_quote_required: true,
+            profiles: [{ profile_id: publication().profile_id, profile_config_sha256: publication().profile_config_sha256 }],
+        };
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ result: {
+            result: Array.from(new TextEncoder().encode(JSON.stringify(policy))),
+        } })));
+        const env = createEnv({
+            VIDEO_ENVIRONMENT: environment,
+            LIVEPEER_WEBHOOK_QUEUE_ENABLED: 'true',
+            LIVEPEER_WEBHOOK_QUEUE_RETENTION_SECONDS: retention,
+            LIVEPEER_WEBHOOK_QUEUE_DLQ: environment === 'public-testnet'
+                ? 'youtick-livepeer-events-dlq-public-testnet' : 'youtick-livepeer-events-dlq-testnet',
+            LIVEPEER_EVENTS: { send: vi.fn() } as unknown as Queue,
+        });
+        const response = await handler.fetch(new Request('https://bridge.youtick.net/__health'), env);
+        expect(await response.json()).toMatchObject({ webhookQueueReady: ready });
+    });
+
     it('ACKs a verified webhook after Queue processing without blocking ingress on the job object', async () => {
         let now = 1_785_600_000_000;
         vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -630,6 +657,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         const env = createEnv({
             VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_WEBHOOK_QUEUE_ENABLED: 'true',
             LIVEPEER_WEBHOOK_QUEUE_DLQ: 'youtick-livepeer-events-dlq-public-testnet',
+            LIVEPEER_WEBHOOK_QUEUE_RETENTION_SECONDS: '86400',
             LIVEPEER_CONTROL: {
                 idFromName: vi.fn(() => ({ toString: () => 'job-id' })),
                 get: vi.fn(() => ({ fetch: objectFetch })),

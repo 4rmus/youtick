@@ -689,7 +689,17 @@ async function writeSanitizedConfigs(extracted, target, config) {
     ].join('\n'), { mode: 0o600 });
     await writeFile(
         bridgeCandidate,
-        `${target === 'public-testnet' ? BRIDGE_ARTIFACT_WRANGLER.replace('namespace_id = "3001"', 'namespace_id = "5003"') : BRIDGE_ARTIFACT_WRANGLER}${target === 'preview'
+        `${target === 'public-testnet' ? BRIDGE_ARTIFACT_WRANGLER
+            .replace('namespace_id = "3001"', 'namespace_id = "5003"')
+            .replace('[vars]', [
+                '[vars]',
+                'LIVEPEER_WEBHOOK_QUEUE_BATCH_SIZE = "10"',
+                'LIVEPEER_WEBHOOK_QUEUE_BATCH_TIMEOUT_SECONDS = "5"',
+                'LIVEPEER_WEBHOOK_QUEUE_MAX_RETRIES = "3"',
+                'LIVEPEER_WEBHOOK_QUEUE_MAX_CONCURRENCY = "1"',
+                'LIVEPEER_WEBHOOK_QUEUE_RETENTION_SECONDS = "86400"',
+                `LIVEPEER_WEBHOOK_QUEUE_DLQ = "${config.bridge.LIVEPEER_DLQ_NAME}"`,
+            ].join('\n')) : BRIDGE_ARTIFACT_WRANGLER}${target === 'preview'
             ? `${BRIDGE_PREVIEW_QUEUE_PRODUCER}${BRIDGE_PREVIEW_D1_BINDING}`
             : target === 'public-testnet' ? [
                 '', '[[queues.producers]]', 'binding = "LIVEPEER_EVENTS"',
@@ -979,9 +989,17 @@ async function currentTraffic(run, args, label, { allowFailure = false } = {}) {
     return { result, traffic: parseDeployment(result.stdout, label) };
 }
 
-async function requireTraffic(run, args, expected, label) {
-    const { traffic } = await currentTraffic(run, args, label);
-    assertTraffic(traffic, expected, label);
+async function requireTraffic(run, args, expected, label, attempts = 1) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const { traffic } = await currentTraffic(run, args, label);
+        try {
+            assertTraffic(traffic, expected, label);
+            return;
+        } catch (error) {
+            if (attempt === attempts - 1) throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
 }
 
 async function prepareComponent({ component, target, sha, run, args, bootstrapAllowed }) {
@@ -1104,7 +1122,7 @@ async function deployTraffic(run, args, traffic, message) {
     outputEvent(await run([
         'versions', 'deploy', ...specs, '--yes', ...args.base, '--message', message,
     ], { cwd: dirname(args.config) }), 'version-deploy');
-    await requireTraffic(run, args, traffic, args.expected.worker);
+    await requireTraffic(run, args, traffic, args.expected.worker, 5);
 }
 
 function smokeInput(target, webUrl, override = {}) {
