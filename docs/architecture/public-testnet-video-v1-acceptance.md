@@ -10,8 +10,8 @@ Bu belge işlem veya harcama onayı değildir. İlk gerçek test tanımlıdır; 
 | Konu | Doğrulanan durum | Canlı teste geçiş şartı |
 |---|---|---|
 | Çalışma alanı | Dirty checkout korunuyor. 61 dosyalık video paketi izole çalışma alanında bütünleştirildi; [PR #179](https://github.com/4rmus/youtick/pull/179) main'e alındı. Korunmuş adayın 61/61 dosyası receipt ile eşleşir. | Entegrasyon tekrarlanmaz. Yeni değişiklikler exact main'den ayrı hazırlanır; dirty checkout doğrudan yayın adayı değildir. |
-| GitHub | Main `28a572803ce79a81b9e893f65b1f1d5b166622f2`; [CI 34155062768](https://github.com/4rmus/youtick/actions/runs/34155062768) 13/13 success; Market artifact/imza doğrulanmış. Preview deploy skipped, `DEPLOY_PREVIEW_ENABLED=false`. | Bu, video kaynak kodunun CI kanıtıdır; yeni public-testnet runtime ve canlı kullanıcı kabulü değildir. |
-| Yayın yolu | Ayrı public artifact, korumalı workflow ve closed/acceptance/drain matrisi PR #179 ile yayımlandı. Access artifact saklama/imzalama farkı ayrıca yerelde tamamlandı; 14/14 güvenlik testi geçti. | Gerçek `public-testnet` environment/vars/secrets ve kaynak kurulumu yok; workflow çalıştırılmadı. Yeni farkın Git/CI yayını ve Market/Access bootstrap yürütme yolu eksik. |
+| GitHub | Main `43fee5c4a04c8314579a9e089aa85c0fe06b03dd`; [CI 34161844285](https://github.com/4rmus/youtick/actions/runs/34161844285) 13/13 success; Market ve Access artifact/imzaları doğrulanmış. Preview deploy skipped, `DEPLOY_PREVIEW_ENABLED=false`. | Bu, kaynak ve sözleşme çıktılarının CI kanıtıdır; yeni public-testnet runtime ve canlı kullanıcı kabulü değildir. |
+| Yayın yolu | Ayrı public artifact/korumalı workflow/mod matrisi PR #179, Access çıktı saklama/imzalama PR #180 ile main'e alındı. B01 ile korumalı environment, kapalı deploy değişkeni, boş D1 ve iki Queue oluşturuldu. | Market/Access, Worker/domain, consumer, migration, secrets ve canonical release config kurulmadı; deploy workflow'u çalıştırılmadı. |
 | Kalite | Live canary `LIVEPEER_PLAYBACK_CANARY_ADAPTIVE=true` ile adaptive hash ve `verifyAdaptive: true` seçeneğini uçtan uca iletiyor; iki tarayıcı için PASS zorunlu ve raporda korunuyor. | Gerçek medya testi yapılmadı. Bu teşhis CLI'si ayrıca 80 MiB geçerli MP4, provider asset ve signing-key oluşturma/silme izinleri ister; S dosyasıyla normal kullanıcı akışının yerine geçmez. |
 | Provider | 7 Eylül 19:56 UTC snapshot'ında 13/13 asset ready; tümü JWT ve yalnız 720p. Eski waiting kaydı güncel durum sayılmaz. | Yeni 360p+720p işleme, süreler ve normal kullanıcı akışı hâlâ kanıtlanmadı. Hazır eski asset yeni kabul yerine geçmez. |
 | Fatura | Bağlı Livepeer hesap ekranı Growth planını gösterir. Fatura dönemi/tutarı ve kalan kota doğrulanamadı; boş dönemle gelen sıfır sayaçlar kullanılmaz. | İki çıktının ücret hesabı, saklama süresi, kota ve onaylı gerçek kullanım bütçesi gerekli. |
@@ -26,10 +26,10 @@ Bu belge işlem veya harcama onayı değildir. İlk gerçek test tanımlıdır; 
 | Web / Bridge | `youtick-web-public-testnet` / `youtick-livepeer-bridge-public-testnet`; `public-testnet.youtick.net` / `bridge-public-testnet.youtick.net` |
 | Read model | `youtick-market-read-model-public-testnet`; kaynakta `read-public-testnet.youtick.net` bağlama ve Web URL'si hazır, canlı kurulum yapılmadı |
 | Queue / DLQ | `youtick-livepeer-events-public-testnet` / `youtick-livepeer-events-dlq-public-testnet` |
-| D1 | Yeni `youtick-market-read-model-public-testnet`; gerçek database UUID gerekli. Eski `50b1e14f-2b06-444b-98cf-b828f11277ef` kullanılamaz. |
+| D1 | B01 ile oluşturuldu: `youtick-market-read-model-public-testnet`, UUID `89871d60-3a26-4045-8694-5ff44af579db`, 0 tablo. Eski `50b1e14f-2b06-444b-98cf-b828f11277ef` kullanılmaz. |
 | Market / Access | Yeni, birbirinden farklı gerçek testnet hesap kimlikleri gerekli. Testlerdeki `public-video-market.testnet` ve `public-video-access.testnet` kurulu kaynak sayılmaz. |
 | Başlangıç bloğu | Yeni Market kurulumunun kesinleşmiş bloğu; testlerdeki sabit sayılar kullanılamaz |
-| Roller | Admin, guardian, operator, relayer ve ayrı sonlu anahtarların public kimlikleri/yöntem izinleri; maskeli parity kanıtı. Secret değerleri bu belgeye yazılmaz. |
+| Roller | Admin/guardian ve hesap yönetim anahtarları, sonlu iki-yöntemli operator anahtarı, kendi ayrı hesabında FullAccess gerektiren sponsor relayer ve quote imza anahtarı birbirinden ayrılır. Public kimlik/izin/bütçe parity kanıtı gerekir; secret değerleri belgeye yazılmaz. |
 | Profil / politika | `28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2`, mevcut legacy desteği; 5.000.000.000 bayt, 86.400.000 ms, imzalı teklif |
 | Sürüm / dönüş | Onaylı commit, CI run/artifact hash'leri, Market WASM hash'i, üç Worker version ID'si, kapalı dönüş sürümleri; hepsi gerçek kayıttan doldurulur |
 
@@ -145,4 +145,52 @@ Kapatma eski backend'in sağlık kontrolüne bağımlı bırakılmaz; önce kapa
 
 Sıra: hesap/anahtar/bütçe kararları → onaylı kaynak/Market/Access kurulum paketi ve D1 migration → korumalı ilk `closed` yayın → ayrı consumer bağlama → onaylı küçük kullanıcı kabulü. NEAR hesabı ilk kurulumunda create/fund/key ve sözleşme için deploy+init mümkünse tek atomik batch'te bağlanır; belirsiz gönderimde ikinci create/init yapılmaz. Yeni kurulum için eski `CODE_UPDATE_ONLY` manifesti değiştirilmez. Kesin hesap ve anahtarlar olmadan genel bir bootstrap çatısı veya canlı komut üretilmez.
 
-**Tek sonraki gate: `VIDEO_PUBLIC_TESTNET_BOOTSTRAP_ARTIFACT_INTEGRATION` — hazır dört dosyalık Git paketinin onayı.** Gerçek kurulum ve kabul matrisi `BLOCKED / NOT_COMPLETE`; faucet başarısı bu şartları kapatmaz.
+## 10. Git paketinin uygulanan sonucu — 8 Eylül 2026
+
+`VIDEO_PUBLIC_TESTNET_BOOTSTRAP_ARTIFACT_INTEGRATION`: **PASS / CI**. Bölüm 9'daki Git paketi kullanıcı onayıyla uygulandı: head `a96f0a8cabd766ab483262a7752ab08431feff57`, [PR #180](https://github.com/4rmus/youtick/pull/180), [başarılı PR CI 34161053872](https://github.com/4rmus/youtick/actions/runs/34161053872), squash main `43fee5c4a04c8314579a9e089aa85c0fe06b03dd`. Onaylı dört dosya değişmedi; gerekli inceleme ve CI kapıları atlanmadı.
+
+`VIDEO_PUBLIC_TESTNET_BOOTSTRAP_MAIN_CI_REVIEW`: **COMPLETED_WITH_WARNINGS / CI**. Main CI `34161844285` 13/13 başarılı; Market `10033007691`, Access `10033009024` kalıcı artifact'ları indirildi. ZIP/dosya hash'leri, metadata ve 7/7 imza exact main SHA/run/attempt/GitHub hosted runner kimliğiyle doğrulandı. Access 210935 bayt, WASM SHA-256 `e0c69bd3d0f665f64d5253bfc065f3943f827789a583102aa7ae86b24fee7a2a`; 26 yöntemli ABI ve source Cargo.lock eşleşir. İki artifact 7 Ekim 2026'ya kadar saklanır. Preview deploy skipped, yeni ortam deploy edilmedi.
+
+## 11. B01 — onaya hazır boş altyapı
+
+`VIDEO_PUBLIC_TESTNET_BOOTSTRAP_ACTION_PACKAGE`: **COMPLETED_WITH_WARNINGS / LOCAL_STATIC**. Tam işlem gövdeleri: `tmp/video-public-testnet-bootstrap-action-package-20260908/foundation-packet.json`, `github-environment.json`, `github-deploy-switch.json`; açıklama `report.md`.
+
+- GitHub `4rmus/youtick`: `public-testnet` environment, reviewer `4rmus` (`157231908`), protected-branch politikası; repo deploy değişkeni `false`.
+- Mevcut Cloudflare hesabı `06b7f27620c16d08f6fdff3748712a59`: yeni boş D1 `youtick-market-read-model-public-testnet`, Queue `youtick-livepeer-events-public-testnet` ve DLQ `youtick-livepeer-events-dlq-public-testnet`. Queue saklama 86400 saniye; bağlanmış üretici/tüketici olmayacak. Gerçek UUID/ID'ler yanıttan alınıp doğrulanacak.
+- İşlemden önce aynı ad/hesap tekrar okunur; beklenmeyen kaynak üzerine yazılmaz. Belirsiz cevapta önce mevcut durum uzlaştırılır. B01 deploy/DNS/migration/consumer/NEAR/anahtar/secret/provider/abonelik işlemi içermez.
+
+Cloudflare kullanımı mevcut Web/Bridge/D1/Queue altyapısı içindir. Medya Livepeer'da, ödeme/yayın/hak otoritesi NEAR'da kalır; Cloudflare Stream'e geçiş yoktur.
+
+B02'deki rol ve en fazla 10 test NEAR bootstrap bütçesi yalnız öneridir. Operator sonlu FunctionCall; relayer kendi ayrı hesabında FullAccess ister. 558187 baytlık iki WASM'ın yalnız kod depolama alt sınırı 5,58187 NEAR'dır. İlk 5,096 NEAR bakiye yetersizdi; Bölüm 13'teki ek faucet kanıtı bu kaydı günceller. Yeni anahtar/rol/kurulum onayı gerekir. Native NEAR CLI atomik işlem yolu yardım üzerinden doğrulandı; yeni SDK veya genel bootstrap çatısı eklenmedi, işlem kurulmadı/imzalanmadı.
+
+## 12. B01 uygulanan sonuç
+
+**`VIDEO_PUBLIC_TESTNET_BOOTSTRAP_FOUNDATION`: PASS.** Kullanıcı B01'i açıkça onayladı; GitHub environment/deploy değişkeni, boş D1 ve iki Queue oluşturuldu. D1 UUID `89871d60-3a26-4045-8694-5ff44af579db`; Queue `88fbf7cd91ad4140a74ea9393face0a6`, DLQ `8651053b477c45fbba1386e0ed50fe41`. Cloudflare API iki kuyrukta 86400 saniye saklama, 0 gecikme, 0 üretici ve 0 tüketici doğruladı. D1 0 tablo içeriyor. GitHub reviewer `4rmus / 157231908`, protected branches ve iki deploy değişkeni `false` doğrulandı. Varsayılan admin bypass imkanı teknik olarak kapatılmadı; bypass uygulanmadı.
+
+Kanıt: `tmp/video-public-testnet-foundation-20260908/receipt.json`. Bu bir Worker/provider medya yayını veya kullanıcı kabulü değildir; migration, consumer, DNS, NEAR, anahtar ve secrets işlemleri yapılmadı.
+
+## 13. B02 — onaya hazır yerel kimlik/anahtar hazırlığı
+
+`VIDEO_PUBLIC_TESTNET_BOOTSTRAP_IDENTITIES_PREFLIGHT`: **COMPLETED_WITH_WARNINGS**. Parent `youtick-dev-v3.testnet`, admin/Access owner `lp-arch-admin-260809.youtick-dev-v3.testnet`, guardian/takedown `lp-arch-guardian-260809.youtick-dev-v3.testnet` mevcut. Yerel private→public ve public→on-chain FullAccess eşleşmeleri doğrulandı; imza denenmedi. Yeni dört Market/Access/operator/relayer hesap adı `UNKNOWN_ACCOUNT`.
+
+Önceki kullanıcı faucet yönlendirmesiyle aynı hesaba bir ek talep **+5 test NEAR** getirdi. Kesinleşmiş blok `267551183` parent toplamını **10,0960459175067229 test NEAR** doğruladı; iki başarılı talep toplam 10 test NEAR. Dışarı transfer veya yeni hesap yok; bu bakiye önerilen bootstrap harcamasının onayı değildir.
+
+Onay paketi `tmp/video-public-testnet-identities-preflight-20260908/local-keys-packet.json`: yukarıdaki yönetim kimliği önerisiyle altı ayrı yerel Ed25519 key; üç yönetim, sonlu operator runtime, ayrı FullAccess relayer runtime, off-chain quote imzası. Private hedef yalnız `/Users/arair/.near-credentials/public-testnet-video-v1/`; klasör 0700, dosyalar 0600, exclusive create. Mevcut anahtarlar ezilmez. Altı farklı public key, private→public türetme ve izinler kontrol edilir; repoya yalnız public manifest kaydedilir.
+
+**`VIDEO_PUBLIC_TESTNET_BOOTSTRAP_LOCAL_KEYS`: PASS.** B02 onaylandı ve altı yerel anahtar oluşturuldu. 6/6 farklı public key, private→public eşleşmesi, klasör 0700/dosyalar 0600 doğrulandı; eski anahtarlar korundu. Public manifest `tmp/video-public-testnet-identities-preflight-20260908/public-manifest.json`; hash `00ef4770087338f666524dd8017b80087718f2b3320342a8ccb2f17a5d2f87d6`. Zincir veya secret aktarımı yapılmadı.
+
+## 14. B03 — korumalı fresh-account kurulum kaynağı
+
+`VIDEO_PUBLIC_TESTNET_BOOTSTRAP_EXECUTION_SOURCE`: **COMPLETED_WITH_WARNINGS / LOCAL_STATIC / LOCAL_TEST**. İzole aday `tmp/video-public-testnet-bootstrap-execution-source-20260908/candidate`; kaynak farkı henüz GitHub'a yayımlanmadı. Yeni workflow, sabit public politika, SDK tabanlı yardımcı/testi ve mevcut CI güvenlik kontrolü hazır.
+
+Önceki native CLI değerlendirmesi düzeltildi: 0.29.0'ın üç işlem bloğu sınırı, otomatik gönderim tekrarları ve büyük base64 argv sınırı tam bootstrap'a uygun değil. Mevcut `near-api-js 7.3.0` yeniden kullanıldı; yeni bağımlılık veya genel kurulum çatısı yok. Yardımcı SDK'nın unsigned transaction hash'ini saklar; dört hesabı sıralı ve hesap başına atomik create/fund/key/deploy+init batch'leriyle işler. Belirsizlikte yalnız aynı hash okunur; ikinci gönderim veya sonraki hesap işlemi yoktur.
+
+Yerel doğrulama: bootstrap 9/9, mevcut `npm run test:provider-canary` 101/101, CI güvenlik 15/15; YAML ve dokuz shell bloğu sözdizimi geçti. Bağımsız kaynak incelemesi engelleyici hata bulmadı. Blok `267554184` salt-okunur ön kontrolü dört hesabın yokluğunu, signer/yönetim anahtarlarını ve mevcut ücret/bakiye uygunluğunu doğruladı. İmza/gönderim yok.
+
+Politika: operator 0,2, relayer 1, Market 5, Access 3 test NEAR; toplam aktarım **9,2**. Güncel protokol 85 ön ücret toplamı **0,271258868207585**, toplam ön tahsis **9,471258868207585 test NEAR**. 0,8 ücret rezervi ve toplam 10 test NEAR sınırı operasyonel ön kontrol/durdurma eşiğidir; zincire gömülü kesin `maxFee` tavanı değildir. Her gönderim öncesi yeniden okunur, her kesinleşme sonrası gerçek bakiye farkı kaydedilir.
+
+Onaya sunulacak B03: exact yedi dosyalık paketin commit/push/PR ve zorunlu kontroller sonrası squash merge'i; yeni main CI ve iki artifact'ın aynı hash'lerle doğrulanması; parent `youtick-dev-v3.testnet` imza anahtarının yalnız `4rmus/youtick` → korumalı `public-testnet` environment'ına `PUBLIC_TESTNET_BOOTSTRAP_PARENT_PRIVATE_KEY` adıyla geçici aktarımı; tek korumalı bootstrap koşusu; terminal sonuçtan sonra bu geçici secret'ın kaldırılması. Altı yeni private key GitHub'a veya Cloudflare'a taşınmaz.
+
+Her hesap ve key seti, code hash, Market'in kapalı politika/başlangıç durumu, Access'in gerçek başlangıç durumu ve kurulum blokları kesinleştirilmeden gate geçmez. İlk işlemden önce public plan artifact'ı kalıcılaşır; aynı policy için önceki kayıt veya rerun görüldüğünde otomatik tekrar reddedilir. Main hareketi, CI/artifact farkı, beklenmeyen hesap veya belirsiz sonuç durumunda paket genişletilmeden durulur.
+
+**Tek sonraki gate: `VIDEO_PUBLIC_TESTNET_BOOTSTRAP_RELEASE_AND_RUN` — B03 onayı.** Web/Bridge/D1 migration/consumer/provider/USDC ve gerçek medya kabulü bu onaya dahil değildir. Genel plan `BLOCKED / NOT_COMPLETE` durumundadır.

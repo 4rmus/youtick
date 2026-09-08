@@ -1,0 +1,228 @@
+name: Public Testnet NEAR Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact current main SHA with successful push CI
+        required: true
+        type: string
+      ci_run_id:
+        description: Successful CI retaining both contract artifacts
+        required: true
+        type: string
+      policy_sha256:
+        description: SHA-256 of the reviewed fresh-account policy
+        required: true
+        type: string
+      confirmation:
+        description: Type CREATE_PUBLIC_TESTNET_V1
+        required: true
+        type: string
+
+concurrency:
+  group: public-testnet-video
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  authorize:
+    if: github.ref == 'refs/heads/main' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      attempt: ${{ steps.verify.outputs.attempt }}
+      materials_sha256: ${{ steps.verify.outputs.materials_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+      - name: Authorize current main, CI and unused policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.sha }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          POLICY_SHA: ${{ inputs.policy_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          PUBLIC_DEPLOY: ${{ vars.DEPLOY_PUBLIC_TESTNET_ENABLED }}
+          PREVIEW_DEPLOY: ${{ vars.DEPLOY_PREVIEW_ENABLED }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ && "$SOURCE_SHA" == "$GITHUB_SHA" ]]
+          [[ "$CI_RUN_ID" =~ ^[1-9][0-9]*$ && "$POLICY_SHA" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$CONFIRMATION" == CREATE_PUBLIC_TESTNET_V1 ]]
+          [[ "$PUBLIC_DEPLOY" == false && "$PREVIEW_DEPLOY" == false ]]
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$SOURCE_SHA" ]]
+          [[ "$(sha256sum workers/livepeer-bridge/scripts/public-testnet-bootstrap-policy.json | cut -d ' ' -f 1)" == "$POLICY_SHA" ]]
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=public-testnet-bootstrap-plan-${POLICY_SHA}&per_page=100" \
+            | jq -e --arg name "public-testnet-bootstrap-plan-${POLICY_SHA}" '[.[].artifacts[] | select(.name == $name)] | length == 0'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" > "$RUNNER_TEMP/ci.json"
+          jq -e --arg sha "$SOURCE_SHA" --arg repo "$GITHUB_REPOSITORY" '
+            .head_sha == $sha and .head_branch == "main" and .event == "push" and .conclusion == "success" and
+            .path == ".github/workflows/ci.yml" and .head_repository.full_name == $repo' "$RUNNER_TEMP/ci.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/jobs?filter=latest&per_page=100" > "$RUNNER_TEMP/jobs.json"
+          for job in 'CI Gate' 'Contracts (tests)' 'Contracts (quality)' 'Production WASM Dependency Audit' 'CodeQL / CodeQL (rust)' 'Retain exact Market runtime artifact'; do
+            jq -e --arg name "$job" '[.jobs[] | select(.name == $name and .conclusion == "success")] | length == 1' "$RUNNER_TEMP/jobs.json"
+          done
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/artifacts.json"
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
+        working-directory: workers/livepeer-bridge
+      - id: verify
+        name: Download exact bytes and verify seven CI attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.sha }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          POLICY_SHA: ${{ inputs.policy_sha256 }}
+        run: |
+          set -euo pipefail
+          attempt="$(jq -er '.run_attempt | tostring | select(test("^[1-9][0-9]*$"))' "$RUNNER_TEMP/ci.json")"
+          mkdir -p "$RUNNER_TEMP/materials"
+          for kind in market access; do
+            jq -e --arg name "$kind-contract-$SOURCE_SHA" --arg sha "$SOURCE_SHA" --argjson run "$CI_RUN_ID" '
+              [.artifacts[] | select(.name == $name and .expired == false and .workflow_run.id == $run and .workflow_run.head_sha == $sha)]
+              | if length == 1 then .[0] else error("artifact_identity") end' "$RUNNER_TEMP/artifacts.json" > "$RUNNER_TEMP/$kind-metadata.json"
+            id="$(jq -er '.id' "$RUNNER_TEMP/$kind-metadata.json")"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/$kind.zip"
+          done
+          python3 - <<'PY'
+          import os, json, hashlib, pathlib, zipfile
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          expected = {'market': {'youtick_nft.wasm','youtick_nft_abi.json','manifest.json','SHA256SUMS'},
+                      'access': {'youtick_access_control.wasm','youtick_access_control_abi.json','Cargo.lock','provenance.json','SHA256SUMS'}}
+          for kind, names in expected.items():
+              metadata = json.loads((root / (kind + '-metadata.json')).read_text())
+              archive = root / (kind + '.zip')
+              assert 'sha256:' + hashlib.sha256(archive.read_bytes()).hexdigest() == metadata['digest']
+              target = root / 'materials' / kind
+              target.mkdir()
+              with zipfile.ZipFile(archive) as z:
+                  assert set(z.namelist()) == names and len(z.namelist()) == len(names)
+                  for name in names:
+                      (target / name).write_bytes(z.read(name))
+          PY
+          node workers/livepeer-bridge/scripts/public-testnet-bootstrap.mjs verify "$RUNNER_TEMP/materials" "$SOURCE_SHA" "$CI_RUN_ID" "$attempt" "$POLICY_SHA"
+          for subject in market/youtick_nft.wasm market/youtick_nft_abi.json market/manifest.json access/youtick_access_control.wasm access/youtick_access_control_abi.json access/Cargo.lock access/provenance.json; do
+            gh attestation verify "$RUNNER_TEMP/materials/$subject" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" --source-digest "$SOURCE_SHA" \
+              --source-ref refs/heads/main --deny-self-hosted-runners --format json > "$RUNNER_TEMP/attestation.json"
+            jq -e --arg run "https://github.com/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/attempts/$attempt" \
+              '[.[] | select(.verificationResult.signature.certificate.runInvocationURI == $run) | select(.verificationResult.verifiedTimestamps | length > 0)] | length > 0' "$RUNNER_TEMP/attestation.json"
+          done
+          digest="$(cd "$RUNNER_TEMP/materials" && sha256sum market/* access/* | sha256sum | cut -d ' ' -f 1)"
+          echo "attempt=$attempt" >> "$GITHUB_OUTPUT"
+          echo "materials_sha256=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo 'Fresh public testnet accounts; no media or USDC operation. Funding/gas limits are operational checks, not a NEAR-encoded maxFee.'
+            echo '```json'
+            cat workers/livepeer-bridge/scripts/public-testnet-bootstrap-policy.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: public-testnet-bootstrap-materials-${{ github.run_id }}
+          path: ${{ runner.temp }}/materials/
+          retention-days: 1
+          if-no-files-found: error
+
+  bootstrap:
+    needs: authorize
+    if: github.ref == 'refs/heads/main' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: public-testnet
+    env:
+      SOURCE_SHA: ${{ inputs.sha }}
+      CI_RUN_ID: ${{ inputs.ci_run_id }}
+      CI_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
+      POLICY_SHA: ${{ inputs.policy_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: public-testnet-bootstrap-materials-${{ github.run_id }}
+          path: ${{ runner.temp }}/materials
+      - name: Recheck reviewed source, protection and material bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MATERIALS_SHA: ${{ needs.authorize.outputs.materials_sha256 }}
+          PUBLIC_DEPLOY: ${{ vars.DEPLOY_PUBLIC_TESTNET_ENABLED }}
+          PREVIEW_DEPLOY: ${{ vars.DEPLOY_PREVIEW_ENABLED }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" == "$GITHUB_SHA" && "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$SOURCE_SHA" ]]
+          [[ "$PUBLIC_DEPLOY" == false && "$PREVIEW_DEPLOY" == false ]]
+          [[ "$(sha256sum workers/livepeer-bridge/scripts/public-testnet-bootstrap-policy.json | cut -d ' ' -f 1)" == "$POLICY_SHA" ]]
+          [[ "$(cd "$RUNNER_TEMP/materials" && sha256sum market/* access/* | sha256sum | cut -d ' ' -f 1)" == "$MATERIALS_SHA" ]]
+          gh api "repos/$GITHUB_REPOSITORY/environments/public-testnet" | jq -e '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length) > 0)'
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=public-testnet-bootstrap-plan-${POLICY_SHA}&per_page=100" \
+            | jq -e --arg name "public-testnet-bootstrap-plan-${POLICY_SHA}" '[.[].artifacts[] | select(.name == $name)] | length == 0'
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
+        working-directory: workers/livepeer-bridge
+      - name: Verify artifacts before accessing the parent secret
+        run: node workers/livepeer-bridge/scripts/public-testnet-bootstrap.mjs verify "$RUNNER_TEMP/materials" "$SOURCE_SHA" "$CI_RUN_ID" "$CI_ATTEMPT" "$POLICY_SHA"
+      - id: prepare
+        name: Preflight and sign four exact account transactions
+        env:
+          PARENT_PRIVATE_KEY: ${{ secrets.PUBLIC_TESTNET_BOOTSTRAP_PARENT_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS'
+          import {writeFileSync} from 'node:fs';
+          if (!process.env.PARENT_PRIVATE_KEY) throw new Error('bootstrap_parent_secret_missing');
+          writeFileSync(`${process.env.RUNNER_TEMP}/bootstrap-parent.json`, JSON.stringify({private_key:process.env.PARENT_PRIVATE_KEY}), {flag:'wx',mode:0o600});
+          JS
+          node workers/livepeer-bridge/scripts/public-testnet-bootstrap.mjs prepare "$RUNNER_TEMP/materials" "$SOURCE_SHA" "$CI_RUN_ID" "$CI_ATTEMPT" "$POLICY_SHA" \
+            "$RUNNER_TEMP/bootstrap-parent.json" "$RUNNER_TEMP/near-bootstrap"
+          echo "plan_sha256=$(sha256sum "$RUNNER_TEMP/near-bootstrap/public-plan.json" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - id: record
+        name: Persist public transaction hashes before any broadcast
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: public-testnet-bootstrap-plan-${{ inputs.policy_sha256 }}
+          path: ${{ runner.temp }}/near-bootstrap/public-plan.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Send each transaction once and reconcile final state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_SHA: ${{ steps.prepare.outputs.plan_sha256 }}
+          PLAN_ARTIFACT_ID: ${{ steps.record.outputs.artifact-id }}
+        run: |
+          set -euo pipefail
+          [[ "$PLAN_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$SOURCE_SHA" ]]
+          node workers/livepeer-bridge/scripts/public-testnet-bootstrap.mjs execute "$RUNNER_TEMP/materials" "$SOURCE_SHA" "$CI_RUN_ID" "$CI_ATTEMPT" "$POLICY_SHA" \
+            "$RUNNER_TEMP/near-bootstrap" "$PLAN_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: public-testnet-bootstrap-receipt-${{ github.run_id }}
+          path: ${{ runner.temp }}/near-bootstrap/receipt.json
+          retention-days: 90
+          if-no-files-found: ignore
+      - name: Remove only this runner's private signing files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/bootstrap-parent.json"
+          rm -f "$RUNNER_TEMP/near-bootstrap/signed/operator.txt" "$RUNNER_TEMP/near-bootstrap/signed/relayer.txt" \
+            "$RUNNER_TEMP/near-bootstrap/signed/market.txt" "$RUNNER_TEMP/near-bootstrap/signed/access.txt"

@@ -11,6 +11,7 @@ const workflows = [
     'codeql.yml',
     'deploy-preview.yml',
     'deploy-public-testnet.yml',
+    'bootstrap-public-testnet.yml',
     'preview-market-code-update.yml',
     'promote-production.yml',
 ];
@@ -179,6 +180,36 @@ test('Access artifacts retain same-run provenance and reject altered or incomple
     assert.match(retained, /subject-checksums: \$\{\{ runner\.temp \}\}\/access-runtime\/SHA256SUMS/);
     assert.match(retained, /name: access-contract-\$\{\{ github\.sha \}\}[\s\S]*retention-days: 30/);
     assert.ok(retained.indexOf('Verify same-run Access') < retained.indexOf('Attest exact Access'));
+});
+
+test('fresh public-testnet bootstrap is reviewed, durable before send and never auto-rerun', async () => {
+    const [source, helper] = await Promise.all([
+        readFile(new URL('../.github/workflows/bootstrap-public-testnet.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../workers/livepeer-bridge/scripts/public-testnet-bootstrap.mjs', import.meta.url), 'utf8'),
+    ]);
+    const triggers = source.slice(source.indexOf('\non:'), source.indexOf('\nconcurrency:'));
+    assert.match(triggers, /workflow_dispatch:/);
+    assert.doesNotMatch(triggers, /\n  (?:push|pull_request|schedule|workflow_run|workflow_call):/);
+    assert.match(source, /group: public-testnet-video\n  cancel-in-progress: false/);
+    assert.equal((source.match(/github\.run_attempt == 1/g) ?? []).length, 2);
+    assert.match(source, /environment:\n      name: public-testnet/);
+    assert.match(source, /--source-digest "\$SOURCE_SHA"/);
+    assert.match(source, /--source-ref refs\/heads\/main --deny-self-hosted-runners/);
+    assert.match(source, /verificationResult\.signature\.certificate\.runInvocationURI/);
+    assert.match(source, /metadata\['digest'\]/);
+    assert.match(source, /set\(z\.namelist\(\)\) == names/);
+    assert.match(source, /select\(\.name == \$name\)\] \| length == 0/);
+    assert.match(source, /PUBLIC_DEPLOY" == false && "\$PREVIEW_DEPLOY" == false/);
+    assert.ok(source.indexOf('Verify artifacts before accessing the parent secret') < source.indexOf('secrets.PUBLIC_TESTNET_BOOTSTRAP_PARENT_PRIVATE_KEY'));
+    assert.ok(source.indexOf('Persist public transaction hashes before any broadcast') < source.indexOf('Send each transaction once'));
+    const uploadPaths = [...source.matchAll(/\n          path: ([^\n]+)/g)].map((m) => m[1]);
+    assert.equal(uploadPaths.length, 4);
+    assert.ok(uploadPaths.every((p) => !/parent\.json|signed\//.test(p)));
+    assert.equal((helper.match(/await rpc\('send_tx'/g) ?? []).length, 1);
+    assert.match(helper, /await rpc\('tx', \{ tx_hash: txHash, sender_account_id: parent/);
+    assert.match(helper, /signer\.signTransaction\(tx\)/);
+    assert.match(helper, /baseEncode\(txHash\)/);
+    assert.doesNotMatch(helper, /runMarketCodeUpdate|sendTransactionUntil|signAndSendTransaction/);
 });
 
 test('web CI verifies the immutable sponsored-wallet executor', async () => {
