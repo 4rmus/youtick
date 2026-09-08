@@ -1167,8 +1167,10 @@ async function requirePublicQueue(api, accountId, config) {
     if (queues[0].queue_id === queues[1].queue_id) fail('public_queue_binding_unproven');
     const consumers = await api(`/accounts/${accountId}/queues/${queues[0].queue_id}/consumers`);
     const consumer = consumers?.[0];
+    const workerNames = [consumer?.script_name, consumer?.script].filter((name) => name !== undefined);
     if (!Array.isArray(consumers) || consumers.length !== 1 || consumer.type !== 'worker'
-        || consumer.script_name !== PUBLIC_TESTNET_TARGET.bridge.worker || consumer.dead_letter_queue !== names[1]
+        || workerNames.length === 0 || workerNames.some((name) => name !== PUBLIC_TESTNET_TARGET.bridge.worker)
+        || consumer.dead_letter_queue !== names[1]
         || consumer.settings?.batch_size !== 10 || consumer.settings?.max_concurrency !== 1
         || consumer.settings?.max_retries !== 3 || consumer.settings?.max_wait_time_ms !== 5000) fail('public_queue_consumer_unproven');
 }
