@@ -104,7 +104,12 @@ export function rebuildMarketReadModel(rawRecords) {
 }
 
 export function normalizeFinalMarketEvents(rawRecords) {
-    return rawRecords.map(parseRecord).sort(compareRecords);
+    const records = rawRecords.map(parseRecord);
+    if (records.some(record => record.execution_index !== undefined)
+        && records.some(record => record.execution_index === undefined)) {
+        throw new Error('mixed_execution_order_evidence');
+    }
+    return records.sort(compareRecords);
 }
 
 export function canonicalMarketEventJson(value) {
@@ -217,7 +222,9 @@ function parseRecord(value) {
         || !Number.isSafeInteger(value.block_height) || value.block_height < 1
         || typeof value.block_hash !== 'string' || !HASH_PATTERN.test(value.block_hash)
         || typeof value.receipt_id !== 'string' || !HASH_PATTERN.test(value.receipt_id)
-        || !Number.isSafeInteger(value.event_index) || value.event_index < 0) {
+        || !Number.isSafeInteger(value.event_index) || value.event_index < 0
+        || (value.execution_index !== undefined
+            && (!Number.isSafeInteger(value.execution_index) || value.execution_index < 0))) {
         throw new Error('invalid_final_event_envelope');
     }
     const event = value.event;
@@ -238,6 +245,8 @@ function parseRecord(value) {
 
 function compareRecords(left, right) {
     return left.block_height - right.block_height
+        || (left.execution_index !== undefined && right.execution_index !== undefined
+            ? left.execution_index - right.execution_index : 0)
         || left.receipt_id.localeCompare(right.receipt_id)
         || left.event_index - right.event_index;
 }

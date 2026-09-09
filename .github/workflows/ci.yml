@@ -523,6 +523,9 @@ jobs:
           scripts/cloudflare-release.test.mjs
           scripts/ci-security.test.mjs
           scripts/apply-market-read-model-d1.test.mjs
+          scripts/fastnear-dev.test.mjs
+          scripts/fetch-neardata-market-block.test.mjs
+          scripts/rebuild-market-read-model.test.mjs
           scripts/market-event-catalog.test.mjs
           scripts/market-read-api.test.mjs
           scripts/check-rust-wasm-advisories.test.mjs

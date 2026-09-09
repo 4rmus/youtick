@@ -247,6 +247,9 @@ test('required CI Gate waits for the reusable CodeQL workflow', async () => {
     assert.match(codeqlJob, /security-events: write/);
     assert.match(ciGate, /\n      - codeql\n/);
     assert.match(ciGate, /scripts\/apply-market-read-model-d1\.test\.mjs/);
+    assert.match(ciGate, /scripts\/fastnear-dev\.test\.mjs/);
+    assert.match(ciGate, /scripts\/fetch-neardata-market-block\.test\.mjs/);
+    assert.match(ciGate, /scripts\/rebuild-market-read-model\.test\.mjs/);
     assert.match(ciGate, /scripts\/market-read-api\.test\.mjs/);
     assert.match(codeql, /\n  workflow_call:\n/);
     assert.doesNotMatch(codeql, /\n  pull_request:\n|\n  push:\n/);
