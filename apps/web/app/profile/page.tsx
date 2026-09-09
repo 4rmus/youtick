@@ -29,7 +29,11 @@ export default function ProfilePage() {
         queryKey: ['creatorReadModel', accountId],
         queryFn: async () => (await readMarketCreatorPublicationPage(accountId!, null, 50)).items,
         enabled: Boolean(accountId && FEATURE_FLAGS.enableDerivedReadModel),
-        staleTime: 30_000,
+        staleTime: 15_000,
+        refetchInterval: 15_000,
+        refetchIntervalInBackground: false,
+        refetchOnWindowFocus: true,
+        retry: false,
     });
 
     if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1 && !FEATURE_FLAGS.enableDerivedReadModel) {

@@ -57,7 +57,11 @@ export function useAllVideos() {
         initialPageParam: { source: 'auto' } as PageParam,
         queryFn: ({ pageParam }) => fetchDiscoverPage(pageParam),
         getNextPageParam: (page) => page.nextPageParam,
-        staleTime: 30_000,
+        staleTime: 15_000,
+        refetchInterval: FEATURE_FLAGS.enableDerivedReadModel ? 15_000 : false,
+        refetchIntervalInBackground: false,
+        refetchOnWindowFocus: FEATURE_FLAGS.enableDerivedReadModel,
+        retry: false,
     });
     return {
         publications: query.data?.pages.flatMap((page) => page.publications) ?? [],

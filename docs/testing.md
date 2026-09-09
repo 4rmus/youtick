@@ -11,6 +11,15 @@ npm run lint
 npm run build
 ```
 
+Catalogue freshness/read-budget regressions are in `catalog-refresh.test.ts`
+and `near-read-budget.test.ts`. Discover (when the derived model is enabled)
+and connected Profile activity refresh every 15 seconds while visible, refresh
+on focus when stale, and do not add React Query retries. Contract view calls
+use one abortable same-origin query with a 6,500ms deadline, covering response
+body delivery as well as headers. The proxy retains its existing 6,000ms budget.
+Transaction submission providers are unchanged. This is a per-contract-read
+deadline; a Discover fallback page can perform count and list reads sequentially.
+
 The suite must cover upload processing, purchase, entitlement, creator
 playback, stranger denial, sale suspension, takedown and disabled gates.
 
@@ -59,6 +68,7 @@ node scripts/check-paid-media-livepeer-v1.mjs
 
 ```bash
 node --test scripts/apply-market-read-model-d1.test.mjs \
+  scripts/fastnear-dev.test.mjs \
   scripts/fetch-neardata-market-block.test.mjs \
   scripts/market-event-catalog.test.mjs \
   scripts/market-read-api.test.mjs \
@@ -73,6 +83,63 @@ contract. They create no D1 database, binding or network connection. The
 explicit
 `fetch-neardata-market-block.mjs` CLI performs a read-only testnet/mainnet GET
 and must be reported separately from local tests.
+
+### FASTNEAR local D1 experiment
+
+`node scripts/run-fastnear-dev.mjs --contract=<account.testnet> --pages=1`
+reads public FASTNEAR testnet history and writes only the private Miniflare D1
+under `.wrangler/fastnear-dev/`. Install the existing Bridge development
+dependencies first (`cd workers/livepeer-bridge && npm ci`). No new package,
+Cloudflare login, remote D1 target, Worker flag, cron or deployment is needed.
+
+Rerun the same command to continue a persisted page cursor; `--pages=10`
+allows at most ten pages in one invocation. `--inspect` reads local tables and
+the existing Discover API without any provider request. `--restart` discards
+only the local scan cursor after token expiry, preserving verified events.
+On 429 the command stops without advancing and reports `Retry-After`; run it
+again after that delay. There is no automatic background loop.
+Live reads are paced at least 2.1 seconds apart per host. This is a local
+precaution, not a guarantee about shared IP or account quotas.
+
+Each finished sweep restarts account history on the next run, so previously
+unseen transactions indexed behind an old cursor can be reconciled. Only
+transactions not already verified as FINAL are downloaded and checked again.
+The verified hash cache is bounded to 1,000 entries and is committed atomically
+with the staged events and cursor in the existing dev state row. FINAL includes
+all receipts; the benchmark never appends receipts to a previously FINAL transaction.
+`--restart` also clears this cache, forcing fresh verification while retaining events.
+
+This dev experiment limits a sweep to 1,000 transactions/events. When new records
+arrive it rebuilds the bounded history in memory, but only replaces tables whose
+projection hash changed. No new events means no event-table/projection/watermark
+writes; only the scan checkpoint advances. Pending changes survive partial pages,
+including an empty final page. Old dev checkpoints are reverified once without
+deleting the saved events or published snapshot. It verifies receipt FINAL status
+through archival RPC and compares event payloads/projections with the existing
+Neardata parser on the visited event blocks. It does not prove
+that no undiscovered event block exists, full production history completeness,
+or an indexing-delay bound. No source subscription/support interaction is needed.
+
+The private database uses the existing initial projection schema plus dev-only
+staging/cursor tables. It is not the deployed database or a production migration;
+its API watermark means last observed event, not a contiguous chain checkpoint.
+It remains unready (503) with no observed events. All writes and schema creation
+stay inside Miniflare; the runner has no remote mode. The installed local runtime
+uses compatibility date `2026-05-14`, while the deployed Worker uses a later date.
+
+The default runner closes after reporting counts, local API timing and source
+request/byte totals. JSON receipts are saved under `.wrangler/fastnear-dev/evidence/`.
+Mocked tests are `LOCAL_TEST`; a real-history local-D1 run is `LOCAL_TEST` plus
+`PROVIDER` read evidence, never Preview/Production performance acceptance.
+
+Run `node scripts/benchmark-fastnear-dev.mjs` for bounded 100/500/1,000-event
+load and freshness checks. It uses real ephemeral Miniflare D1 and the existing
+API, with synthetic provider responses only (no external requests). It records
+local row metrics, repeated-history cost, 1/10/50 concurrent API requests,
+checkpoint recovery, late receipts and the 1,000-event ceiling. Network pacing,
+index delay and freshness are explicitly modelled, not live p95 evidence.
+Receipts are saved in `.wrangler/fastnear-dev-load/evidence/`; the real-history
+dev database is preserved.
 
 ## Local chaos matrix
 
