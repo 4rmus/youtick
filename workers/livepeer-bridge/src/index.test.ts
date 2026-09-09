@@ -229,6 +229,7 @@ async function signedSponsoredRelay(
         nonce?: bigint;
         maxBlockHeight?: bigint;
         accountBlockHeight?: number;
+        playbackSession?: unknown;
     },
 ): Promise<Request> {
     const quote = quoteResponse.quote as Record<string, unknown>;
@@ -246,6 +247,7 @@ async function signedSponsoredRelay(
         upload_key_expires_at_ms: request.upload_key_expires_at_ms,
         sponsor_quote: quote,
         sponsor_quote_signature: overrides?.quoteSignature ?? quoteResponse.signature,
+        ...(overrides?.playbackSession !== undefined ? { playback_session: overrides.playbackSession } : {}),
     });
     const actionsToSign = [actions.functionCall(overrides?.methodName ?? 'ft_transfer_call', {
         receiver_id: overrides?.innerReceiverId ?? CONTRACT_ID,
@@ -1179,7 +1181,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1);
     });
 
-    it('issues one fixed sponsor quote and relays only the exact creator upload once', async () => {
+    it.each([false, true])('issues one fixed sponsor quote and relays only the exact creator upload once; playback=%s', async (withPlayback) => {
         const now = vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
         const runtime = sponsoredRuntime({
             LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true',
@@ -1299,6 +1301,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             [{ jobId: 'job-other' }, 'quote_validation'],
             [{ quoteSignature: base64Encode(new Uint8Array(64)) }, 'quote_validation'],
             [{ nonce: 12n }, 'access_key'],
+            [{ playbackSession: { session_public_key: 'bad', certificate_sha256: 'a'.repeat(64), authorization_duration_ms: '2592000000' } }, 'delegate_shape'],
             [{ maxBlockHeight: 1_401n }, 'quote_validation'],
         ];
         for (const [overrides, reason] of rejectedDelegates) {
@@ -1316,6 +1319,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
 
         const relayRequest = await signedSponsoredRelay(quoteBody, userSigner, {
             accountBlockHeight: 1_200,
+            ...(withPlayback ? { playbackSession: { session_public_key: vectors.upload_intent.envelope.session_public_key, certificate_sha256: 'a'.repeat(64), authorization_duration_ms: '2592000000' } } : {}),
         });
         now.mockReturnValue(1_785_589_420_001);
         const expired = await handler.fetch(relayRequest.clone(), runtime.env);

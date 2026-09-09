@@ -4,7 +4,10 @@ const state = vi.hoisted(() => ({
     featureFlags: { enablePlaybackAuthorizerV2: false, publicTestnetBeta: false, publicTestnetVideoV1: false },
     viewContract: vi.fn(),
     send: vi.fn(),
+    prepare: vi.fn(),
 }));
+
+vi.mock('@/lib/device-session', () => ({ preparePlaybackDevice: state.prepare }));
 
 vi.mock('@/lib/constants', () => ({
     APP_CONFIG: { livepeerBridgeUrl: 'https://bridge.youtick.net' },
@@ -55,6 +58,7 @@ describe('Livepeer publication UI boundary', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         state.viewContract.mockReset();
+        state.prepare.mockReset().mockResolvedValue({ session_public_key: 'ed25519:device', certificate_sha256: 'a'.repeat(64), authorization_duration_ms: '2592000000' });
         state.featureFlags.enablePlaybackAuthorizerV2 = false;
         state.featureFlags.publicTestnetBeta = false;
         state.featureFlags.publicTestnetVideoV1 = false;
@@ -162,6 +166,27 @@ describe('Livepeer publication UI boundary', () => {
         expect(wallet.signAndSendTransaction.mock.calls[0][0].actions).toHaveLength(1);
         expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
         expect(state.send).not.toHaveBeenCalled();
+    });
+
+    it('includes the existing device on every public purchase with one signature and storage first', async () => {
+        state.featureFlags.publicTestnetVideoV1 = true;
+        state.featureFlags.enablePlaybackAuthorizerV2 = true;
+        state.viewContract.mockResolvedValue({ new_purchases_paused: false });
+        const wallet = { signAndSendTransaction: vi.fn().mockResolvedValue({}), signAndSendTransactions: vi.fn(), signMessage: vi.fn() };
+        await buyLivepeerTicket(wallet, 'buyer.testnet', PUBLICATION);
+        await buyLivepeerTicket(wallet, 'buyer.testnet', { ...PUBLICATION, publication_id: 'job-002' });
+        expect(state.prepare).toHaveBeenCalledTimes(2);
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(2);
+        for (const [transaction] of wallet.signAndSendTransaction.mock.calls) {
+            expect(transaction.actions).toHaveLength(1);
+            expect(JSON.parse(transaction.actions[0].args.msg).playback_session).toEqual(await state.prepare.mock.results[0].value);
+        }
+        expect(state.prepare.mock.invocationCallOrder[0]).toBeLessThan(wallet.signAndSendTransaction.mock.invocationCallOrder[0]);
+        expect(wallet.signMessage).not.toHaveBeenCalled();
+        expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
+        state.prepare.mockRejectedValue(new Error('device_session_storage_unavailable'));
+        await expect(buyLivepeerTicket(wallet, 'buyer.testnet', PUBLICATION)).rejects.toThrow('device_session_storage_unavailable');
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledTimes(2);
     });
 
     it.each([

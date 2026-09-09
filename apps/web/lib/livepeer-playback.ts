@@ -2,7 +2,7 @@ import { KeyPair } from 'near-api-js';
 import { getCachedSessionGrant, isSessionGrantVisible } from '@/lib/access-grants';
 import { APP_CONFIG, FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
 import { base64Encode } from '@/lib/crypto/codec';
-import { canonicalDeviceCertificate, ensureDeviceSession } from '@/lib/device-session';
+import { canonicalDeviceCertificate, getDeviceSession, onDeviceSessionCleared } from '@/lib/device-session';
 import type { WalletInstance } from '@/lib/types';
 import { measureVideoOperation } from '@/lib/video-measurements';
 
@@ -47,7 +47,7 @@ export async function requestLivepeerPlaybackToken(
     requireFeature();
     signal?.throwIfAborted();
     if (FEATURE_FLAGS.enablePlaybackAuthorizerV2) {
-        return requestStatelessPlaybackToken(input, signal, wallet);
+        return requestStatelessPlaybackToken(input, signal);
     }
     const grant = getCachedSessionGrant(input.accountId, 'Play', input.jobId);
     if (!grant
@@ -91,7 +91,7 @@ export async function requestLivepeerPlaybackToken(
     let shadowV2: Awaited<ReturnType<typeof createStatelessPlaybackRequest>> | undefined;
     if (FEATURE_FLAGS.enablePlaybackShadowV2 && wallet) {
         try {
-            shadowV2 = await createStatelessPlaybackRequest(input, wallet);
+            shadowV2 = await createStatelessPlaybackRequest(input);
         } catch {
             // Shadow evidence must never change the legacy playback result.
         }
@@ -121,10 +121,8 @@ export async function requestLivepeerPlaybackToken(
 async function requestStatelessPlaybackToken(
     input: LivepeerPlaybackInput,
     signal?: AbortSignal,
-    wallet?: Pick<WalletInstance, 'signMessage'>,
 ): Promise<LivepeerPlaybackToken> {
-    if (!wallet) throw new Error('livepeer_device_wallet_missing');
-    const payload = await createStatelessPlaybackRequest(input, wallet);
+    const payload = await createStatelessPlaybackRequest(input);
     signal?.throwIfAborted();
     const response = await fetch(bridgeRoute(PLAYBACK_V2_ROUTE), {
         method: 'POST',
@@ -142,11 +140,11 @@ async function requestStatelessPlaybackToken(
 
 async function createStatelessPlaybackRequest(
     input: LivepeerPlaybackInput,
-    wallet: Pick<WalletInstance, 'signMessage'>,
 ) {
-    const session = await ensureDeviceSession(wallet, input.accountId);
+    const session = await getDeviceSession(input.accountId);
+    if (!session) throw new Error('device_session_required');
     const origin = browserOrigin();
-    if (session.certificate.account_id !== input.accountId
+    if (session.certificate_proof.account_id !== input.accountId
         || session.certificate.origin_hash !== await sha256Hex(origin)) {
         throw new Error('livepeer_device_session_mismatch');
     }
@@ -167,13 +165,9 @@ async function createStatelessPlaybackRequest(
         body_sha256: await sha256Hex(canonicalJson(body)),
         certificate_sha256: await sha256Hex(canonicalDeviceCertificate(session.certificate)),
     };
-    const keyPair = KeyPair.fromString(session.secret_key as `ed25519:${string}`);
-    if (keyPair.getPublicKey().toString() !== session.certificate.session_public_key) {
-        throw new Error('livepeer_device_session_mismatch');
-    }
-    const requestSignature = base64Encode(
-        keyPair.sign(new TextEncoder().encode(canonicalPlaybackV2Message(request))).signature,
-    );
+    const requestSignature = base64Encode(new Uint8Array(await crypto.subtle.sign(
+        'Ed25519', session.privateKey, new TextEncoder().encode(canonicalPlaybackV2Message(request)),
+    )));
     return {
         body,
         certificate: session.certificate,
@@ -191,11 +185,13 @@ export async function startLivepeerPlaybackSession(
     const controller = new AbortController();
     const signal = callbacks.signal ? AbortSignal.any([controller.signal, callbacks.signal]) : controller.signal;
     let stopped = false;
+    let unsubscribe: (() => void) | undefined;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     let expiryTimer: ReturnType<typeof setTimeout> | undefined;
     const destroy = () => {
         if (stopped) return;
         stopped = true;
+        unsubscribe?.();
         controller.abort();
         if (refreshTimer) clearTimeout(refreshTimer);
         if (expiryTimer) clearTimeout(expiryTimer);
@@ -207,6 +203,9 @@ export async function startLivepeerPlaybackSession(
         destroy();
         callbacks.onError?.(error);
     };
+    if (FEATURE_FLAGS.enablePlaybackAuthorizerV2) {
+        unsubscribe = onDeviceSessionCleared(() => fail(new Error('device_session_required')));
+    }
     let access: LivepeerPlaybackToken;
     try {
         access = await measureVideoOperation('playback_token_initial', async () => {

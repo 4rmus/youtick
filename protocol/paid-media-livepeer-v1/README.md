@@ -300,7 +300,13 @@ top-level fields: `body`, `certificate`, `certificate_proof`, `request` and
 - `body` binds `publication_id`, `generation` and the exact `playback_id`.
 - The `youtick.device-session` version-1 certificate binds network, account,
   device public key, origin hash, the sole `play` scope, issue time and expiry.
-  Its lifetime is at most eight hours.
+  Its lifetime is at most eight hours. Version 1 remains accepted during rollout.
+- The version-2 certificate replaces `account_id` with `contract_id`, allowing
+  the same explicit wallet connection to select an account and sign the device
+  certificate. It binds exactly eight hours, network, Market, origin and `play`.
+  Its proof adds `account_id` from the signed wallet response. That account must
+  equal the request account and own the signing FullAccess key at final NEAR
+  state. Certificate verification caches also bind the selected account.
 - `certificate_proof` is a NEP-413 wallet signature whose recipient is the
   configured Market contract. The signing key must still exist as a final
   FullAccess key; removing it invalidates the certificate.
@@ -327,11 +333,29 @@ positive entitlement for five minutes and negative entitlement for three
 seconds. A fully warm authorization uses zero NEAR/provider calls. Takedown and
 wallet-key removal are rechecked at their 30/60-second bounds respectively.
 
-The browser keeps the generated device secret only in memory and clears it on
-explicit disconnect or page reload. V1 remains an independent closed fallback;
-v2 has no deployment evidence. The local opt-in abuse test rejects 100,000
-wrong-origin requests without external calls, Durable Object access or cache
-growth.
+The browser stores only a non-extractable WebCrypto Ed25519 `CryptoKey` and
+public certificate/proof metadata in IndexedDB, scoped to account, network,
+Market and site. No device secret string is written to browser storage.
+Reload reuses the original eight-hour authority without extending it. Invalid
+or expired records are removed when accessed; disconnect/account changes clear
+stored authority and notify open players. A persisted revision and local abort
+checks prevent pre-disconnect wallet responses from re-creating the session.
+Parallel preparation in the same page shares one pending request. Unsupported
+secure storage/Ed25519 fails closed, with an explicit verification action.
+Playback and token renewal only read an existing valid device session and sign
+with its CryptoKey; neither invokes the wallet. Existing legacy chain-authority
+revocation remains separate. Local disconnect cannot revoke already-issued JWTs
+outside this browser; their maximum remaining lifetime is 180 seconds.
+
+This is a bounded exception to Checkpoint 95's memory-only device-key decision,
+not permission to persist raw secrets or legacy signless/upload keys. It does
+not protect against malicious same-origin code using the signing API and does
+not claim hardware-backed storage. See
+[the source gate and security decision](../../docs/architecture/playback-ux-plan.md).
+Deploy the backward-compatible Bridge before the Web client. V1 remains an
+independent closed fallback. The new certificate version has no deployment
+acceptance evidence. The local opt-in abuse test rejects 100,000 wrong-origin
+requests without external calls, Durable Object access or cache growth.
 
 The default-off shadow transition permits one optional `shadow_v2` field on a
 legacy wire request. That field is the exact independently signed five-field v2
@@ -369,3 +393,62 @@ workflow activation and real Discover-to-Watch acceptance remain separate live a
 Test token links use the [NEAR faucet guide](https://docs.near.org/getting-started/faucet)
 and [Circle faucet](https://faucet.circle.com/) (Near Testnet listed when checked 2026-09-07).
 No token was requested; actual faucet receipt into the configured USDC contract remains unproven.
+
+### Market-backed playback devices (certificate version 3)
+
+Public-testnet Web uses the existing V2 authorizer with a version-3 device
+certificate. Connecting only selects the account. Each new USDC ticket purchase
+or creator upload includes this optional field inside `ft_transfer_call.msg`:
+
+```json
+"playback_session": {
+  "session_public_key": "ed25519:<device-public-key>",
+  "certificate_sha256": "<sha256-of-canonical-certificate>",
+  "authorization_duration_ms": "2592000000"
+}
+```
+
+The canonical certificate contains `domain: youtick.device-session`, `version: 3`,
+`network`, `contract_id`, `account_id`, `session_public_key`, `origin_hash`,
+`scopes: [play]`, and the fixed `authorization_duration_ms`. Its fields are sorted
+with the existing canonical JSON encoder. No client expiry is authoritative.
+The sponsored quote still binds the existing upload request; the user's delegate
+signature binds the full FT message, including `playback_session`.
+
+Only successful FT acceptance registers/renews the device. Market raw storage
+keeps at most three entries per account, keyed within that list by device public
+key. Each new accepted payment sets `authorized_at_ms` to the current block time
+and `expires_at_ms` to that time plus 30 days. Expired entries are pruned on a
+new registration; a fourth device evicts the oldest authorization. Reading or
+watching never renews a record. Refund, duplicate/reconciled payment, and upload
+key replacement do not renew it. Legacy messages without the field retain their
+existing behavior; the Contract Borsh layout does not change.
+
+`get_playback_device(account_id, session_public_key)` returns an unexpired record
+or null. The record contains the device public key, certificate hash, authorization
+and expiry times, and `authorizing_public_key`. A direct payment records the
+actual transaction signer key only when signer ID equals the FT sender. A
+delegated payment records null here, never the sponsor's key.
+
+The `/v2/playback-tokens` wire envelope is unchanged. For certificate version 3,
+`certificate_proof` is `{kind: "market", account_id, signed_delegate_base64?}`.
+The Bridge verifies device proof of possession, the final Market device record,
+and current entitlement/publication/provider policy. Direct records require the
+recorded key to remain FullAccess. Delegated records additionally require a
+valid original wallet delegate signature binding this account and certificate;
+that delegate's user key must remain FullAccess. The old payment submission
+block window is not a playback expiry and the delegate is never rebroadcast by
+playback. No transaction-history lookup or new server signing key is required.
+
+Web saves its non-extractable device CryptoKey before asking for the existing
+payment signature, and saves a sponsored delegate proof before submitting the
+relay. Pending/expired records keep the local device key for reconciliation and
+the next genuine payment; they grant no playback. Reload reads final Market state.
+Logout/account changes clear local authority and invalidate pending work across
+tabs using the persisted revision. Public-testnet never falls back to a separate
+identity signature: after expiry/logout/storage loss, playback waits for a new
+purchase/upload. Other deployments retain the legacy V1/V2 behavior and limits.
+
+Existing authorization cache bounds (up to 60 seconds) and issued media JWT
+bounds (up to 180 seconds, capped by device expiry) remain; remote device/key
+removal is not an instantaneous revocation of already issued media tokens.

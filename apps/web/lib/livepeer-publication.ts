@@ -1,3 +1,4 @@
+import { preparePlaybackDevice } from './device-session';
 import { actions } from 'near-api-js';
 import { APP_CONFIG, FEATURE_FLAGS, GAS_CONSTANTS, NEAR_CONFIG } from '@/lib/constants';
 import { getProvider, viewContract } from '@/lib/near';
@@ -247,6 +248,8 @@ export async function buyLivepeerTicket(
     if (purchasesPaused) {
         throw new Error('livepeer_sales_closed');
     }
+    const playbackSession = FEATURE_FLAGS.publicTestnetVideoV1 && FEATURE_FLAGS.enablePlaybackAuthorizerV2
+        ? await preparePlaybackDevice(accountId) : undefined;
     const transaction = {
         receiverId: NEAR_CONFIG.usdcContractId,
         actions: [actions.functionCall(
@@ -258,6 +261,7 @@ export async function buyLivepeerTicket(
                 msg: JSON.stringify({
                     action: 'buy_ticket',
                     publication_id: publication.publication_id,
+                    ...(playbackSession ? { playback_session: playbackSession } : {}),
                 }),
             },
             GAS_CONSTANTS.mediumGas,

@@ -6,6 +6,11 @@ const walletTestState = vi.hoisted(() => ({
     connectorOptions: undefined as undefined | Record<string, unknown>,
     connectorWallets: [] as Array<{ manifest: Record<string, unknown> }>,
     connect: vi.fn(),
+    connectDeviceSession: vi.fn(),
+    clearDeviceSession: vi.fn(),
+    revokeBrowserAuthority: vi.fn(),
+    flags: { enablePlaybackAuthorizerV2: false, publicTestnetVideoV1: false },
+    handlers: {} as Record<string, (payload: unknown) => void>,
     registeredWallets: [] as Array<Record<string, unknown>>,
     stateSetters: [] as ReturnType<typeof vi.fn>[],
 }));
@@ -52,9 +57,20 @@ vi.mock('@hot-labs/near-connect', () => ({
                 : walletTestState.connect(input);
         }
         getConnectedWallet() { return new Promise(() => {}); }
-        on() {}
+        on(event: string, handler: (payload: unknown) => void) { walletTestState.handlers[event] = handler; }
+        async disconnect() {}
         removeAllListeners() {}
     },
+}));
+
+vi.mock('@/lib/device-session', () => ({
+    connectDeviceSession: walletTestState.connectDeviceSession,
+    clearDeviceSession: walletTestState.clearDeviceSession,
+}));
+vi.mock('@/lib/constants', async (importOriginal) => ({ ...await importOriginal<object>(), FEATURE_FLAGS: walletTestState.flags }));
+vi.mock('@/lib/signless-access-key', () => ({
+    revokeBrowserAuthority: walletTestState.revokeBrowserAuthority,
+    clearSignlessAccessKey: vi.fn(),
 }));
 
 import { WalletProvider, createWalletAdapter } from '@/components/providers/WalletProvider';
@@ -67,6 +83,12 @@ describe('WalletProvider CSP initialization', () => {
         walletTestState.connectorOptions = undefined;
         walletTestState.connectorWallets = [];
         walletTestState.connect.mockReset();
+        walletTestState.connectDeviceSession.mockReset();
+        walletTestState.clearDeviceSession.mockReset();
+        walletTestState.revokeBrowserAuthority.mockReset();
+        walletTestState.flags.enablePlaybackAuthorizerV2 = false;
+        walletTestState.flags.publicTestnetVideoV1 = false;
+        walletTestState.handlers = {};
         walletTestState.registeredWallets = [];
         walletTestState.stateSetters = [];
         vi.useRealTimers();
@@ -113,6 +135,77 @@ describe('WalletProvider CSP initialization', () => {
         expect(walletTestState.connect).toHaveBeenCalledWith();
         expect(getAccounts).toHaveBeenCalledWith({ network: 'testnet' });
         await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    it('connects public-testnet without any message signature and rejects a late account after logout', async () => {
+        vi.useFakeTimers();
+        walletTestState.flags.enablePlaybackAuthorizerV2 = true;
+        walletTestState.flags.publicTestnetVideoV1 = true;
+        let finish!: (accounts: Array<{ accountId: string }>) => void;
+        const getAccounts = vi.fn(() => new Promise<Array<{ accountId: string }>>((resolve) => { finish = resolve; }));
+        walletTestState.connect.mockResolvedValue({ manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts });
+        const provider = WalletProvider({ children: null });
+        const first = provider.props.value.connect();
+        const second = provider.props.value.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        await provider.props.value.signOut();
+        finish([{ accountId: 'creator.testnet' }]);
+        await Promise.all([first, second]);
+        expect(walletTestState.connect).toHaveBeenCalledExactlyOnceWith();
+        expect(walletTestState.connectDeviceSession).not.toHaveBeenCalled();
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalledWith('creator.testnet');
+    });
+
+    it('coalesces combined connect and ignores the duplicate sign-in until persistence completes', async () => {
+        vi.useFakeTimers();
+        walletTestState.flags.enablePlaybackAuthorizerV2 = true;
+        const signedMessage = { accountId: 'creator.testnet', publicKey: 'wallet-public-key', signature: 'wallet-signature' };
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0] };
+        const params = { message: 'certificate-v2', recipient: 'market.testnet', nonce: new Uint8Array(32) };
+        let persist!: () => void;
+        walletTestState.connect.mockImplementation(async () => {
+            walletTestState.handlers['wallet:signInAndSignMessage']({ wallet, accounts: [{ ...signedMessage, signedMessage }] });
+            walletTestState.handlers['wallet:signIn']({ wallet, accounts: [signedMessage], source: 'signInAndSignMessage' });
+            return wallet;
+        });
+        walletTestState.connectDeviceSession.mockImplementation(async (sign) => {
+            expect(await sign(params)).toEqual(signedMessage);
+            await new Promise<void>((resolve) => { persist = resolve; });
+            return { certificate_proof: { account_id: signedMessage.accountId } };
+        });
+        const provider = WalletProvider({ children: null });
+        const first = provider.props.value.connect();
+        const second = provider.props.value.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalled();
+        persist();
+        await Promise.all([first, second]);
+        expect(walletTestState.connectDeviceSession).toHaveBeenCalledOnce();
+        expect(walletTestState.connect).toHaveBeenCalledWith({ signMessageParams: params });
+        expect(walletTestState.stateSetters[0]).toHaveBeenCalledExactlyOnceWith('creator.testnet');
+    });
+
+    it('does not apply a combined response after sign-out or automatically retry cancellation', async () => {
+        vi.useFakeTimers();
+        walletTestState.flags.enablePlaybackAuthorizerV2 = true;
+        let finish!: () => void;
+        walletTestState.connectDeviceSession.mockImplementation(async () => {
+            await new Promise<void>((resolve) => { finish = resolve; });
+            return { certificate_proof: { account_id: 'creator.testnet' } };
+        });
+        const provider = WalletProvider({ children: null });
+        const connecting = provider.props.value.connect();
+        await vi.advanceTimersByTimeAsync(0);
+        await provider.props.value.signOut();
+        finish();
+        await connecting;
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalledWith('creator.testnet');
+        expect(walletTestState.clearDeviceSession).toHaveBeenCalled();
+        expect(walletTestState.revokeBrowserAuthority).not.toHaveBeenCalled();
+        walletTestState.connectDeviceSession.mockRejectedValue(new Error('User rejected'));
+        await provider.props.value.connect();
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(walletTestState.connectDeviceSession).toHaveBeenCalledTimes(2);
     });
 
     it('exposes delegate signing only when the connected wallet advertises it', async () => {

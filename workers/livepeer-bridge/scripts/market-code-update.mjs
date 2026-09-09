@@ -13,7 +13,15 @@ import { pathToFileURL } from 'node:url';
 const ARTIFACT_SCHEMA = 'youtick.testnet-market-runtime-artifact.v1';
 const EVIDENCE_SCHEMA = 'youtick.testnet-market-code-update.v1';
 const POLICY_SCHEMA = 'youtick.testnet-market-code-update-policy.v1';
-const TARGET_CONTRACT_ID = 'lp-arch-market-v2-260809.youtick-dev-v3.testnet';
+const TARGET_CONTRACT_IDS = Object.freeze({
+    preview: 'lp-arch-market-v2-260809.youtick-dev-v3.testnet',
+    'public-testnet': 'video-market-v1-260907.youtick-dev-v3.testnet',
+});
+
+function targetContractId(target) {
+    if (!Object.hasOwn(TARGET_CONTRACT_IDS, target)) throw new Error('market_code_update_target_invalid');
+    return TARGET_CONTRACT_IDS[target];
+}
 const ARTIFACT_FILES = [
     'SHA256SUMS',
     'manifest.json',
@@ -26,6 +34,7 @@ const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/;
 const RPC_TIMEOUT_MS = 10_000;
 
 export async function createMarketRuntimeArtifact({
+    target = 'preview',
     wasmPath,
     abiPath,
     lockfilePath,
@@ -34,6 +43,7 @@ export async function createMarketRuntimeArtifact({
     runId,
     runAttempt,
 }) {
+    const contractId = targetContractId(target);
     requireGitSha(sourceSha);
     requirePositiveInteger(runId, 'market_artifact_run_id_invalid');
     requirePositiveInteger(runAttempt, 'market_artifact_run_attempt_invalid');
@@ -64,7 +74,7 @@ export async function createMarketRuntimeArtifact({
         },
         target: {
             network: 'testnet',
-            contract_id: TARGET_CONTRACT_ID,
+            contract_id: contractId,
             operation: 'CODE_UPDATE_ONLY',
         },
         toolchain: {
@@ -98,11 +108,13 @@ export async function createMarketRuntimeArtifact({
 }
 
 export async function verifyMarketRuntimeArtifact({
+    target = 'preview',
     artifactDir,
     sourceSha,
     runId,
     runAttempt,
 }) {
+    const contractId = targetContractId(target);
     requireGitSha(sourceSha);
     requirePositiveInteger(runId, 'market_artifact_run_id_invalid');
     requirePositiveInteger(runAttempt, 'market_artifact_run_attempt_invalid');
@@ -134,7 +146,7 @@ export async function verifyMarketRuntimeArtifact({
         || manifest.ci.run_id !== String(runId)
         || manifest.ci.run_attempt !== String(runAttempt)
         || manifest.target.network !== 'testnet'
-        || manifest.target.contract_id !== TARGET_CONTRACT_ID
+        || manifest.target.contract_id !== contractId
         || manifest.target.operation !== 'CODE_UPDATE_ONLY'
         || manifest.toolchain.rust !== '1.86.0'
         || manifest.toolchain.cargo_near !== '0.17.0'
@@ -165,6 +177,7 @@ export async function verifyMarketRuntimeArtifact({
 }
 
 export async function runMarketCodeUpdate({
+    target = 'preview',
     artifactDir,
     policyPath,
     rpcUrl,
@@ -187,6 +200,7 @@ export async function runMarketCodeUpdate({
     }
     const validatedRpcUrl = requireRpcUrl(rpcUrl);
     const { manifest, wasm } = await verifyMarketRuntimeArtifact({
+        target,
         artifactDir,
         sourceSha,
         runId,
@@ -195,7 +209,7 @@ export async function runMarketCodeUpdate({
     if (manifest.files.wasm.sha256 !== expectedWasmSha256) {
         throw new Error('market_code_update_wasm_ack_mismatch');
     }
-    const policy = await readPolicy(policyPath);
+    const policy = await readPolicy(policyPath, target);
     let deployPublicKey;
     try {
         deployPublicKey = await derivePublicKeyImpl(privateKey);
@@ -276,6 +290,12 @@ export async function runMarketCodeUpdate({
             throw new Error('market_code_update_state_changed');
         }
         if (!transactionHash(transaction)) throw new Error('market_code_update_receipt_invalid');
+        if (target === 'public-testnet') {
+            const device = await view(validatedRpcUrl, policy.target_contract_id, 'get_playback_device', fetchImpl, after.block_hash, {
+                account_id: policy.target_contract_id, session_public_key: policy.deploy_public_key,
+            });
+            if (device !== null) throw new Error('market_code_update_device_view_invalid');
+        }
     } catch (error) {
         const observed = after || await bestEffortRuntimeSnapshot(
             policy,
@@ -309,7 +329,8 @@ export async function runMarketCodeUpdate({
     });
 }
 
-async function readPolicy(path) {
+async function readPolicy(path, target = 'preview') {
+    const contractId = targetContractId(target);
     const policy = parseJsonObject(await readFile(path), 'market_code_update_policy_invalid');
     assertExactKeys(policy, [
         'schema', 'network', 'target_contract_id', 'access_contract_id',
@@ -332,7 +353,7 @@ async function readPolicy(path) {
     ]);
     if (policy.schema !== POLICY_SCHEMA
         || policy.network !== 'testnet'
-        || policy.target_contract_id !== TARGET_CONTRACT_ID
+        || policy.target_contract_id !== contractId
         || typeof policy.access_contract_id !== 'string'
         || typeof policy.bridge_operator_account_id !== 'string'
         || !/^ed25519:[1-9A-HJ-NP-Za-km-z]{40,50}$/.test(policy.deploy_public_key)
@@ -346,6 +367,15 @@ async function readPolicy(path) {
         || policy.expected_bridge_key.method_names.length === 0) {
         throw new Error('market_code_update_policy_invalid');
     }
+    if (target === 'public-testnet' && (
+        policy.access_contract_id !== 'video-access-v1-260907.youtick-dev-v3.testnet'
+        || policy.bridge_operator_account_id !== 'video-operator-v1-260907.youtick-dev-v3.testnet'
+        || policy.expected_governance.active_bridge_account_id !== policy.bridge_operator_account_id
+        || policy.expected_governance.new_purchases_paused !== true
+        || policy.expected_governance.bridge_frozen !== true
+        || policy.expected_access_state.market_contract_id !== contractId
+        || policy.expected_bridge_key.receiver_id !== contractId
+    )) throw new Error('market_code_update_public_policy_invalid');
     return policy;
 }
 
@@ -689,12 +719,12 @@ async function query(rpcUrl, params, fetchImpl, blockId) {
     }, fetchImpl);
 }
 
-async function view(rpcUrl, accountId, methodName, fetchImpl, blockId) {
+async function view(rpcUrl, accountId, methodName, fetchImpl, blockId, args = {}) {
     const result = await query(rpcUrl, {
         request_type: 'call_function',
         account_id: accountId,
         method_name: methodName,
-        args_base64: 'e30=',
+        args_base64: Buffer.from(JSON.stringify(args)).toString('base64'),
     }, fetchImpl, blockId);
     if (!Array.isArray(result.result)) throw new Error('market_code_update_rpc_invalid');
     try {
@@ -835,9 +865,10 @@ if (isMain) {
         const { command, options } = parseArgs(process.argv.slice(2));
         if (command === 'artifact') {
             assertOnlyOptions(options, [
-                'wasm', 'abi', 'lockfile', 'output-dir', 'sha', 'run-id', 'run-attempt',
+                'wasm', 'abi', 'lockfile', 'output-dir', 'sha', 'run-id', 'run-attempt', 'target',
             ]);
             const manifest = await createMarketRuntimeArtifact({
+                target: options.target ?? 'preview',
                 wasmPath: option(options, 'wasm'),
                 abiPath: option(options, 'abi'),
                 lockfilePath: option(options, 'lockfile'),
@@ -852,8 +883,8 @@ if (isMain) {
                 wasm_sha256: manifest.files.wasm.sha256,
             }));
         } else if (command === 'snapshot') {
-            assertOnlyOptions(options, ['policy']);
-            const policy = await readPolicy(option(options, 'policy'));
+            assertOnlyOptions(options, ['policy', 'target']);
+            const policy = await readPolicy(option(options, 'policy'), options.target ?? 'preview');
             const rpcUrl = requireRpcUrl(process.env.NEAR_RPC_URL);
             const snapshot = await readRuntimeSnapshot(
                 policy,
@@ -881,8 +912,9 @@ if (isMain) {
                 reserve_runway_bytes: snapshot.storage_reserve.reserve_runway_bytes,
             }));
         } else if (command === 'verify-artifact') {
-            assertOnlyOptions(options, ['artifact-dir', 'sha', 'run-id', 'run-attempt']);
+            assertOnlyOptions(options, ['artifact-dir', 'sha', 'run-id', 'run-attempt', 'target']);
             const { manifest } = await verifyMarketRuntimeArtifact({
+                target: options.target ?? 'preview',
                 artifactDir: option(options, 'artifact-dir'),
                 sourceSha: option(options, 'sha'),
                 runId: option(options, 'run-id'),
@@ -896,12 +928,13 @@ if (isMain) {
         } else if (command === 'deploy') {
             assertOnlyOptions(options, [
                 'artifact-dir', 'policy', 'sha', 'run-id', 'run-attempt',
-                'expected-wasm-sha256', 'expected-state-sha256', 'output',
+                'expected-wasm-sha256', 'expected-state-sha256', 'output', 'target',
             ]);
             const output = option(options, 'output');
             let evidence;
             try {
                 evidence = await runMarketCodeUpdate({
+                    target: options.target ?? 'preview',
                     artifactDir: option(options, 'artifact-dir'),
                     policyPath: option(options, 'policy'),
                     rpcUrl: process.env.NEAR_RPC_URL,
@@ -910,7 +943,9 @@ if (isMain) {
                     runAttempt: option(options, 'run-attempt'),
                     expectedWasmSha256: option(options, 'expected-wasm-sha256'),
                     expectedStateSha256: option(options, 'expected-state-sha256'),
-                    privateKey: process.env.PREVIEW_MARKET_DEPLOY_PRIVATE_KEY,
+                    privateKey: options.target === 'public-testnet'
+                        ? process.env.PUBLIC_TESTNET_MARKET_DEPLOY_PRIVATE_KEY
+                        : process.env.PREVIEW_MARKET_DEPLOY_PRIVATE_KEY,
                 });
             } catch (error) {
                 if (error instanceof MarketCodeUpdateError) {

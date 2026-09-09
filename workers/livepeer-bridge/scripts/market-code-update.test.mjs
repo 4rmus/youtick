@@ -215,7 +215,7 @@ test('market update preserves evidence when post-deploy reserve is malformed', a
     assert.equal(fixture.deployCalls.length, 1);
 });
 
-async function artifactFixture() {
+async function artifactFixture(target = 'preview') {
     const root = await mkdtemp(join(tmpdir(), 'market-artifact-'));
     const artifactDir = resolve(root, 'artifact');
     const wasmPath = resolve(root, 'market.wasm');
@@ -227,6 +227,7 @@ async function artifactFixture() {
         writeFile(lockfilePath, 'lockfile'),
     ]);
     const manifest = await createMarketRuntimeArtifact({
+        target,
         wasmPath,
         abiPath,
         lockfilePath,
@@ -239,6 +240,8 @@ async function artifactFixture() {
 }
 
 async function runtimeFixture({
+    target = 'preview',
+    deviceViewMissing = false,
     currentWasm = Buffer.from('market-wasm-v1'),
     expectedCurrentWasm = currentWasm,
     deployError = false,
@@ -250,8 +253,9 @@ async function runtimeFixture({
     reserveHeadroomYocto = '200000000000000000000000',
     deployProviderErrorCode = 'rpc_http_429',
 } = {}) {
-    const artifact = await artifactFixture();
-    const policy = JSON.parse(await readFile(POLICY_PATH, 'utf8'));
+    const artifact = await artifactFixture(target);
+    const policy = JSON.parse(await readFile(target === 'public-testnet'
+        ? new URL('./market-code-update-public-testnet-policy.json', import.meta.url) : POLICY_PATH, 'utf8'));
     const wasm = await readFile(resolve(artifact.artifactDir, 'youtick_nft.wasm'));
     const deployKey = KeyPair.fromRandom('ed25519');
     policy.deploy_public_key = deployKey.getPublicKey().toString();
@@ -267,6 +271,7 @@ async function runtimeFixture({
     const fetchImpl = async (_url, init) => {
         const request = JSON.parse(init.body);
         rpcRequests.push(request);
+        if (deviceViewMissing && request.params?.method_name === 'get_playback_device') throw new Error('missing_device_view');
         const result = rpcResult({
             request,
             policy,
@@ -301,6 +306,7 @@ async function runtimeFixture({
         deployCalls,
         rpcRequests,
         input: {
+            target,
             artifactDir: artifact.artifactDir,
             policyPath,
             rpcUrl: RPC_URL,
@@ -393,6 +399,7 @@ function rpcResult({
                 reserve_covered: true,
             },
             get_contract_state: policy.expected_access_state,
+            get_playback_device: null,
         };
         return { result: [...Buffer.from(JSON.stringify(views[params.method_name]))] };
     }
@@ -422,3 +429,62 @@ function base58Encode(bytes) {
     }
     return encoded || '1';
 }
+
+
+test('public artifacts cannot be used for Preview or an arbitrary target', async () => {
+    const publicArtifact = await artifactFixture('public-testnet');
+    const previewArtifact = await artifactFixture();
+    const verify = (fixture, target) => verifyMarketRuntimeArtifact({
+        target, artifactDir: fixture.artifactDir, sourceSha: SOURCE_SHA, runId: RUN_ID, runAttempt: RUN_ATTEMPT,
+    });
+    assert.equal((await verify(publicArtifact, 'public-testnet')).manifest.target.contract_id,
+        'video-market-v1-260907.youtick-dev-v3.testnet');
+    await assert.rejects(verify(publicArtifact, 'preview'), /market_artifact_manifest_mismatch/);
+    await assert.rejects(verify(previewArtifact, 'public-testnet'), /market_artifact_manifest_mismatch/);
+    await assert.rejects(artifactFixture('production'), /market_code_update_target_invalid/);
+});
+
+test('public code update sends once and probes the device view at the verified final block', async () => {
+    const fixture = await runtimeFixture({ target: 'public-testnet' });
+    const evidence = await runMarketCodeUpdate(fixture.input);
+    assert.equal(evidence.status, 'PASS');
+    assert.equal(fixture.deployCalls.length, 1);
+    assert.equal(fixture.deployCalls[0].targetContractId, 'video-market-v1-260907.youtick-dev-v3.testnet');
+    const probe = fixture.rpcRequests.find(request => request.params?.method_name === 'get_playback_device');
+    assert.equal(probe.params.block_id, '9'.repeat(44));
+    assert.deepEqual(JSON.parse(Buffer.from(probe.params.args_base64, 'base64')), {
+        account_id: fixture.policy.target_contract_id, session_public_key: fixture.policy.deploy_public_key,
+    });
+});
+
+test('public update rejects wrong environment, open governance, state drift and keys before sending', async (t) => {
+    for (const failure of ['preview policy', 'open purchases', 'unfrozen bridge', 'wrong Access', 'wrong state', 'wrong key']) {
+        await t.test(failure, async () => {
+            const fixture = await runtimeFixture({ target: 'public-testnet' });
+            if (failure === 'preview policy') fixture.policy.target_contract_id = 'lp-arch-market-v2-260809.youtick-dev-v3.testnet';
+            if (failure === 'open purchases') fixture.policy.expected_governance.new_purchases_paused = false;
+            if (failure === 'unfrozen bridge') fixture.policy.expected_governance.bridge_frozen = false;
+            if (failure === 'wrong Access') fixture.policy.access_contract_id = 'other.testnet';
+            if (failure === 'wrong state') fixture.input.expectedStateSha256 = 'f'.repeat(64);
+            if (failure === 'wrong key') fixture.input.derivePublicKeyImpl = async () => 'ed25519:11111111111111111111111111111111';
+            await writeFile(fixture.input.policyPath, JSON.stringify(fixture.policy));
+            await assert.rejects(runMarketCodeUpdate(fixture.input), /market_code_update_/);
+            assert.equal(fixture.deployCalls.length, 0);
+        });
+    }
+});
+
+test('public ambiguous broadcast and missing new view keep evidence without retry or rollback', async (t) => {
+    for (const options of [{ deployError: true }, { deviceViewMissing: true }]) {
+        await t.test(JSON.stringify(options), async () => {
+            const fixture = await runtimeFixture({ target: 'public-testnet', ...options });
+            await assert.rejects(runMarketCodeUpdate(fixture.input), error => {
+                assert.equal(error.evidence.target_contract_id, fixture.policy.target_contract_id);
+                assert.equal(error.evidence.transaction_hash, TX_HASH);
+                assert.ok(['RECONCILE_REQUIRED', 'POSTCHECK_FAILED'].includes(error.evidence.status));
+                return true;
+            });
+            assert.equal(fixture.deployCalls.length, 1);
+        });
+    }
+});

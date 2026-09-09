@@ -17,9 +17,13 @@ const featureFlags = vi.hoisted(() => ({
     enablePaidMediaLivepeerV1: true,
     enableLivepeerNearCreatorFee: true,
     enableSponsoredLivepeerUploads: false,
+    enablePlaybackAuthorizerV2: false,
     publicTestnetBeta: false,
     publicTestnetVideoV1: false,
 }));
+
+const device = vi.hoisted(() => ({ prepare: vi.fn(), remember: vi.fn() }));
+vi.mock('@/lib/device-session', () => ({ preparePlaybackDevice: device.prepare, rememberPlaybackDelegate: device.remember }));
 
 vi.mock('@/lib/signless-access-key', () => ({ signAndSendWithSignlessProvision: vi.fn() }));
 
@@ -232,6 +236,9 @@ describe('Livepeer browser upload', () => {
         vi.restoreAllMocks();
         featureFlags.enableLivepeerNearCreatorFee = true;
         featureFlags.enableSponsoredLivepeerUploads = false;
+        featureFlags.enablePlaybackAuthorizerV2 = false;
+        device.prepare.mockReset().mockResolvedValue({ session_public_key: 'ed25519:device', certificate_sha256: 'a'.repeat(64), authorization_duration_ms: '2592000000' });
+        device.remember.mockReset().mockResolvedValue(undefined);
         featureFlags.publicTestnetBeta = false;
         featureFlags.publicTestnetVideoV1 = false;
         near.viewContract.mockReset().mockImplementation(policyView);
@@ -301,17 +308,20 @@ describe('Livepeer browser upload', () => {
 
     it('never turns an unconfirmed public payment into a second payment attempt', async () => {
         const { wallet, input } = await publicResumeFixture();
+        featureFlags.enablePlaybackAuthorizerV2 = true;
         near.viewContract.mockImplementation(policyView);
         const sponsored = { ...wallet, signDelegateActions: vi.fn() };
         await expect(authorizeLivepeerPaidJob(sponsored as never, {
             accountId: input.accountId, jobId: input.jobId, title: 'Paid video', priceUsdc: '2000001', expectedSourceBytes: input.file.size,
         })).rejects.toThrow('livepeer_payment_pending');
         expect(sponsored.signDelegateActions).not.toHaveBeenCalled();
+        expect(device.prepare).not.toHaveBeenCalled();
         expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
     });
 
     it.each([false, true])('records a public payment attempt only at relay submission; definitive rejection=%s', async (rejected) => {
         featureFlags.publicTestnetVideoV1 = true;
+        featureFlags.enablePlaybackAuthorizerV2 = true;
         featureFlags.enableSponsoredLivepeerUploads = true;
         vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
         const file = new File(['video'], 'video.mp4', { type: 'video/mp4', lastModified: 123 });
@@ -330,6 +340,9 @@ describe('Livepeer browser upload', () => {
                 return sponsoredQuoteResponse(request);
             }
             expect((await readLivepeerUploadDraft('creator.testnet', file))?.paymentAttempted).toBe(true);
+            expect(device.remember).toHaveBeenCalledWith('creator.testnet', await device.prepare.mock.results[0].value, 'A'.repeat(64));
+            const call = wallet.signDelegateActions.mock.calls[0][0].delegateActions[0].actions[0] as { args: { msg: string } };
+            expect(JSON.parse(call.args.msg).playback_session).toEqual(await device.prepare.mock.results[0].value);
             return rejected
                 ? Response.json({ error: 'invalid_sponsored_upload_relay', reason: 'access_key' }, { status: 400 })
                 : Response.json({ accepted: true, relayed: false, job_id: 'job-public-payment', tx_hash: null });

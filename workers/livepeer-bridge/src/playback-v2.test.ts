@@ -1,4 +1,4 @@
-import { KeyPair, KeyPairSigner } from 'near-api-js';
+import { KeyPair, KeyPairSigner, actions, buildDelegateAction, encodeSignedDelegate } from 'near-api-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import handler, { playbackAuthorizationCacheRecordCount, type Env } from './index';
 
@@ -83,12 +83,15 @@ function playbackDependencies(input: Parameters<typeof playbackRpc>[0] & {
 
 async function playbackRequest(overrides?: {
     accountId?: string;
+    certificateVersion?: '1' | '2';
+    certificateContract?: string;
+    proofAccountId?: string;
     certificateExpiresAtMs?: number;
     origin?: string;
     requestOrigin?: string;
     requestSignature?: string;
     certificateSignature?: string;
-}): Promise<{ request: Request; walletPublicKey: string; accountId: string; renew: () => Promise<Request> }> {
+}): Promise<{ request: Request; walletPublicKey: string; accountId: string; renew: (requestAccountId?: string) => Promise<Request> }> {
     const now = Date.now();
     const accountId = overrides?.accountId ?? ACCOUNT_ID;
     const origin = overrides?.origin ?? ORIGIN;
@@ -96,9 +99,11 @@ async function playbackRequest(overrides?: {
     const walletKey = KeyPair.fromRandom('ed25519');
     const certificate = {
         domain: 'youtick.device-session',
-        version: '1',
+        version: overrides?.certificateVersion ?? '1',
         network: 'testnet',
-        account_id: accountId,
+        ...(overrides?.certificateVersion === '2'
+            ? { contract_id: overrides.certificateContract ?? MARKET_ID }
+            : { account_id: accountId }),
         session_public_key: deviceKey.getPublicKey().toString(),
         origin_hash: await sha256(origin),
         scopes: ['play'],
@@ -116,13 +121,13 @@ async function playbackRequest(overrides?: {
         generation: 1,
         playback_id: PLAYBACK_ID,
     };
-    const renew = async () => {
+    const renew = async (requestAccountId = accountId) => {
         const requestEnvelope = {
             domain: 'youtick.playback-request',
             version: '1',
             network: 'testnet',
             contract_id: MARKET_ID,
-            account_id: accountId,
+            account_id: requestAccountId,
             origin,
             request_nonce: base64Url(crypto.getRandomValues(new Uint8Array(32))),
             request_expires_at_ms: String(Date.now() + 5 * 60 * 1000),
@@ -140,6 +145,7 @@ async function playbackRequest(overrides?: {
                 body,
                 certificate,
                 certificate_proof: {
+                    ...(overrides?.certificateVersion === '2' ? { account_id: overrides.proofAccountId ?? requestAccountId } : {}),
                     public_key: walletKey.getPublicKey().toString(),
                     signature: overrides?.certificateSignature ?? base64(signedCertificate.signature),
                     nonce: base64Url(walletNonce),
@@ -260,6 +266,27 @@ function decodePart(value: string): Record<string, unknown> {
 
 describe('stateless playback v2', () => {
     beforeEach(() => vi.restoreAllMocks());
+
+    it('accepts a v2 combined-connection certificate and verifies the final selected account', async () => {
+        const { env } = await createEnv();
+        const signed = await playbackRequest({ certificateVersion: '2' });
+        const dependencies = playbackDependencies(signed);
+        vi.stubGlobal('fetch', dependencies.fetcher);
+        expect((await handler.fetch(signed.request, env)).status).toBe(200);
+        expect(dependencies.rpc).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not reuse cached wallet verification for another selected account', async () => {
+        const { env } = await createEnv();
+        const signed = await playbackRequest({ certificateVersion: '2' });
+        vi.stubGlobal('fetch', playbackDependencies(signed).fetcher);
+        expect((await handler.fetch(signed.request, env)).status).toBe(200);
+        const other = playbackDependencies({ ...signed, accountId: 'other.testnet', accessKeyExists: false });
+        vi.stubGlobal('fetch', other.fetcher);
+        expect((await handler.fetch(await signed.renew('other.testnet'), env)).status).toBe(403);
+        expect(other.rpc).toHaveBeenCalledOnce();
+        expect(other.provider).not.toHaveBeenCalled();
+    });
 
     it('denies new public-beta tokens at the exact end time before entitlement or provider reads', async () => {
         const now = 1_785_589_300_000;
@@ -404,6 +431,11 @@ describe('stateless playback v2', () => {
     });
 
     it.each([
+        ['v2 wrong Market', { certificateVersion: '2' as const, certificateContract: 'other.testnet' }, undefined, 400, 'protocol_binding_mismatch'],
+        ['v2 wrong proof account', { certificateVersion: '2' as const, proofAccountId: 'other.testnet' }, undefined, 400, 'protocol_binding_mismatch'],
+        ['v2 missing entitlement', { certificateVersion: '2' as const }, { entitlement: false }, 403, 'playback_denied'],
+        ['v2 function-call key', { certificateVersion: '2' as const }, { accessKeyPermission: { FunctionCall: {} } }, 403, 'playback_denied'],
+        ['v2 expired certificate', { certificateVersion: '2' as const, certificateExpiresAtMs: Date.now() - 1 }, undefined, 403, 'playback_denied'],
         ['expired certificate', { certificateExpiresAtMs: Date.now() - 1 }, undefined, 403, 'playback_denied'],
         ['wrong origin', { requestOrigin: 'https://other.example' }, undefined, 400, 'protocol_binding_mismatch'],
         ['invalid device signature', { requestSignature: base64(new Uint8Array(64)) }, undefined, 403, 'playback_denied'],
@@ -675,5 +707,113 @@ describe('stateless playback v2', () => {
         expect(response.status).toBe(503);
         expect(await response.json()).toEqual({ error: 'control_plane_disabled' });
         expect(rpc).not.toHaveBeenCalled();
+    });
+});
+
+
+async function marketDeviceRequest(delegated = false) {
+    const wallet = KeyPair.fromRandom('ed25519');
+    const device = KeyPair.fromRandom('ed25519');
+    const certificate = {
+        domain: 'youtick.device-session', version: '3', network: 'testnet', account_id: ACCOUNT_ID,
+        contract_id: MARKET_ID, session_public_key: device.getPublicKey().toString(),
+        origin_hash: await sha256(ORIGIN), scopes: ['play'], authorization_duration_ms: '2592000000',
+    };
+    const hash = await sha256(canonicalJson(certificate));
+    const proof: Record<string, unknown> = { account_id: ACCOUNT_ID, kind: 'market' };
+    if (delegated) {
+        const delegate = buildDelegateAction({
+            senderId: ACCOUNT_ID, receiverId: '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af',
+            publicKey: wallet.getPublicKey(), nonce: 1n, maxBlockHeight: 200n,
+            actions: [actions.functionCall('ft_transfer_call', {
+                receiver_id: MARKET_ID, amount: '600000', memo: 'YouTick creator upload fee',
+                msg: JSON.stringify({ action: 'create_paid_job', creator_id: ACCOUNT_ID,
+                    playback_session: { session_public_key: certificate.session_public_key, certificate_sha256: hash, authorization_duration_ms: '2592000000' } }),
+            }, 100_000_000_000_000n, 1n)],
+        });
+        const signed = await new KeyPairSigner(wallet).signDelegateAction(delegate);
+        proof.signed_delegate_base64 = base64(encodeSignedDelegate(signed.signedDelegate));
+    }
+    const renew = async (changes?: Record<string, unknown>, proofChanges?: Record<string, unknown>) => {
+        const cert = { ...certificate, ...changes };
+        const body = { publication_id: PUBLICATION_ID, generation: 1, playback_id: PLAYBACK_ID };
+        const request = {
+            domain: 'youtick.playback-request', version: '1', network: 'testnet', contract_id: MARKET_ID,
+            account_id: ACCOUNT_ID, origin: ORIGIN, request_nonce: base64Url(crypto.getRandomValues(new Uint8Array(32))),
+            request_expires_at_ms: String(Date.now() + 300000), body_sha256: await sha256(canonicalJson(body)),
+            certificate_sha256: await sha256(canonicalJson(cert)),
+        };
+        return new Request('https://bridge.youtick.net/v2/playback-tokens', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+            body: JSON.stringify({ body, certificate: cert, certificate_proof: { ...proof, ...proofChanges }, request,
+                request_signature: base64(device.sign(new TextEncoder().encode(canonicalPlaybackRequest(request))).signature) }),
+        });
+    };
+    const authorizedAt = Date.now();
+    return { renew, walletPublicKey: wallet.getPublicKey().toString(), record: {
+        session_public_key: certificate.session_public_key, certificate_sha256: hash,
+        authorized_at_ms: String(authorizedAt), expires_at_ms: String(authorizedAt + 2592000000),
+        authorizing_public_key: delegated ? null : wallet.getPublicKey().toString(),
+    } };
+}
+
+function marketDeviceDependencies(signed: Awaited<ReturnType<typeof marketDeviceRequest>>, options?: {
+    record?: unknown; accessKeyExists?: boolean; accessKeyPermission?: unknown; entitlement?: boolean;
+}) {
+    const dependencies = playbackDependencies({ ...signed, ...options });
+    const fetcher = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
+        const request = JSON.parse(String(init?.body ?? '{}'));
+        if (request.params?.method_name === 'get_playback_device') {
+            expect(request.params.finality).toBe('final');
+            return Promise.resolve(rpcResult(options && 'record' in options ? options.record : signed.record));
+        }
+        return dependencies.fetcher(url, init);
+    });
+    return { ...dependencies, fetcher };
+}
+
+describe('Market-backed 30-day playback devices', () => {
+    it.each([false, true])('uses final records on day 29 without wallet signing or transaction history (delegated=%s)', async (delegated) => {
+        const signed = await marketDeviceRequest(delegated);
+        vi.spyOn(Date, 'now').mockReturnValue(Number(signed.record.authorized_at_ms) + 29 * 86400000);
+        const { env, idFromName } = await createEnv();
+        const dependencies = marketDeviceDependencies(signed);
+        vi.stubGlobal('fetch', dependencies.fetcher);
+        expect((await handler.fetch(await signed.renew(), env)).status).toBe(200);
+        expect((await handler.fetch(await signed.renew(), env)).status).toBe(200);
+        expect(idFromName).not.toHaveBeenCalled();
+        expect(dependencies.rpc.mock.calls.every(([, init]) => JSON.parse(String(init?.body)).method === 'query')).toBe(true);
+        vi.restoreAllMocks();
+    });
+
+    it('reads renewed expiry after cache loss and denies the exact end without extending it', async () => {
+        const signed = await marketDeviceRequest();
+        const start = Number(signed.record.authorized_at_ms);
+        signed.record.authorized_at_ms = String(start + 20 * 86400000);
+        signed.record.expires_at_ms = String(start + 50 * 86400000);
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(start + 49 * 86400000);
+        const { env } = await createEnv();
+        vi.stubGlobal('fetch', marketDeviceDependencies(signed).fetcher);
+        expect((await handler.fetch(await signed.renew(), env)).status).toBe(200);
+        clock.mockReturnValue(start + 50 * 86400000);
+        expect((await handler.fetch(await signed.renew(), env)).status).toBe(403);
+        clock.mockRestore();
+    });
+
+    it.each(['missing', 'hash', 'duration', 'removed key', 'limited key', 'unpaid', 'account', 'origin', 'delegate'])('rejects %s authorization', async (problem) => {
+        const signed = await marketDeviceRequest(problem === 'delegate');
+        const { env } = await createEnv();
+        const options: Parameters<typeof marketDeviceDependencies>[1] = {};
+        if (problem === 'missing') options.record = null;
+        if (problem === 'hash') options.record = { ...signed.record, certificate_sha256: 'a'.repeat(64) };
+        if (problem === 'duration') options.record = { ...signed.record, expires_at_ms: String(Number(signed.record.authorized_at_ms) + 2592000001) };
+        if (problem === 'removed key') options.accessKeyExists = false;
+        if (problem === 'limited key') options.accessKeyPermission = { FunctionCall: {} };
+        if (problem === 'unpaid') options.entitlement = false;
+        vi.stubGlobal('fetch', marketDeviceDependencies(signed, options).fetcher);
+        const changes = problem === 'account' ? { account_id: 'stranger.testnet' }
+            : problem === 'origin' ? { origin_hash: 'a'.repeat(64) } : undefined;
+        const proofChanges = problem === 'delegate' ? { signed_delegate_base64: base64(new Uint8Array(128)) } : undefined;
+        expect((await handler.fetch(await signed.renew(changes, proofChanges), env)).status).toBeGreaterThanOrEqual(400);
     });
 });

@@ -174,22 +174,33 @@ type PlaybackV2Body = {
     generation: number;
     playback_id: string;
 };
-type DeviceSessionCertificate = {
+type LegacyDeviceCertificate = {
     domain: 'youtick.device-session';
-    version: '1';
+    version: '1' | '2';
     network: 'testnet' | 'mainnet';
-    account_id: string;
+    account_id?: string;
+    contract_id?: string;
     session_public_key: string;
     origin_hash: string;
     scopes: ['play'];
     issued_at_ms: string;
     expires_at_ms: string;
 };
-type DeviceCertificateProof = {
+type MarketDeviceCertificate = Omit<LegacyDeviceCertificate, 'version' | 'issued_at_ms' | 'expires_at_ms'> & {
+    version: '3';
+    account_id: string;
+    contract_id: string;
+    authorization_duration_ms: string;
+};
+type DeviceSessionCertificate = LegacyDeviceCertificate | MarketDeviceCertificate;
+type MarketCertificateProof = { kind: 'market'; account_id: string; signed_delegate_base64?: string };
+type WalletCertificateProof = {
+    account_id?: string;
     public_key: string;
     signature: string;
     nonce: string;
 };
+type DeviceCertificateProof = WalletCertificateProof | MarketCertificateProof;
 type PlaybackV2Envelope = {
     domain: 'youtick.playback-request';
     version: '1';
@@ -208,6 +219,7 @@ type PlaybackV2Request = {
     certificateProof: DeviceCertificateProof;
     request: PlaybackV2Envelope;
     requestSignature: string;
+    deviceExpiresAtMs?: number;
 };
 type CreatorFeeQuoteRequest = {
     creator_id: string;
@@ -257,6 +269,7 @@ type ParsedSponsoredDelegate = {
     maxBlockHeight: bigint;
     request: SponsoredPaidJobRequest;
     quote: SponsoredUploadQuote;
+    hasPlaybackSession?: boolean;
 };
 type SponsorRelayRecord = {
     schema: 'youtick.sponsor-relay.v1';
@@ -571,6 +584,7 @@ const PLAYBACK_MIN_TTL_SECONDS = 120;
 const PLAYBACK_MAX_TTL_SECONDS = 300;
 const PLAYBACK_V2_TTL_SECONDS = 180;
 const DEVICE_CERTIFICATE_MAX_LIFETIME_MS = 8 * 60 * 60 * 1000;
+const MARKET_DEVICE_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 const PLAYBACK_CACHE_MAX_RECORDS = 1024;
 const DEVICE_CERTIFICATE_CACHE_MS = 60 * 1000;
 const PUBLICATION_CACHE_MS = 30 * 1000;
@@ -3917,7 +3931,11 @@ async function parseSponsoredUploadRelayRequest(
         'upload_key_expires_at_ms',
         'sponsor_quote',
         'sponsor_quote_signature',
+        ...(Object.hasOwn(message, 'playback_session') ? ['playback_session'] : []),
     ], shapeCode);
+    if (Object.hasOwn(message, 'playback_session')) {
+        try { parsePlaybackSessionAuthorization(message.playback_session); } catch { throw new Error(shapeCode); }
+    }
     if (message.action !== 'create_paid_job'
         || message.creator_id !== delegate.senderId
         || typeof message.sponsor_quote_signature !== 'string') {
@@ -3973,6 +3991,7 @@ async function parseSponsoredUploadRelayRequest(
     return {
         signedDelegate,
         signedDelegateBase64: value.signed_delegate_base64,
+        hasPlaybackSession: Object.hasOwn(message, 'playback_session'),
         signedDelegateSha256: await sha256BytesHex(encoded),
         publicKey: `ed25519:${baseEncode(publicKeyBytes)}`,
         nonce: delegate.nonce,
@@ -4182,6 +4201,9 @@ async function relaySponsoredUpload(
         throw new Error(SPONSORED_RELAY_REJECTION_CODES.access_key);
     }
     requireCreatorDelegatePermission(creatorAccessKey.permission, env);
+    if (input.hasPlaybackSession && creatorAccessKey.permission !== 'FullAccess') {
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.access_key);
+    }
     if (balance < BigInt(input.quote.total_fee_usdc)) {
         throw new Error('sponsor_balance_insufficient');
     }
@@ -5348,7 +5370,7 @@ async function parsePlaybackV2Request(request: Request, env: Env): Promise<Playb
     ], 'invalid_playback_v2_request');
     const body = parsePlaybackV2Body(value.body);
     const certificate = parseDeviceSessionCertificate(value.certificate);
-    const certificateProof = parseDeviceCertificateProof(value.certificate_proof);
+    const certificateProof = parseDeviceCertificateProof(value.certificate_proof, certificate.version);
     const playbackRequest = parsePlaybackV2Envelope(value.request);
     if (typeof value.request_signature !== 'string'
         || value.request_signature.length > 128
@@ -5363,7 +5385,9 @@ async function parsePlaybackV2Request(request: Request, env: Env): Promise<Playb
         || playbackRequest.network !== env.NEAR_NETWORK
         || certificate.network !== env.NEAR_NETWORK
         || playbackRequest.contract_id !== env.MARKET_CONTRACT_ID
-        || playbackRequest.account_id !== certificate.account_id
+        || (certificate.version === '1'
+            ? playbackRequest.account_id !== certificate.account_id
+            : certificate.contract_id !== env.MARKET_CONTRACT_ID || playbackRequest.account_id !== certificateProof.account_id)
         || playbackRequest.body_sha256 !== await sha256Hex(canonicalJson(body))
         || playbackRequest.certificate_sha256 !== await sha256Hex(canonicalJson(certificate))) {
         throw new Error('protocol_binding_mismatch');
@@ -5371,13 +5395,21 @@ async function parsePlaybackV2Request(request: Request, env: Env): Promise<Playb
 
     const now = BigInt(Date.now());
     const requestExpiresAt = BigInt(playbackRequest.request_expires_at_ms);
+    if (certificate.version === '3') {
+        if (certificate.account_id !== playbackRequest.account_id
+            || requestExpiresAt <= now || requestExpiresAt > now + BigInt(CONTROL_MAX_FUTURE_MS)) {
+            throw new Error('playback_denied');
+        }
+        return { body, certificate, certificateProof, request: playbackRequest, requestSignature: value.request_signature };
+    }
     const issuedAt = BigInt(certificate.issued_at_ms);
     const certificateExpiresAt = BigInt(certificate.expires_at_ms);
     if (requestExpiresAt <= now || requestExpiresAt > now + BigInt(CONTROL_MAX_FUTURE_MS)
         || issuedAt > now
         || certificateExpiresAt <= now
         || certificateExpiresAt > now + BigInt(DEVICE_CERTIFICATE_MAX_LIFETIME_MS)
-        || certificateExpiresAt - issuedAt > BigInt(DEVICE_CERTIFICATE_MAX_LIFETIME_MS)) {
+        || certificateExpiresAt - issuedAt > BigInt(DEVICE_CERTIFICATE_MAX_LIFETIME_MS)
+        || (certificate.version === '2' && certificateExpiresAt - issuedAt !== BigInt(DEVICE_CERTIFICATE_MAX_LIFETIME_MS))) {
         throw new Error('playback_denied');
     }
 
@@ -5406,11 +5438,24 @@ function parsePlaybackV2Body(value: unknown): PlaybackV2Body {
 
 function parseDeviceSessionCertificate(value: unknown): DeviceSessionCertificate {
     const certificate = requireObject(value, 'invalid_playback_v2_request');
+    if (certificate.version === '3') {
+        requireExactKeys(certificate, ['domain', 'version', 'network', 'account_id', 'contract_id',
+            'session_public_key', 'origin_hash', 'scopes', 'authorization_duration_ms'], 'invalid_playback_v2_request');
+        if (certificate.domain !== 'youtick.device-session'
+            || !['testnet', 'mainnet'].includes(String(certificate.network))
+            || typeof certificate.account_id !== 'string' || !ACCOUNT_ID_PATTERN.test(certificate.account_id)
+            || typeof certificate.contract_id !== 'string' || !ACCOUNT_ID_PATTERN.test(certificate.contract_id)
+            || typeof certificate.session_public_key !== 'string' || !SESSION_KEY_PATTERN.test(certificate.session_public_key)
+            || typeof certificate.origin_hash !== 'string' || !SHA256_PATTERN.test(certificate.origin_hash)
+            || !Array.isArray(certificate.scopes) || certificate.scopes.length !== 1 || certificate.scopes[0] !== 'play'
+            || certificate.authorization_duration_ms !== String(MARKET_DEVICE_LIFETIME_MS)) throw new Error('invalid_playback_v2_request');
+        return certificate as MarketDeviceCertificate;
+    }
     requireExactKeys(certificate, [
         'domain',
         'version',
         'network',
-        'account_id',
+        certificate.version === '2' ? 'contract_id' : 'account_id',
         'session_public_key',
         'origin_hash',
         'scopes',
@@ -5418,10 +5463,10 @@ function parseDeviceSessionCertificate(value: unknown): DeviceSessionCertificate
         'expires_at_ms',
     ], 'invalid_playback_v2_request');
     if (certificate.domain !== 'youtick.device-session'
-        || certificate.version !== '1'
+        || !['1', '2'].includes(String(certificate.version))
         || !['testnet', 'mainnet'].includes(String(certificate.network))
-        || typeof certificate.account_id !== 'string'
-        || !ACCOUNT_ID_PATTERN.test(certificate.account_id)
+        || typeof certificate[certificate.version === '2' ? 'contract_id' : 'account_id'] !== 'string'
+        || !ACCOUNT_ID_PATTERN.test(String(certificate[certificate.version === '2' ? 'contract_id' : 'account_id']))
         || typeof certificate.session_public_key !== 'string'
         || !SESSION_KEY_PATTERN.test(certificate.session_public_key)
         || typeof certificate.origin_hash !== 'string'
@@ -5438,10 +5483,19 @@ function parseDeviceSessionCertificate(value: unknown): DeviceSessionCertificate
     return certificate as DeviceSessionCertificate;
 }
 
-function parseDeviceCertificateProof(value: unknown): DeviceCertificateProof {
+function parseDeviceCertificateProof(value: unknown, version: '1' | '2' | '3'): DeviceCertificateProof {
     const proof = requireObject(value, 'invalid_playback_v2_request');
-    requireExactKeys(proof, ['public_key', 'signature', 'nonce'], 'invalid_playback_v2_request');
-    if (typeof proof.public_key !== 'string'
+    if (version === '3') {
+        requireExactKeys(proof, ['account_id', 'kind', ...(Object.hasOwn(proof, 'signed_delegate_base64') ? ['signed_delegate_base64'] : [])], 'invalid_playback_v2_request');
+        if (proof.kind !== 'market' || typeof proof.account_id !== 'string' || !ACCOUNT_ID_PATTERN.test(proof.account_id)
+            || (Object.hasOwn(proof, 'signed_delegate_base64') && (typeof proof.signed_delegate_base64 !== 'string'
+                || proof.signed_delegate_base64.length > MAX_CONTROL_BODY_BYTES
+                || !/^[A-Za-z0-9+/]+={0,2}$/.test(proof.signed_delegate_base64)))) throw new Error('invalid_playback_v2_request');
+        return proof as MarketCertificateProof;
+    }
+    requireExactKeys(proof, [...(version === '2' ? ['account_id'] : []), 'public_key', 'signature', 'nonce'], 'invalid_playback_v2_request');
+    if ((version === '2' && (typeof proof.account_id !== 'string' || !ACCOUNT_ID_PATTERN.test(proof.account_id)))
+        || typeof proof.public_key !== 'string'
         || !SESSION_KEY_PATTERN.test(proof.public_key)
         || typeof proof.signature !== 'string'
         || proof.signature.length > 128
@@ -5957,7 +6011,7 @@ async function issueStatelessPlaybackToken(request: Request, env: Env): Promise<
         const authorization = await readStatelessPlaybackAuthorization(env, input);
         const nowMs = Date.now();
         const certificateRemainingSeconds = Math.floor(
-            (Number(input.certificate.expires_at_ms) - nowMs) / 1000,
+            ((input.certificate.version === '3' ? input.deviceExpiresAtMs! : Number(input.certificate.expires_at_ms)) - nowMs) / 1000,
         );
         if (certificateRemainingSeconds < 1) throw new Error('playback_denied');
         const ttlSeconds = Math.min(PLAYBACK_V2_TTL_SECONDS, certificateRemainingSeconds);
@@ -6008,17 +6062,21 @@ async function verifyPlaybackV2Proofs(env: Env, input: PlaybackV2Request): Promi
         canonicalPlaybackV2Message(input.request),
     );
 
+    if (input.certificate.version === '3') return verifyMarketDeviceProof(env, input);
+    if ('kind' in input.certificateProof) throw new Error('playback_denied');
     const cacheKey = await playbackCacheKey(env, 'certificate', canonicalJson({
         certificate: input.certificate,
         proof: input.certificateProof,
+        account_id: input.request.account_id,
     }));
     if (playbackCacheGet<boolean>(cacheKey) === true) return true;
 
+    const certificateProof = input.certificateProof;
     let signature: Uint8Array;
     let nonce: Uint8Array;
     try {
-        signature = base64Decode(input.certificateProof.signature);
-        nonce = base64UrlDecode(input.certificateProof.nonce);
+        signature = base64Decode(certificateProof.signature);
+        nonce = base64UrlDecode(certificateProof.nonce);
     } catch {
         throw new Error('playback_denied');
     }
@@ -6026,8 +6084,8 @@ async function verifyPlaybackV2Proofs(env: Env, input: PlaybackV2Request): Promi
 
     try {
         await verifyNep413Message({
-            signerAccountId: input.certificate.account_id,
-            signerPublicKey: input.certificateProof.public_key,
+            signerAccountId: input.request.account_id,
+            signerPublicKey: certificateProof.public_key,
             payload: {
                 message: canonicalJson(input.certificate),
                 recipient: env.MARKET_CONTRACT_ID!,
@@ -6078,6 +6136,75 @@ async function verifyEd25519Signature(
     )) {
         throw new Error('playback_denied');
     }
+}
+
+function parsePlaybackSessionAuthorization(value: unknown): JsonObject {
+    const session = requireObject(value, 'invalid_playback_v2_request');
+    requireExactKeys(session, ['session_public_key', 'certificate_sha256', 'authorization_duration_ms'], 'invalid_playback_v2_request');
+    if (typeof session.session_public_key !== 'string' || !SESSION_KEY_PATTERN.test(session.session_public_key)
+        || typeof session.certificate_sha256 !== 'string' || !SHA256_PATTERN.test(session.certificate_sha256)
+        || session.authorization_duration_ms !== String(MARKET_DEVICE_LIFETIME_MS)) throw new Error('invalid_playback_v2_request');
+    return session;
+}
+
+async function verifyMarketDeviceProof(env: Env, input: PlaybackV2Request): Promise<boolean> {
+    if (!('kind' in input.certificateProof)) throw new Error('playback_denied');
+    const cacheKey = await playbackCacheKey(env, 'market-device', canonicalJson({
+        account_id: input.request.account_id, certificate: input.certificate, proof: input.certificateProof,
+    }));
+    const cachedExpiry = playbackCacheGet<number>(cacheKey);
+    if (cachedExpiry !== undefined) {
+        input.deviceExpiresAtMs = cachedExpiry;
+        return true;
+    }
+    const read = await nearPlaybackView(env, env.MARKET_CONTRACT_ID!, 'get_playback_device', {
+        account_id: input.request.account_id, session_public_key: input.certificate.session_public_key,
+    });
+    const device = requireObject(read.value, 'playback_denied');
+    if (device.session_public_key !== input.certificate.session_public_key
+        || device.certificate_sha256 !== input.request.certificate_sha256
+        || typeof device.authorized_at_ms !== 'string' || !/^[0-9]{1,16}$/.test(device.authorized_at_ms)
+        || typeof device.expires_at_ms !== 'string' || !/^[0-9]{1,16}$/.test(device.expires_at_ms)
+        || Number(device.expires_at_ms) - Number(device.authorized_at_ms) !== MARKET_DEVICE_LIFETIME_MS
+        || Number(device.authorized_at_ms) > Date.now() || Number(device.expires_at_ms) <= Date.now()) throw new Error('playback_denied');
+    let publicKey = device.authorizing_public_key;
+    if (publicKey === null) {
+        publicKey = await verifyPlaybackDelegate(env, input);
+    }
+    if (typeof publicKey !== 'string' || !SESSION_KEY_PATTERN.test(publicKey)) throw new Error('playback_denied');
+    await readFinalAccessKey(env, input.request.account_id, publicKey);
+    input.deviceExpiresAtMs = Number(device.expires_at_ms);
+    playbackCachePut(cacheKey, input.deviceExpiresAtMs, Math.min(Date.now() + DEVICE_CERTIFICATE_CACHE_MS, input.deviceExpiresAtMs));
+    return false;
+}
+
+async function verifyPlaybackDelegate(env: Env, input: PlaybackV2Request): Promise<string> {
+    if (!('kind' in input.certificateProof) || !input.certificateProof.signed_delegate_base64) throw new Error('playback_denied');
+    try {
+        const bytes = base64Decode(input.certificateProof.signed_delegate_base64);
+        const signed = deserialize(SCHEMA.SignedDelegate, bytes) as unknown as SignedDelegate;
+        if (!constantTimeEqual(encodeSignedDelegate(signed), bytes)) throw new Error('playback_denied');
+        const delegate = signed.delegateAction;
+        if (delegate.senderId !== input.request.account_id || delegate.receiverId !== usdcContractId(env)
+            || delegate.actions.length !== 1) throw new Error('playback_denied');
+        const call = delegate.actions[0].functionCall;
+        if (!call || call.methodName !== 'ft_transfer_call' || call.deposit !== 1n) throw new Error('playback_denied');
+        const args = JSON.parse(new TextDecoder().decode(Uint8Array.from(call.args))) as JsonObject;
+        if (args.receiver_id !== env.MARKET_CONTRACT_ID || typeof args.msg !== 'string') throw new Error('playback_denied');
+        const message = JSON.parse(args.msg) as JsonObject;
+        const authorization = parsePlaybackSessionAuthorization(message.playback_session);
+        if (message.action !== 'create_paid_job' || message.creator_id !== input.request.account_id
+            || authorization.session_public_key !== input.certificate.session_public_key
+            || authorization.certificate_sha256 !== input.request.certificate_sha256) throw new Error('playback_denied');
+        const publicKey = (delegate.publicKey as unknown as { ed25519Key: { data: number[] } }).ed25519Key.data;
+        const signature = (signed.signature as unknown as { ed25519Signature: { data: number[] } }).ed25519Signature.data;
+        const digest = await crypto.subtle.digest('SHA-256', encodeDelegateAction(delegate));
+        const key = await crypto.subtle.importKey('raw', Uint8Array.from(publicKey), 'Ed25519', false, ['verify']);
+        if (!await crypto.subtle.verify('Ed25519', key, Uint8Array.from(signature), digest)) throw new Error('playback_denied');
+        // The accepted Market record supplies the 30-day lifetime. The delegate's
+        // block window only limits submitting the payment, not using its proof.
+        return `ed25519:${baseEncode(Uint8Array.from(publicKey))}`;
+    } catch { throw new Error('playback_denied'); }
 }
 
 function canonicalPlaybackV2Message(request: PlaybackV2Envelope): string {
@@ -6181,7 +6308,7 @@ async function readStatelessPlaybackAuthorization(
     const entitlementCacheKey = await playbackCacheKey(
         env,
         'entitlement',
-        `${input.certificate.account_id}:${input.body.publication_id}:${tupleHash}`,
+        `${input.request.account_id}:${input.body.publication_id}:${tupleHash}`,
     );
     let entitled = playbackCacheGet<boolean>(entitlementCacheKey);
     const entitlementCacheHit = entitled !== undefined;
@@ -6191,7 +6318,7 @@ async function readStatelessPlaybackAuthorization(
             env.MARKET_CONTRACT_ID!,
             'has_entitlement',
             {
-                account_id: input.certificate.account_id,
+                account_id: input.request.account_id,
                 publication_id: input.body.publication_id,
             },
             publicationBlockHash,

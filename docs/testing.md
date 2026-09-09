@@ -7,6 +7,8 @@ cd apps/web
 npm ci
 npm test -- --run
 npm run test:livepeer-canary
+# Local Brave device storage / mock wallet and chain only
+node scripts/device-session-browser-check.mjs
 npm run lint
 npm run build
 ```

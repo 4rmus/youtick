@@ -24,6 +24,7 @@ const expectedMarket = [
   "get_media_job",
   "get_platform_balance",
   "get_platform_near_balance",
+  "get_playback_device",
   "get_public_testnet_beta_job",
   "get_public_testnet_beta_state",
   "get_public_upload_policy",
@@ -93,6 +94,11 @@ const marketAbi = JSON.stringify(market);
 const accessAbi = JSON.stringify(access);
 
 for (const field of [
+  "session_public_key",
+  "certificate_sha256",
+  "authorized_at_ms",
+  "expires_at_ms",
+  "authorizing_public_key",
   "expected_source_bytes",
   "profile_config_sha256",
   "asset_id_hash",
@@ -158,6 +164,12 @@ for (const field of [
 const issueGrant = access.body.functions.find(({ name }) => name === "issue_session_grant");
 if (JSON.stringify(issueGrant?.params?.args?.map(({ name }) => name)) !== JSON.stringify(["request"])) {
   throw new Error("access issue_session_grant must accept one request object");
+}
+
+const playbackDevice = market.body.functions.find(({ name }) => name === "get_playback_device");
+if (playbackDevice?.kind !== "view"
+  || JSON.stringify(playbackDevice.params?.args?.map(({ name }) => name)) !== JSON.stringify(["account_id", "session_public_key"])) {
+  throw new Error("market get_playback_device must be a view bound to account and device key");
 }
 
 const availability = market.body.root_schema?.definitions?.PublicationAvailability;
