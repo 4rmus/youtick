@@ -2493,8 +2493,8 @@ async function preflightAdmission(
     const jobReservationUsdMicros = operationReservation(env);
     const monthlyBudgetUsdMicros = monthlyBudget(env);
     if (!creatorAllowed(env, candidate.creator)
-        || !jobReservationUsdMicros
-        || !monthlyBudgetUsdMicros) {
+        || jobReservationUsdMicros === null
+        || (!isPublicTestnetEnvironment(env) && monthlyBudgetUsdMicros === null)) {
         throw new Error('admission_closed');
     }
     const now = Date.now();
@@ -2530,7 +2530,8 @@ async function reserveAdmission(
     if (!creatorAllowed(env, candidate.creator)) throw new Error('admission_closed');
     const jobReservationUsdMicros = operationReservation(env);
     const monthlyBudgetUsdMicros = monthlyBudget(env);
-    if (!jobReservationUsdMicros || !monthlyBudgetUsdMicros) throw new Error('admission_closed');
+    if (jobReservationUsdMicros === null
+        || (!isPublicTestnetEnvironment(env) && monthlyBudgetUsdMicros === null)) throw new Error('admission_closed');
     const now = Date.now();
     const result = await state.storage.transaction(async (transaction) => {
         const stored = await transaction.get<AdmissionRecord>(ADMISSION_KEY);
@@ -2660,7 +2661,7 @@ function planAdmission(
     candidate: AdmissionCandidate,
     now: number,
     jobReservationUsdMicros: bigint,
-    monthlyBudgetUsdMicros: bigint,
+    monthlyBudgetUsdMicros: bigint | null,
     env: Env,
 ): {
     record: AdmissionRecord;
@@ -2698,7 +2699,7 @@ function planAdmission(
         if (record.closure?.code !== 'monthly_budget_exceeded') {
             throw new Error('admission_closed');
         }
-        if (record.monthly.utcMonth === utcMonth) {
+        if (monthlyBudgetUsdMicros !== null && record.monthly.utcMonth === utcMonth) {
             return {
                 record,
                 reservationKey,
@@ -2728,7 +2729,8 @@ function planAdmission(
         || (daily.creatorAttempts[candidate.creator] || 0) >= ADMISSION_CREATOR_DAILY_ATTEMPTS) {
         throw new Error('admission_denied');
     }
-    if (BigInt(monthly.reservedBudgetUsdMicros) + jobReservationUsdMicros > monthlyBudgetUsdMicros) {
+    if (monthlyBudgetUsdMicros !== null
+        && BigInt(monthly.reservedBudgetUsdMicros) + jobReservationUsdMicros > monthlyBudgetUsdMicros) {
         return {
             record: {
                 ...record,
@@ -3013,7 +3015,8 @@ async function readAdmissionStatus(state: DurableObjectState, env: Env): Promise
             configuredBudgetUsdMicros: monthlyBudgetUsdMicros === null
                 ? null
                 : String(monthlyBudgetUsdMicros),
-            configuredJobReservationUsdMicros: String(jobReservationUsdMicros || ''),
+            configuredJobReservationUsdMicros: isPublicTestnetEnvironment(env)
+                ? null : String(jobReservationUsdMicros || ''),
         },
     });
 }
@@ -3220,11 +3223,14 @@ async function enforcePublicBetaAccountRateLimit(
 }
 
 function operationReservation(env: Env): bigint | null {
+    // Public testnet uses upload quotas, not estimated dollar reservations.
+    if (isPublicTestnetEnvironment(env)) return 0n;
     const job = env.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS || '';
     return /^[1-9][0-9]{0,19}$/.test(job) ? BigInt(job) : null;
 }
 
 function monthlyBudget(env: Env): bigint | null {
+    if (isPublicTestnetEnvironment(env)) return null;
     const budget = env.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS || '';
     return /^[1-9][0-9]{0,19}$/.test(budget) ? BigInt(budget) : null;
 }
@@ -7486,8 +7492,8 @@ function validOperatorArchiveConfig(env: Env): boolean {
 
 function validAdmissionConfig(env: Env): boolean {
     return (isPublicTestnetEnvironment(env) || creatorAllowlist(env).size > 0)
-        && operationReservation(env) !== null
-        && monthlyBudget(env) !== null
+        && (isPublicTestnetEnvironment(env)
+            || (operationReservation(env) !== null && monthlyBudget(env) !== null))
         && ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
         && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '');
 }

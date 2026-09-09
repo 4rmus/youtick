@@ -887,19 +887,78 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         }
     });
 
+    it.each([
+        { budget: '', closed: false },
+        { budget: '5000000', closed: false },
+        { budget: undefined, closed: true },
+    ])('admits public uploads without dollar reservations: %j', async ({ budget, closed }) => {
+        vi.stubGlobal('fetch', publicUploadBackend());
+        const creator = String(vectors.upload_intent.envelope.account_id);
+        const now = Date.now();
+        const utcDay = new Date(now).toISOString().slice(0, 10);
+        const state = createState();
+        state.values.set('admission:v1', {
+            schema: 'youtick.livepeer-admission.v2',
+            status: closed ? 'AUTO_CLOSED' : 'OPEN',
+            ...(closed ? { closure: { code: 'monthly_budget_exceeded', observedAtMs: now } } : {}),
+            reservations: {},
+            daily: { utcDay, globalAttempts: 1, creatorAttempts: { [creator]: 1 } },
+            monthly: { utcMonth: utcDay.slice(0, 7), reservedBudgetUsdMicros: '5000000' },
+        });
+        const env = createEnv({
+            VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_CREATOR_ALLOWLIST: '',
+            LIVEPEER_BRIDGE_ENABLED: 'true', LIVEPEER_NEW_UPLOADS_ENABLED: 'true',
+            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: budget,
+            LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: budget,
+            PUBLIC_BETA_RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) } as RateLimit,
+        });
+        const control = new LivepeerControl(state.state, env);
+        env.LIVEPEER_CONTROL = {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: (request: Request) => control.fetch(request) }),
+        } as unknown as DurableObjectNamespace;
+        const preflight = await handler.fetch(uploadPreflightRequest(), env);
+        expect(preflight.status, await preflight.clone().text()).toBe(200);
+        expect((await control.fetch(admissionRequest('reserve', {
+            jobId: 'job-preflight', generation: 1, creator, expectedSourceBytes: '1000',
+        }))).status).toBe(200);
+        expect(state.values.get('admission:v1')).toMatchObject({
+            status: 'OPEN',
+            monthly: { reservedBudgetUsdMicros: '5000000' },
+            daily: { globalAttempts: 2, creatorAttempts: { [creator]: 2 } },
+            reservations: { 'job-preflight:1': { estimatedProviderCostUsdMicros: '0' } },
+        });
+        expect(await (await control.fetch(new Request('https://object/internal/admission/status'))).json())
+            .toMatchObject({ monthly: { configuredBudgetUsdMicros: null, configuredJobReservationUsdMicros: null } });
+        await control.fetch(admissionRequest('mark', {
+            jobId: 'job-preflight', generation: 1, state: 'ONCHAIN_PUBLISHED',
+        }));
+        expect((await handler.fetch(uploadPreflightRequest({ job_id: 'job-third' }), env)).status).toBe(409);
+
+        const record = state.values.get('admission:v1') as object;
+        state.values.set('admission:v1', {
+            ...record, status: 'AUTO_CLOSED', closure: { code: 'provider_unavailable', observedAtMs: now },
+        });
+        const providerClosed = await handler.fetch(uploadPreflightRequest({ creator_id: 'other.testnet' }), env);
+        expect(providerClosed.status).toBe(503);
+        expect(await providerClosed.json()).toEqual({ error: 'admission_closed' });
+    });
+
     it('uses ten public slots while retaining one active job per creator and the 5 GB boundary', async () => {
         vi.stubGlobal('fetch', publicUploadBackend());
         const control = new LivepeerControl(createState().state, createEnv({
             VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_CREATOR_ALLOWLIST: '',
-            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '2000000000',
+            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '',
+            LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '',
         }));
         const reserve = (index: number, creator = `creator-${index}.testnet`, bytes = '5000000000') => control.fetch(
             admissionRequest('reserve', { jobId: `job-${index}`, generation: 1, creator, expectedSourceBytes: bytes }),
         );
         expect((await reserve(99, 'oversized.testnet', '5000000001')).status).toBeGreaterThanOrEqual(400);
-        for (let index = 0; index < 10; index += 1) expect((await reserve(index)).status).toBeLessThan(300);
+        expect((await reserve(0)).status).toBe(200);
+        expect((await reserve(11, 'creator-0.testnet')).status).toBe(409);
+        for (let index = 1; index < 10; index += 1) expect((await reserve(index)).status).toBeLessThan(300);
         expect((await reserve(10)).status).toBeGreaterThanOrEqual(400);
-        expect((await reserve(11, 'creator-0.testnet')).status).toBeGreaterThanOrEqual(400);
     });
 
     it('keeps the implemented public control route disabled by default', async () => {

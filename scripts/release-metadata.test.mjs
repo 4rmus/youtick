@@ -990,6 +990,8 @@ test("public packets build and verify without any Preview or Production artifact
   assertSuccess(run(["config", "--environment", "public-testnet", "--output", base], {
     ...publicEnv("public-testnet"), PUBLIC_TESTNET_NEAR_SPONSOR_RELAYER_ACCOUNT_ID: "public-relayer.testnet",
     PUBLIC_TESTNET_NEAR_SPONSOR_RELAYER_KEY_EPOCH: "1",
+    PUBLIC_TESTNET_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: "",
+    PUBLIC_TESTNET_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: "",
   }));
   writeFileSync(bundle, "public bundle\n");
   const args = release.manifestArgs.filter((arg, index, all) => {
@@ -1005,6 +1007,8 @@ test("public packets build and verify without any Preview or Production artifact
     assert.equal(packet.bridge.LIVEPEER_WEBHOOK_QUEUE_ENABLED, String(mode !== "closed"));
     assert.equal(packet.web.NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2, String(mode !== "closed"));
     assert.equal(packet.bridge.LIVEPEER_CREATOR_ALLOWLIST, "");
+    assert.equal(packet.bridge.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS, "");
+    assert.equal(packet.bridge.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS, "");
     assertSuccess(run([...args, "--environment", "public-testnet", "--public-testnet-config", config, "--web-public-testnet", bundle]));
     const manifest = JSON.parse(readFileSync(join(release.artifactDir, "manifest.json")));
     assert.deepEqual(Object.keys(manifest.targets), ["public-testnet"]);
