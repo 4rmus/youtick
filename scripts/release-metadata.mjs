@@ -557,9 +557,6 @@ export function validatePublicTestnetConfig(config) {
   }
   if (mode !== "closed") {
     if (web.NEXT_PUBLIC_MARKET_READ_MODEL_URL !== `https://${PUBLIC_TESTNET_READ_MODEL.domain}`) fail("public_testnet_read_model_origin_invalid");
-    if (!DECIMAL_RE.test(bridge.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS)
-        || !DECIMAL_RE.test(bridge.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS)
-        || BigInt(bridge.LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS) > BigInt(bridge.LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS)) fail("public_testnet_budget_invalid");
   }
   if (mode !== "closed" && (!/^[a-z0-9][a-z0-9._-]*\.testnet$/.test(bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID)
       || [bridge.MARKET_CONTRACT_ID, bridge.ACCESS_CONTRACT_ID, bridge.NEAR_OPERATOR_ACCOUNT_ID].includes(bridge.NEAR_SPONSOR_RELAYER_ACCOUNT_ID)
