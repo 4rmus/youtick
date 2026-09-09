@@ -31,7 +31,7 @@ describe('derived Market read client', () => {
         expect(page.nextCursor).toBe('next_cursor');
         expect(fetchMock).toHaveBeenCalledWith(
             'https://read.test/v1/publications?limit=24',
-            { headers: { Accept: 'application/json' }, signal: expect.any(AbortSignal) },
+            { cache: 'no-cache', headers: { Accept: 'application/json' }, signal: expect.any(AbortSignal) },
         );
     });
 
@@ -76,5 +76,8 @@ describe('derived Market read client', () => {
         expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
             'https://read.test/v1/creators/creator.testnet/publications?limit=50',
         ]);
+        expect(fetchMock.mock.calls[0][1]).toEqual({
+            cache: 'no-cache', headers: { Accept: 'application/json' }, signal: expect.any(AbortSignal),
+        });
     });
 });

@@ -82,7 +82,7 @@ async function readPublicationPage(
 
 async function requestJson(path: string | URL): Promise<Record<string, unknown>> {
     const url = path instanceof URL ? path : new URL(path, requireReadModelOrigin());
-    const response = await fetch(url.toString(), { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(2_500) });
+    const response = await fetch(url.toString(), { cache: 'no-cache', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(2_500) });
     if (!response.ok) throw new Error('market_read_model_unavailable');
     try {
         const value: unknown = await response.json();
