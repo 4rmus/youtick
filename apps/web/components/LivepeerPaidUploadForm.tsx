@@ -784,6 +784,9 @@ function fileValidationMessage(error: 'empty_file' | 'source_limit_exceeded' | '
 
 function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): string {
     const code = reason instanceof Error ? reason.message : '';
+    if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(code)) {
+        return 'Enable secure site storage and use a supported browser before continuing. No payment was sent.';
+    }
     if (code === 'livepeer_resume_required') return 'This job is already paid. Resume the existing upload.';
     if (code === 'livepeer_resume_file_mismatch') return 'Select the same original file to resume this upload.';
     if (code === 'livepeer_key_replacement_pending') return 'The previous wallet action is not confirmed. Check it before trying this upload again.';

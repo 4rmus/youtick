@@ -403,3 +403,36 @@ test('public testnet builds a reviewed isolated artifact before its protected de
     assert.match(deploy, /cloudflare-release.mjs deploy public-testnet/);
     assert.doesNotMatch(deploy, /secrets\.(PREVIEW_|PRODUCTION_)|near .*call|d1 execute|workflow run/);
 });
+
+
+test('public Market code update is manual, exact-target and isolated from Preview', async () => {
+    const workflow = await readFile(new URL('../.github/workflows/public-testnet-market-code-update.yml', import.meta.url), 'utf8');
+    assert.match(workflow, /workflow_dispatch:/);
+    assert.doesNotMatch(workflow, /workflow_run:|pull_request_target:|workflow_call:/);
+    assert.match(workflow, /group: public-testnet-video/);
+    assert.match(workflow, /name: public-testnet/);
+    assert.match(workflow, /github.run_attempt == 1/);
+    assert.match(workflow, /UPDATE_EXISTING_PUBLIC_TESTNET_MARKET_CODE/);
+    assert.match(workflow, /--arg name "public-testnet-market-contract-\$\{REQUESTED_SHA\}"/);
+    assert.match(workflow, /--target public-testnet/);
+    assert.match(workflow, /PUBLIC_TESTNET_MARKET_DEPLOY_PRIVATE_KEY/);
+    assert.match(workflow, /secrets.PUBLIC_TESTNET_NEAR_RPC_URL/);
+    assert.match(workflow, /EXPECTED_POLICY_SHA256/);
+    assert.match(workflow, /required_reviewers/);
+    assert.match(workflow, /deployment_branch_policy.protected_branches/);
+    assert.match(workflow, /--source-digest/);
+    assert.match(workflow, /\.head_sha == \$sha/);
+    assert.match(workflow, /\.event == "push"/);
+    assert.match(workflow, /\.stage == "DISABLED"/);
+    assert.match(workflow, /\.playbackReady == false/);
+    assert.match(workflow, /\.webhookQueueReady == false/);
+    assert.match(workflow, /\.operatorMutationEnabled == false/);
+    assert.doesNotMatch(workflow, /PREVIEW_|PRODUCTION_|PARENT_PRIVATE_KEY|SPONSOR_RELAYER_PRIVATE_KEY|QUOTE_PRIVATE_KEY|bootstrap-public-testnet|new_public_testnet/);
+    assert.equal((workflow.match(/market-code-update.mjs deploy /g) ?? []).length, 1);
+    const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    assert.match(ci, /artifact --target public-testnet/);
+    assert.match(ci, /verify-artifact --target public-testnet/);
+    assert.match(ci, /name: public-testnet-market-contract-\$\{\{ github.sha \}\}/);
+    assert.match(ci, /subject-checksums: .*public-testnet-market-runtime\/SHA256SUMS/);
+    assert.match(ci, /name: market-contract-\$\{\{ github.sha \}\}/);
+});

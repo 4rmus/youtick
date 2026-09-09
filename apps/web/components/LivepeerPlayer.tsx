@@ -17,6 +17,7 @@ import {
 import { ensureSessionGrant } from '@/lib/access-grants';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
+import { ensureDeviceSession } from '@/lib/device-session';
 import { FEATURE_FLAGS } from '@/lib/constants';
 import { recordVideoPlaybackEvents, startVideoMeasurement } from '@/lib/video-measurements';
 import {
@@ -43,9 +44,11 @@ export function LivepeerPlayer({
     const [src, setSrc] = useState<ReturnType<typeof getSrc>>(null);
     const [accessToken, setAccessToken] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [needsSession, setNeedsSession] = useState(false);
+    const [verifying, setVerifying] = useState(false);
+    const verificationRef = useRef<AbortController | null>(null);
     const [attempt, setAttempt] = useState(0);
     // xhrSetup invokes this getter only for HLS network requests, never during render.
-    // eslint-disable-next-line react-hooks/refs
     const [hlsConfig] = useState(() => createLivepeerHlsConfig(() => tokenRef.current));
 
     useEffect(() => {
@@ -57,6 +60,7 @@ export function LivepeerPlayer({
         setSrc(null);
         setAccessToken(null);
         setError(null);
+        setNeedsSession(false);
 
         const ensurePlayGrant = async () => {
             const wallet = await getWallet();
@@ -71,6 +75,7 @@ export function LivepeerPlayer({
         };
 
         const preparePlayback = async () => {
+            if (FEATURE_FLAGS.enablePlaybackAuthorizerV2) return undefined;
             const wallet = await getWallet();
             controller.signal.throwIfAborted();
             if (!FEATURE_FLAGS.enablePlaybackAuthorizerV2) await ensurePlayGrant();
@@ -103,6 +108,7 @@ export function LivepeerPlayer({
                         tokenRef.current = null;
                         setAccessToken(null);
                         setSrc(null);
+                        setNeedsSession(isDeviceSessionError(nextError));
                         setError(playbackErrorMessage(nextError));
                     },
                 }, wallet);
@@ -117,6 +123,7 @@ export function LivepeerPlayer({
                 tokenRef.current = null;
                 setAccessToken(null);
                 setSrc(null);
+                setNeedsSession(isDeviceSessionError(nextError));
                 setError(playbackErrorMessage(
                     nextError instanceof Error ? nextError : new Error('livepeer_playback_failed'),
                 ));
@@ -125,6 +132,7 @@ export function LivepeerPlayer({
         return () => {
             finishPreparation('cancelled');
             disposed = true;
+            verificationRef.current?.abort();
             controller.abort();
             tokenRef.current = null;
             destroy?.();
@@ -134,6 +142,32 @@ export function LivepeerPlayer({
     const retry = () => {
         setError(null);
         setAttempt((current) => current + 1);
+    };
+
+    const verifySession = async () => {
+        if (FEATURE_FLAGS.publicTestnetVideoV1) return;
+        if (verificationRef.current && !verificationRef.current.signal.aborted) return;
+        const controller = new AbortController();
+        verificationRef.current = controller;
+        setVerifying(true);
+        try {
+            const wallet = await getWallet();
+            controller.signal.throwIfAborted();
+            await ensureDeviceSession(wallet, accountId, controller.signal);
+            controller.signal.throwIfAborted();
+            retry();
+        } catch (reason) {
+            if (!controller.signal.aborted) {
+                setError(isDeviceSessionError(reason)
+                    ? playbackErrorMessage(reason as Error)
+                    : 'Verification was not completed. Choose Verify session to try again.');
+            }
+        } finally {
+            if (verificationRef.current === controller) {
+                verificationRef.current = null;
+                setVerifying(false);
+            }
+        }
     };
 
     if (!src || !accessToken) {
@@ -155,8 +189,8 @@ export function LivepeerPlayer({
                 {error ? (
                     <div role="alert" className="relative max-w-sm text-white">
                         <p className="text-sm">{error}</p>
-                        <Button className="mt-4" size="sm" variant="outline" onClick={retry}>
-                            Try again
+                        <Button className="mt-4" size="sm" variant="outline" disabled={verifying} onClick={needsSession && !FEATURE_FLAGS.publicTestnetVideoV1 ? () => void verifySession() : retry}>
+                            {verifying ? 'Verifying session…' : needsSession && !FEATURE_FLAGS.publicTestnetVideoV1 ? 'Verify session' : 'Try again'}
                         </Button>
                     </div>
                 ) : (
@@ -253,7 +287,17 @@ export function LivepeerPlayer({
     );
 }
 
+function isDeviceSessionError(error: unknown): boolean {
+    return error instanceof Error && error.message.startsWith('device_session_');
+}
+
 function playbackErrorMessage(error: Error): string {
+    if (error.message === 'device_session_storage_unavailable' || error.message === 'device_session_crypto_unavailable') {
+        return 'Secure session storage is unavailable. Enable site storage and use a supported browser.';
+    }
+    if (isDeviceSessionError(error)) return FEATURE_FLAGS.publicTestnetVideoV1
+        ? 'This device has no active viewing session. Your next completed purchase or upload activates it for 30 days.'
+        : 'Verify your session to watch. This is separate from purchasing a ticket.';
     if (error.message === 'livepeer_playback_unsupported') {
         return 'This browser cannot play this video.';
     }

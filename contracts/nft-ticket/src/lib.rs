@@ -24,6 +24,8 @@ const SPONSORED_UPLOAD_FEE_USDC: u128 = 100_000;
 const SPONSORED_UPLOAD_DEPOSIT_YOCTO: u128 = 1;
 const SPONSORED_UPLOAD_MAX_BLOCK_WINDOW: u64 = 200;
 const MARKET_STATE_VERSION: u32 = 2;
+const PLAYBACK_DEVICE_LIFETIME_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
+const PLAYBACK_DEVICE_PREFIX: &[u8] = b"youtick:market:playback-devices:v1:";
 // Kept outside Contract so an emergency purchase control does not change the
 // deployed Market v2 Borsh layout or require a state migration.
 const NEW_PURCHASES_PAUSED_KEY: &[u8] = b"youtick:market:control:new-purchases-paused:v1";
@@ -266,6 +268,28 @@ struct TransferMessage {
     upload_key_expires_at_ms: Option<U64>,
     sponsor_quote: Option<SponsoredUploadQuote>,
     sponsor_quote_signature: Option<Base64VecU8>,
+    playback_session: Option<PlaybackSessionAuthorization>,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PlaybackSessionAuthorization {
+    pub session_public_key: String,
+    pub certificate_sha256: String,
+    pub authorization_duration_ms: U64,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlaybackDevice {
+    pub session_public_key: String,
+    pub certificate_sha256: String,
+    pub authorized_at_ms: U64,
+    pub expires_at_ms: U64,
+    // None denotes a delegated payment: the Bridge verifies the user's delegate,
+    // never the relayer's signer key, before granting playback.
+    pub authorizing_public_key: Option<String>,
 }
 
 #[near(serializers = [json])]
@@ -1170,6 +1194,21 @@ impl Contract {
         );
         let message: TransferMessage =
             near_sdk::serde_json::from_str(&msg).expect("Invalid purchase message");
+        if let Some(session) = &message.playback_session {
+            assert_sha256("certificate_sha256", &session.certificate_sha256);
+            let key: near_sdk::PublicKey = session
+                .session_public_key
+                .parse()
+                .expect("Invalid playback device key");
+            require!(
+                key.curve_type() == near_sdk::CurveType::ED25519,
+                "Invalid playback device key"
+            );
+            require!(
+                session.authorization_duration_ms.0 == PLAYBACK_DEVICE_LIFETIME_MS,
+                "Invalid playback device duration"
+            );
+        }
 
         if message.action.as_deref() == Some("create_paid_job") {
             require!(message.publication_id.is_none(), "Invalid paid job message");
@@ -1257,6 +1296,7 @@ impl Contract {
                 .platform_balance
                 .checked_add(amount.0)
                 .expect("Platform balance overflow");
+            self.authorize_playback_device(&sender_id, message.playback_session);
             if public_beta.is_some() || public_upload {
                 self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
             }
@@ -1303,6 +1343,7 @@ impl Contract {
             .checked_add(platform_amount)
             .expect("Platform balance overflow");
         self.entitlements.insert(&entitlement_key, &true);
+        self.authorize_playback_device(&sender_id, message.playback_session);
         if self.public_testnet_beta_state().is_some() {
             self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
         }
@@ -1522,6 +1563,51 @@ impl Contract {
 
     pub fn get_media_job(&self, job_id: String) -> Option<MediaJob> {
         self.media_jobs.get(&job_id)
+    }
+
+    pub fn get_playback_device(
+        &self,
+        account_id: AccountId,
+        session_public_key: String,
+    ) -> Option<PlaybackDevice> {
+        let devices: Vec<PlaybackDevice> =
+            read_raw(&playback_devices_key(&account_id)).unwrap_or_default();
+        devices.into_iter().find(|device| {
+            device.session_public_key == session_public_key
+                && device.expires_at_ms.0 > env::block_timestamp_ms()
+        })
+    }
+
+    fn authorize_playback_device(
+        &mut self,
+        account_id: &AccountId,
+        authorization: Option<PlaybackSessionAuthorization>,
+    ) {
+        let Some(authorization) = authorization else {
+            return;
+        };
+        let key = playback_devices_key(account_id);
+        let now = env::block_timestamp_ms();
+        let mut devices: Vec<PlaybackDevice> = read_raw(&key).unwrap_or_default();
+        devices.retain(|device| {
+            device.expires_at_ms.0 > now
+                && device.session_public_key != authorization.session_public_key
+        });
+        // Insertion order is authorization order; reads never change it.
+        if devices.len() == 3 {
+            devices.remove(0);
+        }
+        devices.push(PlaybackDevice {
+            session_public_key: authorization.session_public_key,
+            certificate_sha256: authorization.certificate_sha256,
+            authorized_at_ms: U64(now),
+            expires_at_ms: U64(now
+                .checked_add(PLAYBACK_DEVICE_LIFETIME_MS)
+                .expect("Time overflow")),
+            authorizing_public_key: (env::signer_account_id() == *account_id)
+                .then(|| String::from(&env::signer_account_pk())),
+        });
+        write_raw(&key, &devices);
     }
 
     pub fn get_publication(&self, publication_id: String) -> Option<Publication> {
@@ -2128,6 +2214,10 @@ fn public_testnet_beta_day_key(creator_id: &AccountId, day: u64) -> Vec<u8> {
 
 fn read_raw<T: BorshDeserialize>(key: &[u8]) -> Option<T> {
     env::storage_read(key).map(|value| T::try_from_slice(&value).expect("Invalid raw state"))
+}
+
+fn playback_devices_key(account_id: &AccountId) -> Vec<u8> {
+    [PLAYBACK_DEVICE_PREFIX, account_id.as_bytes()].concat()
 }
 
 fn write_raw<T: BorshSerialize>(key: &[u8], value: &T) {

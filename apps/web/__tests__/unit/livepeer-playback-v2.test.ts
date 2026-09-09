@@ -1,8 +1,9 @@
 import { KeyPair } from 'near-api-js';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
-    ensureDeviceSession: vi.fn(),
+    getDeviceSession: vi.fn(),
+    cleared: undefined as undefined | (() => void),
     getCachedSessionGrant: vi.fn(),
     isSessionGrantVisible: vi.fn(),
     featureFlags: {
@@ -24,7 +25,8 @@ vi.mock('@/lib/constants', () => ({
 
 vi.mock('@/lib/device-session', () => ({
     canonicalDeviceCertificate: (certificate: unknown) => canonicalJson(certificate),
-    ensureDeviceSession: state.ensureDeviceSession,
+    getDeviceSession: state.getDeviceSession,
+    onDeviceSessionCleared: (listener: () => void) => { state.cleared = listener; return () => { state.cleared = undefined; }; },
 }));
 
 vi.mock('@/lib/access-grants', () => ({
@@ -58,31 +60,81 @@ describe('Livepeer stateless browser playback', () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
-        const keyPair = KeyPair.fromRandom('ed25519');
+        const keyPair = await crypto.subtle.generateKey('Ed25519', false, ['sign', 'verify']) as CryptoKeyPair;
         const now = Date.now();
-        state.ensureDeviceSession.mockReset().mockResolvedValue({
+        state.getDeviceSession.mockReset().mockResolvedValue({
             certificate: {
                 domain: 'youtick.device-session',
-                version: '1',
+                version: '2',
                 network: 'testnet',
-                account_id: INPUT.accountId,
-                session_public_key: keyPair.getPublicKey().toString(),
+                contract_id: 'market.testnet',
+                session_public_key: 'ed25519:11111111111111111111111111111111',
                 origin_hash: await sha256('https://app.youtick.net'),
                 scopes: ['play'],
                 issued_at_ms: String(now),
                 expires_at_ms: String(now + 8 * 60 * 60 * 1000),
             },
             certificate_proof: {
+                account_id: INPUT.accountId,
                 public_key: 'ed25519:11111111111111111111111111111111',
                 signature: btoa(String.fromCharCode(...new Uint8Array(64).fill(7))),
                 nonce: 'A'.repeat(43),
             },
-            secret_key: keyPair.toString(),
+            privateKey: keyPair.privateKey,
         });
         state.getCachedSessionGrant.mockReset();
         state.isSessionGrantVisible.mockReset();
         state.featureFlags.enablePlaybackAuthorizerV2 = true;
         state.featureFlags.enablePlaybackShadowV2 = false;
+    });
+
+    it('renews a Market-backed device token twice without any wallet call', async () => {
+        vi.useFakeTimers();
+        const session = await state.getDeviceSession();
+        delete session.certificate.issued_at_ms;
+        delete session.certificate.expires_at_ms;
+        Object.assign(session.certificate, { version: '3', account_id: INPUT.accountId, authorization_duration_ms: '2592000000' });
+        session.certificate_proof = { account_id: INPUT.accountId, kind: 'market' };
+        state.getDeviceSession.mockResolvedValue(session);
+        const fetcher = vi.fn(async () => Response.json(tokenResponse()));
+        vi.stubGlobal('fetch', fetcher);
+        const wallet = { signMessage: vi.fn() };
+        const onAccess = vi.fn();
+        const playback = await startLivepeerPlaybackSession(INPUT, { onAccess }, wallet);
+        await vi.advanceTimersByTimeAsync(150000);
+        await vi.waitFor(() => expect(onAccess).toHaveBeenCalledTimes(2));
+        await vi.advanceTimersByTimeAsync(150000);
+        await vi.waitFor(() => expect(onAccess).toHaveBeenCalledTimes(3));
+        expect(fetcher).toHaveBeenCalledTimes(3);
+        for (const [, init] of fetcher.mock.calls as unknown as Array<[string, RequestInit]>) {
+            const payload = JSON.parse(String(init.body));
+            expect(payload.certificate.version).toBe('3');
+            expect(payload.certificate_proof).toEqual({ account_id: INPUT.accountId, kind: 'market' });
+            expect(payload.certificate).not.toHaveProperty('expires_at_ms');
+        }
+        expect(wallet.signMessage).not.toHaveBeenCalled();
+        playback.destroy();
+        vi.useRealTimers();
+    });
+
+    it('keeps an unexpired token through a temporary device-record RPC failure', async () => {
+        vi.useFakeTimers();
+        const fetcher = vi.fn(async () => Response.json(tokenResponse()));
+        vi.stubGlobal('fetch', fetcher);
+        const onAccess = vi.fn();
+        const onError = vi.fn();
+        const wallet = { signMessage: vi.fn() };
+        const playback = await startLivepeerPlaybackSession(INPUT, { onAccess, onError }, wallet);
+        state.getDeviceSession.mockRejectedValueOnce(new Error('playback_authorization_unavailable'));
+        await vi.advanceTimersByTimeAsync(150000);
+        expect(onAccess).toHaveBeenCalledOnce();
+        expect(onError).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1000);
+        await vi.waitFor(() => expect(onAccess).toHaveBeenCalledTimes(2));
+        expect(onError).not.toHaveBeenCalled();
+        expect(wallet.signMessage).not.toHaveBeenCalled();
+        playback.destroy();
+        vi.useRealTimers();
     });
 
     it('uses the wallet-certified session key without issuing or reading a legacy grant', async () => {
@@ -92,7 +144,7 @@ describe('Livepeer stateless browser playback', () => {
 
         await requestLivepeerPlaybackToken(INPUT, undefined, wallet);
 
-        expect(state.ensureDeviceSession).toHaveBeenCalledWith(wallet, INPUT.accountId);
+        expect(state.getDeviceSession).toHaveBeenCalledWith(INPUT.accountId);
         expect(state.getCachedSessionGrant).not.toHaveBeenCalled();
         expect(state.isSessionGrantVisible).not.toHaveBeenCalled();
         const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -112,20 +164,77 @@ describe('Livepeer stateless browser playback', () => {
         });
         expect(request.certificate).toMatchObject({
             domain: 'youtick.device-session',
-            account_id: INPUT.accountId,
+            contract_id: 'market.testnet',
         });
         expect(request.request_signature).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
     });
 
-    it('starts and refreshes without waiting for a legacy grant', async () => {
-        vi.spyOn(globalThis, 'setTimeout').mockReturnValue(1 as unknown as ReturnType<typeof setTimeout>);
-        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(tokenResponse())));
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('actually renews twice using timers with zero wallet signatures', async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(Response.json(tokenResponse())));
+        vi.stubGlobal('fetch', fetchMock);
         const wallet = { signMessage: vi.fn() };
-
-        const session = await startLivepeerPlaybackSession(INPUT, { onAccess: vi.fn() }, wallet);
-
+        const onAccess = vi.fn();
+        const session = await startLivepeerPlaybackSession(INPUT, { onAccess }, wallet);
+        await vi.advanceTimersByTimeAsync(150_000);
+        await vi.waitFor(() => expect(onAccess).toHaveBeenCalledTimes(2));
+        await vi.advanceTimersByTimeAsync(150_000);
+        await vi.waitFor(() => expect(onAccess).toHaveBeenCalledTimes(3));
+        expect(state.getDeviceSession).toHaveBeenCalledTimes(3);
+        expect(wallet.signMessage).not.toHaveBeenCalled();
         expect(state.isSessionGrantVisible).not.toHaveBeenCalled();
-        expect(state.getCachedSessionGrant).not.toHaveBeenCalled();
+        session.destroy();
+    });
+
+    it('requires an explicit verification action when no session is stored', async () => {
+        state.getDeviceSession.mockResolvedValue(null);
+        const wallet = { signMessage: vi.fn() };
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        await expect(requestLivepeerPlaybackToken(INPUT, undefined, wallet)).rejects.toThrow('device_session_required');
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(wallet.signMessage).not.toHaveBeenCalled();
+    });
+
+    it('stops on logout and discards a late initial token response', async () => {
+        let reply!: (response: Response) => void;
+        const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { reply = resolve; }));
+        vi.stubGlobal('fetch', fetchMock);
+        const onAccess = vi.fn();
+        const onError = vi.fn();
+        const starting = startLivepeerPlaybackSession(INPUT, { onAccess, onError });
+        const rejected = expect(starting).rejects.toThrow();
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+        state.cleared?.();
+        reply(Response.json(tokenResponse()));
+        await rejected;
+        expect(onAccess).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'device_session_required' }));
+    });
+
+    it.each(['logout', 'expired session'])('closes an active player on %s without renewing wallet authority', async (reason) => {
+        vi.useFakeTimers();
+        let reply!: (response: Response) => void;
+        const fetchMock = vi.fn().mockResolvedValueOnce(Response.json(tokenResponse()))
+            .mockImplementation(() => new Promise<Response>((resolve) => { reply = resolve; }));
+        vi.stubGlobal('fetch', fetchMock);
+        const wallet = { signMessage: vi.fn() };
+        const onAccess = vi.fn();
+        const onError = vi.fn();
+        const session = await startLivepeerPlaybackSession(INPUT, { onAccess, onError }, wallet);
+        if (reason === 'expired session') state.getDeviceSession.mockResolvedValue(null);
+        await vi.advanceTimersByTimeAsync(150_000);
+        if (reason === 'logout') {
+            await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+            state.cleared?.();
+            reply(Response.json(tokenResponse()));
+        }
+        await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'device_session_required' })));
+        await vi.advanceTimersByTimeAsync(180_000);
+        expect(onAccess).toHaveBeenCalledOnce();
+        expect(wallet.signMessage).not.toHaveBeenCalled();
         session.destroy();
     });
 
@@ -160,7 +269,7 @@ describe('Livepeer stateless browser playback', () => {
                 generation: INPUT.generation,
                 playback_id: INPUT.playbackId,
             },
-            certificate: { account_id: INPUT.accountId },
+            certificate_proof: { account_id: INPUT.accountId },
             request: { account_id: INPUT.accountId },
             request_signature: expect.stringMatching(/^[A-Za-z0-9+/]+={0,2}$/),
         });

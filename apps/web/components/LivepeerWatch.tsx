@@ -278,6 +278,9 @@ async function recoverRefundedTicketPayment(
 
 function purchaseErrorMessage(reason: unknown): string {
     const message = reason instanceof Error ? reason.message : '';
+    if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(message)) {
+        return 'Enable secure site storage and use a supported browser before continuing. No payment was sent.';
+    }
     if (message === 'livepeer_entitlement_pending') {
         return 'Your ticket is still syncing. Try again shortly.';
     }

@@ -1881,3 +1881,186 @@ fn governance_can_move_sales_suspended_publication_to_takedown() {
 
     assert_eq!(publication.availability, PublicationAvailability::Takedown);
 }
+
+const DEVICE_DAY_MS: u64 = 86_400_000;
+const DEVICE_START_MS: u64 = 1_785_589_300_000;
+
+fn device_key(index: u8) -> String {
+    String::from(
+        &near_sdk::PublicKey::from_parts(near_sdk::CurveType::ED25519, vec![index; 32]).unwrap(),
+    )
+}
+
+fn device_authorization(index: u8) -> serde_json::Value {
+    serde_json::json!({
+        "session_public_key": device_key(index),
+        "certificate_sha256": format!("{index:064x}"),
+        "authorization_duration_ms": "2592000000"
+    })
+}
+
+fn device_context(day: u64, delegated: bool) {
+    let mut ctx = context(TESTNET_USDC);
+    ctx.block_timestamp((DEVICE_START_MS + day * DEVICE_DAY_MS) * 1_000_000)
+        .signer_account_id(account(if delegated {
+            "relayer.testnet"
+        } else {
+            "buyer.testnet"
+        }))
+        .signer_account_pk(UPLOAD_KEY.parse().unwrap());
+    testing_env!(ctx.build());
+}
+
+fn device_purchase(
+    contract: &mut Contract,
+    publication: usize,
+    device: u8,
+    day: u64,
+    amount: u128,
+) -> u128 {
+    device_context(day, false);
+    match contract.ft_on_transfer(
+        account("buyer.testnet"),
+        U128(amount),
+        serde_json::json!({
+            "action": "buy_ticket", "publication_id": format!("device-job-{publication}"),
+            "playback_session": device_authorization(device)
+        })
+        .to_string(),
+    ) {
+        PromiseOrValue::Value(value) => value.0,
+        _ => panic!("Expected immediate FT result"),
+    }
+}
+
+fn device_sale_contract() -> Contract {
+    let mut market = contract();
+    for index in 0..7 {
+        let job = format!("device-job-{index}");
+        create_job(&mut market, &job, "creator.testnet");
+        finalize(
+            &mut market,
+            &job,
+            1,
+            "creator.testnet",
+            &format!("{:064x}", index + 1),
+            &format!("device_video_{index}"),
+        );
+    }
+    market
+}
+
+#[test]
+fn playback_devices_renew_only_on_new_successful_payments_and_evict_oldest() {
+    let mut market = device_sale_contract();
+    assert_eq!(device_purchase(&mut market, 0, 1, 0, 2_000_000), 0);
+    let first = market
+        .get_playback_device(account("buyer.testnet"), device_key(1))
+        .unwrap();
+    assert_eq!(first.expires_at_ms.0, DEVICE_START_MS + 30 * DEVICE_DAY_MS);
+    assert_eq!(first.authorizing_public_key.as_deref(), Some(UPLOAD_KEY));
+    assert_eq!(device_purchase(&mut market, 1, 2, 1, 2_000_000), 0);
+    assert_eq!(device_purchase(&mut market, 2, 3, 2, 2_000_000), 0);
+    assert_eq!(device_purchase(&mut market, 3, 1, 20, 2_000_000), 0);
+    let renewed = market
+        .get_playback_device(account("buyer.testnet"), device_key(1))
+        .unwrap();
+    assert_eq!(
+        renewed.expires_at_ms.0,
+        DEVICE_START_MS + 50 * DEVICE_DAY_MS
+    );
+    // Duplicate purchase and wrong amount refund without renewing.
+    assert_eq!(device_purchase(&mut market, 3, 1, 21, 2_000_000), 2_000_000);
+    assert_eq!(device_purchase(&mut market, 4, 1, 21, 1), 1);
+    assert_eq!(
+        market.get_playback_device(account("buyer.testnet"), device_key(1)),
+        Some(renewed.clone())
+    );
+    assert_eq!(device_purchase(&mut market, 4, 4, 22, 2_000_000), 0);
+    assert!(market
+        .get_playback_device(account("buyer.testnet"), device_key(2))
+        .is_none());
+    for key in [1, 3, 4] {
+        assert!(market
+            .get_playback_device(account("buyer.testnet"), device_key(key))
+            .is_some());
+    }
+    assert!(market
+        .get_playback_device(account("stranger.testnet"), device_key(1))
+        .is_none());
+    device_context(29, false);
+    assert_eq!(
+        market.get_playback_device(account("buyer.testnet"), device_key(1)),
+        Some(renewed)
+    );
+    device_context(50, false);
+    assert!(market
+        .get_playback_device(account("buyer.testnet"), device_key(1))
+        .is_none());
+}
+
+#[test]
+fn malformed_playback_authorization_does_not_charge_or_grant_access() {
+    let mut market = device_sale_contract();
+    device_context(0, false);
+    for (field, value) in [
+        ("authorization_duration_ms", "2592000001"),
+        ("session_public_key", "invalid"),
+        ("certificate_sha256", "bad"),
+    ] {
+        let mut authorization = device_authorization(1);
+        authorization[field] = serde_json::json!(value);
+        let balance = market.get_platform_balance();
+        must_fail(|| {
+            market.ft_on_transfer(account("buyer.testnet"), U128(2_000_000), serde_json::json!({
+            "action": "buy_ticket", "publication_id": "device-job-0", "playback_session": authorization
+        }).to_string());
+        });
+        assert_eq!(market.get_platform_balance(), balance);
+        assert!(!market.has_entitlement(account("buyer.testnet"), "device-job-0".to_string()));
+        assert!(market
+            .get_playback_device(account("buyer.testnet"), device_key(1))
+            .is_none());
+    }
+}
+
+#[test]
+fn sponsored_upload_authorizes_creator_device_without_using_relayer_key() {
+    let (mut market, request, quote, signature) = public_upload_contract();
+    testing_env!(context("admin.testnet").build());
+    market.unpause_new_purchases();
+    let mut message: serde_json::Value = serde_json::from_str(&sponsored_message_with_signature(
+        &request,
+        quote.clone(),
+        &signature,
+    ))
+    .unwrap();
+    message["playback_session"] = device_authorization(1);
+    device_context(0, true);
+    assert!(matches!(
+        market.ft_on_transfer(
+            request.creator_id.clone(),
+            quote.total_fee_usdc,
+            message.to_string()
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+    let first = market
+        .get_playback_device(request.creator_id.clone(), device_key(1))
+        .unwrap();
+    assert_eq!(first.authorizing_public_key, None);
+    assert_eq!(first.expires_at_ms.0, DEVICE_START_MS + 30 * DEVICE_DAY_MS);
+    // Exact relay reconciliation refunds and cannot start a fresh 30-day period.
+    assert!(matches!(
+        market.ft_on_transfer(
+            request.creator_id.clone(),
+            quote.total_fee_usdc,
+            message.to_string()
+        ),
+        PromiseOrValue::Value(U128(1_600_000))
+    ));
+    assert_eq!(
+        market.get_playback_device(request.creator_id, device_key(1)),
+        Some(first)
+    );
+}

@@ -3,8 +3,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { NearConnector, type Account, type NearWalletBase, type WalletManifest } from '@hot-labs/near-connect';
 import { clearSessionGrantCache } from '@/lib/access-grants';
-import { clearDeviceSession } from '@/lib/device-session';
-import { NEAR_NETWORK } from '@/lib/constants';
+import { clearDeviceSession, connectDeviceSession } from '@/lib/device-session';
+import { FEATURE_FLAGS, NEAR_NETWORK } from '@/lib/constants';
 import { getRpcEndpoints } from '@/lib/rpc-failover';
 import {
     clearSignlessAccessKey,
@@ -89,6 +89,10 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
     const connectorRef = useRef<NearConnector | null>(null);
     const walletRef = useRef<NearWalletBase | null>(null);
     const pinnedWalletRef = useRef<NearWalletBase | null>(null);
+    const connectingRef = useRef<Promise<void> | null>(null);
+    const connectAbortRef = useRef<AbortController | null>(null);
+    const authGenerationRef = useRef(0);
+    const signedReplyRef = useRef<Awaited<ReturnType<NonNullable<WalletInstance['signMessage']>>> | null>(null);
     const accountIdRef = useRef<string | null>(null);
     const [accountId, setAccountId] = useState<string | null>(null);
     const [isReady, setIsReady] = useState(false);
@@ -97,14 +101,17 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
     const clearAuth = useCallback(async (id: string | null) => {
         if (!id) return;
         clearSessionGrantCache(id);
-        await clearDeviceSession(id);
+        await clearDeviceSession();
         await clearSignlessAccessKey(id);
     }, []);
 
-    const applyWallet = useCallback((wallet: NearWalletBase, accounts: Account[]) => {
+    const applyWallet = useCallback((wallet: NearWalletBase, accounts: Account[], sessionPrepared = false) => {
         const nextAccountId = accounts[0]?.accountId ?? null;
         const previousAccountId = accountIdRef.current;
-        if (previousAccountId && previousAccountId !== nextAccountId) void clearAuth(previousAccountId);
+        if (!sessionPrepared && previousAccountId && previousAccountId !== nextAccountId) {
+            authGenerationRef.current += 1;
+            void clearAuth(previousAccountId).catch(() => setError('Secure session cleanup failed. Please retry disconnect.'));
+        }
         walletRef.current = wallet;
         accountIdRef.current = nextAccountId;
         setAccountId(nextAccountId);
@@ -130,19 +137,28 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         });
         connectorRef.current = connector;
 
-        connector.on('wallet:signIn', ({ wallet, accounts }) => {
-            if (!mounted) return;
+        connector.on('wallet:signInAndSignMessage', ({ accounts }) => {
+            if (mounted && connectingRef.current) {
+                const account = accounts[0];
+                if (account && account.accountId === account.signedMessage?.accountId) signedReplyRef.current = account.signedMessage;
+            }
+        });
+        connector.on('wallet:signIn', ({ wallet, accounts, source }) => {
+            if (!mounted || connectingRef.current || source === 'signInAndSignMessage') return;
             applyWallet(wallet, accounts);
             setError(null);
         });
         connector.on('wallet:signOut', () => {
             if (!mounted) return;
-            void clearAuth(accountIdRef.current);
+            authGenerationRef.current += 1;
+            void clearDeviceSession().catch(() => setError('Secure session cleanup failed. Please retry disconnect.'));
+            void clearAuth(accountIdRef.current).catch(() => {});
             walletRef.current = null;
             accountIdRef.current = null;
             setAccountId(null);
         });
 
+        const restoreGeneration = authGenerationRef.current;
         connector.whenManifestLoaded
             .then(async () => {
                 let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -168,7 +184,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
                             );
                         }),
                     ]);
-                    if (mounted) applyWallet(connected.wallet, connected.accounts);
+                    if (mounted && !connectingRef.current && restoreGeneration === authGenerationRef.current) applyWallet(connected.wallet, connected.accounts);
                 } finally {
                     if (timeoutId !== undefined) clearTimeout(timeoutId);
                 }
@@ -180,6 +196,8 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
 
         return () => {
             mounted = false;
+            connectAbortRef.current?.abort();
+            authGenerationRef.current += 1;
             connector.removeAllListeners();
             if (connectorRef.current === connector) connectorRef.current = null;
             pinnedWalletRef.current = null;
@@ -194,21 +212,61 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         return createWalletAdapter(wallet, wallet === pinnedWalletRef.current);
     }, []);
 
-    const connect = useCallback(async () => {
+    const connect = useCallback((): Promise<void> => {
+        if (connectingRef.current) return connectingRef.current;
         const connector = connectorRef.current;
-        if (!connector) return;
-        try {
-            const wallet = await connector.connect();
-            const accounts = await wallet.getAccounts({ network: NEAR_NETWORK });
-            applyWallet(wallet, accounts);
-            setError(null);
-        } catch (reason) {
-            setError(reason instanceof Error ? reason.message : 'Wallet connection failed');
-        }
-    }, [applyWallet]);
+        if (!connector) return Promise.resolve();
+        const expectedGeneration = ++authGenerationRef.current;
+        const controller = new AbortController();
+        connectAbortRef.current = controller;
+        const work = (async () => {
+            await Promise.resolve();
+            try {
+                controller.signal.throwIfAborted();
+                if (!FEATURE_FLAGS.enablePlaybackAuthorizerV2 || FEATURE_FLAGS.publicTestnetVideoV1) {
+                    const wallet = await connector.connect();
+                    const accounts = await wallet.getAccounts({ network: NEAR_NETWORK });
+                    if (expectedGeneration === authGenerationRef.current) applyWallet(wallet, accounts);
+                } else {
+                    if (accountIdRef.current) await clearAuth(accountIdRef.current);
+                    else await clearDeviceSession();
+                    controller.signal.throwIfAborted();
+                    let connectedWallet: NearWalletBase | undefined;
+                    const session = await connectDeviceSession(async (signMessageParams) => {
+                        signedReplyRef.current = null;
+                        connectedWallet = await connector.connect({ signMessageParams });
+                        if (expectedGeneration !== authGenerationRef.current || !signedReplyRef.current) {
+                            throw new Error('device_session_cancelled');
+                        }
+                        return signedReplyRef.current;
+                    }, controller.signal);
+                    if (expectedGeneration !== authGenerationRef.current || !connectedWallet) return;
+                    applyWallet(connectedWallet, [{ accountId: session.certificate_proof.account_id }], true);
+                }
+                if (expectedGeneration === authGenerationRef.current) setError(null);
+            } catch (reason) {
+                if (expectedGeneration === authGenerationRef.current) {
+                    setError(reason instanceof Error && reason.message.startsWith('device_session_')
+                        ? 'Session verification was not completed. Enable secure site storage and connect again.'
+                        : 'Wallet connection was not completed. Choose Connect wallet to try again.');
+                }
+            }
+        })();
+        connectingRef.current = work;
+        void work.finally(() => { if (connectingRef.current === work) connectingRef.current = null; });
+        return work;
+    }, [applyWallet, clearAuth]);
 
     const signOut = useCallback(async () => {
         const id = accountIdRef.current;
+        authGenerationRef.current += 1;
+        connectAbortRef.current?.abort();
+        try {
+            await clearDeviceSession();
+        } catch {
+            setError('Secure session cleanup failed. Enable site storage and retry disconnect.');
+            return;
+        }
         if (id) {
             try {
                 await revokeBrowserAuthority(await getWallet(), id);

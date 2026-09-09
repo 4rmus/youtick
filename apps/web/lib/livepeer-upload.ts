@@ -1,3 +1,4 @@
+import { preparePlaybackDevice, rememberPlaybackDelegate, type PlaybackSessionAuthorization } from './device-session';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { Upload, type DetailedError } from 'tus-js-client';
 import {
@@ -430,35 +431,6 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
         upload_public_key: publicKey,
         upload_key_expires_at_ms: uploadKeyExpiresAtMs,
     };
-    const transaction = asset === 'USDC' ? {
-        receiverId: NEAR_CONFIG.usdcContractId,
-        actions: [actions.functionCall(
-                'ft_transfer_call',
-                {
-                    receiver_id: NEAR_CONFIG.marketContractId,
-                    amount,
-                    memo: 'YouTick creator upload fee',
-                    msg: JSON.stringify({
-                        action: 'create_paid_job',
-                        ...request,
-                    }),
-                },
-                GAS_CONSTANTS.mediumGas,
-                1n,
-            )],
-    } : {
-        receiverId: NEAR_CONFIG.marketContractId,
-        actions: [actions.functionCall(
-            'create_paid_job_near',
-            {
-                request,
-                quote: input.nearQuote?.quote,
-                quote_signature: input.nearQuote?.signature,
-            },
-            GAS_CONSTANTS.mediumGas,
-            BigInt(input.nearQuote?.quote.fee_near_yocto ?? '0'),
-        )],
-    };
     if (asset === 'NEAR' && !input.nearQuote) throw new Error('near_creator_fee_quote_required');
 
     if (existingChainJob) {
@@ -504,6 +476,38 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
     if (FEATURE_FLAGS.publicTestnetVideoV1 && readStoredUploadDraft(input.accountId)?.paymentAttempted) {
         throw new Error('livepeer_payment_pending');
     }
+    const playbackSession = FEATURE_FLAGS.publicTestnetVideoV1 && FEATURE_FLAGS.enablePlaybackAuthorizerV2
+        ? await preparePlaybackDevice(input.accountId) : undefined;
+    const transaction = asset === 'USDC' ? {
+        receiverId: NEAR_CONFIG.usdcContractId,
+        actions: [actions.functionCall(
+                'ft_transfer_call',
+                {
+                    receiver_id: NEAR_CONFIG.marketContractId,
+                    amount,
+                    memo: 'YouTick creator upload fee',
+                    msg: JSON.stringify({
+                        action: 'create_paid_job',
+                        ...request,
+                        ...(playbackSession ? { playback_session: playbackSession } : {}),
+                    }),
+                },
+                GAS_CONSTANTS.mediumGas,
+                1n,
+            )],
+    } : {
+        receiverId: NEAR_CONFIG.marketContractId,
+        actions: [actions.functionCall(
+            'create_paid_job_near',
+            {
+                request,
+                quote: input.nearQuote?.quote,
+                quote_signature: input.nearQuote?.signature,
+            },
+            GAS_CONSTANTS.mediumGas,
+            BigInt(input.nearQuote?.quote.fee_near_yocto ?? '0'),
+        )],
+    };
     input.signal?.throwIfAborted();
     if (!existingSession) {
         persistLivepeerJobSessionKey(
@@ -532,7 +536,7 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
                 sponsorFeeUsdc: sponsoredQuote.quote.sponsor_fee_usdc,
                 totalFeeUsdc: sponsoredQuote.quote.total_fee_usdc,
             });
-            await signAndRelaySponsoredUpload(wallet, request, sponsoredQuote, input.signal);
+            await signAndRelaySponsoredUpload(wallet, request, sponsoredQuote, input.signal, playbackSession);
         } else {
             input.signal?.throwIfAborted();
             await measureVideoOperation('wallet_transaction', () => (
@@ -618,6 +622,7 @@ async function signAndRelaySponsoredUpload(
     request: Record<string, string>,
     signedQuote: SignedSponsoredUploadQuote,
     signal?: AbortSignal,
+    playbackSession?: PlaybackSessionAuthorization,
 ): Promise<void> {
     if (!wallet.signDelegateActions) throw new Error('sponsored_upload_wallet_unsupported');
     const quote = signedQuote.quote;
@@ -635,6 +640,7 @@ async function signAndRelaySponsoredUpload(
                     msg: JSON.stringify({
                         action: 'create_paid_job',
                         ...request,
+                        ...(playbackSession ? { playback_session: playbackSession } : {}),
                         sponsor_quote: quote,
                         sponsor_quote_signature: signedQuote.signature,
                     }),
@@ -650,6 +656,7 @@ async function signAndRelaySponsoredUpload(
         || signed.signedDelegateActions[0].length < 64) {
         throw new Error('invalid_sponsored_upload_delegate');
     }
+    if (playbackSession) await rememberPlaybackDelegate(request.creator_id, playbackSession, signed.signedDelegateActions[0]);
     persistSponsoredDelegate(
         request.creator_id,
         request.job_id,
