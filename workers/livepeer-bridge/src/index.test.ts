@@ -2119,7 +2119,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(state.values.get('reconcile:v1')).toMatchObject({ uploadReadFailed: false, uploadErrorCode: undefined });
         expect(state.values.get('job:v1')).toMatchObject({ assetId: 'asset-123', generation: 1, state: 'PROCESSING' });
         expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('request-upload')
-            || init?.method === 'DELETE' || String(url).includes('origin.livepeer.com'))).toBe(false);
+            || init?.method === 'DELETE' || new URL(String(url)).hostname === 'origin.livepeer.com')).toBe(false);
     });
 
     it.each(['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY', 'ONCHAIN_PUBLISHED', 'PROVIDER_FAILED', 'UPLOAD_EXPIRED', 'CANCELLED'])(
