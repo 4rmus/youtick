@@ -93,6 +93,16 @@ describe('Livepeer browser playback', () => {
 
     afterEach(() => vi.useRealTimers());
 
+    it('enables measured timeline repair only for the diagnosed playback ID and keeps JWT headers', () => {
+        const known = createLivepeerHlsConfig(() => 'current.jwt.signature', 'ef819lp2r3anecgq');
+        expect(known.pLoader).toBeTypeOf('function');
+        expect(createLivepeerHlsConfig(() => null, 'another_playback')).not.toHaveProperty('pLoader');
+        expect(createLivepeerHlsConfig(() => null)).not.toHaveProperty('pLoader');
+        const setRequestHeader = vi.fn();
+        known.xhrSetup({ setRequestHeader } as never, 'https://playback.livepeer.studio/asset/hls/ef819lp2r3anecgq/index.m3u8');
+        expect(setRequestHeader).toHaveBeenCalledWith('Livepeer-Jwt', 'current.jwt.signature');
+    });
+
     it.each([
         [403, 'playback_denied', 4], [429, 'rate_limited', 1],
         [503, 'provider_unavailable', 1], [500, 'internal_error', 1],
