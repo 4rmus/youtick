@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import * as Player from '@livepeer/react/player';
 import { getSrc } from '@livepeer/react/external';
@@ -49,7 +49,7 @@ export function LivepeerPlayer({
     const verificationRef = useRef<AbortController | null>(null);
     const [attempt, setAttempt] = useState(0);
     // xhrSetup invokes this getter only for HLS network requests, never during render.
-    const [hlsConfig] = useState(() => createLivepeerHlsConfig(() => tokenRef.current));
+    const hlsConfig = useMemo(() => createLivepeerHlsConfig(() => tokenRef.current, playbackId), [playbackId]);
 
     useEffect(() => {
         const finishPreparation = startVideoMeasurement('playback_preparation');

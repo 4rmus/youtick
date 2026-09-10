@@ -1,4 +1,5 @@
 import { KeyPair } from 'near-api-js';
+import { OBSERVED_RESET_PLAYBACK_ID, createObservedTimelineLoaders } from './livepeer-hls-timeline';
 import { getCachedSessionGrant, isSessionGrantVisible } from '@/lib/access-grants';
 import { APP_CONFIG, FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
 import { base64Encode } from '@/lib/crypto/codec';
@@ -272,9 +273,10 @@ function transientPlaybackError(error: unknown): boolean {
     return error instanceof TypeError || ['provider_unavailable', 'playback_authorization_unavailable'].includes(error.message);
 }
 
-export function createLivepeerHlsConfig(readToken: () => string | null) {
+export function createLivepeerHlsConfig(readToken: () => string | null, playbackId?: string) {
     return {
         capLevelToPlayerSize: true,
+        ...(playbackId === OBSERVED_RESET_PLAYBACK_ID ? createObservedTimelineLoaders() : {}),
         xhrSetup(xhr: XMLHttpRequest, url: string) {
             if (!isLivepeerPlaybackUrl(url)) throw new Error('livepeer_playback_url_invalid');
             const token = readToken();
