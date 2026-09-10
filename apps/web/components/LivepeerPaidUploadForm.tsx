@@ -75,6 +75,51 @@ const UPLOAD_STAGE_STATE: Record<UploadStage, { active: number; completeThrough:
     published: { active: -1, completeThrough: 4 },
 };
 
+export function getLivepeerPublicationView(query: {
+    isError: boolean;
+    error?: unknown;
+    data?: { publication?: unknown; expired?: boolean; providerState?: string | null; job?: { status?: string } };
+}) {
+    if (query.isError) {
+        const code = query.error instanceof Error ? query.error.message : '';
+        if (['provider_playback_mismatch', 'provider_verification_incomplete', 'provider_identity_mismatch',
+            'provider_state_invalid', 'provider_playback_exposed', 'provider_asset_missing', 'provider_playback_missing',
+            'on_chain_job_mismatch', 'livepeer_job_creator_mismatch'].includes(code)) {
+            return { kind: 'verification_error', title: 'Publication verification blocked',
+                message: 'The video outputs or upload details could not pass publication verification. Keep this paid job; no new payment or upload has been started.',
+                buttonLabel: 'Verification blocked', failed: true, pending: false };
+        }
+        if (['provider_unavailable', 'near_job_query_failed', 'near_finalize_pending', 'rate_limited'].includes(code)
+            || query.error instanceof TypeError && ['Failed to fetch', 'fetch failed', 'Load failed',
+                'NetworkError when attempting to fetch resource.'].includes(query.error.message)
+            || query.error instanceof Error && ['AbortError', 'TimeoutError'].includes(query.error.name)) {
+            return { kind: 'temporary_error', title: 'Temporary connection problem',
+                message: 'Publication status could not be checked because of a temporary connection problem. Keep this job and check its status again.',
+                buttonLabel: 'Connection unavailable', failed: false, pending: false };
+        }
+        return { kind: 'unknown_error', title: 'Publication status unavailable',
+            message: 'Publication status could not be verified. Keep this paid job; no new payment or upload has been started.',
+            buttonLabel: 'Status unavailable', failed: false, pending: false };
+    }
+    if (query.data?.publication) return { kind: 'published', title: 'Publication ready', message: 'Publication ready.',
+        buttonLabel: 'Open publication', failed: false, pending: false };
+    if (query.data?.expired || query.data?.providerState === 'UPLOAD_EXPIRED') {
+        return { kind: 'expired', title: 'Publication deadline passed', message: UPLOAD_EXPIRED_MESSAGE,
+            buttonLabel: 'Publication deadline passed', failed: true, pending: false };
+    }
+    if (query.data?.providerState === 'PROVIDER_FAILED') {
+        return { kind: 'provider_failed', title: 'Video processing failed',
+            message: 'Livepeer could not process this upload. No new payment or upload has been started.',
+            buttonLabel: 'Processing failed', failed: true, pending: false };
+    }
+    const finalizing = query.data?.job?.status === 'Published'
+        || ['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY', 'ONCHAIN_PUBLISHED'].includes(query.data?.providerState || '');
+    return { kind: 'pending', title: 'Upload complete; awaiting publication',
+        message: finalizing ? 'Finalizing publication…' : query.data?.providerState === 'PROCESSING'
+            ? 'Livepeer is processing the upload…' : 'Upload complete. Waiting for Livepeer processing…',
+        buttonLabel: 'Waiting for publication', failed: false, pending: true };
+}
+
 export function LivepeerPaidUploadForm() {
     const { accountId, connect, getWallet, isReady } = useWallet();
     const [file, setFile] = React.useState<File | null>(null);
@@ -106,7 +151,6 @@ export function LivepeerPaidUploadForm() {
         setUploadStage((current) => transitionUploadStage(current, next));
     }, []);
     const uploaded = uploadStage === 'provider_processing' || uploadStage === 'published';
-    const publicationReady = uploadStage === 'published';
     const publicationPollingEnabled = Boolean(uploaded && jobId && accountId);
     const publicationQuery = useQuery({
         queryKey: ['livepeerUploadPublication', accountId, jobId],
@@ -128,7 +172,7 @@ export function LivepeerPaidUploadForm() {
         },
         enabled: publicationPollingEnabled,
         retry: false,
-        refetchInterval: (query) => query.state.data?.publication
+        refetchInterval: (query) => query.state.status === 'success' && query.state.data?.publication
             ? false
             : publicationPollIntervalMs(
                 query.state.dataUpdateCount + query.state.fetchFailureCount,
@@ -136,8 +180,12 @@ export function LivepeerPaidUploadForm() {
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: true,
     });
-    const publicationExpired = publicationQuery.data?.expired === true;
-    const providerFailed = publicationQuery.data?.providerState === 'PROVIDER_FAILED';
+    const publicationView = getLivepeerPublicationView(publicationQuery);
+    const publicationReady = publicationView.kind === 'published';
+    const publicationExpired = publicationView.kind === 'expired';
+    const displayedStage = uploaded && !publicationReady ? 'provider_processing' : uploadStage;
+    const displayedFailedStep = uploaded ? publicationView.failed ? 3 : null : failedStep;
+    const displayedStatus = uploaded ? publicationView.message : status;
 
     React.useEffect(() => {
         const preview = previewRef.current;
@@ -179,31 +227,13 @@ export function LivepeerPaidUploadForm() {
     }, [accountId, moveUploadStage]);
 
     React.useEffect(() => {
-        if (!publicationPollingEnabled || !accountId) return;
-        if (publicationQuery.data?.publication) {
-            clearLivepeerUploadDraft(accountId);
-            if (jobId) clearLivepeerJobSessionKey(accountId, jobId);
-            moveUploadStage('published');
-            setFailedStep(null);
-            setError(null);
-            setStatus('Publication ready.');
-        } else if (publicationQuery.data?.expired) {
-            setFailedStep(3);
-            setStatus(UPLOAD_EXPIRED_MESSAGE);
-        } else if (publicationQuery.isError) {
-            setStatus('Publication status is unavailable. Keep your file; no retry or new payment has been started.');
-        } else if (publicationQuery.data?.providerState === 'PROVIDER_FAILED') {
-            setFailedStep(3);
-            setStatus('Livepeer could not process this upload. No new payment or upload has been started.');
-        } else if (publicationQuery.data?.job) {
-            setStatus(publicationQuery.data.job.status === 'Published'
-                || ['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY', 'ONCHAIN_PUBLISHED'].includes(publicationQuery.data.providerState || '')
-                ? 'Finalizing publication…'
-                : publicationQuery.data.providerState === 'PROCESSING'
-                    ? 'Livepeer is processing the upload…'
-                    : 'Upload complete. Waiting for Livepeer processing…');
-        }
-    }, [accountId, jobId, moveUploadStage, publicationPollingEnabled, publicationQuery.data, publicationQuery.isError]);
+        if (!publicationPollingEnabled || !accountId || !publicationReady) return;
+        clearLivepeerUploadDraft(accountId);
+        if (jobId) clearLivepeerJobSessionKey(accountId, jobId);
+        moveUploadStage('published');
+        setFailedStep(null);
+        setError(null);
+    }, [accountId, jobId, moveUploadStage, publicationPollingEnabled, publicationReady]);
 
     const selectFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
         operation.current?.abort();
@@ -346,6 +376,7 @@ export function LivepeerPaidUploadForm() {
                 clearLivepeerJobSessionKey(accountId, jobId);
                 moveUploadStage('published');
                 setStatus('Publication ready.');
+                await publicationQuery.refetch();
                 return;
             }
             controller.signal.throwIfAborted();
@@ -519,8 +550,11 @@ export function LivepeerPaidUploadForm() {
                 clearLivepeerUploadDraft(accountId);
                 clearLivepeerJobSessionKey(accountId, jobId);
                 setStatus('Publication ready.');
+                await publicationQuery.refetch();
             } else {
-                setError(uploadErrorMessage(reason, true));
+                const publicationError = getLivepeerPublicationView({ isError: true, error: reason });
+                setError(publicationError.kind === 'unknown_error'
+                    ? uploadErrorMessage(reason, true) : publicationError.message);
                 setStatus(null);
             }
         } finally {
@@ -578,8 +612,8 @@ export function LivepeerPaidUploadForm() {
             {uploaded && (
                 <Alert>
                     <CheckCircle2 className="h-4 w-4" />
-                    <AlertTitle>{publicationReady ? 'Publication ready' : publicationExpired ? 'Publication deadline passed' : publicationQuery.isError ? 'Publication status unavailable' : providerFailed ? 'Video processing failed' : 'Upload complete; awaiting publication'}</AlertTitle>
-                    <AlertDescription>{publicationExpired ? UPLOAD_EXPIRED_MESSAGE : 'A watch link appears only after the publication exists on NEAR.'}</AlertDescription>
+                    <AlertTitle>{publicationView.title}</AlertTitle>
+                    <AlertDescription>{publicationView.message}</AlertDescription>
                 </Alert>
             )}
 
@@ -650,8 +684,8 @@ export function LivepeerPaidUploadForm() {
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
                             <ol aria-label="Publication progress" className="grid gap-3 sm:grid-cols-5">
                                 {UPLOAD_STEPS.map((label, index) => {
-                                    const state = UPLOAD_STAGE_STATE[uploadStage];
-                                    const failed = failedStep === index;
+                                    const state = UPLOAD_STAGE_STATE[displayedStage];
+                                    const failed = displayedFailedStep === index;
                                     const complete = !failed && index <= state.completeThrough;
                                     const active = !failed && index === state.active;
                                     return (
@@ -700,8 +734,8 @@ export function LivepeerPaidUploadForm() {
                         </div>
                     ) : uploaded ? (
                         <Button className="w-full" disabled>
-                            {!publicationQuery.isError && !providerFailed && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            {publicationQuery.isError ? 'Status unavailable' : providerFailed ? 'Processing failed' : 'Waiting for publication'}
+                            {publicationView.pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            {publicationView.buttonLabel}
                         </Button>
                     ) : !payment ? (
                         <Button className="w-full" disabled={!formReady || busy} onClick={() => void preparePayment()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Check payment options</Button>
@@ -716,7 +750,7 @@ export function LivepeerPaidUploadForm() {
                             <p className="text-xs text-zinc-400">Cancellation stops provider creation only. The technical-pilot fee is not refunded.</p>
                         </div>
                     )}
-                    {status && <p role="status" className="text-sm text-zinc-400">{status}</p>}
+                    {displayedStatus && <p role="status" className="text-sm text-zinc-400">{displayedStatus}</p>}
                     {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
                 </CardContent>
             </Card>
@@ -739,7 +773,7 @@ export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; 
             return progress;
         },
         retry: false,
-        refetchInterval: (query) => query.state.data?.publication
+        refetchInterval: (query) => query.state.status === 'success' && query.state.data?.publication
             ? false
             : publicationPollIntervalMs(query.state.dataUpdateCount + query.state.fetchFailureCount),
         refetchIntervalInBackground: false,

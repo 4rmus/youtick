@@ -255,6 +255,12 @@ export function normalizeLivepeerAsset(value: unknown): ProviderAsset {
     const creator = requireObject(asset.creatorId, 'provider_identity_mismatch');
     const policy = requireObject(asset.playbackPolicy, 'provider_playback_mismatch');
     const status = requireObject(asset.status, 'provider_state_invalid');
+    const videoSpec = asset.videoSpec && typeof asset.videoSpec === 'object'
+        ? asset.videoSpec as JsonObject : null;
+    const videoTracks = Array.isArray(videoSpec?.tracks)
+        ? videoSpec.tracks.filter((track): track is JsonObject => (
+            track && typeof track === 'object' && track.type === 'video'
+        )) : [];
     let sha256: string | null = null;
     if (asset.hash !== null && asset.hash !== undefined) {
         if (!Array.isArray(asset.hash)) throw new Error('provider_state_invalid');
@@ -281,6 +287,8 @@ export function normalizeLivepeerAsset(value: unknown): ProviderAsset {
         sizeBytes: typeof asset.size === 'number' ? asset.size : Number.NaN,
         downloadUrl: String(asset.downloadUrl),
         sha256,
+        sourceVideo: asset.videoSpec === undefined ? undefined : videoTracks.length === 1
+            ? { width: videoTracks[0].width, height: videoTracks[0].height } : null,
     };
 }
 
