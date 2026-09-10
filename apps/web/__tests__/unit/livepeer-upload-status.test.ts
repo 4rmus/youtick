@@ -18,7 +18,7 @@ vi.mock('@tanstack/react-query', () => ({
 vi.mock('@/lib/livepeer-publication', () => ({ readLivepeerUploadProgress: state.read }));
 vi.mock('@/lib/livepeer-upload', () => ({ rememberLivepeerUploadJob: state.remember }));
 
-import { LivepeerUploadStatus } from '@/components/LivepeerPaidUploadForm';
+import { getLivepeerPublicationView, LivepeerUploadStatus } from '@/components/LivepeerPaidUploadForm';
 
 const progress = { job: { creator_id: 'creator.testnet' }, publication: null, expired: false };
 const render = () => renderToStaticMarkup(React.createElement(LivepeerUploadStatus, {
@@ -69,5 +69,65 @@ describe('upload status after closing its tab', () => {
         const html = render();
         expect(html).toContain('could not be verified for this account');
         expect(html).not.toContain('/watch');
+    });
+});
+
+describe('publication view shared by the form status, alert and button', () => {
+    it.each([
+        ['provider_playback_mismatch', 'verification_error'],
+        ['provider_verification_incomplete', 'verification_error'],
+        ['provider_identity_mismatch', 'verification_error'],
+        ['provider_state_invalid', 'verification_error'],
+        ['provider_playback_exposed', 'verification_error'],
+        ['livepeer_job_creator_mismatch', 'verification_error'],
+        ['provider_unavailable', 'temporary_error'],
+        ['near_job_query_failed', 'temporary_error'],
+        ['rate_limited', 'temporary_error'],
+        ['unrecognized provider error', 'unknown_error'],
+    ])('classifies %s without trusting stale publication or expiry data', (code, kind) => {
+        const result = getLivepeerPublicationView({ isError: true, error: new Error(code),
+            data: { publication: {}, expired: true } });
+        expect(result.kind).toBe(kind);
+        expect(result.pending).toBe(false);
+        expect(result.failed).toBe(kind === 'verification_error');
+        expect(result.buttonLabel).not.toBe('Open publication');
+        expect(JSON.stringify(result)).not.toContain(code);
+    });
+
+    it.each([
+        [{ publication: {} }, 'published'],
+        [{ expired: true }, 'expired'],
+        [{ providerState: 'UPLOAD_EXPIRED' }, 'expired'],
+        [{ providerState: 'PROVIDER_FAILED' }, 'provider_failed'],
+        [{ job: { status: 'Published' } }, 'pending'],
+        [{ providerState: 'FINALIZE_RETRY' }, 'pending'],
+        [{ providerState: 'PROCESSING' }, 'pending'],
+    ])('renders the current successful state %j', (data, kind) => {
+        const view = getLivepeerPublicationView({ isError: false, data, error: new Error('provider_playback_mismatch') });
+        expect(view.kind).toBe(kind);
+        expect(view.pending).toBe(kind === 'pending');
+        if ('job' in data && data.job.status === 'Published') expect(view.message).toBe('Finalizing publication…');
+    });
+
+    it('updates every visible decision through technical, connection, success and expiry transitions', () => {
+        const results = [
+            { isError: true, error: new Error('provider_playback_mismatch') },
+            { isError: true, error: new Error('provider_unavailable') },
+            { isError: false, data: { publication: {} } },
+            { isError: false, data: { expired: true } },
+        ].map(getLivepeerPublicationView);
+        expect(results.map((result) => result.kind)).toEqual(['verification_error', 'temporary_error', 'published', 'expired']);
+        expect(new Set(results.map((result) => result.message)).size).toBe(4);
+        expect(new Set(results.map((result) => result.title)).size).toBe(4);
+        expect(new Set(results.map((result) => result.buttonLabel)).size).toBe(4);
+        expect(results.map((result) => result.failed)).toEqual([true, false, false, true]);
+    });
+
+    it('distinguishes known network failures from programming errors and never displays raw detail', () => {
+        expect(getLivepeerPublicationView({ isError: true, error: new TypeError('Failed to fetch') }).kind).toBe('temporary_error');
+        const raw = 'https://private.example/video?jwt=secret';
+        const view = getLivepeerPublicationView({ isError: true, error: new TypeError(raw) });
+        expect(view.kind).toBe('unknown_error');
+        expect(JSON.stringify(view)).not.toContain(raw);
     });
 });

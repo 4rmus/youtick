@@ -1,9 +1,21 @@
 import { mediaProfiles } from './media-provider';
 import { dependencyFetch } from './dependency-fetch';
-import type { MediaProvider, VerifiedAsset, VerifyReadyAssetInput } from './media-provider';
+import type { MediaProvider, ProviderAsset, VerifiedAsset, VerifyReadyAssetInput } from './media-provider';
 
 export const MAX_PROVIDER_PLAYBACK_OUTPUTS = 16;
 const MAX_THUMBNAIL_REFERENCE_PROBES = 32;
+const MAX_HLS_MANIFESTS = 16;
+const MAX_HLS_MEDIA_REFERENCES = 64;
+const DIMENSION_TOLERANCE = 2;
+
+type Dimensions = { width: number; height: number };
+type HlsVariant = Dimensions & { url: string };
+type HlsVerification = { variants: HlsVariant[]; required: HlsVariant[] };
+type HlsContext = {
+    manifests: Map<string, string[]>;
+    mediaReferences: Set<string>;
+    reference?: Dimensions;
+};
 
 type VerificationDependencies = {
     sha256(value: string): Promise<string>;
@@ -51,42 +63,40 @@ export async function verifyLivepeerReadyAsset(
     const vttUrls = [...new Set(vttSources.map((source) => source.url))];
     if (hlsUrls.length === 0
         || playback.sources.some((source) => source.kind === 'unknown')
-        || (mp4Sources.length > 0 && !mp4Sources.some((source) => (
-            source.width === 1280
-            && source.height === 720
-            && typeof source.bitrate === 'number'
-            && source.bitrate > 0
-        )))
         || hlsUrls.some((url) => !validPlaybackUrl(url))
         || mp4Urls.some((url) => !validPlaybackUrl(url))
         || vttUrls.some((url) => !validPlaybackUrl(url))
         || !validPlaybackUrl(asset.downloadUrl)) {
         throw new Error('provider_playback_mismatch');
     }
+    if (!dependencies.signPlaybackToken) throw new Error('runtime_not_configured');
+    const token = await dependencies.signPlaybackToken(input.playbackId);
+    const context: HlsContext = { manifests: new Map(), mediaReferences: new Set() };
+    const verifiedHls: HlsVerification[] = [];
     for (const hlsUrl of new Set([livepeerHlsUrl(input.playbackId), ...hlsUrls])) {
-        await requireHlsPlaybackDenied(hlsUrl);
+        verifiedHls.push(await verifyAdaptiveHls(hlsUrl, token, expectedProfiles, asset.sourceVideo, context));
     }
-    if (expectedProfiles.length > 1) {
-        if (!dependencies.signPlaybackToken) throw new Error('runtime_not_configured');
-        const token = await dependencies.signPlaybackToken(input.playbackId);
-        for (const hlsUrl of new Set([livepeerHlsUrl(input.playbackId), ...hlsUrls])) {
-            await verifyAdaptiveHls(hlsUrl, token, expectedProfiles);
-        }
+    const variants = verifiedHls.flatMap((hls) => hls.variants);
+    if (mp4Sources.some((source) => !validDimensions(source)
+        || typeof source.bitrate !== 'number' || !Number.isFinite(source.bitrate) || source.bitrate <= 0
+        || !variants.some((variant) => sameDimensions(variant, source))
+            && !(validDimensions(asset.sourceVideo) && sameDimensions(asset.sourceVideo, source)))
+        || mp4Sources.length > 0 && !mp4Sources.some((source) => validDimensions(source)
+            && verifiedHls.some((hls) => sameDimensions(hls.required[hls.required.length - 1], source)))) {
+        throw new Error('provider_playback_mismatch');
     }
     for (const mp4Url of mp4Urls) {
-        await requireAnonymousPlaybackDenied(mp4Url);
+        await requireAnonymousPlaybackDenied(mp4Url, context.mediaReferences);
     }
     for (const vttUrl of vttUrls) {
-        await requireAnonymousPlaybackDenied(vttUrl);
+        await requireAnonymousPlaybackDenied(vttUrl, context.mediaReferences);
     }
     if (vttUrls.length > 0) {
-        if (!dependencies.signPlaybackToken) throw new Error('runtime_not_configured');
-        const token = await dependencies.signPlaybackToken(input.playbackId);
         for (const thumbnailUrl of await vttThumbnailUrls(vttUrls, token)) {
-            await requireAnonymousPlaybackDenied(thumbnailUrl);
+            await requireAnonymousPlaybackDenied(thumbnailUrl, context.mediaReferences);
         }
     }
-    await requireAnonymousPlaybackDenied(asset.downloadUrl);
+    await requireAnonymousPlaybackDenied(asset.downloadUrl, context.mediaReferences);
 
     return {
         assetIdHash: await dependencies.sha256(input.assetId),
@@ -149,7 +159,7 @@ async function hlsPlaybackDenied(response: Response): Promise<boolean> {
     try {
         return hlsManifestKind(await response.text()) === 'error';
     } catch {
-        return false;
+        throw new Error('provider_unavailable');
     }
 }
 
@@ -179,7 +189,8 @@ async function requireHlsPlaybackDenied(url: string): Promise<void> {
     }
 }
 
-async function requireAnonymousPlaybackDenied(url: string): Promise<void> {
+async function requireAnonymousPlaybackDenied(url: string, verified?: Set<string>): Promise<void> {
+    if (verified?.has(url)) return;
     let response: Response;
     try {
         response = await dependencyFetch('livepeer_media', 'asset_anonymous_probe', url, {
@@ -191,9 +202,10 @@ async function requireAnonymousPlaybackDenied(url: string): Promise<void> {
     } catch {
         throw new Error('provider_unavailable');
     }
-    await response.body?.cancel();
+    await response.body?.cancel().catch(() => undefined);
     if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
     if (![401, 403].includes(response.status)) throw new Error('provider_playback_exposed');
+    verified?.add(url);
 }
 
 function vttReferences(body: string): string[] | null {
@@ -252,37 +264,101 @@ async function fetchVttReferences(vttUrl: string, token: string): Promise<string
     }
     if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
     if (response.status !== 200) throw new Error('provider_playback_mismatch');
-    try {
-        const references = vttReferences(await response.text());
-        if (references) return references;
-    } catch {
-        // Fall through to the stable provider mismatch below.
-    }
+    const body = await response.text().catch(() => { throw new Error('provider_unavailable'); });
+    const references = vttReferences(body);
+    if (references) return references;
     throw new Error('provider_playback_mismatch');
+}
+
+function validDimensions(value: { width: unknown; height: unknown } | null | undefined): value is Dimensions {
+    return Boolean(value && Number.isSafeInteger(value.width) && Number(value.width) > 0
+        && Number.isSafeInteger(value.height) && Number(value.height) > 0);
+}
+
+function sameDimensions(left: Dimensions, right: Dimensions): boolean {
+    return Math.abs(left.width - right.width) <= DIMENSION_TOLERANCE
+        && Math.abs(left.height - right.height) <= DIMENSION_TOLERANCE;
+}
+
+function sameAspect(reference: Dimensions, output: Dimensions): boolean {
+    const orientation = (value: Dimensions) => Math.abs(value.width - value.height) <= DIMENSION_TOLERANCE
+        ? 0 : Math.sign(value.width - value.height);
+    if (orientation(reference) * orientation(output) < 0) return false;
+    const scale = Math.min(output.width / reference.width, output.height / reference.height);
+    return Math.abs(output.width - reference.width * scale) <= DIMENSION_TOLERANCE
+        && Math.abs(output.height - reference.height * scale) <= DIMENSION_TOLERANCE;
+}
+
+function distinctRenditions(candidates: HlsVariant[][], selected: HlsVariant[] = []): HlsVariant[] | null {
+    if (!candidates.length) return selected;
+    for (const candidate of candidates[0]) {
+        if (selected.some((previous) => previous.url === candidate.url
+            || previous.width === candidate.width && previous.height === candidate.height)) continue;
+        const match = distinctRenditions(candidates.slice(1), [...selected, candidate]);
+        if (match) return match;
+    }
+    return null;
+}
+
+function requiredRenditions(
+    variants: HlsVariant[], profiles: Dimensions[], source: ProviderAsset['sourceVideo'],
+): HlsVariant[] {
+    for (const measure of [(size: Dimensions) => size.height, (size: Dimensions) => Math.max(size.width, size.height)]) {
+        const required = distinctRenditions(profiles.map((profile) => variants.filter((variant) => (
+            Math.abs(measure(variant) - measure(profile)) <= DIMENSION_TOLERANCE
+        ))));
+        if (required) return required;
+    }
+    if (!validDimensions(source)) throw new Error('provider_verification_incomplete');
+    const reference = variants.reduce((largest, variant) => variant.height > largest.height ? variant : largest);
+    const short = Math.min(source.width, source.height);
+    const long = Math.max(source.width, source.height);
+    // Playback determines display orientation; this permits 90-degree equivalence, not arbitrary stretching.
+    const oriented = reference.width >= reference.height ? { width: long, height: short } : { width: short, height: long };
+    if (!sameAspect(oriented, reference)) throw new Error('provider_verification_incomplete');
+    const height = 2 * Math.floor(oriented.height / 2);
+    if (height <= 0) throw new Error('provider_verification_incomplete');
+    const targets = [...new Set(profiles.map((profile) => Math.min(profile.height, height)))];
+    const required = distinctRenditions(targets.map((target) => variants.filter((variant) => (
+        Math.abs(variant.height - target) <= DIMENSION_TOLERANCE
+        || target === height && profiles.some((profile) => profile.height > height
+            && Math.abs(variant.height - profile.height) <= DIMENSION_TOLERANCE)
+    ))));
+    if (!required) throw new Error('provider_playback_mismatch');
+    return required;
 }
 
 // Probe both renditions and bounded media samples; this is not a whole-video playback test.
 export async function verifyAdaptiveHls(
     masterUrl: string, token: string, profiles: { width: number; height: number }[],
-): Promise<void> {
-    const master = await authorizedHls(masterUrl, token);
-    // This profile has two muxed variants; unverified alternate audio/I-frame playlists stay closed.
+    source?: ProviderAsset['sourceVideo'],
+    context: HlsContext = { manifests: new Map(), mediaReferences: new Set() },
+): Promise<HlsVerification> {
+    const master = await verifiedHlsManifest(masterUrl, token, context);
+    // Unverified alternate audio/I-frame playlists stay closed.
     if (master.some((line) => /(?:^|[:,])URI=/.test(line))) throw new Error('provider_playback_mismatch');
     const variants = master.flatMap((line, index) => {
         if (!line.startsWith('#EXT-X-STREAM-INF:')) return [];
         const resolution = /(?:^|,)RESOLUTION=(\d+)x(\d+)(?:,|$)/.exec(line.slice(18));
-        if (!resolution || !master[index + 1] || master[index + 1].startsWith('#')) {
+        const bandwidth = /(?:^|,)BANDWIDTH=(\d+)(?:,|$)/.exec(line.slice(18));
+        if (!resolution || !bandwidth || !Number.isSafeInteger(Number(bandwidth[1])) || Number(bandwidth[1]) <= 0
+            || !master[index + 1] || master[index + 1].startsWith('#')) {
             throw new Error('provider_playback_mismatch');
         }
         return [{ width: Number(resolution[1]), height: Number(resolution[2]), url: hlsReference(masterUrl, master[index + 1]) }];
     });
-    if (variants.length !== profiles.length || new Set(variants.map((variant) => variant.url)).size !== profiles.length
-        || profiles.some((profile) => !variants.some((variant) => variant.width === profile.width && variant.height === profile.height))) {
+    if (!variants.length || variants.length > MAX_HLS_MANIFESTS
+        || new Set(variants.map((variant) => variant.url)).size !== variants.length
+        || variants.some((variant) => !validDimensions(variant))) {
         throw new Error('provider_playback_mismatch');
     }
+    const reference = variants.reduce((largest, variant) => variant.height > largest.height ? variant : largest);
+    if (variants.some((variant) => !sameAspect(reference, variant))
+        || context.reference && !sameAspect(context.reference, reference)) throw new Error('provider_playback_mismatch');
+    context.reference ??= reference;
+    const required = requiredRenditions(variants, profiles, source);
     for (const variant of variants) {
-        await requireHlsPlaybackDenied(variant.url);
-        const media = await authorizedHls(variant.url, token);
+        const media = await verifiedHlsManifest(variant.url, token, context);
         if (media.some((line) => line.startsWith('#EXT-X-STREAM-INF:')) || !media.includes('#EXT-X-ENDLIST')) {
             throw new Error('provider_playback_mismatch');
         }
@@ -293,8 +369,26 @@ export async function verifyAdaptiveHls(
             ...media.flatMap((line) => [...line.matchAll(/(?:^|[:,])URI="([^"]+)"/g)].map((match) => match[1])),
         ]);
         if (references.size > 16) throw new Error('provider_playback_mismatch');
-        for (const reference of references) await requireAnonymousPlaybackDenied(hlsReference(variant.url, reference));
+        for (const reference of references) {
+            const url = hlsReference(variant.url, reference);
+            if (context.mediaReferences.has(url)) continue;
+            if (context.mediaReferences.size >= MAX_HLS_MEDIA_REFERENCES) throw new Error('provider_playback_mismatch');
+            await requireAnonymousPlaybackDenied(url);
+            context.mediaReferences.add(url);
+        }
     }
+    return { variants, required };
+}
+
+async function verifiedHlsManifest(url: string, token: string, context: HlsContext): Promise<string[]> {
+    if (!validPlaybackUrl(url)) throw new Error('provider_playback_mismatch');
+    const previous = context.manifests.get(url);
+    if (previous) return previous;
+    if (context.manifests.size >= MAX_HLS_MANIFESTS) throw new Error('provider_playback_mismatch');
+    await requireHlsPlaybackDenied(url);
+    const lines = await authorizedHls(url, token);
+    context.manifests.set(url, lines);
+    return lines;
 }
 
 function hlsReference(parent: string, reference: string): string {
@@ -319,14 +413,14 @@ async function authorizedHls(url: string, token: string): Promise<string[]> {
     let bytes = 0;
     try {
         for (;;) {
-            const chunk = await reader.read();
+            const chunk = await reader.read().catch(() => { throw new Error('provider_unavailable'); });
             if (chunk.done) break;
             bytes += chunk.value.byteLength;
             if (bytes > 512 * 1024) throw new Error('provider_playback_mismatch');
             body += decoder.decode(chunk.value, { stream: true });
         }
         body += decoder.decode();
-    } finally { await reader.cancel(); }
+    } finally { await reader.cancel().catch(() => undefined); }
     if (hlsManifestKind(body) !== 'playable') throw new Error('provider_playback_mismatch');
     return body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }

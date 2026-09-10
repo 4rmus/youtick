@@ -1,5 +1,5 @@
 import { KeyPair } from 'near-api-js';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import handler, { LivepeerControl, type Env } from './index';
 
 const RPC_URL = 'https://rpc.testnet.near.org';
@@ -16,6 +16,17 @@ const EXPECTED_BYTES = '20000000';
 const HLS_ERROR = '#EXTM3U\n#EXT-X-ERROR:access_denied\n#EXT-X-ENDLIST\n';
 const MIXED_IFRAME_HLS = '#EXTM3U\n#EXT-X-ERROR\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=128000,URI="iframe.m3u8"\n';
 const THUMBNAIL_VTT = 'WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nkeyframes_0.jpg\n';
+const HLS_MASTER = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\n360/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720\n720/index.m3u8\n';
+const HLS_CHILD = '#EXTM3U\n#EXTINF:2,\nfirst.ts\n#EXTINF:2,\nlast.ts\n#EXT-X-ENDLIST\n';
+let playbackSigningEnv: Partial<Env>;
+beforeAll(async () => { playbackSigningEnv = await thumbnailPlaybackEnv(); });
+
+function privateHls(url: string, init?: RequestInit): Response | null {
+    if (!url.endsWith('.m3u8')) return null;
+    const token = new Headers(init?.headers).get('Livepeer-Jwt');
+    const authorized = token?.split('.').length === 3 && !token.endsWith('.invalid');
+    return new Response(!authorized ? HLS_ERROR : /\/(360|720)\/index\.m3u8$/.test(url) ? HLS_CHILD : HLS_MASTER);
+}
 
 type TestState = {
     state: DurableObjectState;
@@ -89,6 +100,7 @@ function createEnv(overrides?: Partial<Env>): Env {
         NEAR_OPERATOR_ACCOUNT_ID: OPERATOR_ID,
         NEAR_OPERATOR_PRIVATE_KEY: key.toString(),
         NEAR_OPERATOR_KEY_EPOCH: '1',
+        ...playbackSigningEnv,
         ...overrides,
     };
 }
@@ -247,7 +259,7 @@ function reconcileFetch(
         if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(asset);
         if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
         if (url === RPC_URL) return rpcResult(contractValue);
-        if (url.includes('.m3u8')) return new Response(HLS_ERROR, { status: 200 });
+        if (url.includes('.m3u8')) return privateHls(url, init)!;
         return new Response(null, { status: 403 });
     });
 }
@@ -948,7 +960,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             } as unknown as DurableObjectNamespace,
         }));
         let assetReads = 0;
-        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
             if (url.includes(`/asset/${ASSET_ID}`)) {
                 assetReads += 1;
@@ -957,13 +969,13 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
                     : undefined));
             }
             if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
-            if (url.endsWith('.m3u8')) return new Response(HLS_ERROR, { status: 200 });
-            return new Response(null, { status: 403 });
+            return privateHls(url, init) ?? new Response(null, { status: 403 });
         }));
 
         const early = await control.fetch(internalWebhookRequest(webhook()));
         expect(early.status).toBe(409);
         expect(testState.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+        expect(testState.values.get('reconcile:v1')).toMatchObject({ uploadErrorCode: 'provider_state_invalid', uploadReadFailed: true });
 
         const processing = await control.fetch(internalWebhookRequest(
             webhook('asset.updated', Date.now() + 1),
@@ -989,6 +1001,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(JSON.stringify(transitions)).not.toContain('job-001');
         expect(JSON.stringify(transitions)).not.toContain(ASSET_ID);
         expect(assetReads).toBe(2);
+        expect(testState.values.get('reconcile:v1')).toMatchObject({ uploadErrorCode: undefined, uploadReadFailed: false });
         expect(operatorFetch.mock.calls.filter(([request]) => (
             new URL(request.url).pathname === '/internal/finalize'
         ))).toHaveLength(1);
@@ -1054,11 +1067,12 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         const testState = createState();
         testState.values.set('job:v1', jobRecord());
         const control = new LivepeerControl(testState.state, createEnv());
-        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => (
-            String(input).includes(`/asset/${ASSET_ID}`)
-                ? Response.json(asset)
-                : Response.json(playback)
-        )));
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(asset);
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(playback);
+            return privateHls(url, init) ?? new Response(null, { status: 403 });
+        }));
 
         const response = await control.fetch(internalWebhookRequest());
         expect(response.status).toBe(409);
@@ -1076,15 +1090,14 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
                 get: vi.fn(() => ({ fetch: operatorFetch })),
             } as unknown as DurableObjectNamespace,
         }));
-        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
             if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
             if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback({ source: [{
                 type: 'html5/application/vnd.apple.mpegurl',
                 url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`,
             }] }));
-            if (url.endsWith('.m3u8')) return new Response(HLS_ERROR, { status: 200 });
-            return new Response(null, { status: 403 });
+            return privateHls(url, init) ?? new Response(null, { status: 403 });
         }));
 
         const response = await control.fetch(internalWebhookRequest());
@@ -1127,17 +1140,16 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             {
                 type: 'html5/video/mp4',
                 url: alternateMp4,
-                width: 204,
+                width: 640,
                 height: 360,
                 bitrate: 449_890,
             },
         ] });
-        const providerFetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+        const providerFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
             if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
             if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(playback);
-            if (url === canonicalHls) return new Response(HLS_ERROR, { status: 200 });
-            return new Response(null, { status: 403 });
+            return privateHls(url, init) ?? new Response(null, { status: 403 });
         });
         vi.stubGlobal('fetch', providerFetch);
         const readyEvent = webhook();
@@ -1152,7 +1164,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(testState.values.get('job:v1')).not.toHaveProperty('tusEndpoint');
         expect(testState.values.get('reconcile:v1')).toMatchObject({ status: 'PROVIDER_UNKNOWN' });
         expect(testState.alarms).toHaveLength(1);
-        expect(providerFetch).toHaveBeenCalledTimes(17);
+        const verifiedCalls = providerFetch.mock.calls.length;
         const calls = providerFetch.mock.calls.map(([input, init]) => ({
             url: String(input),
             method: (init as RequestInit | undefined)?.method,
@@ -1160,8 +1172,8 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             redirect: (init as RequestInit | undefined)?.redirect,
         }));
         for (const hlsUrl of [canonicalHls, providerHls, alternateHls]) {
-            expect(calls.filter((call) => call.url === hlsUrl)).toHaveLength(4);
-            expect(calls.filter((call) => call.url === hlsUrl && call.headers.has('Livepeer-Jwt'))).toHaveLength(3);
+            expect(calls.filter((call) => call.url === hlsUrl)).toHaveLength(5);
+            expect(calls.filter((call) => call.url === hlsUrl && call.headers.has('Livepeer-Jwt'))).toHaveLength(4);
         }
         const anonymousOutputs = calls.filter((call) => [
             `https://livepeercdn.com/asset/${PLAYBACK_ID}/video`,
@@ -1181,7 +1193,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         const duplicate = await control.fetch(internalWebhookRequest(readyEvent));
         expect(duplicate.status).toBe(200);
         expect(await duplicate.json()).toMatchObject({ duplicate: true, finalized: true });
-        expect(providerFetch).toHaveBeenCalledTimes(17);
+        expect(providerFetch).toHaveBeenCalledTimes(verifiedCalls);
         expect(operatorFetch.mock.calls.filter(([request]) => (
             new URL(request.url).pathname === '/internal/finalize'
         ))).toHaveLength(1);
@@ -1263,12 +1275,11 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
                 get: vi.fn(() => ({ fetch: operatorFetch })),
             } as unknown as DurableObjectNamespace,
         }));
-        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
             if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
             if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
-            if (url.endsWith('.m3u8')) return new Response(HLS_ERROR, { status: 200 });
-            return new Response(null, { status: 403 });
+            return privateHls(url, init) ?? new Response(null, { status: 403 });
         }));
 
         const ready = await control.fetch(internalWebhookRequest());
@@ -1524,6 +1535,29 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect([...testState.values.keys()].some((key) => key.endsWith(':suspend-sales'))).toBe(false);
     });
 
+    it('does not suspend sales when an incomplete ladder lacks source measurements', async () => {
+        let now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const testState = createState();
+        testState.values.set('job:v1', await publishedJob());
+        const control = new LivepeerControl(testState.state, createEnv());
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
+            if (url.endsWith('.m3u8')) {
+                const response = privateHls(url, init)!;
+                return new Response((await response.text()).replace(/#EXT-X-STREAM-INF:BANDWIDTH=3000000[^\n]+\n720\/index.m3u8\n/, ''));
+            }
+            return new Response(null, { status: 403 });
+        }));
+        await control.alarm();
+        now += 60_000;
+        await control.alarm();
+        expect(testState.values.get('reconcile:v1')).toMatchObject({ status: 'PROVIDER_UNKNOWN', consecutiveErrors: 2 });
+        expect([...testState.values.keys()].some((key) => key.endsWith(':suspend-sales'))).toBe(false);
+    });
+
     it('still requires two healthy observations when an outage interrupts drift recovery', async () => {
         let now = 1_785_600_000_000;
         vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -1650,13 +1684,12 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         const control = new LivepeerControl(testState.state, env);
         const canonicalHls = `https://playback.livepeer.studio/asset/hls/${PLAYBACK_ID}/index.m3u8`;
         const providerHls = `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8`;
-        const providerFetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+        const providerFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
             if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
             if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
-            if (url === canonicalHls) return new Response(HLS_ERROR, { status: 200 });
             if (url === providerHls) return new Response(MIXED_IFRAME_HLS, { status: 200 });
-            return new Response(null, { status: 403 });
+            return privateHls(url, init) ?? new Response(null, { status: 403 });
         });
         vi.stubGlobal('fetch', providerFetch);
 
@@ -1701,18 +1734,17 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             {
                 type: 'html5/video/mp4',
                 url: alternateMp4,
-                width: 204,
+                width: 640,
                 height: 360,
                 bitrate: 449_890,
             },
         ] });
-        const providerFetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+        const providerFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
             if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
             if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(playback);
-            if (url === canonicalHls) return new Response(HLS_ERROR, { status: 200 });
             if (url === alternateMp4) return new Response(null, { status: 200 });
-            return new Response(null, { status: 403 });
+            return privateHls(url, init) ?? new Response(null, { status: 403 });
         });
         vi.stubGlobal('fetch', providerFetch);
 
@@ -1762,11 +1794,10 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             const url = String(input);
             if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
             if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(playback);
-            if (url === canonicalHls) return new Response(HLS_ERROR, { status: 200 });
             if (url === vtt && new Headers(init?.headers).has('Livepeer-Jwt')) {
                 return new Response(THUMBNAIL_VTT, { status: 200 });
             }
-            return new Response(null, { status: 403 });
+            return privateHls(url, init) ?? new Response(null, { status: 403 });
         });
         vi.stubGlobal('fetch', providerFetch);
 
@@ -1800,14 +1831,14 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
                 get: vi.fn(() => ({ fetch: operatorFetch })),
             } as unknown as DurableObjectNamespace,
         }));
-        const providerFetch = vi.fn(async (input: RequestInfo | URL) => {
+        const providerFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
             if (url.includes(`/asset/${ASSET_ID}`)) {
                 await assetGate;
                 return Response.json(providerAsset());
             }
             if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(providerPlayback());
-            return new Response(null, { status: 403 });
+            return privateHls(url, init) ?? new Response(null, { status: 403 });
         });
         vi.stubGlobal('fetch', providerFetch);
         const readyEvent = webhook();

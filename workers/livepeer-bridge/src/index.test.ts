@@ -2073,6 +2073,73 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it.each(['request', 'alarm'])('preserves verification errors through %s, restart, backoff and recovery', async (entry) => {
+        let now = 1_788_430_000_000;
+        const started = now;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const backend = recoveryBackend(started, 6 * 60 * 60 * 1000);
+        let outcome = 'mismatch';
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.endsWith('/playback/playback-123')) return Response.json({ type: 'vod', meta: {
+                playbackPolicy: { type: 'jwt' }, source: [{ type: 'unknown', url: 'https://private.invalid/secret' }],
+            } });
+            if (url.endsWith('/asset/asset-123')) {
+                if (outcome === 'unavailable') return new Response(null, { status: 503 });
+                const asset = await (await backend(input, init)).json() as Record<string, unknown>;
+                return Response.json({ ...asset, status: { phase: outcome === 'mismatch' ? 'ready' : 'processing', updatedAt: now } });
+            }
+            return backend(input, init);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const state = createState();
+        seedStuckRecoveryJob(state, started);
+        const env = publicBetaEnv({ LIVEPEER_PROJECT_ID: 'project-123' });
+        let control = new LivepeerControl(state.state, env);
+        const read = async () => control.fetch(await controlRequest({ body: {
+            recovery: 'reconcile', expected_source_bytes: RECOVERY_SOURCE_BYTES,
+        } }));
+        if (entry === 'alarm') await expect(control.alarm()).rejects.toThrow('provider_playback_mismatch');
+        else expect(await (await read()).json()).toEqual({ error: 'provider_playback_mismatch' });
+        const providerCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('livepeer.studio')).length;
+        expect(state.values.get('reconcile:v1')).toMatchObject({ uploadReadFailed: true, uploadErrorCode: 'provider_playback_mismatch' });
+        control = new LivepeerControl(state.state, env);
+        const repeated = await read();
+        expect(repeated.status).toBe(409);
+        expect(await repeated.json()).toEqual({ error: 'provider_playback_mismatch' });
+        expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('livepeer.studio'))).toHaveLength(providerCalls);
+        now += 60_000;
+        outcome = 'unavailable';
+        const unavailable = await read();
+        expect(unavailable.status).toBe(503);
+        expect(await unavailable.json()).toEqual({ error: 'provider_unavailable' });
+        now = (state.values.get('reconcile:v1') as { nextReconcileAtMs: number }).nextReconcileAtMs;
+        outcome = 'processing';
+        expect((await read()).status).toBe(200);
+        expect(state.values.get('reconcile:v1')).toMatchObject({ uploadReadFailed: false, uploadErrorCode: undefined });
+        expect(state.values.get('job:v1')).toMatchObject({ assetId: 'asset-123', generation: 1, state: 'PROCESSING' });
+        expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('request-upload')
+            || init?.method === 'DELETE' || new URL(String(url)).hostname === 'origin.livepeer.com')).toBe(false);
+    });
+
+    it.each(['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY', 'ONCHAIN_PUBLISHED', 'PROVIDER_FAILED', 'UPLOAD_EXPIRED', 'CANCELLED'])(
+        'does not return stale verification errors for %s', async (jobState) => {
+            const now = 1_788_430_000_000;
+            vi.spyOn(Date, 'now').mockReturnValue(now);
+            vi.stubGlobal('fetch', recoveryBackend(now, 6 * 60 * 60 * 1000));
+            const state = createState();
+            seedStuckRecoveryJob(state, now);
+            state.values.set('job:v1', { ...state.values.get('job:v1') as object, state: jobState });
+            state.values.set('reconcile:v1', { schema: 'youtick.livepeer-reconcile.v1', status: 'PROVIDER_UNKNOWN',
+                consecutiveErrors: 1, nextReconcileAtMs: now + 60_000, uploadReadFailed: true, uploadErrorCode: 'provider_playback_mismatch' });
+            const control = new LivepeerControl(state.state, publicBetaEnv({ LIVEPEER_PROJECT_ID: 'project-123' }));
+            const response = await control.fetch(await controlRequest({ body: { recovery: 'reconcile', expected_source_bytes: RECOVERY_SOURCE_BYTES } }));
+            expect(response.status).toBe(200);
+            expect(await response.json()).toMatchObject({ state: jobState });
+            expect(state.values.get('reconcile:v1')).toMatchObject({ uploadReadFailed: false, uploadErrorCode: undefined });
+        },
+    );
+
     it('keeps a failed provider read unavailable during backoff without another provider attempt', async () => {
         const now = 1_788_430_000_000;
         vi.spyOn(Date, 'now').mockReturnValue(now);
@@ -2101,12 +2168,15 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         vi.spyOn(Date, 'now').mockReturnValue(now);
         const state = createState();
         seedStuckRecoveryJob(state, now - 3_600_000);
+        state.values.set('reconcile:v1', { schema: 'youtick.livepeer-reconcile.v1', status: 'PROVIDER_UNKNOWN',
+            consecutiveErrors: 1, nextReconcileAtMs: now + 60_000, uploadReadFailed: true, uploadErrorCode: 'provider_playback_mismatch' });
         const fetchMock = vi.fn();
         vi.stubGlobal('fetch', fetchMock);
         const control = new LivepeerControl(state.state, publicBetaEnv());
         await control.alarm();
         await control.alarm();
         expect(state.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_EXPIRED', absoluteDeadlineAtMs: now });
+        expect(state.values.get('reconcile:v1')).toMatchObject({ uploadReadFailed: false, uploadErrorCode: undefined });
         expect(fetchMock).not.toHaveBeenCalled();
     });
 

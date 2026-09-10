@@ -390,6 +390,7 @@ type ReconcileRecord = {
     consecutiveErrors: number;
     nextReconcileAtMs: number;
     uploadReadFailed?: boolean;
+    uploadErrorCode?: string;
     lastGoodAtMs?: number;
     lastDrift?: {
         code: string;
@@ -701,6 +702,7 @@ const SAFE_ERROR_CODES = new Set([
     'provider_playback_exposed',
     'provider_playback_mismatch',
     'publication_cover_image_denied',
+    'provider_verification_incomplete',
     'publication_cover_image_redirected',
     'publication_cover_image_status',
     'publication_cover_image_type',
@@ -1321,8 +1323,12 @@ export class LivepeerControl {
         if (input.body.recovery === 'reconcile') {
             await this.reconcileUpload(record);
             record = await this.state.storage.get<JobRecord>(JOB_KEY) || record;
+            if (!['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(record.state)) {
+                await persistUploadVerificationResult(this.state);
+                return json({ job_id: record.jobId, generation: record.generation, state: record.state });
+            }
             const observation = await this.state.storage.get<ReconcileRecord>(RECONCILE_KEY);
-            if (observation?.uploadReadFailed) throw new Error('provider_unavailable');
+            if (observation?.uploadReadFailed) throw new Error(observation.uploadErrorCode || 'provider_unavailable');
             return json({ job_id: record.jobId, generation: record.generation, state: record.state });
         }
         if (input.body.recovery === 'resume') {
@@ -1475,6 +1481,7 @@ export class LivepeerControl {
         if (publicBetaDeadlineExpired(record)) {
             const expired = transitionJob(record, 'UPLOAD_EXPIRED');
             await this.state.storage.put(JOB_KEY, expired);
+            await persistUploadVerificationResult(this.state);
             await updateAdmission(this.env, expired, 'UPLOAD_EXPIRED');
             return;
         }
@@ -1489,6 +1496,7 @@ export class LivepeerControl {
             ...previous, schema: 'youtick.livepeer-reconcile.v1', status: 'PROVIDER_UNKNOWN',
             consecutiveErrors: previous?.consecutiveErrors || 0,
             nextReconcileAtMs: nextReadAtMs, uploadReadFailed: true,
+            uploadErrorCode: previous?.uploadErrorCode || 'provider_unavailable',
         } satisfies ReconcileRecord);
         await scheduleReconcile(this.state, nextReadAtMs);
         try {
@@ -1516,14 +1524,13 @@ export class LivepeerControl {
             if (!response.ok) throw new Error('provider_unavailable');
             const current = (await this.state.storage.get<ReconcileRecord>(RECONCILE_KEY))!;
             await this.state.storage.put(RECONCILE_KEY, { ...current, consecutiveErrors: 0,
-                nextReconcileAtMs: nextReadAtMs, uploadReadFailed: false });
+                nextReconcileAtMs: nextReadAtMs, uploadReadFailed: false, uploadErrorCode: undefined });
         } catch (error) {
             if (['provider_unavailable', 'near_finalize_pending', 'near_job_query_failed'].includes(safeErrorCode(error))) {
                 await persistUnknownReconcile(this.state, 'PROVIDER_UNKNOWN');
-                const current = (await this.state.storage.get<ReconcileRecord>(RECONCILE_KEY))!;
-                await this.state.storage.put(RECONCILE_KEY, { ...current, uploadReadFailed: true });
                 await scheduleReconcile(this.state, record.absoluteDeadlineAtMs);
             }
+            await persistUploadVerificationResult(this.state, safeErrorCode(error));
             throw error;
         }
     }
@@ -1821,6 +1828,7 @@ export class LivepeerControl {
                     publication,
                 };
                 await this.state.storage.put(JOB_KEY, record);
+                await persistUploadVerificationResult(this.state);
                 logJobStateTransition(existing.state, record.state, existing);
                 await updateAdmission(this.env, record, 'READY_VERIFIED');
                 await this.state.storage.put(dedupKey, {
@@ -1832,6 +1840,7 @@ export class LivepeerControl {
                 });
             } catch (error) {
                 await this.state.storage.delete(dedupKey);
+                await persistUploadVerificationResult(this.state, safeErrorCode(error));
                 throw error;
             }
         } else {
@@ -2252,6 +2261,7 @@ async function scheduleTerminalArchive(
     env: Env,
     job: JobRecord,
 ): Promise<void> {
+    await persistUploadVerificationResult(state);
     if (env.UPLOAD_JOB_ARCHIVE_ENABLED !== 'true'
         || !job.terminalArchive
         || job.terminalArchive.status === 'COMMITTED') return;
@@ -3325,6 +3335,31 @@ async function persistUnknownReconcile(
         salesSuspensionQueuedAtMs: previous?.salesSuspensionQueuedAtMs,
     } satisfies ReconcileRecord);
     await scheduleReconcile(state, nextReconcileAtMs);
+}
+
+async function persistUploadVerificationResult(state: DurableObjectState, errorCode?: string): Promise<void> {
+    const nextReadAtMs = await state.storage.transaction(async (transaction) => {
+        const job = await transaction.get<JobRecord>(JOB_KEY);
+        const previous = await transaction.get<ReconcileRecord>(RECONCILE_KEY);
+        const code = job && ['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(job.state) ? errorCode : undefined;
+        if (!previous && !code) return;
+        await assertDurableObjectRecordCapacity(transaction, [RECONCILE_KEY], 'upload_job');
+        const nextReconcileAtMs = code ? Math.min(
+            Math.max(previous?.nextReconcileAtMs || 0, Date.now() + RECONCILE_CONFIRMATION_MS),
+            job?.absoluteDeadlineAtMs ?? Number.MAX_SAFE_INTEGER,
+        ) : previous!.nextReconcileAtMs;
+        await transaction.put(RECONCILE_KEY, {
+            ...previous,
+            schema: 'youtick.livepeer-reconcile.v1',
+            status: previous?.status || 'PROVIDER_UNKNOWN',
+            consecutiveErrors: previous?.consecutiveErrors || 0,
+            nextReconcileAtMs,
+            uploadReadFailed: Boolean(code),
+            uploadErrorCode: code,
+        } satisfies ReconcileRecord);
+        return code ? nextReconcileAtMs : undefined;
+    });
+    if (nextReadAtMs !== undefined) await scheduleReconcile(state, nextReadAtMs);
 }
 
 async function persistDriftReconcile(
@@ -7740,6 +7775,7 @@ function errorStatus(code: string): number {
         || code === 'provider_playback_missing'
         || code === 'provider_playback_exposed'
         || code === 'provider_playback_mismatch'
+        || code === 'provider_verification_incomplete'
         || code === 'provider_state_invalid'
         || code === 'device_nonce_replayed'
         || code === 'provider_create_pending'

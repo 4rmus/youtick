@@ -56,6 +56,7 @@ export type ProviderAsset = {
     sizeBytes: number;
     downloadUrl: string;
     sha256: string | null;
+    sourceVideo?: { width: unknown; height: unknown } | null;
 };
 
 export type ProviderPlaybackSource = {
