@@ -115,7 +115,7 @@ export async function requestLivepeerPlaybackToken(
     if (!response.ok) {
         throw Object.assign(new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`), { status: response.status });
     }
-    return parsePlaybackToken(value, input.playbackId, 'youtick.livepeer-playback-token.v1');
+    return parsePlaybackToken(value, input.playbackId, 'youtick.livepeer-playback-token.v1', response.status);
 }
 
 async function requestStatelessPlaybackToken(
@@ -135,7 +135,7 @@ async function requestStatelessPlaybackToken(
     if (!response.ok) {
         throw Object.assign(new Error(typeof value.error === 'string' ? value.error : `livepeer_control_http_${response.status}`), { status: response.status });
     }
-    return parsePlaybackToken(value, input.playbackId, 'youtick.livepeer-playback-token.v2');
+    return parsePlaybackToken(value, input.playbackId, 'youtick.livepeer-playback-token.v2', response.status);
 }
 
 async function createStatelessPlaybackRequest(
@@ -212,7 +212,7 @@ export async function startLivepeerPlaybackSession(
             signal.throwIfAborted();
             if (!FEATURE_FLAGS.enablePlaybackAuthorizerV2) await waitForPlayGrantVisibility(input);
             return requestPlaybackTokenWithRetry(input, signal, wallet);
-        });
+        }, undefined, signal);
         signal.throwIfAborted();
     } catch (error) {
         destroy();
@@ -231,7 +231,7 @@ export async function startLivepeerPlaybackSession(
         try {
             const renewed = await measureVideoOperation('playback_token_renewal', () => (
                 refreshPlaybackAccess(input, signal, callbacks.renewGrant, wallet)
-            ));
+            ), undefined, signal);
             if (stopped) return;
             if (Date.now() >= Number(access.expires_at_ms)) return fail(new Error('livepeer_playback_token_expired'));
             access = renewed;
@@ -353,6 +353,7 @@ function parsePlaybackToken(
     value: Record<string, unknown>,
     playbackId: string,
     expectedSchema: LivepeerPlaybackToken['schema'],
+    status: number,
 ): LivepeerPlaybackToken {
     const expiresAtMs = Number(value.expires_at_ms);
     if (value.schema !== expectedSchema
@@ -365,7 +366,7 @@ function parsePlaybackToken(
         || expiresAtMs <= Date.now()
         || expiresAtMs > Date.now() + 305_000
         || value.hls_url !== livepeerHlsUrl(playbackId)) {
-        throw new Error('invalid_livepeer_playback_token');
+        throw Object.assign(new Error('invalid_livepeer_playback_token'), { status });
     }
     return value as LivepeerPlaybackToken;
 }

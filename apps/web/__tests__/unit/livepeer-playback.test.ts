@@ -93,7 +93,47 @@ describe('Livepeer browser playback', () => {
 
     afterEach(() => vi.useRealTimers());
 
+    it.each([
+        [403, 'playback_denied', 4], [429, 'rate_limited', 1],
+        [503, 'provider_unavailable', 1], [500, 'internal_error', 1],
+    ])('measures initial HTTP %s without changing the retry count', async (status, code, attempts) => {
+        playbackTimers();
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const fetchMock = vi.fn(async () => Response.json({ error: code }, { status: Number(status) }));
+        vi.stubGlobal('fetch', fetchMock);
+        const onAccess = vi.fn();
+        const started = Date.now();
+        const result = expect(startLivepeerPlaybackSession(INPUT, { onAccess })).rejects.toMatchObject({
+            message: code, status,
+        });
+        await vi.runAllTimersAsync();
+        await result;
+        expect(fetchMock).toHaveBeenCalledTimes(Number(attempts));
+        expect(Date.now() - started).toBe(Number(attempts) === 4 ? 7000 : 0);
+        expect(onAccess).not.toHaveBeenCalled();
+        const entries = log.mock.calls.map(([entry]) => JSON.parse(String(entry)));
+        expect(entries).toHaveLength(2);
+        expect(entries[1]).toMatchObject({ phase: 'playback_token_initial', outcome: 'failed', errorCode: code, httpStatus: status });
+    });
+
+    it('retains HTTP 200 on unusable V1 tokens and never grants access', async () => {
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const fetchMock = vi.fn(async () => Response.json({ ...tokenResponse(), token: 'secret-invalid-token' }));
+        vi.stubGlobal('fetch', fetchMock);
+        const onAccess = vi.fn();
+        await expect(startLivepeerPlaybackSession(INPUT, { onAccess })).rejects.toMatchObject({
+            message: 'invalid_livepeer_playback_token', status: 200,
+        });
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(onAccess).not.toHaveBeenCalled();
+        expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
+            outcome: 'failed', errorCode: 'invalid_livepeer_playback_token', httpStatus: 200,
+        });
+        expect(JSON.stringify(log.mock.calls)).not.toContain('secret');
+    });
+
     it('retains access through a temporary renewal failure and retries before expiry', async () => {
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
         playbackTimers();
         const now = Date.now();
         const fetchMock = vi.fn()
@@ -114,6 +154,10 @@ describe('Livepeer browser playback', () => {
         await vi.advanceTimersByTimeAsync(200_000);
         expect(fetchMock).toHaveBeenCalledTimes(3);
         expect(onError).not.toHaveBeenCalled();
+        expect(log.mock.calls.map(([entry]) => JSON.parse(String(entry)))).toEqual(expect.arrayContaining([
+            expect.objectContaining({ phase: 'playback_token_renewal', outcome: 'failed', errorCode: 'type_error' }),
+            expect.objectContaining({ phase: 'playback_token_renewal', outcome: 'completed' }),
+        ]));
     });
 
     it.each([[401, 'provider_unavailable'], [403, 'provider_unavailable'], [503, 'control_plane_disabled']])(
