@@ -231,6 +231,62 @@ describe('device session', () => {
         });
     });
 
+    it('restores a cold page after logout and reauthorization without stopping playback', async () => {
+        const api = await import('@/lib/device-session');
+        await api.clearDeviceSession();
+        const authorization = await api.preparePlaybackDevice('buyer.testnet');
+        const now = Date.now();
+        chain.view.mockResolvedValue({
+            ...authorization, authorized_at_ms: String(now), expires_at_ms: String(now + 30 * 86400000),
+        });
+        vi.resetModules();
+        const reloaded = await import('@/lib/device-session');
+        const controller = new AbortController();
+        const cleared = vi.fn(() => controller.abort());
+        const unsubscribe = reloaded.onDeviceSessionCleared(cleared);
+        try {
+            const restored = await reloaded.getDeviceSession('buyer.testnet');
+            expect(restored?.certificate.session_public_key).toBe(authorization.session_public_key);
+            expect(restored?.privateKey.extractable).toBe(false);
+            expect(controller.signal.aborted).toBe(false);
+            expect(cleared).not.toHaveBeenCalled();
+        } finally { unsubscribe(); }
+    });
+
+    it('still observes a missed logout and ignores its later duplicate broadcast', async () => {
+        const originalBroadcastChannel = globalThis.BroadcastChannel;
+        const channels: Array<{ onmessage?: (event: { data: number }) => void }> = [];
+        vi.stubGlobal('BroadcastChannel', class {
+            onmessage?: (event: { data: number }) => void;
+            constructor() { channels.push(this); }
+            postMessage() {}
+        });
+        try {
+            const api = await import('@/lib/device-session');
+            await api.getDeviceSession('buyer.testnet');
+            const cleared = vi.fn();
+            api.onDeviceSessionCleared(cleared);
+            vi.resetModules();
+            const otherTab = await import('@/lib/device-session');
+            await otherTab.clearDeviceSession();
+            expect(cleared).not.toHaveBeenCalled();
+            expect(await api.getDeviceSession('buyer.testnet')).toBeNull();
+            expect(cleared).toHaveBeenCalledOnce();
+            channels[0].onmessage?.({ data: 1 });
+            expect(cleared).toHaveBeenCalledOnce();
+
+            // A real broadcast must also stop a fresh subscriber before its first read.
+            vi.resetModules();
+            const coldTab = await import('@/lib/device-session');
+            const coldCleared = vi.fn();
+            coldTab.onDeviceSessionCleared(coldCleared);
+            await otherTab.clearDeviceSession();
+            channels.at(-1)?.onmessage?.({ data: 2 });
+            expect(coldCleared).toHaveBeenCalledOnce();
+            expect(await coldTab.getDeviceSession('buyer.testnet')).toBeNull();
+        } finally { vi.stubGlobal('BroadcastChannel', originalBroadcastChannel); }
+    });
+
     it('reconciles a day-20 renewal after reload without changing key or inventing expiry', async () => {
         const now = Date.now();
         const time = vi.spyOn(Date, 'now').mockReturnValue(now);
