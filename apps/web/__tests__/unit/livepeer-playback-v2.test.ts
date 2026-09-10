@@ -198,7 +198,38 @@ describe('Livepeer stateless browser playback', () => {
         expect(wallet.signMessage).not.toHaveBeenCalled();
     });
 
+    it('records a pre-HTTP device rejection without inventing a status or wallet action', async () => {
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        state.getDeviceSession.mockResolvedValue(null);
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        const wallet = { signMessage: vi.fn() };
+        await expect(startLivepeerPlaybackSession(INPUT, { onAccess: vi.fn() }, wallet)).rejects.toThrow('device_session_required');
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(wallet.signMessage).not.toHaveBeenCalled();
+        const event = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+        expect(event).toMatchObject({ outcome: 'failed', errorCode: 'device_session_required' });
+        expect(event).not.toHaveProperty('httpStatus');
+    });
+
+    it('retains HTTP 200 on unusable V2 tokens without logging their body', async () => {
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const fetchMock = vi.fn(async () => Response.json({ ...tokenResponse(), schema: 'secret-invalid-schema' }));
+        vi.stubGlobal('fetch', fetchMock);
+        const onAccess = vi.fn();
+        await expect(startLivepeerPlaybackSession(INPUT, { onAccess })).rejects.toMatchObject({
+            message: 'invalid_livepeer_playback_token', status: 200,
+        });
+        expect(onAccess).not.toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
+            outcome: 'failed', errorCode: 'invalid_livepeer_playback_token', httpStatus: 200,
+        });
+        expect(JSON.stringify(log.mock.calls)).not.toMatch(/secret|header.payload.signature/);
+    });
+
     it('stops on logout and discards a late initial token response', async () => {
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
         let reply!: (response: Response) => void;
         const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { reply = resolve; }));
         vi.stubGlobal('fetch', fetchMock);
@@ -212,6 +243,9 @@ describe('Livepeer stateless browser playback', () => {
         await rejected;
         expect(onAccess).not.toHaveBeenCalled();
         expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'device_session_required' }));
+        const entries = log.mock.calls.map(([entry]) => JSON.parse(String(entry)));
+        expect(entries).toHaveLength(2);
+        expect(entries[1]).toMatchObject({ phase: 'playback_token_initial', outcome: 'cancelled', errorCode: 'cancelled' });
     });
 
     it.each(['logout', 'expired session'])('closes an active player on %s without renewing wallet authority', async (reason) => {
