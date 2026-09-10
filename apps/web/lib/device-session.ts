@@ -9,7 +9,7 @@ const PUBLIC_KEY_PATTERN = /^ed25519:[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 const pending = new Map<string, Promise<DeviceSession>>();
 const listeners = new Set<() => void>();
 let generation = 0;
-let observedRevision = 0;
+let observedRevision: number | undefined;
 let channel: BroadcastChannel | undefined;
 
 type LegacyDeviceCertificate = {
@@ -60,7 +60,7 @@ function watchSessionChanges(): void {
     if (!channel && typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
         channel = new BroadcastChannel(scope());
         channel.onmessage = ({ data }) => {
-            if (Number.isSafeInteger(data) && data > observedRevision) {
+            if (Number.isSafeInteger(data) && data > (observedRevision ?? 0)) {
                 observedRevision = data;
                 invalidate();
             }
@@ -96,7 +96,10 @@ async function readStored(accountId: string): Promise<{ revision: number; sessio
         transaction.oncomplete = () => {
             db.close();
             const nextRevision = revision.result ?? 0;
-            if (nextRevision > observedRevision) {
+            if (observedRevision === undefined) {
+                // A cold page learns the existing revision; it is not a new logout.
+                observedRevision = nextRevision;
+            } else if (nextRevision > observedRevision) {
                 observedRevision = nextRevision;
                 // A read can beat the broadcast. Stop active players too, without
                 // cancelling a fresh payment that started after the logout.
@@ -357,7 +360,7 @@ export async function clearDeviceSession(): Promise<void> {
         transaction.oncomplete = () => { db.close(); resolve(); };
         transaction.onerror = transaction.onabort = () => { db.close(); reject(new Error('device_session_storage_unavailable')); };
     });
-    observedRevision = Math.max(observedRevision, clearedRevision);
+    observedRevision = Math.max(observedRevision ?? 0, clearedRevision);
     watchSessionChanges();
     channel?.postMessage(clearedRevision);
 }

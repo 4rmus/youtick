@@ -70,7 +70,10 @@ const bundle = await build({
   const market=await page.evaluate(async authorization=>{
     const now=Date.now();
     window.deviceRecord={...authorization,authorized_at_ms:String(now),expires_at_ms:String(now+2592000000)};
+    let clearEvents=0;
+    const unsubscribe=DeviceSessions.onDeviceSessionCleared(()=>clearEvents++);
     const session=await DeviceSessions.getDeviceSession('buyer.testnet');
+    unsubscribe();
     let exportRejected=false;try{await crypto.subtle.exportKey('pkcs8',session.privateKey)}catch{exportRejected=true}
     const again=await DeviceSessions.preparePlaybackDevice('buyer.testnet');
     const originalNow=Date.now;
@@ -80,8 +83,9 @@ const bundle = await build({
     Date.now=()=>now+50*86400000;
     const day50=await DeviceSessions.getDeviceSession('buyer.testnet');
     Date.now=originalNow;
-    return {exportRejected,key:session.certificate.session_public_key,again,day49:!!day49,day50};
+    return {exportRejected,key:session.certificate.session_public_key,again,day49:!!day49,day50,clearEvents};
   },deviceA);
+  assert.equal(market.clearEvents,0);
   assert.equal(market.exportRejected,true);assert.equal(market.key,deviceA.session_public_key);
   assert.deepEqual(market.again,deviceA);assert.equal(market.day49,true);assert.equal(market.day50,null);
   // Fresh context: payment preparation must listen for logout before any player exists.
@@ -112,7 +116,7 @@ const bundle = await build({
   assert.equal(await raceA.evaluate(()=>DeviceSessions.getDeviceSession('buyer.testnet')),null);
   assert.equal(await raceA.evaluate(()=>window.readClearEvents),1);
   await raceContext.close();
-  const report={browser:await browser.version(),executable:'Brave Browser',mode:'headless isolated profile',origin:'localhost only',wallet:'mock proof; no real signature',checks:{parallelSingleCall:true,reloadSameCertificate:true,nonExtractableBeforeAndAfterReload:true,pkcs8AndJwkExportRejected:true,otherAccountDenied:true,crossTabClear:true,crossTabLateReplyRejected:true,marketDeviceCrossTabSameKey:true,marketDeviceReloadWithoutWallet:true,marketRenewalDay20To50:true,marketExpiryDenied:true,paymentPrepareCrossTabLogoutDenied:true,readBeforeBroadcastStopsPlayer:true}};
+  const report={browser:await browser.version(),executable:'Brave Browser',mode:'headless isolated profile',origin:'localhost only',wallet:'mock proof; no real signature',checks:{parallelSingleCall:true,reloadSameCertificate:true,nonExtractableBeforeAndAfterReload:true,pkcs8AndJwkExportRejected:true,otherAccountDenied:true,crossTabClear:true,crossTabLateReplyRejected:true,marketDeviceCrossTabSameKey:true,marketDeviceReloadWithoutWallet:true,marketColdReloadDoesNotClearSession:market.clearEvents===0,marketRenewalDay20To50:true,marketExpiryDenied:true,paymentPrepareCrossTabLogoutDenied:true,readBeforeBroadcastStopsPlayer:true}};
   console.log(JSON.stringify(report, null, 2));
  } finally {await browser?.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(e=>{console.error(e);process.exitCode=1});
