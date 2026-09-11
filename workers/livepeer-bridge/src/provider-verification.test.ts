@@ -263,6 +263,45 @@ it.each(['network', 'syntax'])('distinguishes VTT body failure from malformed VT
         .rejects.toThrow(failure === 'network' ? 'provider_unavailable' : 'provider_playback_mismatch');
 });
 
+it.each([
+    { count: 60, status: 403, unsafe: false, error: null },
+    { count: 64, status: 403, unsafe: false, error: null },
+    { count: 65, status: 403, unsafe: false, error: 'provider_playback_mismatch' },
+    { count: 60, status: 200, unsafe: false, error: 'provider_playback_exposed' },
+    { count: 60, status: 302, unsafe: false, error: 'provider_playback_exposed' },
+    { count: 60, status: 503, unsafe: false, error: 'provider_unavailable' },
+    { count: 60, status: 403, unsafe: true, error: 'provider_playback_mismatch' },
+])('verifies every M-shaped VTT resource with a bounded total: %j', async ({ count, status, unsafe, error }) => {
+    const provider = readyProvider();
+    const playback = await provider.readPlayback();
+    const vtt = 'https://playback.livepeer.studio/thumbnails.vtt';
+    provider.readPlayback.mockResolvedValue({ ...playback, sources: [...playback.sources, { kind: 'vtt', url: vtt }] });
+    const urls = Array.from({ length: count }, (_, index) => `https://playback.livepeer.studio/thumbs/${index}.jpg`);
+    if (unsafe) urls[count - 1] = 'https://attacker.test/thumbnail.jpg';
+    const time = (index: number) => new Date(index * 10_000).toISOString().slice(11, 23);
+    const body = 'WEBVTT\n\n' + urls.map((url, index) => `${time(index)} --> ${time(index + 1)}\n${url}\n`).join('\n');
+    const mock = backend();
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+        if (url === vtt && new Headers(init.headers).get('Livepeer-Jwt') === 'authorized') return new Response(body);
+        if (url === urls[count - 1]) return new Response(null, { status });
+        return mock(url, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = verifyLivepeerReadyAsset(provider, readyInput, dependencies);
+    if (error) await expect(result).rejects.toThrow(error);
+    else await expect(result).resolves.toMatchObject({ verifiedSourceBytes: '10' });
+    const probes = fetchMock.mock.calls.filter(([url]) => urls.includes(url));
+    if (count > 64 || unsafe) expect(probes).toHaveLength(0);
+    else {
+        expect(probes.map(([url]) => url)).toEqual(urls);
+        for (const [, init] of probes) {
+            expect(new Headers(init.headers).has('Livepeer-Jwt')).toBe(false);
+            expect(new Headers(init.headers).get('Range')).toBe('bytes=0-0');
+            expect(init.redirect).toBe('manual');
+        }
+    }
+});
+
 it.each([0, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid MP4 bitrate %j', async (bitrate) => {
     const provider = readyProvider([[1280, 720]]);
     const playback = await provider.readPlayback();

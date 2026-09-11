@@ -3,7 +3,8 @@ import { dependencyFetch } from './dependency-fetch';
 import type { MediaProvider, ProviderAsset, VerifiedAsset, VerifyReadyAssetInput } from './media-provider';
 
 export const MAX_PROVIDER_PLAYBACK_OUTPUTS = 16;
-const MAX_THUMBNAIL_REFERENCE_PROBES = 32;
+// ponytail: 64 probes covers M; measure the budget for larger VTTs before raising this bound.
+const MAX_THUMBNAIL_REFERENCE_PROBES = 64;
 const MAX_HLS_MANIFESTS = 16;
 const MAX_HLS_MEDIA_REFERENCES = 64;
 const DIMENSION_TOLERANCE = 2;
