@@ -43,6 +43,25 @@ describe('local video measurements', () => {
         expect(JSON.parse(String(log.mock.calls[1][0])).outcome).toBe('completed');
     });
 
+    it.each(['completed', 'failed', 'cancelled', 'disconnected'] as const)(
+        'keeps a delayed wallet restore open until %s without exposing errors', (outcome) => {
+            const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+            let now = 100;
+            vi.spyOn(performance, 'now').mockImplementation(() => now);
+            const finish = startVideoMeasurement('wallet_restore');
+            now = 5100;
+            finish('delayed');
+            now = 6100;
+            finish(outcome, new Error('secret wallet payload'));
+            finish('cancelled');
+            const events = log.mock.calls.map(([value]) => JSON.parse(String(value)));
+            expect(events.map((event) => event.outcome)).toEqual(['started', 'delayed', outcome]);
+            expect(events[1]).toMatchObject({ phase: 'wallet_restore', durationMs: 5000 });
+            expect(events[2]).toMatchObject({ phase: 'wallet_restore', durationMs: 6000 });
+            expect(JSON.stringify(events)).not.toContain('secret');
+        },
+    );
+
     it.each([
         ['playback_denied', 403], ['rate_limited', 429],
         ['provider_unavailable', 503], ['internal_error', 500],

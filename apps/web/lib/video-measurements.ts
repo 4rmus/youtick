@@ -3,9 +3,9 @@ import { NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
 
 type VideoPhase = 'payment_preparation' | 'payment_options' | 'sponsored_quote' | 'wallet_signature'
     | 'wallet_transaction' | 'payment_relay' | 'payment_finality' | 'source_transfer'
-    | 'playback_preparation' | 'playback_token_initial' | 'playback_token_renewal';
+    | 'playback_preparation' | 'playback_token_initial' | 'playback_token_renewal' | 'wallet_restore';
 
-type VideoOutcome = 'completed' | 'failed' | 'cancelled';
+type VideoOutcome = 'completed' | 'failed' | 'cancelled' | 'delayed' | 'disconnected';
 
 const PLAYBACK_ERROR_CODES = new Set([
     'playback_denied', 'playback_authorization_unavailable', 'provider_unavailable',
@@ -70,7 +70,7 @@ export function startVideoMeasurement(
     let finished = false;
     return (outcome: VideoOutcome, error?: unknown, signal?: AbortSignal) => {
         if (finished) return;
-        finished = true;
+        if (outcome !== 'delayed') finished = true;
         report({
             phase, startedAtMs, sourceBytes: size,
             ...(phase === 'playback_token_initial' || phase === 'playback_token_renewal'

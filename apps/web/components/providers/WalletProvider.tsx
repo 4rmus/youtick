@@ -6,6 +6,7 @@ import { clearSessionGrantCache } from '@/lib/access-grants';
 import { clearDeviceSession, connectDeviceSession } from '@/lib/device-session';
 import { FEATURE_FLAGS, NEAR_NETWORK } from '@/lib/constants';
 import { getRpcEndpoints } from '@/lib/rpc-failover';
+import { startVideoMeasurement } from '@/lib/video-measurements';
 import {
     clearSignlessAccessKey,
     revokeBrowserAuthority,
@@ -145,6 +146,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         });
         connector.on('wallet:signIn', ({ wallet, accounts, source }) => {
             if (!mounted || connectingRef.current || source === 'signInAndSignMessage') return;
+            authGenerationRef.current += 1;
             applyWallet(wallet, accounts);
             setError(null);
         });
@@ -159,43 +161,61 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         });
 
         const restoreGeneration = authGenerationRef.current;
+        const canRestore = () => mounted && !connectingRef.current && restoreGeneration === authGenerationRef.current;
+        const finishRestore = startVideoMeasurement('wallet_restore');
+        // Bound UI readiness without discarding the SDK's eventual restore result.
+        const timeoutId = setTimeout(() => {
+            if (!mounted) return;
+            setIsReady(true);
+            if (!canRestore()) return;
+            finishRestore('delayed');
+            setError('Your wallet connection is taking longer than expected. You can wait or reload this page.');
+        }, WALLET_RESTORE_TIMEOUT_MS);
         connector.whenManifestLoaded
             .then(async () => {
-                let timeoutId: ReturnType<typeof setTimeout> | undefined;
-                try {
-                    connector.wallets = connector.wallets.filter((candidate) => (
-                        candidate.manifest.id !== 'meteor-wallet'
-                    ));
-                    connector.manifest.wallets = connector.manifest.wallets.filter((candidate) => (
-                        candidate.id !== 'meteor-wallet'
-                    ));
-                    await connector.registerWallet(
-                        PINNED_WALLET_MANIFEST.wallets[0] as unknown as WalletManifest,
-                    );
-                    pinnedWalletRef.current = connector.wallets.find((candidate) => (
-                        isPinnedMeteorManifest(candidate.manifest)
-                    )) ?? null;
-                    const connected = await Promise.race([
-                        connector.getConnectedWallet(),
-                        new Promise<never>((_, reject) => {
-                            timeoutId = setTimeout(
-                                () => reject(new Error('Wallet restore timed out')),
-                                WALLET_RESTORE_TIMEOUT_MS,
-                            );
-                        }),
-                    ]);
-                    if (mounted && !connectingRef.current && restoreGeneration === authGenerationRef.current) applyWallet(connected.wallet, connected.accounts);
-                } finally {
-                    if (timeoutId !== undefined) clearTimeout(timeoutId);
-                }
+                if (!mounted) return;
+                connector.wallets = connector.wallets.filter((candidate) => (
+                    candidate.manifest.id !== 'meteor-wallet'
+                ));
+                connector.manifest.wallets = connector.manifest.wallets.filter((candidate) => (
+                    candidate.id !== 'meteor-wallet'
+                ));
+                await connector.registerWallet(
+                    PINNED_WALLET_MANIFEST.wallets[0] as unknown as WalletManifest,
+                );
+                if (!mounted) return;
+                pinnedWalletRef.current = connector.wallets.find((candidate) => (
+                    isPinnedMeteorManifest(candidate.manifest)
+                )) ?? null;
+                if (!canRestore()) return;
+                const connected = await connector.getConnectedWallet();
+                if (!canRestore()) return;
+                applyWallet(connected.wallet, connected.accounts);
+                setError(null);
+                finishRestore('completed');
             })
-            .catch(() => {})
+            .catch((reason: unknown) => {
+                if (!canRestore()) return;
+                let disconnected = false;
+                try {
+                    disconnected = reason instanceof Error
+                        && ['No wallet selected', 'No accounts found'].includes(reason.message);
+                } catch {
+                    // Unreadable SDK errors still get a fixed, non-sensitive message.
+                }
+                finishRestore(disconnected ? 'disconnected' : 'failed');
+                setError(disconnected ? null : 'Your wallet connection could not be restored. Reload this page to try again.');
+            })
             .finally(() => {
+                clearTimeout(timeoutId);
+                finishRestore('cancelled');
                 if (mounted) setIsReady(true);
             });
 
         return () => {
             mounted = false;
+            clearTimeout(timeoutId);
+            finishRestore('cancelled');
             connectAbortRef.current?.abort();
             authGenerationRef.current += 1;
             connector.removeAllListeners();
