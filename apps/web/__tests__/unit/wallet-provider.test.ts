@@ -6,6 +6,8 @@ const walletTestState = vi.hoisted(() => ({
     connectorOptions: undefined as undefined | Record<string, unknown>,
     connectorWallets: [] as Array<{ manifest: Record<string, unknown> }>,
     connect: vi.fn(),
+    getConnectedWallet: vi.fn(),
+    manifestLoaded: undefined as Promise<void> | undefined,
     connectDeviceSession: vi.fn(),
     clearDeviceSession: vi.fn(),
     revokeBrowserAuthority: vi.fn(),
@@ -40,7 +42,7 @@ vi.mock('@hot-labs/near-connect', () => ({
             { manifest: { id: 'meteor-wallet', executor: 'https://moving.example/meteor.js' } },
         ];
         manifest = { wallets: this.wallets.map((wallet) => wallet.manifest), version: 'remote' };
-        whenManifestLoaded = Promise.resolve();
+        whenManifestLoaded = walletTestState.manifestLoaded ?? Promise.resolve();
 
         constructor(options: Record<string, unknown>) {
             walletTestState.connectorOptions = options;
@@ -56,7 +58,7 @@ vi.mock('@hot-labs/near-connect', () => ({
                 ? walletTestState.connect()
                 : walletTestState.connect(input);
         }
-        getConnectedWallet() { return new Promise(() => {}); }
+        getConnectedWallet() { return walletTestState.getConnectedWallet() ?? new Promise(() => {}); }
         on(event: string, handler: (payload: unknown) => void) { walletTestState.handlers[event] = handler; }
         async disconnect() {}
         removeAllListeners() {}
@@ -83,6 +85,8 @@ describe('WalletProvider CSP initialization', () => {
         walletTestState.connectorOptions = undefined;
         walletTestState.connectorWallets = [];
         walletTestState.connect.mockReset();
+        walletTestState.getConnectedWallet.mockReset();
+        walletTestState.manifestLoaded = undefined;
         walletTestState.connectDeviceSession.mockReset();
         walletTestState.clearDeviceSession.mockReset();
         walletTestState.revokeBrowserAuthority.mockReset();
@@ -92,6 +96,7 @@ describe('WalletProvider CSP initialization', () => {
         walletTestState.registeredWallets = [];
         walletTestState.stateSetters = [];
         vi.useRealTimers();
+        vi.restoreAllMocks();
     });
 
     it('passes the request nonce and stops waiting for a stale wallet restore', async () => {
@@ -110,6 +115,117 @@ describe('WalletProvider CSP initialization', () => {
             PINNED_WALLET_MANIFEST.wallets[0],
         ]);
         expect(walletTestState.stateSetters[1]).toHaveBeenCalledWith(true);
+    });
+
+    it.each(['manifest', 'accounts'])('applies a valid late restore after delayed %s without reconnecting', async (stage) => {
+        vi.useFakeTimers();
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        let release!: () => void;
+        const waiting = new Promise<void>((resolve) => { release = resolve; });
+        const restored = { wallet: { manifest: PINNED_WALLET_MANIFEST.wallets[0] }, accounts: [{ accountId: 'creator.testnet' }] };
+        if (stage === 'manifest') walletTestState.manifestLoaded = waiting;
+        walletTestState.getConnectedWallet.mockImplementation(async () => {
+            if (stage === 'accounts') await waiting;
+            return restored;
+        });
+        WalletProvider({ children: null });
+        await vi.advanceTimersByTimeAsync(5_000);
+        const readyAtDeadline = walletTestState.stateSetters[1].mock.calls.some(([value]) => value === true);
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).toHaveBeenCalledExactlyOnceWith('creator.testnet');
+        expect(readyAtDeadline).toBe(true);
+        expect(walletTestState.stateSetters[2]).toHaveBeenCalledWith(expect.stringContaining('taking longer'));
+        expect(walletTestState.stateSetters[2]).toHaveBeenLastCalledWith(null);
+        expect(walletTestState.getConnectedWallet).toHaveBeenCalledOnce();
+        expect(walletTestState.connect).not.toHaveBeenCalled();
+        expect(walletTestState.connectDeviceSession).not.toHaveBeenCalled();
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+        const events = log.mock.calls.map(([value]) => JSON.parse(String(value)));
+        expect(events.map((event) => event.outcome)).toEqual(['started', 'delayed', 'completed']);
+        expect(events.every((event) => event.phase === 'wallet_restore')).toBe(true);
+        expect(JSON.stringify(events)).not.toContain('creator.testnet');
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it.each(['unmount', 'signOut', 'signIn', 'connect'])('ignores a late restore after %s', async (action) => {
+        vi.useFakeTimers();
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        walletTestState.clearDeviceSession.mockResolvedValue(undefined);
+        let release!: (value: unknown) => void;
+        walletTestState.getConnectedWallet.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+        const provider = WalletProvider({ children: null });
+        await vi.advanceTimersByTimeAsync(0);
+        const nextWallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn().mockResolvedValue([{ accountId: 'new.testnet' }]) };
+        if (action === 'unmount') {
+            walletTestState.cleanup?.();
+            walletTestState.cleanup = undefined;
+        } else if (action === 'signOut') {
+            walletTestState.handlers['wallet:signOut']({});
+        } else if (action === 'signIn') {
+            walletTestState.handlers['wallet:signIn']({ wallet: nextWallet, accounts: [{ accountId: 'new.testnet' }], source: 'signIn' });
+        } else {
+            walletTestState.connect.mockResolvedValue(nextWallet);
+            await provider.props.value.connect();
+        }
+        await vi.advanceTimersByTimeAsync(5_000);
+        release({ wallet: nextWallet, accounts: [{ accountId: 'old.testnet' }] });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalledWith('old.testnet');
+        if (action === 'signIn' || action === 'connect') expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith('new.testnet');
+        expect(walletTestState.stateSetters[2]).not.toHaveBeenCalledWith(expect.any(String));
+        expect(log.mock.calls.map(([value]) => JSON.parse(String(value)).outcome)).toEqual(['started', 'cancelled']);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it.each(['No wallet selected', 'No accounts found'])('keeps %s disconnected without clearing device authority', async (message) => {
+        vi.useFakeTimers();
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        walletTestState.getConnectedWallet.mockRejectedValue(new Error(message));
+        WalletProvider({ children: null });
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalled();
+        expect(walletTestState.stateSetters[1]).toHaveBeenCalledWith(true);
+        expect(walletTestState.stateSetters[2]).not.toHaveBeenCalledWith(expect.any(String));
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+        expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).outcome).toBe('disconnected');
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('still registers pinned Meteor when manual connect supersedes a delayed restore', async () => {
+        vi.useFakeTimers();
+        let release!: () => void;
+        walletTestState.manifestLoaded = new Promise<void>((resolve) => { release = resolve; });
+        walletTestState.connect.mockImplementation(async () => {
+            await walletTestState.manifestLoaded;
+            return { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: async () => [{ accountId: 'new.testnet' }] };
+        });
+        const provider = WalletProvider({ children: null });
+        await vi.advanceTimersByTimeAsync(5_000);
+        const connecting = provider.props.value.connect();
+        release();
+        await connecting;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.registeredWallets).toEqual([PINNED_WALLET_MANIFEST.wallets[0]]);
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith('new.testnet');
+        expect(walletTestState.getConnectedWallet).not.toHaveBeenCalled();
+        expect(walletTestState.connect).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+        Object.assign(new Error('secret https://private/?jwt=secret'), { proof: 'secret' }),
+        Object.defineProperty(new Error(), 'message', { get() { throw new Error('secret getter'); } }),
+    ])('shows a safe restore failure without logging the SDK payload', async (failure) => {
+        vi.useFakeTimers();
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        walletTestState.getConnectedWallet.mockRejectedValue(failure);
+        WalletProvider({ children: null });
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(walletTestState.stateSetters[2]).toHaveBeenLastCalledWith(expect.stringContaining('could not be restored'));
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalled();
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+        expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).outcome).toBe('failed');
+        expect(JSON.stringify(log.mock.calls)).not.toMatch(/secret|private|proof/);
     });
 
     it('reads the middleware nonce in the root layout', async () => {
