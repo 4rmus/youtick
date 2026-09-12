@@ -15,7 +15,7 @@ function backend(manifest = master, exposed = '') {
         return new Response(url === masterUrl ? manifest : child);
     });
 }
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it('uses the exact recorded profile and rejects unknown hashes', () => {
     expect(mediaProfiles(profiles.legacy.hash).map((profile) => profile.height)).toEqual([720]);
@@ -266,7 +266,7 @@ it.each(['network', 'syntax'])('distinguishes VTT body failure from malformed VT
 it.each([
     { count: 60, status: 403, unsafe: false, error: null },
     { count: 64, status: 403, unsafe: false, error: null },
-    { count: 65, status: 403, unsafe: false, error: 'provider_playback_mismatch' },
+    { count: 1025, status: 403, unsafe: false, error: 'provider_playback_mismatch' },
     { count: 60, status: 200, unsafe: false, error: 'provider_playback_exposed' },
     { count: 60, status: 302, unsafe: false, error: 'provider_playback_exposed' },
     { count: 60, status: 503, unsafe: false, error: 'provider_unavailable' },
@@ -291,7 +291,7 @@ it.each([
     if (error) await expect(result).rejects.toThrow(error);
     else await expect(result).resolves.toMatchObject({ verifiedSourceBytes: '10' });
     const probes = fetchMock.mock.calls.filter(([url]) => urls.includes(url));
-    if (count > 64 || unsafe) expect(probes).toHaveLength(0);
+    if (count > 1024 || unsafe) expect(probes).toHaveLength(0);
     else {
         expect(probes.map(([url]) => url)).toEqual(urls);
         for (const [, init] of probes) {
@@ -316,4 +316,120 @@ it('retains optional source video measurements without confusing missing and mal
     expect(normalizeLivepeerAsset({ ...asset, videoSpec: { tracks: [{ type: 'audio' }] } }).sourceVideo).toBeNull();
     expect(normalizeLivepeerAsset({ ...asset, videoSpec: { tracks: [{ type: 'video', width: 934, height: 720 }] } }).sourceVideo)
         .toEqual({ width: 934, height: 720 });
+});
+
+async function longThumbnailFixture(count = 720) {
+    const provider = readyProvider();
+    const playback = await provider.readPlayback();
+    const vtt = 'https://playback.livepeer.studio/thumbnails.vtt';
+    provider.readPlayback.mockResolvedValue({ ...playback, sources: [...playback.sources, { kind: 'vtt', url: vtt }] });
+    const urls = Array.from({ length: count }, (_, i) => `https://playback.livepeer.studio/thumbs/${i}.jpg`);
+    let body = 'WEBVTT\n\n' + urls.map((url, i) => `${new Date(i * 10000).toISOString().slice(11,23)} --> ${new Date((i+1)*10000).toISOString().slice(11,23)}\n${url}\n`).join('\n');
+    let exposed: string | undefined;
+    let unavailable: string | undefined;
+    const mock = backend();
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+        if (url === vtt && new Headers(init.headers).get('Livepeer-Jwt') === 'authorized') return new Response(body);
+        if (url === exposed) return new Response(null, { status: 200 });
+        if (url === unavailable) return new Response(null, { status: 503 });
+        return mock(url, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const deps = { ...dependencies, sha256: async (value: string) => Array.from(new Uint8Array(
+        await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)),
+    ), b => b.toString(16).padStart(2, '0')).join('') };
+    return { provider, urls, fetchMock, deps, changeVtt: (suffix = '\n') => { body += suffix; },
+        expose: (i: number) => { exposed = urls[i]; }, fail: (i?: number) => { unavailable = i === undefined ? undefined : urls[i]; } };
+}
+
+it('checks all 720 thumbnail references across bounded resumable steps before returning verified', async () => {
+    const f = await longThumbnailFixture();
+    let checkpoint;
+    const checked: string[] = [];
+    let steps = 0;
+    for (;;) {
+        f.fetchMock.mockClear();
+        const result = await verifyLivepeerReadyAsset(f.provider, { ...readyInput, checkpoint }, f.deps);
+        const probes = f.fetchMock.mock.calls.filter(([url]) => f.urls.includes(url));
+        expect(probes.length).toBeLessThanOrEqual(64);
+        expect(f.fetchMock.mock.calls.length).toBeLessThanOrEqual(254);
+        checked.push(...probes.map(([url]) => url));
+        steps++;
+        if (!('pending' in result)) { expect(result.verifiedSourceBytes).toBe('10'); break; }
+        expect(result).not.toHaveProperty('verifiedSourceBytes');
+        checkpoint = JSON.parse(JSON.stringify(result.checkpoint));
+        expect(steps).toBeLessThan(13);
+    }
+    expect(steps).toBe(12);
+    expect(checked).toEqual(f.urls);
+});
+
+it('rejects a late exposed thumbnail and retries network failure from the same safe checkpoint', async () => {
+    const f = await longThumbnailFixture(130);
+    const first = await verifyLivepeerReadyAsset(f.provider, readyInput, f.deps);
+    if (!('pending' in first)) throw Error('expected pending');
+    const second = await verifyLivepeerReadyAsset(f.provider, { ...readyInput, checkpoint: first.checkpoint }, f.deps);
+    if (!('pending' in second)) throw Error('expected pending');
+    f.fail(129);
+    await expect(verifyLivepeerReadyAsset(f.provider, { ...readyInput, checkpoint: second.checkpoint }, f.deps)).rejects.toThrow('provider_unavailable');
+    f.fail(); f.expose(129);
+    await expect(verifyLivepeerReadyAsset(f.provider, { ...readyInput, checkpoint: second.checkpoint }, f.deps)).rejects.toThrow('provider_playback_exposed');
+});
+
+it('invalidates saved thumbnail progress when the VTT or provider revision changes', async () => {
+    const f = await longThumbnailFixture(130);
+    const first = await verifyLivepeerReadyAsset(f.provider, readyInput, f.deps);
+    if (!('pending' in first)) throw Error('expected pending');
+    f.changeVtt(); f.expose(0);
+    await expect(verifyLivepeerReadyAsset(f.provider, { ...readyInput, checkpoint: first.checkpoint }, f.deps)).rejects.toThrow('provider_verification_incomplete');
+    await expect(verifyLivepeerReadyAsset(f.provider, readyInput, f.deps)).rejects.toThrow('provider_playback_exposed');
+});
+
+it.each(['revision', 'expired'])('restarts rather than trusting %s thumbnail progress', async (change) => {
+    let now = Date.now(); vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const f = await longThumbnailFixture(130);
+    const first = await verifyLivepeerReadyAsset(f.provider, readyInput, f.deps);
+    if (!('pending' in first)) throw Error('expected pending');
+    if (change === 'expired') now += 600_001;
+    else f.provider.readAsset.mockResolvedValue({ ...await f.provider.readAsset(), updatedAtMs: 2000 });
+    f.expose(0);
+    await expect(verifyLivepeerReadyAsset(f.provider, { ...readyInput, checkpoint: first.checkpoint }, f.deps)).rejects.toThrow('provider_verification_incomplete');
+    await expect(verifyLivepeerReadyAsset(f.provider, readyInput, f.deps)).rejects.toThrow('provider_playback_exposed');
+});
+
+it('yields before the step deadline without sending the next thumbnail request', async () => {
+    let now = Date.now(); vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const started = now, f = await longThumbnailFixture();
+    const backend = f.fetchMock.getMockImplementation()!;
+    f.fetchMock.mockImplementation(async (url, init) => {
+        if (f.urls.includes(url)) now += 1000;
+        return backend(url, init);
+    });
+    const result = await verifyLivepeerReadyAsset(f.provider, readyInput, f.deps);
+    if (!('pending' in result)) throw Error('expected pending');
+    const probes = f.fetchMock.mock.calls.filter(([url]) => f.urls.includes(url));
+    expect(probes.length).toBeGreaterThan(0);
+    expect(probes.length).toBeLessThan(64);
+    expect(probes.map(([url]) => url)).toEqual(f.urls.slice(0, result.checkpoint.nextThumbnail));
+    expect(now - started).toBeLessThanOrEqual(30_000);
+});
+
+it('does not complete a proof that expires during its final step', async () => {
+    let now = Date.now(); vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const f = await longThumbnailFixture(65);
+    const first = await verifyLivepeerReadyAsset(f.provider, readyInput, f.deps);
+    if (!('pending' in first)) throw Error('expected pending');
+    now += 599_999;
+    const backend = f.fetchMock.getMockImplementation()!;
+    f.fetchMock.mockImplementation(async (url, init) => {
+        if (url === f.urls[64]) now += 2;
+        return backend(url, init);
+    });
+    await expect(verifyLivepeerReadyAsset(f.provider, { ...readyInput, checkpoint: first.checkpoint }, f.deps)).rejects.toThrow('provider_verification_incomplete');
+});
+
+it('bounds VTT input bytes before issuing thumbnail probes', async () => {
+    const f = await longThumbnailFixture(); f.changeVtt(' '.repeat(512 * 1024));
+    await expect(verifyLivepeerReadyAsset(f.provider, readyInput, f.deps)).rejects.toThrow('provider_playback_mismatch');
+    expect(f.fetchMock.mock.calls.filter(([url]) => f.urls.includes(url))).toHaveLength(0);
 });

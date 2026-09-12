@@ -13,7 +13,7 @@ import {
 } from 'near-api-js';
 import { deserialize } from 'borsh';
 import { verifyMessage as verifyNep413Message } from 'near-api-js/nep413';
-import type { CreateUploadResult, MediaSourceType } from './media-provider';
+import type { CreateUploadResult, MediaSourceType, ProviderVerificationCheckpoint } from './media-provider';
 import { MEDIA_SOURCE_FORMATS, supportedProfile } from './media-provider';
 import { LivepeerProvider } from './livepeer-provider';
 import { dependencyFetch } from './dependency-fetch';
@@ -353,6 +353,7 @@ type JobRecord = {
     projectId?: string;
     tusEndpoint?: string;
     publication?: FinalizePublication;
+    providerVerification?: ProviderVerificationCheckpoint;
     finalizeRetry?: {
         attempts: number;
         lastHttpStatus: number;
@@ -1157,6 +1158,14 @@ export class LivepeerControl {
             return;
         }
         if (!job.publication) {
+            if (job.providerVerification && ['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(job.state)) {
+                await this.handleLivepeerWebhook(new Request('https://object/internal/livepeer-webhook', {
+                    method: 'POST',
+                    body: JSON.stringify({ event: 'asset.updated', timestamp: Date.now(),
+                        payload: { asset: { id: job.assetId, status: { phase: 'ready' } } } }),
+                }));
+                return;
+            }
             await this.reconcileUpload(job);
             return;
         }
@@ -1193,7 +1202,9 @@ export class LivepeerControl {
                 return await this.heartbeatUploadLease(request);
             }
             if (request.method === 'POST' && url.pathname === '/v1/upload-cancellations') {
-                return await this.cancelUpload(request);
+                const run = this.operatorTail.then(() => this.cancelUpload(request));
+                this.operatorTail = run.then(() => undefined, () => undefined);
+                return await run;
             }
             if (request.method === 'POST' && url.pathname === '/v1/playback-tokens') {
                 return await this.issuePlaybackToken(request);
@@ -1523,8 +1534,10 @@ export class LivepeerControl {
             }));
             if (!response.ok) throw new Error('provider_unavailable');
             const current = (await this.state.storage.get<ReconcileRecord>(RECONCILE_KEY))!;
+            const pending = (await this.state.storage.get<JobRecord>(JOB_KEY))?.providerVerification;
             await this.state.storage.put(RECONCILE_KEY, { ...current, consecutiveErrors: 0,
-                nextReconcileAtMs: nextReadAtMs, uploadReadFailed: false, uploadErrorCode: undefined });
+                nextReconcileAtMs: pending ? current.nextReconcileAtMs : nextReadAtMs,
+                uploadReadFailed: false, uploadErrorCode: undefined });
         } catch (error) {
             if (['provider_unavailable', 'near_finalize_pending', 'near_job_query_failed'].includes(safeErrorCode(error))) {
                 await persistUnknownReconcile(this.state, 'PROVIDER_UNKNOWN');
@@ -1752,7 +1765,7 @@ export class LivepeerControl {
             await updateAdmission(this.env, expired, 'UPLOAD_EXPIRED');
             return json({ accepted: true, expired: true }, 202);
         }
-        if (['PROVIDER_FAILED', 'UPLOAD_EXPIRED'].includes(existing.state)) {
+        if (['PROVIDER_FAILED', 'UPLOAD_EXPIRED', 'CANCELLED'].includes(existing.state)) {
             return json({ accepted: true, ignored: true, terminal: true }, 202);
         }
         const phase = providerPhase(asset);
@@ -1821,8 +1834,12 @@ export class LivepeerControl {
         let record = existing;
         if (!seen) {
             try {
-                const publication = await verifyReadyProviderAsset(this.env, record);
-                const { tusEndpoint: _clearedTusEndpoint, ...withoutTusEndpoint } = record;
+                const publication = await verifyReadyProviderAsset(this.state, this.env, record);
+                if (!publication) {
+                    await this.state.storage.delete(dedupKey);
+                    return json({ accepted: true, processing: true }, 202);
+                }
+                const { tusEndpoint: _clearedTusEndpoint, providerVerification: _checkpoint, ...withoutTusEndpoint } = record;
                 record = {
                     ...transitionJob(withoutTusEndpoint, 'READY_VERIFIED'),
                     publication,
@@ -3282,7 +3299,8 @@ async function reconcilePublishedJob(
 ): Promise<void> {
     await tryProcessSalesSuspension(state, env, job);
     try {
-        const verified = await verifyReadyProviderAsset(env, job);
+        const verified = await verifyReadyProviderAsset(state, env, job);
+        if (!verified) return;
         if (canonicalJson(verified) !== canonicalJson(job.publication)) {
             await persistDriftReconcile(state, env, job, 'provider_publication_mismatch');
             return;
@@ -6688,39 +6706,83 @@ async function verifyAndParseWebhook(
     return webhook;
 }
 
-async function verifyReadyProviderAsset(env: Env, job: JobRecord): Promise<FinalizePublication> {
+async function verifyReadyProviderAsset(
+    state: DurableObjectState, env: Env, job: JobRecord,
+): Promise<FinalizePublication | null> {
     if (!validProviderVerificationConfig(env)
-        || !job.assetId
-        || !job.playbackId
-        || !job.projectId) {
+        || !job.assetId || !job.playbackId || !job.projectId) {
         throw new Error('runtime_not_configured');
     }
-    const verified = await livepeerProvider(env).verifyReadyAsset({
-        jobId: job.jobId,
-        generation: job.generation,
-        expectedSourceBytes: job.expectedSourceBytes,
-        profileConfigSha256: job.profileConfigSha256,
-        assetId: job.assetId,
-        playbackId: job.playbackId,
-        projectId: job.projectId,
-        expectedProjectId: env.LIVEPEER_PROJECT_ID!,
-        apiTokenName: job.apiTokenName,
-    });
-    return {
-        job_id: job.jobId,
-        generation: job.generation,
-        creator_id: job.creator,
-        expected_source_bytes: job.expectedSourceBytes,
-        profile_id: job.profileId,
-        profile_config_sha256: job.profileConfigSha256,
-        asset_id_hash: verified.assetIdHash,
-        playback_id: verified.playbackId,
-        project_id_hash: verified.projectIdHash,
-        verified_source_bytes: verified.verifiedSourceBytes,
-        provider_source_fingerprint: verified.sourceFingerprint,
-        ready_at_ms: verified.readyAtMs,
-        availability: 'ACTIVE',
-    };
+    if (job.state !== 'ONCHAIN_PUBLISHED' && publicBetaDeadlineExpired(job)) {
+        throw new Error('provider_verification_incomplete');
+    }
+    try {
+        const verified = await livepeerProvider(env).verifyReadyAsset({
+            jobId: job.jobId,
+            generation: job.generation,
+            expectedSourceBytes: job.expectedSourceBytes,
+            profileConfigSha256: job.profileConfigSha256,
+            assetId: job.assetId,
+            playbackId: job.playbackId,
+            projectId: job.projectId,
+            expectedProjectId: env.LIVEPEER_PROJECT_ID!,
+            apiTokenName: job.apiTokenName,
+            checkpoint: job.providerVerification,
+        });
+        const nextAtMs = job.state === 'ONCHAIN_PUBLISHED' ? Date.now() + 1_000
+            : Math.min(Date.now() + 1_000, job.absoluteDeadlineAtMs ?? Number.MAX_SAFE_INTEGER);
+        await state.storage.transaction(async (transaction) => {
+            const current = await transaction.get<JobRecord>(JOB_KEY);
+            if (!current || canonicalJson({ ...current, providerVerification: undefined })
+                !== canonicalJson({ ...job, providerVerification: undefined })
+                || current.state !== 'ONCHAIN_PUBLISHED' && publicBetaDeadlineExpired(current)) {
+                throw new Error('provider_verification_incomplete');
+            }
+            if ('pending' in verified) {
+                await assertDurableObjectRecordCapacity(transaction, [JOB_KEY, RECONCILE_KEY], 'upload_job');
+                await transaction.put(JOB_KEY, { ...current, providerVerification: verified.checkpoint });
+                const previous = await transaction.get<ReconcileRecord>(RECONCILE_KEY);
+                await transaction.put(RECONCILE_KEY, {
+                    ...previous, schema: 'youtick.livepeer-reconcile.v1', status: 'PROVIDER_UNKNOWN',
+                    consecutiveErrors: previous?.consecutiveErrors || 0, nextReconcileAtMs: nextAtMs,
+                    uploadReadFailed: false, uploadErrorCode: undefined,
+                } satisfies ReconcileRecord);
+            } else if (current.providerVerification) {
+                const { providerVerification: _checkpoint, ...completed } = current;
+                await transaction.put(JOB_KEY, completed);
+            }
+        });
+        if ('pending' in verified) {
+            await scheduleReconcile(state, nextAtMs);
+            return null;
+        }
+        return {
+            job_id: job.jobId,
+            generation: job.generation,
+            creator_id: job.creator,
+            expected_source_bytes: job.expectedSourceBytes,
+            profile_id: job.profileId,
+            profile_config_sha256: job.profileConfigSha256,
+            asset_id_hash: verified.assetIdHash,
+            playback_id: verified.playbackId,
+            project_id_hash: verified.projectIdHash,
+            verified_source_bytes: verified.verifiedSourceBytes,
+            provider_source_fingerprint: verified.sourceFingerprint,
+            ready_at_ms: verified.readyAtMs,
+            availability: 'ACTIVE',
+        };
+    } catch (error) {
+        if (safeErrorCode(error) !== 'provider_unavailable') {
+            await state.storage.transaction(async (transaction) => {
+                const current = await transaction.get<JobRecord>(JOB_KEY);
+                if (current?.providerVerification) {
+                    const { providerVerification: _checkpoint, ...withoutCheckpoint } = current;
+                    await transaction.put(JOB_KEY, withoutCheckpoint);
+                }
+            });
+        }
+        throw error;
+    }
 }
 
 function publicationCoverRoute(pathname: string): { jobId: string; generation: number } | null {

@@ -1,10 +1,15 @@
 import { mediaProfiles } from './media-provider';
 import { dependencyFetch } from './dependency-fetch';
-import type { MediaProvider, ProviderAsset, VerifiedAsset, VerifyReadyAssetInput } from './media-provider';
+import type { MediaProvider, ProviderAsset, ProviderVerificationResult, VerifyReadyAssetInput } from './media-provider';
 
 export const MAX_PROVIDER_PLAYBACK_OUTPUTS = 16;
-// ponytail: 64 probes covers M; measure the budget for larger VTTs before raising this bound.
-const MAX_THUMBNAIL_REFERENCE_PROBES = 64;
+const MAX_THUMBNAIL_PROBES_PER_STEP = 64;
+// ponytail: 1024 references covers the measured 720-cue asset; larger lists require a budget review.
+const MAX_THUMBNAIL_REFERENCES = 1024;
+const MAX_VERIFICATION_REQUESTS = 256;
+const VERIFICATION_STEP_MS = 30_000;
+const VERIFICATION_CYCLE_MS = 10 * 60_000;
+type VerificationBudget = { requests: number; deadlineAtMs: number };
 const MAX_HLS_MANIFESTS = 16;
 const MAX_HLS_MEDIA_REFERENCES = 64;
 const DIMENSION_TOLERANCE = 2;
@@ -16,6 +21,7 @@ type HlsContext = {
     manifests: Map<string, string[]>;
     mediaReferences: Set<string>;
     reference?: Dimensions;
+    budget?: VerificationBudget;
 };
 
 type VerificationDependencies = {
@@ -27,7 +33,9 @@ export async function verifyLivepeerReadyAsset(
     provider: Pick<MediaProvider, 'readAsset' | 'readPlayback'>,
     input: VerifyReadyAssetInput,
     dependencies: VerificationDependencies,
-): Promise<VerifiedAsset> {
+): Promise<ProviderVerificationResult> {
+    // The two provider metadata reads each retain their existing five-second timeout.
+    const budget = { requests: 2, deadlineAtMs: Date.now() + VERIFICATION_STEP_MS };
     const expectedProfiles = mediaProfiles(input.profileConfigSha256);
     const asset = await provider.readAsset(input.assetId);
     const playback = await provider.readPlayback(input.playbackId);
@@ -72,7 +80,7 @@ export async function verifyLivepeerReadyAsset(
     }
     if (!dependencies.signPlaybackToken) throw new Error('runtime_not_configured');
     const token = await dependencies.signPlaybackToken(input.playbackId);
-    const context: HlsContext = { manifests: new Map(), mediaReferences: new Set() };
+    const context: HlsContext = { manifests: new Map(), mediaReferences: new Set(), budget };
     const verifiedHls: HlsVerification[] = [];
     for (const hlsUrl of new Set([livepeerHlsUrl(input.playbackId), ...hlsUrls])) {
         verifiedHls.push(await verifyAdaptiveHls(hlsUrl, token, expectedProfiles, asset.sourceVideo, context));
@@ -87,17 +95,43 @@ export async function verifyLivepeerReadyAsset(
         throw new Error('provider_playback_mismatch');
     }
     for (const mp4Url of mp4Urls) {
-        await requireAnonymousPlaybackDenied(mp4Url, context.mediaReferences);
+        await requireAnonymousPlaybackDenied(mp4Url, context.mediaReferences, budget);
     }
     for (const vttUrl of vttUrls) {
-        await requireAnonymousPlaybackDenied(vttUrl, context.mediaReferences);
+        await requireAnonymousPlaybackDenied(vttUrl, context.mediaReferences, budget);
     }
-    if (vttUrls.length > 0) {
-        for (const thumbnailUrl of await vttThumbnailUrls(vttUrls, token)) {
-            await requireAnonymousPlaybackDenied(thumbnailUrl, context.mediaReferences);
-        }
+    await requireAnonymousPlaybackDenied(asset.downloadUrl, context.mediaReferences, budget);
+    const vttBodies = new Map<string, string>();
+    const thumbnails = await vttThumbnailUrls(vttUrls, token, budget, vttBodies);
+    const { checkpoint: previous, ...identity } = input;
+    const bindingSha256 = await dependencies.sha256(JSON.stringify([
+        identity, asset, playback, [...context.manifests], [...vttBodies], thumbnails,
+    ]));
+    const now = Date.now();
+    if (previous && (previous.bindingSha256 !== bindingSha256
+        || !Number.isSafeInteger(previous.nextThumbnail)
+        || previous.nextThumbnail < 0 || previous.nextThumbnail >= thumbnails.length
+        || !Number.isSafeInteger(previous.startedAtMs) || previous.startedAtMs > now
+        || now - previous.startedAtMs >= VERIFICATION_CYCLE_MS)) {
+        throw new Error('provider_verification_incomplete');
     }
-    await requireAnonymousPlaybackDenied(asset.downloadUrl, context.mediaReferences);
+    const checkpoint = previous ?? { bindingSha256, nextThumbnail: 0, startedAtMs: now };
+    let nextThumbnail = checkpoint.nextThumbnail;
+    const end = Math.min(nextThumbnail + MAX_THUMBNAIL_PROBES_PER_STEP, thumbnails.length);
+    while (nextThumbnail < end) {
+        // Reserve a complete probe timeout; never start the N+1 or an over-deadline request.
+        if (budget.requests >= MAX_VERIFICATION_REQUESTS || Date.now() + 5_000 > budget.deadlineAtMs) break;
+        await requireAnonymousPlaybackDenied(thumbnails[nextThumbnail], context.mediaReferences, budget);
+        nextThumbnail += 1;
+    }
+    if (Date.now() >= budget.deadlineAtMs) throw new Error('provider_unavailable');
+    if (Date.now() - checkpoint.startedAtMs >= VERIFICATION_CYCLE_MS) {
+        throw new Error('provider_verification_incomplete');
+    }
+    if (nextThumbnail < thumbnails.length) {
+        if (nextThumbnail === checkpoint.nextThumbnail) throw new Error('provider_unavailable');
+        return { pending: true, checkpoint: { ...checkpoint, nextThumbnail } };
+    }
 
     return {
         assetIdHash: await dependencies.sha256(input.assetId),
@@ -164,7 +198,7 @@ async function hlsPlaybackDenied(response: Response): Promise<boolean> {
     }
 }
 
-async function requireHlsPlaybackDenied(url: string): Promise<void> {
+async function requireHlsPlaybackDenied(url: string, budget?: VerificationBudget): Promise<void> {
     const invalidTokens = [
         null,
         'invalid.invalid.invalid',
@@ -176,7 +210,7 @@ async function requireHlsPlaybackDenied(url: string): Promise<void> {
         if (token) headers.set('Livepeer-Jwt', token);
         let response: Response;
         try {
-            response = await dependencyFetch('livepeer_media', 'hls_anonymous_probe', url, {
+            response = await verificationFetch(budget, 'hls_anonymous_probe', url, {
                 method: 'GET',
                 headers,
                 redirect: 'manual',
@@ -190,11 +224,11 @@ async function requireHlsPlaybackDenied(url: string): Promise<void> {
     }
 }
 
-async function requireAnonymousPlaybackDenied(url: string, verified?: Set<string>): Promise<void> {
+async function requireAnonymousPlaybackDenied(url: string, verified?: Set<string>, budget?: VerificationBudget): Promise<void> {
     if (verified?.has(url)) return;
     let response: Response;
     try {
-        response = await dependencyFetch('livepeer_media', 'asset_anonymous_probe', url, {
+        response = await verificationFetch(budget, 'asset_anonymous_probe', url, {
             method: 'GET',
             headers: { Range: 'bytes=0-0' },
             redirect: 'manual',
@@ -238,12 +272,12 @@ function vttReferenceUrl(parentUrl: string, reference: string): string {
     }
 }
 
-async function vttThumbnailUrls(vttUrls: string[], token: string): Promise<string[]> {
+async function vttThumbnailUrls(vttUrls: string[], token: string, budget?: VerificationBudget, bodies?: Map<string, string>): Promise<string[]> {
     const thumbnails = new Set<string>();
     for (const vttUrl of vttUrls) {
-        for (const reference of await fetchVttReferences(vttUrl, token)) {
+        for (const reference of await fetchVttReferences(vttUrl, token, budget, bodies)) {
             thumbnails.add(vttReferenceUrl(vttUrl, reference));
-            if (thumbnails.size > MAX_THUMBNAIL_REFERENCE_PROBES) {
+            if (thumbnails.size > MAX_THUMBNAIL_REFERENCES) {
                 throw new Error('provider_playback_mismatch');
             }
         }
@@ -251,10 +285,10 @@ async function vttThumbnailUrls(vttUrls: string[], token: string): Promise<strin
     return [...thumbnails];
 }
 
-async function fetchVttReferences(vttUrl: string, token: string): Promise<string[]> {
+async function fetchVttReferences(vttUrl: string, token: string, budget?: VerificationBudget, bodies?: Map<string, string>): Promise<string[]> {
     let response: Response;
     try {
-        response = await dependencyFetch('livepeer_media', 'vtt_read', vttUrl, {
+        response = await verificationFetch(budget, 'vtt_read', vttUrl, {
             method: 'GET',
             headers: { 'Livepeer-Jwt': token },
             redirect: 'manual',
@@ -265,7 +299,8 @@ async function fetchVttReferences(vttUrl: string, token: string): Promise<string
     }
     if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
     if (response.status !== 200) throw new Error('provider_playback_mismatch');
-    const body = await response.text().catch(() => { throw new Error('provider_unavailable'); });
+    const body = await readVerificationText(response);
+    bodies?.set(vttUrl, body);
     const references = vttReferences(body);
     if (references) return references;
     throw new Error('provider_playback_mismatch');
@@ -335,6 +370,7 @@ export async function verifyAdaptiveHls(
     source?: ProviderAsset['sourceVideo'],
     context: HlsContext = { manifests: new Map(), mediaReferences: new Set() },
 ): Promise<HlsVerification> {
+    context.budget ??= { requests: 0, deadlineAtMs: Date.now() + VERIFICATION_STEP_MS };
     const master = await verifiedHlsManifest(masterUrl, token, context);
     // Unverified alternate audio/I-frame playlists stay closed.
     if (master.some((line) => /(?:^|[:,])URI=/.test(line))) throw new Error('provider_playback_mismatch');
@@ -374,7 +410,7 @@ export async function verifyAdaptiveHls(
             const url = hlsReference(variant.url, reference);
             if (context.mediaReferences.has(url)) continue;
             if (context.mediaReferences.size >= MAX_HLS_MEDIA_REFERENCES) throw new Error('provider_playback_mismatch');
-            await requireAnonymousPlaybackDenied(url);
+            await requireAnonymousPlaybackDenied(url, undefined, context.budget);
             context.mediaReferences.add(url);
         }
     }
@@ -386,8 +422,8 @@ async function verifiedHlsManifest(url: string, token: string, context: HlsConte
     const previous = context.manifests.get(url);
     if (previous) return previous;
     if (context.manifests.size >= MAX_HLS_MANIFESTS) throw new Error('provider_playback_mismatch');
-    await requireHlsPlaybackDenied(url);
-    const lines = await authorizedHls(url, token);
+    await requireHlsPlaybackDenied(url, context.budget);
+    const lines = await authorizedHls(url, token, context.budget);
     context.manifests.set(url, lines);
     return lines;
 }
@@ -398,16 +434,23 @@ function hlsReference(parent: string, reference: string): string {
     return url;
 }
 
-async function authorizedHls(url: string, token: string): Promise<string[]> {
+async function authorizedHls(url: string, token: string, budget?: VerificationBudget): Promise<string[]> {
     if (!validPlaybackUrl(url)) throw new Error('provider_playback_mismatch');
     let response: Response;
     try {
-        response = await dependencyFetch('livepeer_media', 'hls_authorized_probe', url, {
+        response = await verificationFetch(budget, 'hls_authorized_probe', url, {
             headers: { 'Livepeer-Jwt': token }, redirect: 'manual', signal: AbortSignal.timeout(5_000),
         });
     } catch { throw new Error('provider_unavailable'); }
     if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
     if (response.status !== 200 || !response.body) throw new Error('provider_playback_mismatch');
+    const body = await readVerificationText(response);
+    if (hlsManifestKind(body) !== 'playable') throw new Error('provider_playback_mismatch');
+    return body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+async function readVerificationText(response: Response): Promise<string> {
+    if (!response.body) throw new Error('provider_playback_mismatch');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let body = '';
@@ -422,6 +465,16 @@ async function authorizedHls(url: string, token: string): Promise<string[]> {
         }
         body += decoder.decode();
     } finally { await reader.cancel().catch(() => undefined); }
-    if (hlsManifestKind(body) !== 'playable') throw new Error('provider_playback_mismatch');
-    return body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return body;
+}
+
+function verificationFetch(budget: VerificationBudget | undefined, operation: string, url: string, init: RequestInit): Promise<Response> {
+    const remainingMs = budget ? budget.deadlineAtMs - Date.now() : 5_000;
+    if (remainingMs <= 0 || budget && budget.requests >= MAX_VERIFICATION_REQUESTS) {
+        throw new Error('provider_unavailable');
+    }
+    if (budget) budget.requests += 1;
+    return dependencyFetch('livepeer_media', operation, url, {
+        ...init, signal: AbortSignal.timeout(Math.min(5_000, remainingMs)),
+    });
 }
