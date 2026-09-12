@@ -6,7 +6,7 @@ import type {
     ProviderPlayback,
     ProviderPlaybackSource,
     TusState,
-    VerifiedAsset,
+    ProviderVerificationResult,
     VerifyReadyAssetInput,
 } from './media-provider';
 import { MEDIA_SOURCE_FORMATS, mediaProfiles } from './media-provider';
@@ -51,7 +51,7 @@ export class LivepeerProvider implements MediaProvider {
         return this.transport.readPlayback(playbackId);
     }
 
-    verifyReadyAsset(input: VerifyReadyAssetInput): Promise<VerifiedAsset> {
+    verifyReadyAsset(input: VerifyReadyAssetInput): Promise<ProviderVerificationResult> {
         if (!this.options.readyVerificationEnabled) throw new Error('runtime_not_configured');
         return verifyLivepeerReadyAsset(this, input, this.options);
     }
@@ -190,6 +190,7 @@ export class LivepeerTransport {
                 `${API_BASE}/${kind}/${encodeURIComponent(id)}`,
                 {
                     headers: { Authorization: `Bearer ${this.apiKey}` },
+                    redirect: 'manual',
                     signal: AbortSignal.timeout(5_000),
                 },
             );

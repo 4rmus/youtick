@@ -1,5 +1,5 @@
 import { KeyPair } from 'near-api-js';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import handler, { LivepeerControl, type Env } from './index';
 
 const RPC_URL = 'https://rpc.testnet.near.org';
@@ -927,7 +927,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(providerFetch).not.toHaveBeenCalled();
     });
 
-    it.each(['PROVIDER_FAILED', 'UPLOAD_EXPIRED'])(
+    it.each(['PROVIDER_FAILED', 'UPLOAD_EXPIRED', 'CANCELLED'])(
         'ignores a late ready event for terminal %s without retrying provider work',
         async (state) => {
             const testState = createState();
@@ -2204,5 +2204,108 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(testState.values.get('operator:last-nonce')).toBe('12');
         expect(testState.values.get('outbox:job-001:1:finalize')).toMatchObject({ state: 'CONFIRMED' });
         expect(testState.values.get('outbox:job-002:1:finalize')).toMatchObject({ state: 'CONFIRMED' });
+    });
+});
+
+describe('bounded thumbnail verification continuation', () => {
+    beforeEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+    afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+    async function fixture(published = false, count = 720) {
+        const state = createState(), job = published ? await publishedJob() : jobRecord();
+        state.values.set('job:v1', job);
+        const operator = vi.fn(async (request: Request) => new URL(request.url).pathname === '/internal/finalize'
+            ? Response.json({ accepted: true, finalized: true }) : Response.json({ accepted: true }));
+        const env = createEnv({ LIVEPEER_CONTROL: {
+            idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+            get: vi.fn(() => ({ fetch: operator })),
+        } as unknown as DurableObjectNamespace });
+        const urls = Array.from({ length: count }, (_, i) => `https://livepeercdn.com/thumbs/${i}.jpg`);
+        let body = 'WEBVTT\n\n' + urls.map((u, i) => `${new Date(i * 10000).toISOString().slice(11,23)} --> ${new Date((i+1)*10000).toISOString().slice(11,23)}\n${u}\n`).join('\n');
+        const vtt = `https://livepeercdn.com/asset/${PLAYBACK_ID}/thumbnails.vtt`;
+        const publishedRecord = await publishedJob(), fallback = reconcileFetch(publishedRecord.publication);
+        let exposed: number | undefined;
+        let onThumbnail = (_index: number) => {};
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) {
+                const playback = providerPlayback();
+                return Response.json(providerPlayback({ source: [...playback.meta.source, { type: 'text/vtt', url: vtt }] }));
+            }
+            if (url === vtt) return new Response(new Headers(init?.headers).has('Livepeer-Jwt') ? body : null,
+                { status: new Headers(init?.headers).has('Livepeer-Jwt') ? 200 : 403 });
+            const i = urls.indexOf(url);
+            if (i >= 0) { onThumbnail(i); return new Response(null, { status: i === exposed ? 200 : 403 }); }
+            return fallback(input, init);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        return { state, env, job, urls, operator, fetchMock, changeVtt: () => { body += '\n'; }, expose: (i: number) => { exposed = i; },
+            onThumbnail: (fn: (i: number) => void) => { onThumbnail = fn; } };
+    }
+
+    it.each([false, true])('resumes all 720 references after object restart, published=%s', async (published) => {
+        let now = Date.now(); vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const f = await fixture(published);
+        for (let step = 0; step < 12; step++) {
+            f.fetchMock.mockClear();
+            const control = new LivepeerControl(f.state.state, f.env);
+            if (step === 0 && !published) expect((await control.fetch(internalWebhookRequest())).status).toBe(202);
+            else await control.alarm();
+            const record = f.state.values.get('job:v1') as Record<string, any>;
+            const thumbnailCalls = f.fetchMock.mock.calls.filter(([u]) => f.urls.includes(String(u)));
+            expect(thumbnailCalls).toHaveLength(step === 11 ? 16 : 64);
+            if (step < 11) {
+                expect(record.providerVerification.nextThumbnail).toBe((step + 1) * 64);
+                expect(record.state).toBe(published ? 'ONCHAIN_PUBLISHED' : 'UPLOAD_READY');
+                if (!published) expect(record.publication).toBeUndefined();
+                expect(f.operator.mock.calls.filter(([r]) => new URL(r.url).pathname === '/internal/finalize')).toHaveLength(0);
+                expect(f.state.values.get('reconcile:v1')).toMatchObject({ status: 'PROVIDER_UNKNOWN', nextReconcileAtMs: now + 1000 });
+            } else {
+                expect(record.providerVerification).toBeUndefined();
+                expect(record.state).toBe('ONCHAIN_PUBLISHED');
+                if (published) expect(f.state.values.get('reconcile:v1')).toMatchObject({ status: 'HEALTHY' });
+            }
+            now += 1000;
+        }
+        expect(f.operator.mock.calls.filter(([r]) => new URL(r.url).pathname === '/internal/finalize')).toHaveLength(published ? 0 : 1);
+        expect(f.fetchMock.mock.calls.some(([u]) => String(u).includes('request-upload'))).toBe(false);
+    });
+
+    it('discards changed-list progress and schedules a delayed retry rather than a fast restart', async () => {
+        let now = Date.now(); vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const f = await fixture(false, 130);
+        expect((await new LivepeerControl(f.state.state, f.env).fetch(internalWebhookRequest())).status).toBe(202);
+        now += 1000; f.changeVtt();
+        await expect(new LivepeerControl(f.state.state, f.env).alarm()).rejects.toThrow('provider_verification_incomplete');
+        expect((f.state.values.get('job:v1') as any).providerVerification).toBeUndefined();
+        expect(f.state.values.get('reconcile:v1')).toMatchObject({ uploadReadFailed: true,
+            uploadErrorCode: 'provider_verification_incomplete', nextReconcileAtMs: now + 60_000 });
+        expect(f.operator).not.toHaveBeenCalled();
+    });
+
+    it('never finalizes when the last thumbnail is exposed', async () => {
+        let now = Date.now(); vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const f = await fixture(false, 65); f.expose(64);
+        expect((await new LivepeerControl(f.state.state, f.env).fetch(internalWebhookRequest())).status).toBe(202);
+        now += 1000;
+        await expect(new LivepeerControl(f.state.state, f.env).alarm()).rejects.toThrow('provider_playback_exposed');
+        expect(f.state.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_READY' });
+        expect((f.state.values.get('job:v1') as any).providerVerification).toBeUndefined();
+        expect(f.operator).not.toHaveBeenCalled();
+    });
+
+    it.each(['deadline', 'cancelled'])('cannot publish when %s changes during the last step', async (change) => {
+        let now = Date.now(); vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const f = await fixture(false, 65);
+        f.state.values.set('job:v1', { ...f.job, absoluteDeadlineAtMs: now + 2000 });
+        expect((await new LivepeerControl(f.state.state, f.env).fetch(internalWebhookRequest())).status).toBe(202);
+        now += 1000;
+        f.onThumbnail(i => { if (i === 64) {
+            if (change === 'deadline') now += 2000;
+            else f.state.values.set('job:v1', { ...(f.state.values.get('job:v1') as object), state: 'CANCELLED' });
+        } });
+        await expect(new LivepeerControl(f.state.state, f.env).alarm()).rejects.toThrow('provider_verification_incomplete');
+        expect((f.state.values.get('job:v1') as any).publication).toBeUndefined();
+        expect(f.operator).not.toHaveBeenCalled();
     });
 });

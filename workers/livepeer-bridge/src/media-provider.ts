@@ -83,6 +83,18 @@ export type VerifyReadyAssetInput = {
     projectId: string;
     expectedProjectId: string;
     apiTokenName: string;
+    checkpoint?: ProviderVerificationCheckpoint;
+};
+
+export type ProviderVerificationCheckpoint = {
+    bindingSha256: string;
+    nextThumbnail: number;
+    startedAtMs: number;
+};
+
+export type ProviderVerificationResult = VerifiedAsset | {
+    pending: true;
+    checkpoint: ProviderVerificationCheckpoint;
 };
 
 export type VerifiedAsset = {
@@ -99,6 +111,6 @@ export interface MediaProvider {
     readTusOffset(uploadUrl: string): Promise<TusState>;
     readAsset(assetId: string): Promise<ProviderAsset>;
     readPlayback(playbackId: string): Promise<ProviderPlayback>;
-    verifyReadyAsset(input: VerifyReadyAssetInput): Promise<VerifiedAsset>;
+    verifyReadyAsset(input: VerifyReadyAssetInput): Promise<ProviderVerificationResult>;
     deleteAsset(assetId: string): Promise<'deleted' | 'missing'>;
 }
