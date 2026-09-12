@@ -818,7 +818,12 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             profiles: [profiles.adaptive, profiles.legacy].map((profile) => ({ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: profile.hash })) });
         vi.stubGlobal('fetch', backend);
         const control = new LivepeerControl(state.state, env);
-        const first = await control.fetch(await controlRequest({ body: { expected_source_bytes: '5000000000', profile_config_sha256: profileHash } }));
+        const request = await controlRequest({ body: { expected_source_bytes: '5000000000', profile_config_sha256: profileHash } });
+        const { envelope } = await request.clone().json() as { envelope: { expires_at_ms: string } };
+        const first = await control.fetch(request);
+        expect(state.alarms.length).toBeGreaterThan(0);
+        expect(state.alarms.at(-1)).toBeGreaterThan(now);
+        expect(state.alarms.at(-1)).toBeLessThanOrEqual(Number(envelope.expires_at_ms));
         expect(first.status, (await first.clone().json() as { error?: string }).error).toBe(201);
         expect(state.values.get('job:v1')).toMatchObject({ absoluteDeadlineAtMs: now - 1000 + 86_400_000 });
         const creation = backend.mock.calls.find(([url]) => String(url).endsWith('/asset/request-upload'));

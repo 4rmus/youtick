@@ -1,113 +1,152 @@
 # Current state
 
-> Reconciled on 2026-09-02 against exact `main`
-> [`292f7b8d917540e3453fc61f4aa9c6fae304baa6`](https://github.com/4rmus/youtick/commit/292f7b8d917540e3453fc61f4aa9c6fae304baa6),
-> exact-main CI, protected Preview receipts and fresh finality reads.
-> This snapshot separates source, CI, Preview, provider and Production evidence.
-> It does not authorize a deployment, feature activation or external mutation.
+> 12 Eylül 2026 — Video V1 durumu ve canlı dayanıklılık ön kontrolü.
+> Kaynak: [main `b53e00e962b595f0edf4f1283c146d73d1f76b57`](https://github.com/4rmus/youtick/commit/b53e00e962b595f0edf4f1283c146d73d1f76b57).
+> Yükleme kayıtları önceki koşunun orijinal sekmelerinden kurtarıldı; iki ayrı
+> hesapla oynatma 13:39–13:46 UTC arasında doğrulandı. 2+2 kabulünün son zincir snapshot'ı
+> **12 Eylül 13:47:35.486 UTC**. Yeni ödeme, yükleme veya deploy yapılmadı.
+> Dayanıklılık ön kontrolünün 15:58–16:12 UTC okumaları hedef yayın, provider,
+> webhook ve kuyruk bağlantısını doğruladı; yeni canlı hata testi değildir.
 
-This is the short operational snapshot. The phased target remains the external
-architecture plan, while [`transformation-progress.md`](transformation-progress.md)
-retains the append-only checkpoint history through Checkpoint 186. Dated
-"next gate" text in either historical document is not current work selection.
+## Şu anki hedef
 
-## Product and authority
+Ana hedef genel mimari dönüşüm planındaki **Faz 3 — dayanıklı, devam edebilir yükleme**.
+Güncel alt plan [Public Testnet Video V1](./public-testnet-video-v1-plan.md).
+Önceki ürün gate'i `VIDEO_PUBLIC_TESTNET_LONG_UPLOAD_PUBLICATION_VERIFICATION_RELEASE`
+**COMPLETED_WITH_WARNINGS / KAPALI**; 5 GB / 120 dakika yükleme ve yayın kabulü PASS.
+**Video V1 bütünü NOT_COMPLETE. `VIDEO_PUBLIC_TESTNET_TWO_BY_TWO_ACCEPTANCE` — PASS / KAPALI.**
+İki üreticinin TUS aktarım işlemleri 160,934 saniye örtüştü. Soteri ve utick2,
+iki ayrı Brave profilinde aynı anda en az 5 dakika izledi. Önceki eksikler kapandı;
+güncel sonuç kabul §47, ilk koşunun uyarılı kaydı §46'dadır.
+**Dayanıklılık ön kontrolü: `VIDEO_PUBLIC_TESTNET_RESILIENCE_PREFLIGHT` — PASS.**
+**Önceki gate: `VIDEO_PUBLIC_TESTNET_TERMINAL_REPLAY_ACCEPTANCE` — PASS / KAPALI.**
+M2 yayınına iki imzalı sentetik bildirim sırayla gönderildi; ayrı ACK'ler yaklaşık
+10,4 ve 6,9 saniyede gözlendi. 60 saniyelik sessiz pencere ve son ACK sonrası
+10 dakika gözlem tamamlandı. Yayınlar, bakiyeler, 23 asset, operator nonce/outbox,
+Bridge sürümü ve açık yükleme kabulü korundu; iki kuyruk 0 mesaj / 0 bayt.
+Güncel kanıt kabul §52; altı eski mesajın yedekli temizliği §51'de korunur.
+Gerçek provider redelivery ve kesin ek fatura tutarı bu testle kanıtlanmaz.
+**Son gate: `VIDEO_PUBLIC_TESTNET_MISSING_WEBHOOK_LOCAL_COVERAGE` — PASS / LOCAL_TEST.**
+Public-testnet politika, ilk alarm kaydı, aynı depolamayla restart ve tek finalize
+kapsamı mevcut testlere eklendi. 8 seçili test ve TypeScript kontrolü geçti (§54).
+Uygulama davranışı değişmedi; iki test dosyası ve üç canonical belge yerelde.
+§53'teki canlı aday/bildirim engeli sınırları korunur; canlı kabul UNPROVEN.
+Tek sonraki gate `VIDEO_PUBLIC_TESTNET_MISSING_WEBHOOK_TEST_INTEGRATION`:
+iki test ve üç belgeyi ayrı PR ile main'e almak; deploy0. Henüz başlamadı,
+commit/push/PR yapılmadı. Playback planındaki mevcut kullanıcı değişikliği korunur.
+12 Eylül kullanıcı kararı: ilk sürüm kabulü **2 eşzamanlı yükleme + 2 eşzamanlı izleme**.
+Önceki 3 yükleme önerisi bununla değişti; 1.000 eşzamanlı izleme testi kullanıcı
+isteğiyle kapsamdan çıkarıldı. Canlı global yükleme sınırı değiştirilmedi.
 
-- NEAR owns job, payment, publication, settlement and entitlement truth.
-- Livepeer owns media ingest, processing, storage and HLS delivery.
-- The Bridge owns control and authorization; source video does not pass through it.
-- D1 is a rebuildable Discover/Profile read model, never financial authority.
+Okuma sırası: exact GitHub main ve ilgili ortamın zamanlı kanıtı → bu kısa özet →
+[Video V1 kabul günlüğü](./public-testnet-video-v1-acceptance.md) §54 → §53 → §52 → §51 → §50 → §49 → §48 → §47 →
+[Playback planı](./playback-ux-plan.md) §16 → tarihsel plan/kapanış kayıtları.
+Tarihsel “next gate”, FAILED veya NOT_DEPLOYED metinleri güncel çalışma seçimi değildir.
 
-## Evidence order
+## Ürün ve yetki sınırları
 
-Use this order when facts disagree:
+- NEAR ödeme, iş, yayın, kazanç ve izleme hakkının otoritesidir.
+- Livepeer doğrudan TUS yükleme, işleme, saklama ve JWT korumalı HLS dağıtımını sağlar.
+- Bridge kontrol ve yetkilendirme katmanıdır; kaynak video tarayıcıdan doğrudan Livepeer’a gider.
+- D1 yeniden üretilebilir Discover/Profile okuma verisidir; ekonomik otorite değildir.
+- Public-testnet cihaz yetkisi yeni başarılı satın alma/yükleme işleminden itibaren
+  **30 gün** sürer. İzleme, reload, token yenileme veya upload-key recovery süreyi uzatmaz.
+  Önceki 8 saatlik oturum metinleri tarihsel/legacy davranıştır; güncel karar Playback §13'tedir.
+- Kaynak feature flag'leri kapalı varsayılanlarını korur. Deploy anahtarının false olması
+  çalışan public-testnet yüklemelerinin kapalı olduğu anlamına gelmez.
 
-1. exact GitHub `main`;
-2. fresh environment and finality evidence;
-3. this dated snapshot;
-4. the append-only checkpoint history;
-5. the target phase plan and older design documents.
+## Doğrulanmış kaynak ve kayıtlı kabul
 
 `LOCAL_STATIC`, `LOCAL_TEST`, `CI`, `PROVIDER`, `PREVIEW`, `PRODUCTION`,
-`EXTERNAL_NOT_RUN` and `UNPROVEN` are independent evidence classes. A passing
-source or CI result does not prove deployment, and a Preview result does not
-prove Production or mainnet behavior.
+`EXTERNAL_NOT_RUN` ve `UNPROVEN` ayrı kanıt sınıflarıdır.
+Aşağıdaki PREVIEW satırları özellikle **public-testnet** ortamını anlatır.
 
-## Current evidence
-
-| Subject | Class | Status | Evidence |
-|---|---|---|---|
-| Application source | `LOCAL_STATIC` | `PASS` | Exact `main` is `292f7b8d...` with tree `0cdd4a54...`. PRs #161-171 contain the bounded sponsor recovery and playback-v2 release work. PR #170 makes a paused or unreadable Market fail before wallet submission and keeps v2 purchase to one USDC transaction; PR #171 bounds the same-candidate release retry used by protected reclose. All release flags remain default-off. |
-| CI | `CI` | `PASS` | [Main run 33623661479](https://github.com/4rmus/youtick/actions/runs/33623661479) passed for exact `292f7b8d...`. |
-| Sponsored paid-job recovery | `PREVIEW / PROVIDER` | `PASS_BOUNDED` | Exact source `6a623454...` used [Deploy Preview run 33490967180](https://github.com/4rmus/youtick/actions/runs/33490967180): attempt 2 opened only the sponsor recovery packet and attempt 3 reclosed it. One canary run completed the existing job `Authorized -> Published`, added exactly one publication, created no payment/job/key, left creator and platform balances unchanged and deleted the recovery file only after success. Provider creation was bounded to `0 or 1`; an independent provider inventory count is `UNPROVEN`. |
-| Guided buyer purchase | `PREVIEW` | `PASS_TESTNET` | Real-wallet buyer `lp-p3-creator-b-250825.youtick-dev-v3.testnet` selected publication `lp-85ef5b7e-c6a0-4e9b-8f58-a5f41ba1fbdd` through Discover and bought one ticket for exact `2,000,000` micro-USDC in [`HtCaLHz...`](https://testnet.nearblocks.io/txns/HtCaLHzfzC7zpSVJMSXhBH1gXPL2UxgDPRYvmgme1uaq). Buyer changed `19,400,000 -> 17,400,000`, Market USDC `3,740,000 -> 5,740,000`, creator liability `1,960,000 -> 3,920,000` and platform liability `1,780,000 -> 1,820,000`. Exactly one entitlement and purchase event were added; publication count stayed at three. |
-| Playback v2 | `PREVIEW` | `PASS` | [Deploy Preview run 33609515929, attempt 2](https://github.com/4rmus/youtick/actions/runs/33609515929/attempts/2) opened only playback-v2 at exact `1d1c3647...`, with canonical NEAR Discover fallback enabled. Creator-B used one wallet `signMessage`; the selected video rendered and advanced to `0:09 / 0:10`. No FunctionCall key, browser grant or persistent token write was added. |
-| Wallet and purchase safety | `PREVIEW / CI` | `PASS_WITH_WARNINGS` | The first guided attempt in [`E6L18ySn...`](https://testnet.nearblocks.io/txns/E6L18ySngMVdsF63izdqFKNJgoLadVgVD7enEwDKzppL) reached a paused Market, fully refunded the `2 USDC` and created no entitlement. The exact legacy scoped key from that attempt was later deleted once in [`5Kw5Qhr...`](https://testnet.nearblocks.io/txns/5Kw5QhrWYXMcKpjNECsFEhKBrasUpMenjLTLqWAtNxHh); Creator-B now has one FullAccess key and zero grants. PR #170 prevents the paused-Market wallet submission and removes legacy AddKey behavior from v2 purchases. |
-| Market safety | `PREVIEW` | `PASS_PAUSED` | Admin unpaused once in [`H1NW8gPo...`](https://testnet.nearblocks.io/txns/H1NW8gPoXenUwZTThqtixREvYPUteA6mZWBg1daDkNQh), Creator-B purchased once in [`HtCaLHz...`](https://testnet.nearblocks.io/txns/HtCaLHzfzC7zpSVJMSXhBH1gXPL2UxgDPRYvmgme1uaq), and guardian paused in [`DrPjtW2Q...`](https://testnet.nearblocks.io/txns/DrPjtW2QV64GYYxJjZMj8NRPR9td5GvDc9ximvdVm842). Fresh finality reads show `new_purchases_paused=true`, Creator-B entitlement true, the publication active at `2,000,000` and final balances unchanged. |
-| Final Preview | `PREVIEW` | `PASS_CLOSED` | [Deploy Preview run 33624730436, attempt 2](https://github.com/4rmus/youtick/actions/runs/33624730436/attempts/2) reclosed exact `292f7b8d...`. Bridge health is `stage=DISABLED`; upload, provider/operator mutation, sponsor quote/relay, playback, Queue and archive readiness are all false. Deploy and all canary repository gates are false. |
-| Production | `PRODUCTION / UNPROVEN` | `LEGACY_ONLY / NEW_STACK_CLOSED` | The protected releases did not deploy Production. `youtick.net` retained body SHA-256 `a62de757f70aea8d5cb752b12ac50c30435ac8a6e7661cb817562b206c95e065` and the `youtick-web4` origin. Production feature variables remain false. `bridge.youtick.net` did not resolve, so direct Production Bridge health is `UNPROVEN`. |
-
-## Exact Preview receipts
-
-| Window | Source and run | Serving result |
+| Konu | Kanıt / sonuç | Sınır ve referans |
 |---|---|---|
-| Sponsor recovery reclose | `6a623454...`; [run 33490967180, attempt 3](https://github.com/4rmus/youtick/actions/runs/33490967180/attempts/3) | Web `7b262579-7474-49c2-9137-97ab96af7fd3`; Bridge `cb7fedea-e9e4-40dc-b25b-e62fda762e44`; read model `298f092d-f3ef-45c3-a75d-4842bf950527`; `DISABLED`. |
-| Guided UAT playback-only open | `1d1c3647...`; [run 33609515929, attempt 2](https://github.com/4rmus/youtick/actions/runs/33609515929/attempts/2) | Web `1774bb2c-4b6e-42ba-a3e6-5a9fbf1044cc`; Bridge `8ed0a3bf-adc2-4cd4-a2e0-739955343af1`; read model `97431fea-ea66-498c-8921-ee8fea359902`; playback-only `ENABLED`. |
-| Final closed Preview | `292f7b8d...`; [run 33624730436, attempt 2](https://github.com/4rmus/youtick/actions/runs/33624730436/attempts/2) | Web `98accbab-0e5a-420a-81e9-6c7c6f3937da`; Bridge `7bcb5c3d-c0ff-4392-9950-f02d52c0cc39`; read model `eee8ca37-1f66-496a-adf9-19b057af1e19`; `DISABLED`. |
+| Kaynak ve CI | Main `b53e00e9`; [CI 34683092906](https://github.com/4rmus/youtick/actions/runs/34683092906) success | `LOCAL_STATIC / CI`; eski kök checkout yayın kaynağı değildir. |
+| Korumalı yayın | [Public Testnet Video 34683764285](https://github.com/4rmus/youtick/actions/runs/34683764285) success; ilk deneme | 6 provenance + 2 SBOM doğrulandı. Yeni CI veya yayın bu belge gate'inde çalıştırılmadı. |
+| Büyük dosya | Aynı 5.000.000.000 bayt / 7200,008008 sn kaynak ready/JWT → Published/ACTIVE → katalog HTTP 200 | `PREVIEW / PROVIDER`; yeni Bridge cutover sonrası 120,852844 sn. Kurtarmada yeni ödeme/upload/asset 0; yayınlar 7→8, önceki 7 yayın aynı. Kabul §45. |
+| Kesintiden devam | M2 aynı dosya/iş/TUS üzerinden 33.554.432→269.467.407 bayt; yanlış dosya/hesap kontrolleri ve ilk 24 saatlik son tarih korundu | `PREVIEW / PROVIDER`; tek ödeme/asset/publication, uyarılı işlevsel kabul kapalı. Kabul §25. Genel başarı oranı veya eşzamanlı kapasite kanıtı değildir. |
+| Cüzdan ve playback | #189 ödeme yetkili cihaz oturumu, #191 cold reload, #193 güvenli hata ölçümü, #194 ölçülen HLS zaman çizelgesi, #196 geç cüzdan dönüşü main'de | Son cüzdan koşusu 12/12 imzasız restore; Playback §16'da 20 sarma ve üç gerçek token yenilemesi. Farklı koşuların ölçümleri birleştirilmez. |
+| Üretici çekimi | 5,88 testUSDC tek çekimle cüzdana geçti; kazanç 0; FINAL/FT/olay/bakiye ve Profile doğrulandı | `PREVIEW`, PASS. Gerçek ücret 0,000747676380855 testNEAR. Kabul §35. Mainnet muhasebe kabulü değildir. |
+| Maliyet/hız | Kullanıcı kabulüyle COMPLETED_WITH_WARNINGS / KAPALI | İlk görüntü hızı, yeterli p95 örneği ve gerçek ek fatura maliyeti ertelendi; giderilmiş sayılmaz. Kabul §33. |
+| Chrome/Edge ve yavaş ağ | Kullanıcı kabulüyle COMPLETED_WITH_WARNINGS / KAPALI | 7 ilk görüntü örneği ve Edge'de yaklaşık 450 sn aynı oynatıcı ilerlemesi. Ağ/tampon etkisi, Auto kalite toparlanması ve ölçüm sınırları ertelendi. Kabul §39. |
+| Discover/veri akışı | Public-testnet kurulum, sürekli blok takibi, predecessor bağlantısı, sınırlı katalog okumaları ve önbellek yenilemesi main'de | B09/B10 ve PR #185–188 kayıtları. FASTNEAR yerel deneyi üretim veri kaynağının devralma kabulü değildir. NEAR geri dönüşü korunur. |
 
-The first guided-UAT reclose, [run 33609515929 attempt 3](https://github.com/4rmus/youtick/actions/runs/33609515929/attempts/3),
-stopped before promotion when release smoke observed a transient `403` instead
-of the expected closed response. It left the closed candidate at 0% and did not
-change stable traffic. PR #171 added only a bounded same-candidate propagation
-retry; the later exact-main receipt and fresh health close that incident without
-treating the failed run as deployment evidence.
+Son kayıtlı public-testnet sürümleri: Web `eadec555-d4fa-4469-a810-f10191b787f4`,
+Bridge `0f45b81e-8f7d-485c-aad8-51e076910a3c`, read-model
+`91063507-21ec-46df-8d56-2542b8d6e37b`; her biri %100. Servis edilen 16 Web JS
+artifact ile eşleşti. Public yüklemeler açık bırakıldı, iki deploy anahtarı false.
+Bu değerler yukarıdaki zamanlı kabul kaydına aittir; yeni işlem öncesinde yenilenir.
+Eski Preview korunmuştur. **Production/mainnet açılışı bu kayıtla kanıtlanmaz**;
+yeni bir Production yayını bu gate'te yapılmadı.
 
-## Recent source sequence
+## Fazların durumu
 
-| PR | Main commit | Purpose | Runtime meaning |
-|---|---|---|---|
-| [#161](https://github.com/4rmus/youtick/pull/161) | `5b61f0f...` | Align sponsor recovery release policy | Source safety; default-off |
-| [#162](https://github.com/4rmus/youtick/pull/162) | `5a26be3...` | Allow protected same-SHA Preview reclose | Release safety |
-| [#163](https://github.com/4rmus/youtick/pull/163) | `20be6e5...` | Scope recovery to the exact job | Source safety |
-| [#164](https://github.com/4rmus/youtick/pull/164) | `af14bd4...` | Add bounded second-key exception | One approved testnet exception completed |
-| [#165](https://github.com/4rmus/youtick/pull/165) | `2b82bb6...` | Use Node `Buffer` at the TUS boundary | Recovery adapter fix |
-| [#166](https://github.com/4rmus/youtick/pull/166) | `6a62345...` | Keep `File` for fingerprint and `Buffer` for TUS | Recovery runtime completed |
-| [#167](https://github.com/4rmus/youtick/pull/167) | `e4f0abc...` | Add default-off playback-v2 Preview gate | Buyer pilot completed |
-| [#168](https://github.com/4rmus/youtick/pull/168) | `338432e...` | Recognize playback-only stable baseline during reclose | Final Preview reclose completed |
-| [#169](https://github.com/4rmus/youtick/pull/169) | `687ecee...` | Reconcile the technical V1 pilot snapshot | Documentation only |
-| [#170](https://github.com/4rmus/youtick/pull/170) | `1d1c364...` | Guard playback-v2 ticket purchase submission | Guided real-wallet purchase completed |
-| [#171](https://github.com/4rmus/youtick/pull/171) | `292f7b8...` | Bound candidate override propagation retries | Final Preview reclose completed |
+Ana plan Faz 0–6, toplam **7 faz** içerir. Faz 3'ün kapanışından sonra **3 faz** kalır;
+önceki fazların tüm dış doğrulamalarının tamamlandığı veya bir tamamlanma yüzdesi iddia edilmez.
 
-## Phase summary
+| Faz | Durum |
+|---|---|
+| 0 — Mimari sınırlar | Pilot için büyük ölçüde hazır; bağımsız inceleme/sorumlular açık. |
+| 1 — Cüzdan ve sözleşme güvenliği | Yerel/testnet/CI kanıtı güçlü; ana ağ yönetişimi ve bağımsız inceleme açık. |
+| 2 — Oynatma ve kayıt ömrü | Gerçek oynatma/cihaz akışları ilerledi; arşivleme/temizlik ve Production kanıtı eksik. |
+| 3 — Dayanıklı yükleme | Aktif; resume, 5 GB yayın ve 2+2 kabulü kapandı. Genel dayanıklılık ve faz kapanışı açık. |
+| 4 — Olay/veri/muhasebe | Public-testnet veri akışı ve mali işlemler kanıtlı; genel faz ve mainnet muhasebesi açık. |
+| 5 — Kapasite/maliyet/işletim | Kısmi; gerçek ölçek, alarm teslimi ve fatura uzlaştırması açık. |
+| 6 — Denetim/kurtarma/mainnet | Dış denetim, tatbikat, yönetişim ve kademeli ana ağ açılışı tamamlanmadı. |
 
-| Phase | Purpose | Current assessment |
-|---|---|---|
-| 0 | Boundaries and activation freeze | Mostly complete for the pilot; independent threat review and named owners remain open. |
-| 1 | Wallet, contract and governance security | Strong local/testnet/CI evidence; mainnet governance and independent review remain open. |
-| 2 | Stateless playback and bounded state | Technical and real-wallet single-buyer v2 playback are proven on Preview/testnet; retention cleanup and Production proof remain incomplete. |
-| 3 | Resumable concurrent upload | Active. One existing paid job was recovered and published, but the full two-creator payment-to-publication concurrency flow remains a separate, optional gate and is not proven by this pilot. |
-| 4 | Events, read model and finance | Two exact `2 USDC` purchases and splits are proven on testnet, including one Discover-to-watch guided UAT; continuous ingestion and mainnet accounting remain closed. |
-| 5 | Scale, cost and operations | Partial; delivered alerts, load evidence and billed-cost reconciliation remain external. |
-| 6 | Audit, resilience and mainnet | Not ready; external audit, drills, governance and gradual Production activation remain blocked. |
+## Kalanlar ve kabul edilmiş ertelemeler
 
-## Decisions and blockers
+- Video V1'in kalan canlı dayanıklılık senaryoları, eski beta regresyonu
+  ve nihai kabulü açık. İlk sürüm için 10 yükleme hedefi
+  küçültüldü; 1.000 izleyici testi istenmiyor ve yapılmayacak. Bir kapasite sınırının
+  kodda olması kapasite testi değildir.
+- Terminal replay öncesindeki 6 DLQ mesajı üç eski işe bağlandı; aynı işlerdeki
+  tarihsel boyut/küçük resim sınırı hataları #192/#195/#197 ile düzeltilmişti.
+  Tek tek özgün hata izi UNPROVEN. Altı eski mesajın yedekli seçici temizliği §51 ile tamamlandı.
+- 5 GB yayının kabulü iki saat kesintisiz oynatma, diğer dosya biçimleri veya 5 GB+1 sınır testi değildir.
+- Maliyet/hız, tarayıcı/yavaş ağ ve Playback gate'leri kullanıcı kabulüyle kapalıdır;
+  ertelenen bulgular bunları kendiliğinden yeniden açmaz. Fiziksel A/V kalibrasyonu,
+  bağımsız yetkisiz hesap HTTP kanıtı ve kesin ek provider maliyeti UNPROVEN kalır.
+- Son uzun-video koşusundaki bir `admission_denied` kaydı hedef iş ile bağımsız
+  ilişkilendirilemedi; hedef kendiliğinden yayımlandı. Bu uyarı düzeltilmiş sayılmaz.
+- UploadJob arşiv/silme, 90 günlük temizlik ve operasyon doğrulamaları ayrı açık işlerdir.
+  Tam sıfırdan read-model rebuild/RTO daha önce ertelendi; yeniden V1 çıkış şartı yapılmaz.
+- Modern player/1080p konuşması ayrı bir öneridir; kaydedilmiş uygulama planı veya
+  yapılmış geliştirme olarak sunulmaz. Bu kabulün profilleri 360p+720p'dir.
 
-- The bounded V1 testnet slice now proves one sponsored paid-job recovery, two
-  exact two-USDC purchases, permanent entitlements and v2 playback without
-  persistent token writes. The normal-user Discover-to-watch UAT is accepted
-  with non-blocking findings.
-- All Preview mutation and canary gates are default-off and currently false.
-  Market purchases are paused and final Preview health is fully closed.
-- Two-creator concurrency is not implied by the single creator/buyer pilot. It
-  remains a separate optional Phase 3 gate.
-- Provider inventory cardinality, continuous read-model ingestion, UploadJob
-  deletion, 90-day cleanup, full rebuild/RTO, Production/mainnet behavior and
-  independent audit remain unproven or deliberately deferred.
-- The remaining UAT findings are presentational or operational: the Pay control
-  can appear active while Market is paused, playback-v2 still shows legacy-key
-  copy, Meteor can emit non-blocking iframe/reporting console noise, and the
-  guardian pause command must use a balance-safe gas ceiling. None produced an
-  open P0/P1 issue; the guardian balance and gas ceiling must be rechecked before
-  another paid runtime.
-- No automatic product or runtime gate is open. Two-creator concurrency remains
-  deferred until product need justifies its separate gate.
+## Yeni çalışma alanına geçiş
+
+2+2 kabulünde iki ayrı üreticinin 269.467.407 baytlık videoları Published/ACTIVE;
+katalog ikisine HTTP 200 verdi. Yayınlar 8→10, önceki 8 yayın aynı; ilk koşunun
+toplam ödemesi 1,20 testUSDC. Devamda ek ödeme veya yükleme yok. Orijinal
+sekme kayıtları TUS işlem örtüşmesini 160,934 saniye olarak kanıtladı; bu,
+382,627 saniyelik yayın öncesi iş örtüşmesinden farklıdır ve kesintisiz PATCH
+baytı gönderimi iddiası değildir. İki ayrı hesapla en az 5 dakikalık oynatma,
+toplam 4 başarılı yenileme ve 0 ölçülen medya hatası doğrulandı; akışlar kapatıldı.
+Kesin ek provider maliyeti UNPROVEN kalır. Güncel kayıt kabul §47 ve
+`tmp/video-two-by-two-evidence-recovery-20260912/receipt.json` içindedir;
+ilk koşunun receipt dosyası tarihsel olarak değişmeden korunur.
+
+Kullanıcı **eski klasörü silmeden arşiv tutmayı** ve başka klasörde temiz main'den
+çalışmayı seçti. Yerel arşiv kökü: `/Users/arair/works/youtick-lp`.
+Bu kökteki `agent/closed-preview-bootstrap-smoke` / `d2d3b035...` kodu güncel main
+olarak kullanılmaz; eski kod/test/workflow parçaları yeni çalışma alanına taşınmaz.
+
+Taşınacak dört belge bu dosya, `public-testnet-video-v1-plan.md`,
+`public-testnet-video-v1-acceptance.md` ve `playback-ux-plan.md` dosyalarıdır.
+Yerel güncelleme GitHub main'e otomatik geçmez: yeni klonda dört dosya ayrıca
+aktarılmalı veya yalnız belge değişiklikleri ayrı Git yayınıyla main'e alınmalıdır.
+Bu gate commit/push/PR/merge/deploy başlatmaz ve yeni klasörü oluşturmaz.
+
+Tarihsel raporların düz kod biçimindeki mutlak yolları eski arşivi gösterir;
+`tmp/...` kanıt yolları da bu arşiv köküne göre okunur. `/var/folders/...` bağlantıları
+geçici yerel kanıttır; yeni klonda veya kalıcı arşivde bulunacağı varsayılmaz.
+Market olay/D1 gelecek planı eski klasörde `docs/architecture/market-event-driven-read-model-plan.md`
+olarak korunur; aktif gate veya üretim FASTNEAR geçişi değildir.
+
+2 Eylül özetinin değişmemiş hali [önceki current-state kaydında](https://github.com/4rmus/youtick/blob/b53e00e962b595f0edf4f1283c146d73d1f76b57/docs/architecture/current-state.md),
+uzun geçmiş [transformation-progress.md](./transformation-progress.md) içinde korunur.
+Ana faz hedefi yerel arşivden ayrı `/Users/arair/Desktop/youtick/youtick-fazli-mimari-donusum-plani.md`
+dosyasındadır; bu belge güncellemesi o hedef planını değiştirmez.

@@ -1225,33 +1225,69 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(testState.alarms.at(-1)).toBe(now + 15 * 60 * 1000);
     });
 
-    it('recovers a missing ready webhook through the alarm and finalizes only once', async () => {
-        const now = 1_785_600_000_000;
-        vi.spyOn(Date, 'now').mockReturnValue(now);
-        const testState = createState();
-        testState.values.set('job:v1', { ...jobRecord(), absoluteDeadlineAtMs: now + 3_600_000 });
-        const operatorFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true, finalized: true }));
-        const env = createEnv({
-            LIVEPEER_OPERATOR_JOB_ID: '', LIVEPEER_CREATOR_ALLOWLIST: '*',
-            LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: 'true', LIVEPEER_PLAYBACK_V2_ENABLED: 'true',
-            LIVEPEER_SPONSORED_UPLOADS_ENABLED: 'true', LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true',
-            LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '20000000',
-            LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '2000000',
-            LIVEPEER_CONTROL: {
-                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
-                get: vi.fn(() => ({ fetch: operatorFetch })),
-            } as unknown as DurableObjectNamespace,
-        });
-        const fetchMock = reconcileFetch((await publishedJob()).publication);
-        vi.stubGlobal('fetch', fetchMock);
-        const control = new LivepeerControl(testState.state, env);
-        await control.alarm();
-        await control.alarm();
-        await control.fetch(internalWebhookRequest());
-        expect(testState.values.get('job:v1')).toMatchObject({ state: 'ONCHAIN_PUBLISHED', absoluteDeadlineAtMs: now + 3_600_000 });
-        expect(operatorFetch.mock.calls.filter(([request]) => new URL((request as Request).url).pathname === '/internal/finalize')).toHaveLength(1);
-        expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('livepeer.studio') && ['POST', 'DELETE'].includes(init?.method || ''))).toBe(false);
-    });
+    it.each(['legacy public beta', 'public-testnet', 'mismatched public-testnet policy'])(
+        'recovers a missing ready webhook through the alarm and finalizes only once: %s', async (mode) => {
+            let now = 1_785_600_000_000;
+            const deadline = now + 3_600_000;
+            vi.spyOn(Date, 'now').mockImplementation(() => now);
+            const testState = createState();
+            const original = { ...jobRecord(), absoluteDeadlineAtMs: deadline };
+            testState.values.set('job:v1', original);
+            const operatorFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true, finalized: true }));
+            const env = createEnv({
+                VIDEO_ENVIRONMENT: mode === 'legacy public beta' ? undefined : 'public-testnet',
+                LIVEPEER_OPERATOR_JOB_ID: '', LIVEPEER_CREATOR_ALLOWLIST: '*',
+                LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: 'true', LIVEPEER_PLAYBACK_V2_ENABLED: 'true',
+                LIVEPEER_SPONSORED_UPLOADS_ENABLED: 'true', LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true',
+                LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '20000000',
+                LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '2000000',
+                LIVEPEER_CONTROL: {
+                    idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                    get: vi.fn(() => ({ fetch: operatorFetch })),
+                } as unknown as DurableObjectNamespace,
+            });
+            const asset = providerAsset({ status: { phase: 'processing', updatedAt: 1_785_589_200_000 } });
+            const backend = reconcileFetch((await publishedJob()).publication, asset);
+            const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+                if (String(input) === RPC_URL && JSON.parse(String(init?.body)).params.method_name === 'get_public_upload_policy') {
+                    return rpcResult({ version: 1, environment: 'public-testnet', network: 'testnet',
+                        market_contract_id: mode === 'mismatched public-testnet policy' ? 'other.testnet' : CONTRACT_ID,
+                        max_source_bytes: '5000000000', job_ttl_ms: '86400000', signed_quote_required: true,
+                        profiles: [{ profile_id: original.profileId, profile_config_sha256: original.profileConfigSha256 }],
+                    });
+                }
+                return backend(input, init);
+            });
+            vi.stubGlobal('fetch', fetchMock);
+            const control = new LivepeerControl(testState.state, env);
+            if (mode === 'mismatched public-testnet policy') {
+                await expect(control.alarm()).rejects.toThrow('deployment_binding_mismatch');
+                expect(backend).not.toHaveBeenCalled();
+                expect(operatorFetch).not.toHaveBeenCalled();
+                expect(testState.values.get('job:v1')).toEqual(original);
+                return;
+            }
+            await control.alarm();
+            expect(testState.values.get('job:v1')).toMatchObject({ state: 'PROCESSING', absoluteDeadlineAtMs: deadline });
+            expect(operatorFetch.mock.calls.filter(([request]) => new URL(request.url).pathname === '/internal/finalize')).toHaveLength(0);
+            expect(testState.alarms.at(-1)).toBe(now + 60_000);
+            now = testState.alarms.at(-1)!;
+            asset.status.phase = 'ready';
+            const restarted = new LivepeerControl(testState.state, env);
+            await restarted.alarm();
+            expect(testState.values.get('job:v1')).toMatchObject({ state: 'ONCHAIN_PUBLISHED',
+                jobId: original.jobId, generation: original.generation, creator: original.creator,
+                assetId: original.assetId, absoluteDeadlineAtMs: deadline,
+                publication: { verified_source_bytes: EXPECTED_BYTES, asset_id_hash: await sha256(ASSET_ID) },
+            });
+            expect(backend.mock.calls.some(([url]) => String(url).includes(`/playback/${PLAYBACK_ID}`))).toBe(true);
+            expect(backend.mock.calls.some(([url]) => String(url).includes('.m3u8'))).toBe(true);
+            await restarted.alarm();
+            expect((await restarted.fetch(internalWebhookRequest())).status).toBe(200);
+            expect(operatorFetch.mock.calls.filter(([request]) => new URL((request as Request).url).pathname === '/internal/finalize')).toHaveLength(1);
+            expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('livepeer.studio') && ['POST', 'DELETE'].includes(init?.method || ''))).toBe(false);
+        },
+    );
 
     it('retries a queued finalization from the job alarm', async () => {
         const now = 1_785_600_000_000;
