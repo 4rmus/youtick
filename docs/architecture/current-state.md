@@ -1,7 +1,8 @@
 # Current state
 
-> 12 Eylül 2026 — Video V1 durumu ve canlı dayanıklılık ön kontrolü.
-> Kaynak: [main `b53e00e962b595f0edf4f1283c146d73d1f76b57`](https://github.com/4rmus/youtick/commit/b53e00e962b595f0edf4f1283c146d73d1f76b57).
+> 12 Eylül 2026 — kullanıcı onayıyla kontrollü testnet Video V1 uyarılı kapanışı.
+> Son kaynak/test entegrasyonu: [`f28b3031cf860d5810c2cb9db0de8b255605f712`](https://github.com/4rmus/youtick/commit/f28b3031cf860d5810c2cb9db0de8b255605f712).
+> Son kayıtlı davranış yayını b53e00e olarak korunur; PR #198 yalnız test/belge içerir, yeni deploy yok.
 > Yükleme kayıtları önceki koşunun orijinal sekmelerinden kurtarıldı; iki ayrı
 > hesapla oynatma 13:39–13:46 UTC arasında doğrulandı. 2+2 kabulünün son zincir snapshot'ı
 > **12 Eylül 13:47:35.486 UTC**. Yeni ödeme, yükleme veya deploy yapılmadı.
@@ -14,7 +15,8 @@ Ana hedef genel mimari dönüşüm planındaki **Faz 3 — dayanıklı, devam ed
 Güncel alt plan [Public Testnet Video V1](./public-testnet-video-v1-plan.md).
 Önceki ürün gate'i `VIDEO_PUBLIC_TESTNET_LONG_UPLOAD_PUBLICATION_VERIFICATION_RELEASE`
 **COMPLETED_WITH_WARNINGS / KAPALI**; 5 GB / 120 dakika yükleme ve yayın kabulü PASS.
-**Video V1 bütünü NOT_COMPLETE. `VIDEO_PUBLIC_TESTNET_TWO_BY_TWO_ACCEPTANCE` — PASS / KAPALI.**
+**Kontrollü testnet Video V1 — COMPLETED_WITH_WARNINGS / KAPALI (§59).**
+`VIDEO_PUBLIC_TESTNET_TWO_BY_TWO_ACCEPTANCE` — PASS / KAPALI.
 İki üreticinin TUS aktarım işlemleri 160,934 saniye örtüştü. Soteri ve utick2,
 iki ayrı Brave profilinde aynı anda en az 5 dakika izledi. Önceki eksikler kapandı;
 güncel sonuç kabul §47, ilk koşunun uyarılı kaydı §46'dadır.
@@ -26,20 +28,21 @@ M2 yayınına iki imzalı sentetik bildirim sırayla gönderildi; ayrı ACK'ler 
 Bridge sürümü ve açık yükleme kabulü korundu; iki kuyruk 0 mesaj / 0 bayt.
 Güncel kanıt kabul §52; altı eski mesajın yedekli temizliği §51'de korunur.
 Gerçek provider redelivery ve kesin ek fatura tutarı bu testle kanıtlanmaz.
-**Son gate: `VIDEO_PUBLIC_TESTNET_MISSING_WEBHOOK_LOCAL_COVERAGE` — PASS / LOCAL_TEST.**
-Public-testnet politika, ilk alarm kaydı, aynı depolamayla restart ve tek finalize
-kapsamı mevcut testlere eklendi. 8 seçili test ve TypeScript kontrolü geçti (§54).
-Uygulama davranışı değişmedi; iki test dosyası ve üç canonical belge yerelde.
-§53'teki canlı aday/bildirim engeli sınırları korunur; canlı kabul UNPROVEN.
-Tek sonraki gate `VIDEO_PUBLIC_TESTNET_MISSING_WEBHOOK_TEST_INTEGRATION`:
-iki test ve üç belgeyi ayrı PR ile main'e almak; deploy0. Henüz başlamadı,
-commit/push/PR yapılmadı. Playback planındaki mevcut kullanıcı değişikliği korunur.
+**Kaynak entegrasyonu: PR #198 — PASS.** Public-testnet politika, ilk alarm,
+restart ve tek finalize testleri main f28b303'te. PR/main CI başarılı; Bridge380PASS/3SKIP.
+Preview otomatik yayını atlandı; yeni runtime yayını yapılmadı. Runtime bu incelemede yeniden ölçülmedi (§55).
+**Son gate: `VIDEO_PUBLIC_TESTNET_V1_ACCEPTANCE_CLOSEOUT` — COMPLETED_WITH_WARNINGS / KAPALI.**
+Kullanıcı §58'deki somut paketi “onaylıyorum” yanıtıyla kabul etti. Beş canlı hata
+senaryosu ve ek sınır/biçim testleri DEFERRED_BY_USER_ACCEPTANCE olarak kaydedildi;
+teknik kanıtları UNPROVEN kalır. Mevcut kullanıcı akışları ve önceki kabul edilmiş
+uyarılar korunur. **Kabul döngüsü durdu; aktif veya sonraki V1 gate'i yok.**
+Bu karar yalnız kontrollü testnet V1 içindir; tüm mimari fazlar veya Mainnet kapanışı değildir.
 12 Eylül kullanıcı kararı: ilk sürüm kabulü **2 eşzamanlı yükleme + 2 eşzamanlı izleme**.
 Önceki 3 yükleme önerisi bununla değişti; 1.000 eşzamanlı izleme testi kullanıcı
 isteğiyle kapsamdan çıkarıldı. Canlı global yükleme sınırı değiştirilmedi.
 
 Okuma sırası: exact GitHub main ve ilgili ortamın zamanlı kanıtı → bu kısa özet →
-[Video V1 kabul günlüğü](./public-testnet-video-v1-acceptance.md) §54 → §53 → §52 → §51 → §50 → §49 → §48 → §47 →
+[Video V1 kabul günlüğü](./public-testnet-video-v1-acceptance.md) §59 → §58 → §57 → §55 → §52 → §47 →
 [Playback planı](./playback-ux-plan.md) §16 → tarihsel plan/kapanış kayıtları.
 Tarihsel “next gate”, FAILED veya NOT_DEPLOYED metinleri güncel çalışma seçimi değildir.
 
@@ -63,7 +66,7 @@ Aşağıdaki PREVIEW satırları özellikle **public-testnet** ortamını anlat�
 
 | Konu | Kanıt / sonuç | Sınır ve referans |
 |---|---|---|
-| Kaynak ve CI | Main `b53e00e9`; [CI 34683092906](https://github.com/4rmus/youtick/actions/runs/34683092906) success | `LOCAL_STATIC / CI`; eski kök checkout yayın kaynağı değildir. |
+| Kaynak ve CI | Main `f28b303`; [CI 34710745980](https://github.com/4rmus/youtick/actions/runs/34710745980) success; PR #198 | `LOCAL_STATIC / CI`; yalnız test/belge entegrasyonu, yeni canlı kabul veya deploy değildir. |
 | Korumalı yayın | [Public Testnet Video 34683764285](https://github.com/4rmus/youtick/actions/runs/34683764285) success; ilk deneme | 6 provenance + 2 SBOM doğrulandı. Yeni CI veya yayın bu belge gate'inde çalıştırılmadı. |
 | Büyük dosya | Aynı 5.000.000.000 bayt / 7200,008008 sn kaynak ready/JWT → Published/ACTIVE → katalog HTTP 200 | `PREVIEW / PROVIDER`; yeni Bridge cutover sonrası 120,852844 sn. Kurtarmada yeni ödeme/upload/asset 0; yayınlar 7→8, önceki 7 yayın aynı. Kabul §45. |
 | Kesintiden devam | M2 aynı dosya/iş/TUS üzerinden 33.554.432→269.467.407 bayt; yanlış dosya/hesap kontrolleri ve ilk 24 saatlik son tarih korundu | `PREVIEW / PROVIDER`; tek ödeme/asset/publication, uyarılı işlevsel kabul kapalı. Kabul §25. Genel başarı oranı veya eşzamanlı kapasite kanıtı değildir. |
@@ -91,17 +94,17 @@ Ana plan Faz 0–6, toplam **7 faz** içerir. Faz 3'ün kapanışından sonra **
 | 0 — Mimari sınırlar | Pilot için büyük ölçüde hazır; bağımsız inceleme/sorumlular açık. |
 | 1 — Cüzdan ve sözleşme güvenliği | Yerel/testnet/CI kanıtı güçlü; ana ağ yönetişimi ve bağımsız inceleme açık. |
 | 2 — Oynatma ve kayıt ömrü | Gerçek oynatma/cihaz akışları ilerledi; arşivleme/temizlik ve Production kanıtı eksik. |
-| 3 — Dayanıklı yükleme | Aktif; resume, 5 GB yayın ve 2+2 kabulü kapandı. Genel dayanıklılık ve faz kapanışı açık. |
+| 3 — Dayanıklı yükleme | Kontrollü testnet V1 kullanıcı onayıyla uyarılarla kapalı. Genel dayanıklılık ve mimari faz kapanışı ayrı; sonraki faza geçilmedi. |
 | 4 — Olay/veri/muhasebe | Public-testnet veri akışı ve mali işlemler kanıtlı; genel faz ve mainnet muhasebesi açık. |
 | 5 — Kapasite/maliyet/işletim | Kısmi; gerçek ölçek, alarm teslimi ve fatura uzlaştırması açık. |
 | 6 — Denetim/kurtarma/mainnet | Dış denetim, tatbikat, yönetişim ve kademeli ana ağ açılışı tamamlanmadı. |
 
 ## Kalanlar ve kabul edilmiş ertelemeler
 
-- Video V1'in kalan canlı dayanıklılık senaryoları, eski beta regresyonu
-  ve nihai kabulü açık. İlk sürüm için 10 yükleme hedefi
-  küçültüldü; 1.000 izleyici testi istenmiyor ve yapılmayacak. Bir kapasite sınırının
-  kodda olması kapasite testi değildir.
+- Kontrollü testnet V1 kabulü kapalıdır. Beş canlı dayanıklılık ve ek sınır/biçim
+  testleri kullanıcı onayıyla ertelendi; çözülmüş veya PASS sayılmaz (§59). Eski beta
+  ve1.000izleyici kapsam dışı,2+2PASS korunur. V1 için açık kabul blocker'ı veya
+  otomatik sıradaki gate yok; genel mimari/operasyon işleri ayrı kalır.
 - Terminal replay öncesindeki 6 DLQ mesajı üç eski işe bağlandı; aynı işlerdeki
   tarihsel boyut/küçük resim sınırı hataları #192/#195/#197 ile düzeltilmişti.
   Tek tek özgün hata izi UNPROVEN. Altı eski mesajın yedekli seçici temizliği §51 ile tamamlandı.
@@ -133,6 +136,8 @@ Kullanıcı **eski klasörü silmeden arşiv tutmayı** ve başka klasörde temi
 çalışmayı seçti. Yerel arşiv kökü: `/Users/arair/works/youtick-lp`.
 Bu kökteki `agent/closed-preview-bootstrap-smoke` / `d2d3b035...` kodu güncel main
 olarak kullanılmaz; eski kod/test/workflow parçaları yeni çalışma alanına taşınmaz.
+
+12 Eylül güncellemesi: PR #198 ile üç canonical belge main'e taşındı; playback planındaki yerel kullanıcı değişikliği korunur. Aşağıdaki taşıma açıklaması önceki geçişin tarihsel kaydıdır.
 
 Taşınacak dört belge bu dosya, `public-testnet-video-v1-plan.md`,
 `public-testnet-video-v1-acceptance.md` ve `playback-ux-plan.md` dosyalarıdır.

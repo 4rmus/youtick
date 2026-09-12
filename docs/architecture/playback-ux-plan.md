@@ -1,23 +1,25 @@
 # İzleme oturumu ve oynatma kullanıcı deneyimi planı
 
+> 12 Eylül 2026 belge uzlaştırması: genel kaynak/yayın durumu [current-state.md](./current-state.md), bu playback gate'inin son kabulü **§16** içindedir. Önceki source/teşhis/loop bölümleri tarihsel kayıttır; uygulanacak yeni talimat değildir. Modern player/1080p önerisi bu planın uygulanmış parçası değildir.
+
 > 9 Eylül 2026 — Bu sohbetin teşhis ve planı, son Livepeer player değerlendirmesiyle birleştirilmiştir.
 > Belge kaydı, uygulama veya canlı işlem onayı değildir.
 
 - Analiz gate'i: `PLAYBACK_UX_DIAGNOSIS_AND_PLAN` — **COMPLETED_WITH_WARNINGS**.
 - Belge kayıt gate'i: `PLAYBACK_UX_PLAN_SAVE` — **PASS / LOCAL_STATIC**.
-- Uygulama durumu: **SOURCE_GATE_COMPLETE / LIVE_ACCEPTANCE_UNPROVEN**. İlk source gate yerelde kapandı; medya sorununun düzeldiği veya canlı kabulün geçtiği iddia edilmez.
+- Uygulama durumu: **MAIN’DE / PUBLIC-TESTNET’E YAYIMLANDI; KABUL UYARILARLA KAPALI**. İlgili source/yayın ve §16 kabulü kayıtlıdır; fiziksel A/V ve bağımsız yetkisiz hesap HTTP kanıtı eksikleri PASS sayılmaz.
 - Son kaynak gate’i: **`PLAYBACK_SINGLE_SIGNATURE_SOURCE` — COMPLETED_WITH_WARNINGS / LOCAL_STATIC + LOCAL_TEST** (bölüm 13). Önceki sekiz saatlik çözüm tarihsel kayıttır; public-testnet için bölüm 13 esas alınır.
-- Son teşhis gate’i: **`PLAYBACK_MEDIA_TRACE` — COMPLETED_WITH_WARNINGS / PREVIEW + PROVIDER**. Güncel kanıt için bölüm 11 esas alınır.
-- Medya onarımı: **`PLAYBACK_MEDIA_FIX_SOURCE` — BLOCKED / PROVIDER_REPAIR_REQUIRED**. Bu ayrı medya sorunu değişmedi; onarım paketi bölüm 12’de.
-- İmza akışı için tek sonraki gate: **`PLAYBACK_SINGLE_SIGNATURE_RELEASE_PREFLIGHT`**. Kaynak gate’i kapandı; yayın veya canlı kabul başlatılmadı. Medya onarımı için dışarıya talep gönderimi kullanıcı tarafından yasaklı kalır.
-- Çalışma dizini: `/Users/arair/works/youtick-lp`.
-- Kanonik bağlam: [public-testnet planı](./public-testnet-video-v1-plan.md), [kabul kaydı](./public-testnet-video-v1-acceptance.md), [AGENTS.md](https://github.com/4rmus/youtick/blob/89fd909e91575ff2334d87b301765c9f101fd9db/AGENTS.md), [test komutları](../testing.md).
+- Son teşhis gate’i: **`PLAYBACK_MEDIA_TRACE` — COMPLETED_WITH_WARNINGS / PREVIEW + PROVIDER**. 10 Eylül yeni video incelemesi bölüm 14’tedir; eski video artık aktif hedef değildir.
+- Son medya kaynak gate’i: **`PLAYBACK_MEDIA_FIX_SOURCE` — COMPLETED_WITH_WARNINGS**. Yeni `matrixxx` düzeltmesi bölüm 15’tedir; PR #194 ve public-testnet koşusu `34509663409` ile yayımlandı.
+- Son kabul gate’i: **`PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE` — COMPLETED_WITH_WARNINGS / KAPALI**. Yayın, teknik ölçümler ve kullanıcı kabulü bölüm 16’nın son kapanış kaydındadır. Aktif veya otomatik başlatılacak sonraki gate yok. Fiziksel ≤150ms kalibrasyon UNPROVEN uyarısı korunur; bütün maddelerin PASS olduğu iddia edilmez.
+- Tarihsel çalışma ve yerel kanıt arşivi: `/Users/arair/works/youtick-lp`; yeni kod alanı temiz main’den açılır.
+- Kanonik bağlam: [public-testnet planı](./public-testnet-video-v1-plan.md), [kabul kaydı](./public-testnet-video-v1-acceptance.md), [AGENTS.md](https://github.com/4rmus/youtick/blob/b53e00e962b595f0edf4f1283c146d73d1f76b57/AGENTS.md), [test komutları](../testing.md).
 
 ## 1. Amaç, kapsam ve sınırlar
 
-Test videosu: [matrixx — public-testnet Watch](https://public-testnet.youtick.net/watch?job=lp-7518e5a3-fbd1-444a-909a-5dc8e037f70c).
+Bu playback gate’inde ölçülmüş test videosu: [matrixxx — public-testnet Watch](https://public-testnet.youtick.net/watch?job=lp-0ccc24cb-0b79-4eb7-a2ab-72e5fcbe43e6).
 
-İş kimliği: `lp-7518e5a3-fbd1-444a-909a-5dc8e037f70c`.
+İş kimliği: `lp-0ccc24cb-0b79-4eb7-a2ab-72e5fcbe43e6`. Önceki bölümlerdeki eski video bulguları tarihsel kanıttır; güncel inceleme bölüm 14’tedir.
 
 Hedef deneyim:
 
@@ -34,7 +36,7 @@ NEAR ekonomik ve izleme hakkı otoritesi, Livepeer medya katmanı, Bridge kontro
 
 Her görevde bir aktif gate yürütülür; kapanınca raporlanır ve durulur. Kullanıcı değişiklikleri korunur; yalnız açıkça belirlenen dosyalara dokunulur. Git yayını, CI tekrar çalıştırma, deploy, ödeme, upload, cüzdan imzası, provider/config/secret, NEAR ve D1 değişiklikleri gate'e özel açık onay gerektirir. Gerçek deploy yalnız korumalı GitHub workflow'larıyla yürür.
 
-## 2. Kısa teşhis ve kanıt sınırı
+## 2. Tarihsel başlangıç teşhisi ve kanıt sınırı
 
 İmza sorununun temel nedeni doğrulandı: satın alma cihaz oturumu oluşturmuyor; player açılırken ayrıca mesaj imzası isteniyor. Oturum yalnız sayfanın belleğinde tutulduğu için yenilemede kayboluyor. Donma ve ses kesilmesinin kök nedeni henüz kesinleşmedi.
 
@@ -53,8 +55,8 @@ Bu gözlemler tarihli kanıttır; sonraki çalıştırmada değişmiş runtime'�
 
 | Kullanıcı gözlemi | Doğrulanmış neden veya hipotez | Kod/canlı kanıtı | Eksik doğrulama |
 | --- | --- | --- | --- |
-| Creator kendi videosunda imza görüyor. | Creator zaten ücretsiz yetkilidir. İstenen imza cihaz kimliğini doğrulayan mesaj imzasıdır. | [Market creator yetkisi](https://github.com/4rmus/youtick/blob/89fd909e91575ff2334d87b301765c9f101fd9db/contracts/nft-ticket/src/lib.rs), `has_entitlement`; [device-session](../../apps/web/lib/device-session.ts), `ensureDeviceSession`. Canlı final NEAR okumasında creator yetkili. | Creator etkileşiminin pencere/onay sayısı bu analizde yeniden ölçülmedi. |
-| Satın alma sonrası cüzdan kendiliğinden açılıyor. | Satın alma yalnız bilet işlemini imzalar. Hak doğrulanınca player mount olur ve eksik cihaz oturumu için `signMessage` çağırır. | [Watch](https://github.com/4rmus/youtick/blob/89fd909e91575ff2334d87b301765c9f101fd9db/apps/web/components/LivepeerWatch.tsx), `buyLivepeerTicket` sonrası entitlement kontrolü; [Player](https://github.com/4rmus/youtick/blob/89fd909e91575ff2334d87b301765c9f101fd9db/apps/web/components/LivepeerPlayer.tsx), otomatik hazırlık effect'i. | Satın alma anından iframe hazır olana kadarki canlı zaman çizelgesi eksik. |
+| Creator kendi videosunda imza görüyor. | Creator zaten ücretsiz yetkilidir. İstenen imza cihaz kimliğini doğrulayan mesaj imzasıdır. | [Market creator yetkisi](https://github.com/4rmus/youtick/blob/b53e00e962b595f0edf4f1283c146d73d1f76b57/contracts/nft-ticket/src/lib.rs), `has_entitlement`; [device-session](https://github.com/4rmus/youtick/blob/b53e00e962b595f0edf4f1283c146d73d1f76b57/apps/web/lib/device-session.ts), `ensureDeviceSession`. Canlı final NEAR okumasında creator yetkili. | Creator etkileşiminin pencere/onay sayısı bu analizde yeniden ölçülmedi. |
+| Satın alma sonrası cüzdan kendiliğinden açılıyor. | Satın alma yalnız bilet işlemini imzalar. Hak doğrulanınca player mount olur ve eksik cihaz oturumu için `signMessage` çağırır. | [Watch](https://github.com/4rmus/youtick/blob/b53e00e962b595f0edf4f1283c146d73d1f76b57/apps/web/components/LivepeerWatch.tsx), `buyLivepeerTicket` sonrası entitlement kontrolü; [Player](https://github.com/4rmus/youtick/blob/b53e00e962b595f0edf4f1283c146d73d1f76b57/apps/web/components/LivepeerPlayer.tsx), otomatik hazırlık effect'i. | Satın alma anından iframe hazır olana kadarki canlı zaman çizelgesi eksik. |
 | İlk pencere boş; kapatıp Play'e basınca yeniden imza geliyor. | Otomatik hazırlık pencereyi açıklar. Boş kalmasının kesin nedeni doğrulanmadı. İptal, remount ve iframe yaşam döngüsü ayrı adaylardır. | Brave'deki mevcut konsolda 13 kez `Iframe not loaded`. Eşleşen canlı bundle bu hatayı, iframe artık yokken mesaj gönderildiğinde üretir. | Hatanın ilk boş pencereyle zaman ilişkisi ve cüzdan action-ready durumu eksik. |
 | Yenileme veya geri dönüşte yeniden imza gerekiyor. | Sekiz saatlik cihaz yetkisi yalnız modül belleğindeki `Map` içinde; reload anahtarı kaybettiriyor. | `device-session.ts` ve mevcut `device-session.test.ts` reload sonrası kaybı açıkça doğrular. | Güvenli yeni saklama davranışı uygulanmadı veya Brave'de sınanmadı. |
 | Tekrarlanan cüzdan çağrısı riski var. | Aynı anda başlayan oturum istekleri ortak bekleyen iş kullanmıyor. Çıkıştan sonra gelen imza yanıtı oturumu geri yazabiliyor. | Dosya yazmadan yerel yeniden üretim: iki eşzamanlı `ensureDeviceSession` çağrısı iki imza isteği ve iki anahtar oluşturdu; `clearDeviceSession` sonrası geç yanıt oturumu geri getirdi. | Bu yarışın kullanıcının ilk boş penceresine neden olduğu kanıtlanmadı. |
@@ -241,9 +243,9 @@ Kalan belirsizlik: ilk boş cüzdan penceresi ile ses/donmanın eşzamanlı canl
 
 **Teşhis/kayıt anındaki sonraki gate: `PLAYBACK_SESSION_REUSE_SOURCE`.** Aşağıdaki tarihli source kaydı artık güncel durumdur; belgeyi kaydetmek tek başına uygulama yetkisi vermemişti.
 
-## 8. Tek gate içinde çalışan loop promptu
+## 8. Tarihsel loop promptu — yeni çalışma talimatı değildir
 
-Aşağıdaki prompt sonraki uygulama çalıştırmaları içindir. Dosyanın varlığı otomasyon kurmaz, uygulama başlatmaz veya yeni gate'e otomatik geçiş yetkisi vermez.
+Aşağıdaki prompt önceki uygulama aşamasının tarihsel kaydıdır; güncel kapanış §16'dadır. Dosyanın varlığı otomasyon kurmaz, uygulama başlatmaz veya yeni gate'e otomatik geçiş yetkisi vermez.
 
 ```text
 Çalışma dizini: /Users/arair/works/youtick-lp
@@ -591,7 +593,7 @@ operasyonu ve o operasyonun açık onayının bulunmamasıdır.
 Amaç: ölçülen timestamp kusurunun en küçük gerçek düzeltme noktasını bulmak;
 Livepeer React Player + JWT HLS ve NEAR kimlik/hak kontrollerini korumak.
 Değiştirilen dosyalar yalnız bu plan ve
-`playback-media-remediation-package.md` (yerel medya onarım kaydı).
+playback-media-remediation-package.md (yerel arşiv: `/Users/arair/works/youtick-lp/docs/architecture/playback-media-remediation-package.md`).
 Kod, test, profil, bağımlılık, buffer, feature flag, provider/config/secret,
 NEAR/D1 ve release dosyaları değiştirilmedi. Tek yazan ana agent; subagent yok.
 
@@ -751,3 +753,463 @@ oynatma kabulü **EXTERNAL_NOT_RUN / UNPROVEN** olarak kalır.
 **Tek sonraki gate: `PLAYBACK_SINGLE_SIGNATURE_RELEASE_PREFLIGHT`.** İncelenen
 kaynağın yayın paketi hazırlanır; Market → Bridge → Web yayını ve gerçek Brave
 kabulü ayrıca yetkilendirilir. Bu kaynak gate’i sonraki gate’i başlatmadı.
+
+
+## 14. Yeni video: sarma sonrası senkron ve kısa süre — 10 Eylül 2026
+
+**PLAYBACK_MEDIA_TRACE: COMPLETED_WITH_WARNINGS.** Kullanıcı eski videoyu
+kapsamdan çıkardı; yeni `matrixxx` publication’ı
+`lp-0ccc24cb-0b79-4eb7-a2ab-72e5fcbe43e6` üzerinde ilerlenmesini ve Livepeer
+belgelerinin değerlendirilmesini istedi. Kaymanın ileri sarmadan sonra olduğunu,
+oynatıcı süresinin de orijinalden kısa göründüğünü belirtti.
+
+Tam ölçüm, yöntem, sınırlar ve kaynaklı öneriler:
+playback-new-video-sync-analysis.md (yerel arşiv: `/Users/arair/works/youtick-lp/docs/architecture/playback-new-video-sync-analysis.md`).
+
+- Taze provider metadata: **248.581667s**; 360p ve 720p HLS:
+  **25 segment / 248.705s**; mevcut player: **30.037911s**.
+- Yeni asset’in altı gerçek segmentinde video ilk PTS yeniden **1.5s**;
+  ses de yaklaşık 1.41–1.46s’ye sıfırlanıyor. Playlist discontinuity sayısı 0.
+  Eski videonun kanıtı yeni videoya varsayım olarak taşınmadı.
+- Temiz hls.js instance’larında 60s’ye sarma: Auto’da duration **21.037911s**,
+  360p’de **30.037911s** ve erken durma; 720p’de 6s sonra readyState=1,
+  yeni kare/ses ilerlemesi yok. Audio buffer yaklaşık [0,11.967] aralığında kaldı.
+- Kısa süre ve sarma sonrası ses bozulmasının ortak teknik açıklaması teslim
+  edilen HLS’nin kesinti bildirimi olmayan timestamp reset’idir. Kesin provider
+  üretim noktası, yerel orijinal dosya ve fiziksel A/V farkı henüz doğrulanmadı.
+- Resmî Livepeer docs `de6026f63e2ec1bf11bb91f82facf1a86dbf2e39` incelendi:
+  TUS, backend Playback Info/JWT ve React Player akışı uygun. API bu asset için
+  HLS+VTT sunuyor, MP4 yok. iframe/WebRTC/buffer değişikliği bu kusuru çözmüş
+  sayılmaz; mevcut yetkilendirme ve HLS yolu korunmalı.
+
+Yalnız bu plan ve yeni analiz belgesi değişti. Başlangıçtaki diğer dosyalar
+hash ile korundu; belge boşluk kontrolü geçti. Kod değişmediği için mevcut
+testler/build tekrarlanmadı. Yeni ödeme/upload, cüzdan imzası, provider/config,
+Git/CI/deploy, NEAR/D1 mutation ve dış destek talebi yapılmadı.
+
+Geçici browser karşılaştırması kaldırıldı; asıl video 7.109323s’de duraklatılmış,
+Auto durumda ve kullanıcının mevcut oturumu korunarak bırakıldı.
+**Tek sonraki gate: `PLAYBACK_MEDIA_FIX_SOURCE` — yeni asset için.** Bu analiz
+onarım veya tam medya kabulü değildir; eski video ve atlanan sentetik deney
+tekrar açılmayacak, dışarıya talep gönderilmeyecek.
+
+
+## 15. Yeni asset için PLAYBACK_MEDIA_FIX_SOURCE — 10 Eylül 2026
+
+**COMPLETED_WITH_WARNINGS / LOCAL_STATIC + LOCAL_TEST + kontrollü PREVIEW/PROVIDER.**
+Kullanıcının yeni asset için seçtiği source gate tamamlandı; deployment ve tam
+canlı UX kabulü yapılmadı. Eski video ve iptal edilmiş dış iletişim açılmadı.
+
+Detaylı kaynak, test ve gerçek medya kanıtı:
+[playback-new-video-timeline-fix.md](./playback-new-video-timeline-fix.md).
+
+- İki kalitedeki 50 segmentin tamamında saat sıfırlaması doğrulandı. Playlist
+  SHA-256 `daa629f3156f8fe09843b69de756785d2cd823da0a0a0f7d202c41df541c0720`.
+- Düzeltme yalnız playback `ef819lp2r3anecgq` ve bu tam playlist içeriğine bağlı.
+  hls.js’nin mevcut playlist/segment loader noktalarıyla nominal başlangıçlar
+  korunur; ses/video PTS ve DTS’ye aynı offset uygulanır. Playlist, medya payload’ı,
+  kaynak buffer ve mevcut JWT/izinli host yolu korunur. Provider verisi değişmez.
+- Kör discontinuity-ekleme adayı son süreyi ~2s uzattığı için bırakıldı.
+  Son ortak-saat düzeltmesi gerçek videoda 248.784578s’de normal sona ulaştı.
+- Son kaynak Auto/360p/720p’de 60s sarma sonrası 63.273/63.393/63.205s’ye ilerledi;
+  süre 248.705s kaldı, audio/video buffer beraber ilerledi. Geri sarma ve son
+  bölüme geçiş de ortak-ofset algoritmasıyla geçti. Fiziksel A/V ms farkı ölçülmedi.
+- 42 odaklı Web testi, son yardımcı dosyada 13/13 tekrar kontrol, lint ve build
+  geçti. Native Brave denemesi mevcut yetkili medya üzerinde geçici adaydı;
+  uygulamanın yayımlanmış bundle’ı değiştirilmedi. Kontroller tekrar gerektiren
+  her yeni değişiklik/bulgu için sınırlandırıldı.
+
+Yedi değişen yol tam raporda listelenir. Uygulama alanı yalnız yeni HLS yardımcısı,
+`livepeer-playback.ts`, `LivepeerPlayer.tsx` ve iki ilgili test dosyasıdır; ayrıca
+bu plan ve kaynak sonuç belgesi güncellendi. Kullanıcı değişiklikleri izole aday
+ve explicit-path diff ile korundu. Aktarım sonrası 7 dosya adayla birebir eşleşti;
+267 kapsam dışı dosyanın hash’i, HEAD ve diff/boşluk kontrolü doğrulandı. Yeni
+servis/bağımlılık veya genel çatı yoktur.
+
+Sınırlar: tek ölçülmüş asset için uyumluluk; provider düzeldiğinde kaldırılmalı
+veya yeniden doğrulanmalı. Native-only HLS ve fiziksel ses/senkron kabulü,
+20 sarma p95 ve yeni yayında token/cüzdan kabulü ayrı kalır. Yeni ödeme/upload,
+Git/CI/deploy, provider/config/secret, NEAR/D1 mutation ve dış mesaj yapılmadı.
+
+**Tek sonraki gate: `PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE`.** Git yayını ve
+korumalı deployment için mevcut scope’ta açık onay alınmadan işlem yapılmaz;
+bu source gate’i sonraki gate’e otomatik geçmedi.
+
+
+## 16. PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE — 10 Eylül 2026
+
+**Gate kapanışı: COMPLETED_WITH_WARNINGS. Git/deployment ve teknik tarayıcı ölçümleri PASS; manuel kullanıcı kabulü kaydedildi. Fiziksel kalibrasyon UNPROVEN.** Kullanıcı
+bu gate’i seçti ve somut Git paketini ayrıca onayladı. Aşağıdaki ilk hazırlık
+kaydı tarihsel; Git sonucu ve kesin deployment girdileri bölüm sonunda günceldir.
+
+Somut altı dosyalık source/yayın/kabul paketi (yerel arşiv: `/Users/arair/works/youtick-lp/docs/architecture/playback-public-testnet-acceptance-preflight.md`).
+
+- Main ve son public yayın kaynağı `9205c53fc92970e34e66f85b55ea89ebb0c81c50`.
+  Eski source için CI `34486614251` ve yayın `34489775341` SUCCESS; yeni adayın
+  CI veya commit’i henüz yok.
+- Eski dirty çalışma alanı topluca taşınmadı. İzole main arşivine yalnız medya
+  source gate’inin beş Web kaynak/test farkı ve sonuç belgesi uygulandı.
+  Main’deki yeni hata tanılama testleri korundu; yalnız bir test ekleme bağlamı
+  uzlaştırıldı. Main arşivindeki diğer 272 dosya birebir aynı.
+- Main’in Next 16.3.3 kilit dosyasıyla izole `npm ci`, 49 odaklı test, lint,
+  kapalı-bayrak build ve mevcut public-testnet acceptance config’iyle build PASS.
+  Kök node_modules/package/lock değiştirilmedi. Önceki yerel Next 16.3.0 kanıtı
+  yeni lock sürümünün yerine kullanılmadı.
+- Oluşturulan acceptance config, son artifact’in
+  `9a9711d7a3c64cd1befdc71576ba1d02d266b45748f41ceecd296db8d4bd99ed`
+  hash’iyle aynı. Public/Preview deploy bayrakları false ve environment koruması
+  salt-okunur doğrulandı; config değişmedi.
+- Altı dosyalık patch/hash, önerilen branch/PR açıklaması, Git onay kapsamı,
+  mevcut üç Worker’lı workflow’un etkileri ve gerçek medya kabul matrisi hazır.
+  Source paketi yalnız yeni playback ID’nin dar uyumluluk düzeltmesidir.
+
+Bu tur çalışma dizininde yalnız bu plan ve hazırlık belgesi değişti; izole aday
+ve loglar task temp dizinindedir. Source/lock/HEAD/index ve mevcut kullanıcı
+çalışması korunur. Yeni kaynak bağlamı nedeniyle ilgili kontroller çalıştırıldı;
+canlı medya kanıtı gerekçesiz tekrar edilmedi.
+
+Çalıştırılmayanlar: commit/push/PR/merge, yeni CI/rerun, deploy, canlı izleme/kabul,
+yeni cüzdan imzası, ödeme/upload, provider/config/secret, NEAR/D1 mutation ve dış
+mesaj. Eksik yayın ve fiziksel A/V/20-sarma/iki-yenileme kabulü tamamlandı sayılmaz.
+
+### Git aşaması sonucu — kullanıcı onayı sonrası
+
+- [PR #194](https://github.com/4rmus/youtick/pull/194), normal squash merge.
+- Branch commit `207e1e073f57487e5e87cb62f4f4dcbb64017e6a`;
+  [PR CI 34506193056](https://github.com/4rmus/youtick/actions/runs/34506193056) SUCCESS.
+- Main `9ee5bc18cc48e500c6ec53b2a66296ad891dfde8`;
+  [main CI 34507547060](https://github.com/4rmus/youtick/actions/runs/34507547060) SUCCESS.
+- Onaylanan altı dosyanın hash’i merge tree ile eşleşti; değişen yol kümesi tam
+  olarak aynı. Force push, admin bypass, CI rerun veya deployment yok.
+- Root çalışma alanının 275 dosyası Git aşaması boyunca korundu;
+  root HEAD `d2d3b035ac1e3afa348f353b014339ab46290e16` değişmedi. Git işlemleri
+  ayrı checkout’ta yürütüldü; bu plan ve hazırlık raporu yalnız yerel kayıt olarak güncellendi.
+
+**Tek devam gate’i: `PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE`.** Kesin onay paketi:
+aynı public config ile `deploy-public-testnet.yml`, `ref=main`,
+`sha=9ee5bc18cc48e500c6ec53b2a66296ad891dfde8`, `ci_run_id=34507547060`, `mode=acceptance`,
+`confirmation=DEPLOY_PUBLIC_TESTNET_acceptance`; tek dispatch, normal environment
+onayı ve public deploy bayrağı false→true→false. Workflow read-model→Bridge→Web
+geçişi yapar; ardından mevcut ödenmiş yeni video ile canlı kabul yürütülür.
+Yeni ödeme, upload, cüzdan imzası, provider asset onarımı veya dış talep bu pakette yoktur.
+
+Public/Preview deploy bayrakları false; son public yayın hâlâ `34489775341`
+ve eski `9205c53` kaynağıdır. Yeni kodun deployment ve tam canlı kabulü henüz
+yapılmadı. **Git onayı deployment yetkisi olarak kullanılmadı; deployment onayı bekleniyor.**
+
+### Deployment onayı uygulandı — aynı gate
+
+Kullanıcı kesin deployment paketini onayladı. Tek dispatch
+[34509663409](https://github.com/4rmus/youtick/actions/runs/34509663409),
+source `9ee5bc18cc48e500c6ec53b2a66296ad891dfde8`, CI `34507547060`, acceptance.
+Altı artifact için signer workflow + source digest doğrulaması ve manifest/lock/config
+eşleşmesi PASS; normal public-testnet environment onayı verildi. Workflow sürüyor.
+Public deploy bayrağı geçici true; koşu bitince false yapılacak. Preview false.
+Canlı kabul henüz başlamadı; bu ilerleme kaydı PASS değildir.
+
+### Deployment sonucu ve kullanıcı tarafından ertelenen tarayıcı kabulü
+
+**Deployment PASS; tam gate BLOCKED.** Kullanıcı 10 Eylül 2026'da kalan
+Brave ölçümü için “Tarayıcı ölçümünü sonraya bırak” dedi. Bu nedenle tam
+medya/oturum kabulü kapatılmadı ve sonraki gate başlatılmadı. Önceki
+WAITING_DEPLOY_AUTHORIZATION ve DEPLOYMENT_RUNNING kayıtları tarihseldir.
+
+- Tek korumalı koşu [34509663409](https://github.com/4rmus/youtick/actions/runs/34509663409),
+  attempt 1, SUCCESS. Kaynak `9ee5bc18cc48e500c6ec53b2a66296ad891dfde8`,
+  başarılı main CI `34507547060`, mevcut acceptance config hash'i aynı.
+- Altı artifact'in signer workflow/source digest doğrulaması, manifest ve
+  lock hash kontrolü PASS; normal environment onayı kullanıldı. Rerun/bypass yok.
+- Managed traffic, üç yeni sürümde %100 ve deployment receipt ile eşleşiyor:
+  Web `d6703271-5a81-47ff-acac-b14a4b57b12c`,
+  Bridge `04e6808a-99b6-4ee1-9b19-393fb17a44c9`,
+  read-model `1711c568-2a66-49c3-8ed0-602dc26abe75`.
+- Bridge/read-model canlı health sürümleri eşleşti. Gerçek sunulan watch chunk
+  `page-49c7fe4a9ab71f29.js`, SHA-256
+  `d301be3b658057b494b5e3d1e93dd29d38df44ac7916e93041f5478912ffbf5b`,
+  imzalı Web artifact'indeki dosyayla birebir aynı.
+- Kök site fingerprint kontrolü workflow'da PASS. Preview managed deployment
+  ve %100 sürüm dağılımı değişmedi. Public deploy bayrağı false→true→false;
+  Preview false kaldı. Public acceptance/upload ayarları aynı kaldı.
+- İlk gerçek Brave kontrolünde mevcut `soteri.testnet` oturumu reload sonrası
+  ek cüzdan açılması gözlenmeden oynattı. Aynı yeni video önceden 30.037911s
+  iken yayımlanan player **4:09** gösterdi, **0:27** konumuna ilerledi.
+  Geçici medya düzeltmesi yüklenmedi. Bu kısa gözlem uzun oturum veya A/V kabulü değildir.
+
+Ertelenen / UNPROVEN: yayımlanmış Auto/360p/720p karşılaştırması; 10 buffer içi +
+10 buffer dışı sarma, p95/max ve durma eşikleri; aynı player'da en az 6 dakika ve
+iki gerçek token yenilemesi; anonim/yetkisiz kimlik reddi; fiziksel A/V ≤150ms;
+normal sona ulaşma. Önceki kontrollü source kanıtları bunların yerine kullanılmadı.
+
+Ham yayın/ölçüm kaydı:
+[acceptance-result.json](/var/folders/m7/jqxmhnys7d1778jj0g8kyg800000gn/T/playback-acceptance-m2nyenzb/acceptance-result.json),
+[managed-runtime-verification.json](/var/folders/m7/jqxmhnys7d1778jj0g8kyg800000gn/T/playback-acceptance-m2nyenzb/managed-runtime-verification.json),
+[deployment receipt](/var/folders/m7/jqxmhnys7d1778jj0g8kyg800000gn/T/playback-acceptance-m2nyenzb/deployed-receipt/public-testnet-deployment.json).
+Python HTTP istemcisi health okumasında 403 aldı; curl ile gerçek health/chunk
+okumaları başarılı oldu. Bu istemci farkı yayın arızası olarak raporlanmadı.
+GitHub'ın artifact action Node 20→24 uyarısı koşuyu engellemedi; workflow değiştirilmedi.
+
+Yerelde yalnız kanonik plan ve kabul hazırlık raporu güncellendi. Source,
+package/lock, kök HEAD/index ve kullanıcı değişiklikleri korunur. Yeni kod
+olmadığından önceki başarılı yerel test/lint/build tekrar edilmedi. Yeni ödeme,
+upload, cüzdan imzası, provider asset işlemi, NEAR/D1 manuel mutasyonu veya dış
+talep yapılmadı. Kullanıcının erteleme yanıtından sonra tarayıcı ölçümü sürdürülmedi.
+
+**Tek devam gate'i: `PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE` — yalnız ertelenen canlı
+kabul.** Aynı kaynak ve yayın geçerliyse Git/CI/deploy tekrarı gerekmez. Otomatik
+zamanlama veya sonraki gate'e geçiş yoktur.
+
+
+### Tarayıcı kabulüne devam — 10 Eylül 2026, 17:53–18:12 UTC
+
+Kullanıcı `PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE` tarayıcı ölçümüne devam edilmesini
+istedi. **Teknik ölçümler PASS; tam gate BLOCKED / iki kabul kanıtı UNPROVEN.**
+Önceki kullanıcı-ertelemesi artık aktif engel değildir. Son yayın hâlâ
+`34509663409` / `9ee5bc18cc48e500c6ec53b2a66296ad891dfde8`, SUCCESS olarak doğrulandı.
+Aynı yeni video ve Brave'in mevcut `soteri.testnet` oturumu kullanıldı.
+
+- Yeni sekme, iki reload ve Discover → geri dönüş mevcut hesabı ve izleme
+  hakkını korudu. Geri dönüş sonrası oynatma 26.591375s'ye ilerleyip video
+  yüzeyinden duraklatıldı. Uygulamanın cüzdan imzası/işlem ölçüm olayı **0**;
+  uzun oturumda ölçülen `window.open` çağrısı **0**, kullanıcıya cüzdan onayı yok.
+- Gerçek yayımlanmış Livepeer React Player'da Auto/360p/720p seçimi ve sarma
+  karşılaştırması: ilk ilerleyen kare **101 / 1870 / 1434 ms**. Sonraki 10s'de
+  ses baytı ve video karesi arttı; süre **248.785–248.786s** civarında kaldı.
+- **20 sarma, 10 buffer içi + 10 buffer dışı:** nearest-rank p95 **1957 ms**,
+  en kötü **2750 ms**. Her örnek sonrası 10s izlendi; en uzun kare aralığı
+  **133 ms**, 500ms üzeri durma yok; bütün örneklerde ses/kare ilerlemesi var.
+  Ayrı alt gruplarda p95: buffer içi **124 ms**, buffer dışı **2750 ms**.
+  Planın birleşik 20 örnek eşiği geçti; her alt grubun p95 ≤2s olduğu iddia edilmez.
+- Aynı video DOM öğesi ve aynı medya kaynağında **380187 ms / 6 dakika 20 saniye**;
+  **3 gerçek token yenilemesi HTTP 200**. Uygulamanın kendi renewal completed
+  kayıtları da eşleşti. Bu aralıkta `emptied`/`loadstart`/`error` olayı yok.
+  Sarma hedefleri dışındaki kendiliğinden zaman sıçramaları için ayrı sürekli
+  zaman-farkı serisi tutulmadı; böyle bir nicel sıfır-sıçrama iddiası yapılmaz.
+- Sonra normal `ended` olayı: **248.785453s**, currentTime=duration.
+  JWT ve cookie göndermeden gerçek yüklenmiş HLS segmentine istek **401**;
+  64 bayt hata yanıtı, medya erişimi reddedildi.
+
+Yöntem/sınırlar: Geçici konsol ölçümü gerçek `<video>` üzerinde `currentTime`
+ile sarar; `requestVideoFrameCallback` ile hedef sonrası ilerleyen ilk kareyi
+ve sonraki 10s'nin kare aralıklarını ölçer. Pointer sürükleme/hit-target gecikmesi
+ölçülmedi. Buffer sınıfı her sarma öncesi gerçek `buffered` aralıklarından çıkarıldı.
+Buffer dolunca uzun oturum ölçümü bittikten sonra iki normal reload ile dış
+örnekler 3+4+3 toplandı. Disk cache temizlenmedi; ağ, buffer, provider ve
+uygulama kodu/ayarları değiştirilmedi. Sonuç bu bağlantı ve bu 20 örnek içindir.
+Ses baytı/kare ilerlemesi fiziksel A/V farkını ölçmez.
+
+İki ilk kalite örneğinde aynı 60s store isteği gerçek sarma başlatmadı; bu
+örnekler dışlandı. Kalite değişiminden sonra farklı hedefler ve doğrudan medya
+sarması ile düzeltildi. Ölçüm yardımcısını `eval` ile değiştirme denemesi CSP
+engeline takıldı; CSP korunarak işlev doğrudan konsolda yeniden tanımlandı.
+Bir reload'ın ilk görüntüsünde geçici ERR_CONNECTION_CLOSED vardı; yeniden
+reload yapmadan sonraki okuma sayfanın ve oturumun normal geldiğini gösterdi.
+Bunlar başarılı uygulama senaryosu veya kalıcı ürün hatası olarak sayılmadı.
+
+**Kalanlar / UNPROVEN:**
+
+1. Ölçülebilir ses/görüntü referansında **≤150 ms**. Referans verilmedi; kullanıcıya
+   güncel kayma gözlemi soruldu, bu sonuç yazılırken yanıt gelmedi. Öznel kontrol
+   yanıtı gelse bile tek başına milisaniye eşiğinin ölçümü değildir.
+2. Bu videoya hakkı olmayan mevcut kimlikle gerçek browser/authorizer reddi.
+   Yalnız aynı uygulamanın IndexedDB `sessions` kayıt anahtarları salt okunur
+   incelendi: tek `account:soteri.testnet` ve bu hesap satın almış. Gizli anahtar
+   okunmadı/dışa aktarılmadı; yeni kimlik, imza veya bilet oluşturulmadı.
+
+Detaylı 20 satır, buffer aralıkları, saatler, kalite ve oturum sonuçları:
+[browser-result.json](/var/folders/m7/jqxmhnys7d1778jj0g8kyg800000gn/T/playback-browser-acceptance-m1ysmztc/browser-result.json).
+Kabul raporu (yerel arşiv: `/Users/arair/works/youtick-lp/docs/architecture/playback-public-testnet-acceptance-preflight.md`) ölçüm tablosunu içerir.
+Geçici ölçüm nesnesi silindi, konsol filtresi `MEDIA_RACE` olarak geri kondu;
+yalnız açılan ölçüm sekmesi kapatıldı, kullanıcının eski sekmesi korundu.
+
+Yerelde yalnız bu plan ve kabul raporu değişti; kaynak kod/test/lock dosyaları
+ve mevcut kullanıcı çalışması korunur. Yeni kaynak değişmediği için tamamlanmış
+unit/lint/build/CI tekrar edilmedi. Yeni deploy/Git yayını, ödeme, upload,
+cüzdan imzası, provider asset onarımı, NEAR/D1 manuel mutasyonu veya dış talep yok.
+**Tek devam gate'i `PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE`: yalnız eksik iki kabul
+kanıtı.** Bu tur sonraki gate'i başlatmaz; tam hedef PASS/complete sayılmaz.
+
+
+### Orijinal dosyayla A/V referans incelemesi — 10 Eylül 2026
+
+Kullanıcı orijinal dosyanın yolunu verdi. **Referans incelemesi
+COMPLETED_WITH_WARNINGS; tam gate BLOCKED.** Orijinal dosyanın eksikliği giderildi;
+aktif eksikler ölçüm yolunun gecikme kalibrasyonu ve ayrı yetkisiz kimlik kabulüdür.
+
+- Dosya: `/Users/arair/Desktop/youtick/demo-video/All I'm offering is the truth _ The Matrix [Open Matte].mp4`.
+  **17.070.370 bayt**, SHA-256
+  `dc84bb6d977eae06b213369f3c7229a5c184582952c9c4ef81fa070b0cfd52fb`.
+- Kapsayıcı **248.681708s**; video **248.581667s**, 1280×720, 24000/1001 fps;
+  AAC ses 48kHz, 5.1. Video süresi önceki provider metadata değeriyle eşleşiyor.
+  Önceki gerçek HLS bitişi 248.785453s ile kapsayıcı farkı **103.745 ms**;
+  bu fark A/V kayması değildir. Dosya değiştirilmedi.
+- 5960 video karesinin zamanları sabit 1001/24000s adımda doğrulandı.
+  11655 ses karesinde yalnız ilk çerçeveden sonra **2002/48000s = 41.708333ms**
+  timestamp boşluğu var. İlk AAC frame 1024 örnek içerirken packet duration
+  3026 örnek; sonraki zamanlar kesintisiz. Ham PCM birleştirmesi bu boşluğu
+  atladığından referans eşleştirmesinde açıkça düzeltildi; medyaya uygulanmadı.
+
+Aynı ödenmiş hesap ve gerçek yayımlanmış player'da sarma sonrası yaklaşık 4s'lik
+beş ses/kare örneği alındı. Kısa WebAudio PCM ve `requestVideoFrameCallback`
+kareleri yalnız yerel JSON'a kaydedildi. JWT, özel anahtar veya ham istek URL'si
+kaydedilmedi. Orijinal dosya yalnız yerel ffmpeg ile PCM/gri karelere çözüldü;
+yayın medyası yeniden kodlanmadı, dosya dışarı yüklenmedi.
+
+| Kalite / hedef | Gerçek boyut | Ses korelasyonu | Tahmini ortanca ses gecikmesi |
+| --- | --- | --- | --- |
+| Auto / 60s | 1280×720 | 0.942 | 66.3 ms |
+| Auto / 120s | 1280×720 | 0.938 | 37.8 ms |
+| Auto / 210s | 1280×720 | 0.940 | 63.7 ms |
+| 360p / 120s | 640×360 | 0.952 | 24.4 ms |
+| 720p / 120s | 1280×720 | 0.952 | 15.3 ms |
+
+Bunlar **kalibre edilmemiş tahminler**, fiziksel ≤150ms kabulü değildir.
+Tek durağan kareler zaman açısından belirsizdi; kare dizisi birlikte eşleştirildi.
+Kaynak kare adımı 41.708ms; benzer derecede iyi video eşleştirmeleri sonuca ek
+hassasiyet getiriyor. JSON'daki near-best aralıkları güven aralığı değildir.
+Geçici `ScriptProcessor` yolu player ses zincirine gecikme ekleyebilir; dolayısıyla
+bu tahmin gerçek, değiştirilmemiş player çıkışının kesin gecikmesi olarak sunulmaz.
+
+Bu araç gecikmesini ayırmak için orijinalin ağsız `data:` sayfasında aynı yöntemle
+kalibrasyonu planlandı. Browser Use URL güvenlik politikası bu navigasyonu
+reddetti; alternatif tarayıcı yolu veya güvenlik aşımı denenmedi. Boş yerel sekmeye
+orijinal dosya seçilmedi/yüklenmedi. Bu sınır nedeniyle A/V kabulü UNPROVEN kalıyor.
+Ayrı yetkisiz hesap/oturum bilgisi de henüz verilmedi; önceki anonim 401 kanıtı
+bu farklı kabul maddesinin yerine kullanılmadı.
+
+Kanıtlar: [reference-result.json](/var/folders/m7/jqxmhnys7d1778jj0g8kyg800000gn/T/playback-av-reference-4q83t1hn/reference-result.json),
+[source-timing-result.json](/var/folders/m7/jqxmhnys7d1778jj0g8kyg800000gn/T/playback-av-reference-4q83t1hn/source-timing-result.json),
+[browser-av-traces.json](/var/folders/m7/jqxmhnys7d1778jj0g8kyg800000gn/T/playback-av-reference-4q83t1hn/browser-av-traces.json).
+Yerel analiz komutları ve NumPy eşleştirmesi aynı geçici kanıt klasöründedir;
+yeni bağımlılık kurulmadı. Sonraki kayıt önceki başarılı 20-sarma/token kanıtlarını
+tekrarlamaz veya geçersiz kılmaz.
+
+İki geçici sekme kapatıldı; ses ölçüm yolu onlarla kaldırıldı, asıl kullanıcı
+sekmesi korundu. Yerelde yalnız plan ve kabul raporu güncellendi. Source/test/lock
+ve orijinal MP4 korunur; yeni kod olmadığından unit/lint/build tekrarlanmadı.
+Yeni ödeme/upload/imza, Git/CI/deploy, provider onarımı, NEAR/D1 manuel mutasyonu
+ve dış destek talebi yapılmadı.
+**Tek devam gate'i: `PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE` — kalibre A/V ve ayrı
+mevcut yetkisiz kimlik kabulü.** Yeni onay gerektiren bir işlem kendiliğinden başlatılmaz.
+
+
+### Kullanıcının yeniden deneme isteği — doğrudan medya kaydı
+
+Kullanıcı engelin nedenini ve öneriyi sordu, yeniden denemeyi istedi.
+**Yeniden deneme COMPLETED_WITH_WARNINGS; tam gate BLOCKED.** `data:` URL
+kalibrasyon sayfası tekrar denenmedi; bu sayfayı açmak için farklı URL veya
+başka tarayıcı yüzeyi kullanılmadı. Önceki ret, videodan/Livepeer'den değil
+Browser Use URL politikasından kaynaklanıyordu.
+
+[W3C Media Capture from DOM Elements](https://www.w3.org/TR/mediacapture-fromelement/)
+incelendi. Mevcut yetkili video öğesinin `captureStream()` akışından
+`MediaRecorder` ile üç kısa yerel WebM kaydı alındı. Bu yeni ölçüm, yerel
+kalibrasyon sayfasını gerektirmez ve player sesini WebAudio/ScriptProcessor
+çıkışına yönlendirmez. Kullanıcının orijinal MP4'ü dışarı yüklenmedi. JWT/NEAR
+hak kontrolü korunarak aynı yeni video ve mevcut `soteri.testnet` kullanıldı.
+
+| Seçim / sarma hedefi | Kayıt çözünürlüğü | Paket zamanlarıyla ortanca ses öndeliği | Örneklerde min–max |
+| --- | --- | --- | --- |
+| 720p / 120s | 1280×720 | 95.7ms | 85.7–106.7ms |
+| 360p / 120s | 640×360 | 120.3ms | 110.3–131.3ms |
+| Auto / 210s | 1280×720 | 110.7ms | 100.7–121.7ms |
+
+Her kayıt yaklaşık 8s, 240 video karesi ve 133 ses karesi/paketi. Kayıtların
+ses/görüntü packet sayıları decode frame sayılarıyla birebir eşleşti; video PTS
+artan sırada. Ses eşleşmesi 0.942–0.993; video dizisi benzerliği 0.9984–0.9996.
+Kaynak ilk ses paketinin 41.708333ms boşluğu ve kayıt içindeki ses PTS aralıkları
+hesaba katıldı. Yakın video eşleşmelerine hassasiyetle üst değer 133.4ms altında;
+bu aralık istatistiksel güven aralığı değildir. Kayıt örneklerinde 150ms aşılmadı.
+
+FFmpeg, Chrome WebM kaydını incelerken Opus başlığı uyarıları verdi; sessizce
+yok sayılmadı. Üç kaydın bütün ses/video packet→frame sayıları, ses örnek sayısı
+ve içerik korelasyonu ayrıca doğrulandı. 360p rawvideo çözümünde düşük çıkış
+zaman tabanı yuvarlaması uyarısı görüldü; analiz zamanları rawvideo mux saatinden
+değil kayıt dosyasının ffprobe frame PTS'lerinden alındı, ham kare sayısı eşleşti.
+Bu uyarılar provider çıktısına veya yayımlanmış koda atfedilmedi.
+
+**Kapsam sınırı:** W3C'ye göre captured stream, medya öğesinin içeriğini temsil
+eder; fiziksel ekran/hoparlör çıkışının kalibre kaydı değildir. Bu yüzden yeni
+bulgu **kayıt içi A/V referans karşılaştırmasını** güçlendirir; fiziksel ≤150ms
+maddesini kendiliğinden PASS yapmaz. Önceki ScriptProcessor 15–66ms ses-geriliği
+tahminleri bununla birleştirilmez; iki farklı ölçüm yolu farklı sonuç verdi.
+
+**Öneri:** Bu ölçümlere dayanarak yeni buffer, yeniden kodlama, player/provider
+veya auth değişikliği yapma. Kalan kabul için ayrı mevcut satın almamış kimlikle
+ret ve kalibre fiziksel çıkış doğrulaması gerekir. Bunların yerine yeni ödeme,
+yeni oturum imzası veya önceden geçmiş test tekrarı yapılmaz.
+
+Kanıt: [native-av-result.json](/var/folders/m7/jqxmhnys7d1778jj0g8kyg800000gn/T/playback-native-av-b93ns8r2/native-av-result.json).
+Kısa kayıtlar ve çalıştırılabilir yerel eşleştirme/özet komutları aynı geçici
+klasördedir. WebM yalnız ölçüm kopyasıdır; kaynak MP4/HLS veya provider asset'i
+yeniden kodlanmadı/değiştirilmedi. Kod/dependency/config ve orijinal korunur.
+
+Birden çok yerel ölçüm dosyası kaydı için verilen geçici otomatik indirme izni
+bittiğinde **Sor (varsayılan)** durumuna geri getirildi; diğer site izinlerine
+dokunulmadı. Geçici yardımcı ve ölçüm/ayar sekmeleri kaldırıldı, kullanıcı sekmesi
+korundu. Repo'da yalnız plan ve kabul raporu güncellendi; yeni Git/CI/deploy,
+ödeme/upload/cüzdan imzası, provider onarımı, NEAR/D1 manuel mutasyonu veya dış
+talep yapılmadı. Başarılı 20 sarma/token serisi ve unit/lint/build tekrarlanmadı.
+**Tek devam gate'i `PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE` — kalan gerçek kabul.**
+
+
+### Kullanıcı kabul bildirimi — başka hesapla satın alma ve izleme
+
+Kullanıcı “başka bir hesapla satın alıp izledim, problem yok” bildirimini verdi.
+Bu, gerçek kullanıcı deneyiminin olumlu sonucudur; kullanıcı bildirimi olarak
+kaydedildi, aynı senaryo araçlarla tekrar çalıştırılmadı. Hesap adı, işlem ve
+imza sayısı verilmediğinden bunlara ilişkin yeni sayısal kanıt iddia edilmez.
+Yeni hesap da satın aldığı için bu bildirim **satın almamış hesap reddi** testi
+sayılmaz. Hassas fiziksel ≤150ms ölçümü de kullanıcı gözlemiyle kanıtlanmış sayılmaz.
+
+Öneri: mevcut düzeltmeyi koru; yeni player/buffer/provider/auth müdahalesi yapma.
+Yeni ödeme yapmadan mevcut satın almamış bir hesapla erişim reddini tamamla.
+Bu kontrol geçerse, fiziksel kalibrasyon eksikliğini açık uyarı olarak tutup
+`COMPLETED_WITH_WARNINGS` kapanışını değerlendirmek önerilir. Bu bir kapanış
+önerisidir; mevcut kabul kriterleri bu kayıtla değiştirilmedi, gate kapanmadı.
+
+Bu tur yalnız plan ve kabul raporuna kullanıcı bildirimi eklendi. Kod, tarayıcı,
+provider, Git/CI/deploy veya cüzdan işlemi yapılmadı; tamamlanmış testler
+tekrarlanmadı. **Tek devam gate'i `PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE`.**
+
+
+### Nihai gate kapanışı — kullanıcı ret kontrolü sonrası
+
+**`PLAYBACK_PUBLIC_TESTNET_ACCEPTANCE`: COMPLETED_WITH_WARNINGS / KAPALI.**
+Kullanıcı, “Bu videoyu hiç satın almamış bir hesapla sayfayı aç. Satın alma yapma.
+Video oynuyor mu, yoksa satın alma mı istiyor?” kontrolüne **“denedim video
+oynamıyor”** yanıtını verdi. Yanıt bu açık test bağlamında manuel satın almamış
+hesap kontrolü olarak kaydedildi. Daha önce başka hesapla satın alıp sorunsuz
+izlediğini bildirmişti. Böylece önceki koşullu uyarılı kapanış önerisi uygulandı;
+aynı test için kullanıcıdan yeniden ödeme veya tekrar istenmedi.
+
+Kapanış kanıtları:
+
+- İncelenmiş kaynak `9ee5bc18cc48e500c6ec53b2a66296ad891dfde8`, main CI
+  `34507547060`, korumalı yayın `34509663409`, artifact ve serving sürümü eşleşmesi.
+- Süre yaklaşık 4:09; normal bitiş; Auto/360p/720p ses/kare ilerlemesi.
+- 20 sarma: birleşik p95 1957ms, max 2750ms; sonraki 10s'de max kare aralığı 133ms.
+- Aynı player/kaynakta 6 dakika 20s, üç gerçek token yenilemesi; ek cüzdan olayı yok.
+- JWT'siz gerçek segment HTTP 401; satın almamış hesapta oynamama **kullanıcı bildirimi**.
+- Başka hesapta satın alma sonrası sorunsuz izleme **kullanıcı bildirimi**.
+- Doğrudan medya kaydı/orijinal karşılaştırması: ortanca ses öndeliği 720p 95.7ms,
+  360p 120.3ms, Auto 110.7ms; incelenen kayıt örnekleri 150ms altında.
+
+Açık uyarılar, PASS olarak sunulmayacak:
+
+1. Fiziksel hoparlör/ekran çıkışının kalibre ≤150ms ölçümü yapılmadı; **UNPROVEN**.
+   Kayıt içi medya eşleştirmesi ve kullanıcının sorunsuz deneyimi bununla eş tutulmaz.
+2. Satın almamış hesap sonucunu kullanıcı bildirdi. Hesap adı, ret arayüz mesajı
+   ve HTTP/authorizer kaydı paylaşılmadı; bunlar bağımsız araç doğrulaması olarak
+   iddia edilmez. “Video oynamıyor” yanıtı tek başına belirli bir HTTP kodu değildir.
+3. Kaynak düzeltmesi yalnız ölçülmüş playback ID/playlist hash'i içindir; bütün
+   videolar veya sağlayıcının genel medya üretimi için kabul sonucu değildir.
+
+Bu kapanış bütün nicel kriterlerin PASS olduğu veya bütün playback planının
+uyarısız doğrulandığı anlamına gelmez. Önceki BLOCKED/eksik-girdi kayıtları
+kronolojik kanıt olarak korunur; bu kapanış mevcut operasyonel durumdur.
+
+Bu tur yalnız plan ve kabul raporu güncellendi. Yeni kod veya tarayıcı işlemi,
+yeni ödeme/upload/imza, Git/CI/deploy, provider onarımı veya dış talep yapılmadı.
+Tamamlanmış testler tekrarlanmadı; yalnız belge ve dosya-koruma kontrolü yapıldı.
+**Sonraki gate: yok / tanımlanmadı.** Bu gate yeniden yürütülmeyecek ve başka bir
+gate otomatik başlatılmayacak. Uyarılar yeni bir kullanıcı talebiyle ele alınabilir.

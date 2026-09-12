@@ -1,12 +1,12 @@
 # Herkese açık YouTick Testnet Video V1
 
-> Son gate: `VIDEO_PUBLIC_TESTNET_MISSING_WEBHOOK_LOCAL_COVERAGE` — PASS / LOCAL_TEST.
-> Public-testnet politika, ilk alarm, restart ve tek finalize kapsamı eklendi.
-> 8 seçili test ve TypeScript kontrolü geçti (§54); uygulama davranışı değişmedi.
-> Testler yerelde, henüz commit/push/PR yok. Tek sonraki gate
-> `VIDEO_PUBLIC_TESTNET_MISSING_WEBHOOK_TEST_INTEGRATION`: iki test ve üç
-> canonical belge için ayrı PR/normal merge; deploy0. Henüz başlamadı.
-> Canlı kayıp bildirim UNPROVEN; terminal replay PASS, 2+2 PASS ve Video V1 NOT_COMPLETE korunur.
+> **KONTROLLÜ TESTNET VIDEO V1 — COMPLETED_WITH_WARNINGS / KAPALI.**
+> Kullanıcı §58 karar paketini “onaylıyorum” yanıtıyla kabul etti; kapanış kabul§59.
+> Altı ek test grubu DEFERRED_BY_USER_ACCEPTANCE; teknik eksikleri UNPROVEN kalır.
+> Önceki maliyet/hız/tarayıcı/Playback/resume uyarıları ve2+2PASS korunur.
+> Eski beta ve1.000izleyici hariç. Aktif/sonraki V1 gate'i yok; kabul döngüsü durdu.
+> Bu testnet kabulü yeni deploy/Git/ödeme/veri işlemi veya Mainnet açılışı değildir.
+> Aşağıdaki tarihsel NOT_COMPLETE ve sonraki-gate kayıtları güncel karar değildir.
 
 > Dayanıklılık ön kontrolü §48 ve önceki sonuçlar korunur; kapanmış resume,
 > 24 saat sonrası yayın erişimi, 2+2 ve kabul edilmiş ertelemeler yeniden açılmaz.
@@ -47,7 +47,7 @@
 
 24 saat, **yüklemenin yayımlanması için verilen süredir**. Zamanında yayımlanan videonun izleme hakkını sona erdirmez. Anahtar yenileme, bağlantı kontrolü veya tekrar deneme bu süreyi uzatmaz.
 
-Mevcut beta kendi sözleşmesi, takvimi ve verileriyle korunur. Yeni ortam, eski beta’nın toplam 10 iş ve 14 günlük kampanya sınırlarını devralmaz.
+Kullanıcının12Eylül kararına göre eski beta ve her iki sürümün videoları test verisidir; eski beta regresyonu V1 kabul şartı değildir. Eski verileri silme/taşıma veya sistemi kapatma işlemi seçilmedi. Yeni ortam eski beta’nın toplam10iş ve14günlük kampanya sınırlarını devralmaz.
 
 ## 2. Ortam, sözleşme ve yetki
 
@@ -108,12 +108,12 @@ Mevcut teklif ön kontrolü, imzalı ödeme aktarımı öncesindeki kapasite rez
 
 - Başlangıçta küçük, orta ve 5 GB/120 dakika kaynaklar ölçülür. Küçük örneklerden yükleme p95 veya kapasite başarısı çıkarılmaz.
 - Chrome/Edge üzerinde normal ve yavaş bağlantıda ilk görüntü, kısa aralıklı tekrar, gerçek token yenileme ve uzun izleme ölçülür.
-- Yerel yetkilendirme yükü farklı hesap/anahtar/sertifikalarla sınanır; aynı imzalı isteğin tekrarı 1.000 izleyici sayılmaz.
-- Gerçek medya dağıtım kapasitesi ayrıca bütçelenmiş provider/CDN koşusuyla kanıtlanır. Yerel sonuç gerçek 1.000 izleyici başarısı olarak sunulmaz.
+- İlk sürümün2eşzamanlı yükleme+2ayrı hesapla izleme kabulü§47ilePASS. Daha yüksek kapasite bu sonuçtan çıkarılmaz.
+- 1.000izleyici canlı koşusu kullanıcı isteğiyle kapsam dışıdır; yerel yetkilendirme testleri canlı medya kapasitesi yerine geçmez.
 - Kesinti, sekme kapatma, yanlış dosya/hesap, kayıp bildirim, sıra dışı bildirim, gecikmiş alarm, süre dolumu ve kapatma bayrakları sınanır.
 - Kurtarmada ikinci ödeme, ikinci asset ve ikinci publication sayısı **sıfır** olmalıdır.
 - Önceden tanımlanmamış yeni kullanıcıların yükleme → Discover → satın alma → izleme ve üretici kazancını çekme akışları geçmelidir.
-- Eski beta ve mevcut yayınların davranışı regresyon testleriyle korunur.
+- Mevcut public-testnet sürümünün kullanıcı akışları korunur. Eski beta regresyonu kullanıcı kararıyla V1 kapsamından çıkarıldı (kabul§57).
 
 Mevcut **sıcak token yetkilendirmesi p95 <500 ms** hedefi korunur. Diğer hız hedefleri ve bütçe, seçtiğin üzere başlangıç ölçümünden sonra belirlenir. İş başına ayrılan operasyon bütçesi, gerçek işleme/depolama/izleme maliyetiyle aynı sayı kabul edilmez.
 

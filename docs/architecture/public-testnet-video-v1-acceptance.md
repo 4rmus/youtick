@@ -1,10 +1,10 @@
 # Public Testnet Video V1 — kabul ve sonuç kayıtları
 
-> **Son gate: `VIDEO_PUBLIC_TESTNET_MISSING_WEBHOOK_LOCAL_COVERAGE` — PASS / LOCAL_TEST.**
-> Public-testnet politika, ilk alarm, restart ve tek finalize kapsamı eklendi (§54).
-> 8 seçili test ve TypeScript kontrolü PASS; canlı kayıp bildirim hâlâ UNPROVEN.
-> Tek sonraki gate iki test ve üç belgenin PR ile entegrasyonu; başlamadı.
-> Terminal replay PASS §52 ve 2+2 PASS §47 korunur.
+> **KONTROLLÜ TESTNET VIDEO V1 — COMPLETED_WITH_WARNINGS / KAPALI (§59).**
+> Kullanıcı “onaylıyorum” dedi; §58'deki altı ek test grubu kabul edilerek ertelendi.
+> Çalışan akışların kanıtı ve önceki uyarılar korunur; yapılmamış testler PASS sayılmaz.
+> Kabul döngüsü durdu. Aktif/sonraki V1 gate'i yok; yeni test, deploy veya veri işlemi yok.
+> Önceki NOT_COMPLETE ve onay-bekliyor kayıtları tarihsel sonuçlardır.
 
 > **Son ön kontrol: `VIDEO_PUBLIC_TESTNET_RESILIENCE_PREFLIGHT` — PASS.**
 > §48 kalan dayanıklılık kanıtını ve tek mevcut yayın üzerinde iki imzalı test
@@ -114,6 +114,8 @@ TUS tesliminden sonraki **5 dakikada** hâlâ waiting/processing varsa snapshot 
 Bu küçük koşu ilk kullanıcı yolunu kanıtlar; bütün planın kabulü değildir.
 
 ## 6. Sonraki kabul matrisi ve kanıt alanları
+
+Bu başlangıç matrisi tarihsel kapsamdır; güncel kapanış/erteleme kararı §56'dadır. Eski10yükleme/1.000izleyici satırı yeni koşu yetkisi değildir; kullanıcı kararı2+2, 1.000izleyici kapsam dışıdır.
 
 | Senaryo | Kabul |
 |---|---|
@@ -1890,3 +1892,96 @@ Mevcut public upload-intent testinde, legacy ve adaptive profil için imzalı is
 Kanıt `tmp/video-public-testnet-missing-webhook-local-20260912/README.md`, `tests.json`, `alarm-tests.json`, `typecheck.log`, `checks.json`, `receipt.json`, `review.patch`. **Üretim hatası gösterilmedi; davranış düzeltmesi yapılmadı.** Yerel testler mock kullandı; gerçek wallet imzası, ödeme/upload/provider/Queue işlemi, CI/deploy veya 1.000 izleyici testi **0**. HEAD/index aynı; commit/push/PR yok. Önceki terminal replay PASS ve 2+2 PASS korunur; canlı kayıp bildirim kabulü UNPROVEN, genel Video V1 NOT_COMPLETE.
 
 **Tek sonraki gate: VIDEO_PUBLIC_TESTNET_MISSING_WEBHOOK_TEST_INTEGRATION — BAŞLATILMADI.** Hazır `integration-package.json`, iki test dosyası ile üç canonical belgenin mevcut değişikliklerini temiz exact-main çalışma alanında tek PR'a almayı önerir: explicit-path commit/push, PR, zorunlu otomatik CI ve normal merge; deploy/CI manuel tekrar0. Mevcut playback planı ve diğer kullanıcı dosyaları kapsam dışıdır. Entegrasyon için ayrı devam onayı gerekir; bu gate'te Git yayını yapılmadı. Main değişmişse farklar yeniden uzlaştırılır; otomatik geniş staging veya üzerine yazma yok. Bu yalnız test/belge entegrasyonudur, yeni canlı kurtarma kanıtı sayılmaz.
+
+## 55. PR #198 entegrasyonunun güncel kayda alınması — 12 Eylül 2026
+
+**VIDEO_PUBLIC_TESTNET_MISSING_WEBHOOK_TEST_INTEGRATION — PASS / CI.** [PR #198](https://github.com/4rmus/youtick/pull/198) 18:17:33 UTC'de normal squash ile main'e birleşti: **f28b3031cf860d5810c2cb9db0de8b255605f712**. İki test dosyası ve bu üç canonical belgenin biriken kayıtları taşındı; [PR CI34710109432](https://github.com/4rmus/youtick/actions/runs/34710109432) ve [main CI34710745980](https://github.com/4rmus/youtick/actions/runs/34710745980) success. Bridge380PASS/3SKIP; tip kontrolü, mock canary, dry-run, belgeler, güvenlik taramaları ve CI Gate geçti. PR ve squash commit'in dosya ağacı eşit.
+
+[Preview34711356384](https://github.com/4rmus/youtick/actions/runs/34711356384) skipped; iki deploy anahtarı false. Yeni provider/NEAR/D1/Queue mutasyonu veya gerçek deploy0. Eski dirty çalışma alanının278dosyası/HEAD/index/status korundu. Yerel main checkout HEAD'i b53e00e, origin/main f28b303; bu bilinçli korumadır, entegrasyon eksikliği değildir. §54'teki henüz-commit/push/entegrasyon-yapılmadı cümleleri o yerel gate'in tarihsel durumudur; **entegrasyon tekrar başlatılmaz**. Kanıt `tmp/video-public-testnet-missing-webhook-integration-20260912/receipt.json`; bu belge incelemesinde GitHub main/PR/CI ayrıca yenilendi, yeni CI veya Git yazımı yapılmadı. Davranışı taşıyan son public-testnet deploy hâlâ kayıtlı b53e00e yayınıdır; runtime bu incelemede yeniden ölçülmedi.
+
+## 56. İlk sürüm kalan kabul matrisi — 12 Eylül 2026
+
+**VIDEO_PUBLIC_TESTNET_V1_REMAINING_ACCEPTANCE_REVIEW — COMPLETED_WITH_WARNINGS.** Amaç kapananları tekrar açmadan ilk kontrollü public-testnet sürümünün açık kabulünü netleştirmekti. Yalnız current-state, Video V1 planı, bu günlük ve yeni yerel kanıt değişti; uygulama/test/config/playback planı, Git index/HEAD ve canlı ortam korundu. GitHub main f28b303 ve başarılı main CI taze okundu; servis, tarayıcı, provider ve zincir kabulü yeniden çalıştırılmadı.
+
+**Tamamlanan / yeniden çalıştırılmayacak:** kayıtlı işlevsel yükleme→Discover→satın alma/izleme ve Playback kabulü; aynı dosya/iş/TUS resume ile yanlış hesap/dosya koruması (§25); üretici çekimi (§35); 5GB/120dk aktarım→yayın (§45); iki yükleme+iki ayrı hesapla izleme (§47); zamanında yayımlanan videoya24saat sonrası erişim (§47–48); sentetik yinelenen/eski bildirim (§52); kayıp bildirim yerel kapsamı ve kaynak entegrasyonu (§54–55). Her kaydın önceki uyarıları korunur; bunlar tek bir kusursuz uçtan uca koşu diye birleştirilmez.
+
+**Kullanıcı kabulüyle kapalı:** maliyet/hızdaki ilk görüntü, örnek/p95/cache ve kesin ek fatura eksikleri (§33); tarayıcı/yavaş ağdaki Auto toparlanma, eksik örnekler ve ölçüm aracı sınırları (§39); önceki Playback ve resume kapanışlarının uyarıları. Bu kararlar yeni canlı dayanıklılık ertelemesi anlamına gelmez. **1.000 izleyici testi kullanıcı isteğiyle kapsam dışı**; ilk sürüm kapasite kabulü2+2PASS. Canlı global10iş limiti bu kullanıcı kararıyla değiştirilmedi.
+
+| Açık kabul | Eldeki kanıt | Kapanış için gereken / karar durumu |
+|---|---|---|
+| Kayıp bildirim | LOCAL_TEST + CI; uzun işin otomatik toparlanması kısmi canlı kanıt | Bildirimin gerçekten gelmediği kontrollü canlı koşu UNPROVEN; uygun iş ve güvenli hedefe özgü engelleme yolu yok. Erteleme kabul edilmedi. |
+| Queue zorlanmış yeniden teslim/retry | Yerel ve tarihsel eski Preview kanıtı | Güncel public-testnet'te hedefli tekrar teslim UNPROVEN; terminal2ACK veya DLQ temizliği bunun yerine geçmez. Erteleme kabul edilmedi. |
+| Erken/geç alarm | Yerel zamanlama/restart/son tarih testleri | Gerçek platformdaki kontrollü erken/geç teslim UNPROVEN. Erteleme kabul edilmedi. |
+| Bitmemiş işte24saat sonu + geç ready reddi | Sabit son tarih ve yerel ret kanıtlı | Gerçek süre dolumu UNPROVEN; yayımlanmış videonun25saat sonrası izlenmesi bu koşul değildir. Erteleme kabul edilmedi. |
+| Devam eden iş varken close/drain | Önceki kapalı/drain ayar/yayın kayıtları | Yeni iş reddi + mevcut işin korunması aynı canlı koşuda UNPROVEN. Açık sistemi sırf test için kapatma bu incelemenin önerilen sonraki işlemi değildir. |
+| Eski beta korunumu | Önceki izolasyon/koruma kayıtları | Güncel sürüm/iş/veri karşılaştırması ayrı kapatılmadı; sonraki salt-okunur paket budur. |
+| Ek sınır/biçim kabulleri | Başlangıç matrisi§6; dar5GBaktarımı geçti | 5GB+1, diğer container'lar ve120dk kesintisiz oynatma geniş kapsamı tamamlanmış sayılmaz. İlk sürümde zorunlu mu/ertelenecek mi açık karar gerektirir; dar yükleme gate'i bunları kendiliğinden kaldırmadı. |
+| Nihai Video V1 kabulü | Yukarıdaki kanıtlar ve kabul edilmiş uyarılar | Kalan kanıtlar veya maddeleri adıyla belirten açık kullanıcı kabulü gerekir. NOT_COMPLETE korunur; açılış/mainnet/deploy yetkisi verilmez. |
+
+Bu tablo **8 açık kabul başlığıdır; 8 yeni geliştirme veya 8 mimari faz değildir**. Yönetilebilir kapanış sırası üç gruptur: **eski beta korunumu → beş canlı dayanıklılık ve ek sınır/biçim kararları → nihai V1 kabulü**. Yerel test eksikliği giderildi; sırf canlı hata üretmek için yeni servis, ortak webhook kapatma veya ikinci ücretli iş otomatik eklenmez. Mevcut kanıtla geçmeyen maddeler “PASS” ya da “kullanıcı erteledi” yapılmadı. Ana mimaride Faz3 aktif; sonrası3faz ve ayrı operasyon/arşivleme/Mainnet işleri bu incelemeyle kapanmaz.
+
+**Önerilen tek sonraki gate: VIDEO_PUBLIC_TESTNET_OLD_BETA_READONLY_REGRESSION — BAŞLATILMADI.** Kaynaktaki eski Preview Web `https://preview.youtick.net` / `youtick-web-preview` ve Bridge `https://bridge-preview.youtick.net` / `youtick-livepeer-bridge-preview` hedefleri kullanılır. Önce son başarılı Preview yayını ve konfigürasyonundan eski Market/Access/proje/asset kimlikleri çözülür; yeni public-testnet kimlikleri yerine konmaz. Ardından sürüm/health, aynı FINAL bloktaki mevcut iş/yayın verisi ve en çok3bilinen asset metadata/policy bağlantısı karşılaştırılır. Beklenen expired/closed beta politikası varsa açılmaz; baseline eksikse varsayım üretilmez. Bu salt-okunur kabul yeni yükleme/satın alma/tam oynatma kanıtı değildir.
+
+Paket sınırı **15 dakika, en fazla40dış okuma, en fazla3asset metadata okuması**; ödeme/yükleme/cüzdan imzası/izleyici oturumu/webhook/Queue/config/deploy **0**. Salt-okunur NEAR query/block çağrıları POST taşıması kullanabilir; zincir işlemi gönderilmez. Production/mainnet hariç. Paket `next-package.json`; genel risk ertelemesi onayı değildir. “Devam” yalnız bu sonraki gate'i başlatır; beş dayanıklılık veya ek sınır uyarısının kabulü yerine geçmez.
+
+Kanıt `tmp/video-public-testnet-remaining-acceptance-review-20260912/acceptance-matrix.json`, `source-refresh.json`, `next-package.json`, `receipt.json`, `checks.json`. Belge derlemesi, explicit-path diff kontrolü ve275korunan dosya kontrolü yapıldı. Bu incelemede uygulama testleri/CI rerun, canlı test, yeni ödeme/upload, provider/Queue/NEAR/D1 yazımı veya Git yayını çalıştırılmadı. Genel Video V1 **NOT_COMPLETE**.
+
+## 57. Eski beta kapsamının kaldırılması ve mevcut sürüm kontrolü — 12 Eylül 2026
+
+**VIDEO_PUBLIC_TESTNET_V1_SCOPE_SIMPLIFICATION — PASS.** Kullanıcı eski beta sürümünün önemli olmadığını, her iki sürümdeki videoların test/deneme verisi olduğunu belirtti. Bu tercih doğrultusunda **eski beta regresyonu V1 kabul şartından çıkarıldı (NOT_REQUIRED_BY_USER)**; §56'daki eski beta paketi başlatılmayacak. Bu karar eski servisleri kapatma, video/asset/yayın silme, hesap/anahtar temizleme veya eski verileri yeni ortama taşıma yetkisi değildir. Mevcut ve eski videolara dokunulmadı.
+
+**Mevcut sürümün temel işlevleri çalışıyor:** önceki gerçek2yükleme+2ayrı hesapla izleme kabulü§47PASS; satın alma/izleme/çekim kayıtları korunur. Güncel salt-okunur kontrolde public Web ana sayfasıHTTP200, Bridge status=ok ve newUploadReady/playbackReady=true, read-model status=ok. FINAL blok268286657 içinde10yayının10'u ACTIVE; mevcut M2 katalog kaydı doğru publication kimliğiyle döndü. Okuma 2026-09-12T18:59:23.358117+00:00. Bridge `0f45b81e-8f7d-485c-aad8-51e076910a3c`, read-model `91063507-21ec-46df-8d56-2542b8d6e37b`. Web için ilk /__health isteği404 verdi; bu uç Web'de bulunmadığı için ana sayfa kontrolü kullanıldı, uygulama arızası diye raporlanmadı.
+
+Bu kontrol yeni bir tarayıcı oynatma veya ücretli yükleme testi değildir; health/ACTIVE tek başına yeni uçtan uca kanıt sayılmaz. İşlevsel değerlendirme önceki gerçek testlerle bu güncel servis/veri okumasının birlikte değerlendirilmesidir. Kaynak main f28b303 ve PR/main CI PASS kaydı§55'te; yeni deploy yapılmadı.
+
+**Kalan kapsam sadeleşti:** yedi açık başlık (beş canlı dayanıklılık, ek sınır/biçim kararı, nihai V1 kabulü), iki kapanış grubu. Bu beş hata senaryosunun canlı kanıtı ve ek biçim/sınır testleri hâlâ UNPROVEN; kullanıcının eski beta tercihi bunları da ertelemiş veya kabul etmiş sayılmaz. Yeni1.000izleyici testi yok;2+2kapalı ve önceki maliyet/hız/tarayıcı/Playback kabulleri korunur.
+
+**Tek sonraki gate: VIDEO_PUBLIC_TESTNET_V1_ACCEPTANCE_DECISION — BAŞLATILMADI.** Yalnız mevcut sürüm için kalan dayanıklılık ve ek sınır/biçim maddelerini, normal kullanımda kanıtlanan akışlardan ayrı kısa bir kabul kararına dönüştürmek. Kullanıcı bu maddeleri açıkça kabul ederek ertelemeyi seçerse uyarılarla V1 kapanışı önerilebilir; bu tur nihai kabul veya yeni erteleme verilmedi. Eski beta kontrolü araya alınmaz. Genel Video V1 NOT_COMPLETE, Mainnet/Production açılışı kapsam dışı.
+
+Yalnız üç canonical belge ve `tmp/video-public-testnet-v1-scope-simplification-20260912/` kanıtları değişti. Uygulama/test/config/Git/CI/deploy, ödeme/upload, provider/Queue/NEAR/D1 mutasyonu0;275diğer tracked dosya korundu. Kanıt live-check.json, acceptance-matrix.json, receipt.json ve checks.json. Belge derlemesi ve explicit-path diff kontrolü yapıldı.
+
+## 58. Kontrollü testnet V1 kabul kararı — 12 Eylül 2026
+
+**VIDEO_PUBLIC_TESTNET_V1_ACCEPTANCE_DECISION — COMPLETED_WITH_WARNINGS / KARAR PAKETİ HAZIR.** Kullanıcının “önerdiğin gibi devam et” talimatıyla mevcut sürüm için somut kapanış önerisi hazırlandı. Öneri **V1-CONTROLLED-TESTNET-WARNINGS-20260912**; kullanıcı onayı henüz verilmedi. Bu gate'in hazırlık sonucu, genel V1 kabulü değildir; genel Video V1 **NOT_COMPLETE / USER_DECISION_PENDING** kalır.
+
+**Öneri:** mevcut kontrollü public-testnet V1'i **COMPLETED_WITH_WARNINGS** olarak kapatmak ve aşağıdaki altı ek test grubunu kayıtlı uyarıyla ertelemek. Mevcut kullanıcı akışları için yükleme/Discover/satın alma/izleme/çekim, aynı işten devam,5GB/120dk kaynak aktarımı ve yayını,2+2eşzamanlılık ve terminal tekrar kanıtları korunur. PR #198/main f28b303 ve380PASS/3SKIP CI kaydı§55'tedir; son servis/veri kontrolü§57'nin18:59UTC kaydıdır, bu tur yenilenmedi.
+
+| Sonraya bırakılması önerilen test | Kabul edilirse açık kalacak sınır |
+|---|---|
+| Hazır bildiriminin kaybolması | Bildirimsiz toparlanmanın canlı güvencesi yok; takılan iş inceleme gerektirebilir. |
+| Zorlanmış kuyruk tekrar teslimi | Yerel korumalar ve terminal tekrar geçti; gerçek retry koşulu ayrıca sınanmadı. |
+| Erken/geç platform alarmı | Yerel saat/restart testleri var; gerçek alarm gecikmesindeki toparlanma süresi kanıtlanmadı. |
+| Bitmemiş işin gerçek24saat sonu + geç ready | Sabit son tarih/yerel ret var; gerçek süre sonu birleşimi canlıda sınanmadı. |
+| Devam eden iş varken close/drain | Yeni iş reddi ve mevcut işin korunması birlikte canlı sınanmadı; ilk böyle kapatma öncesi ele alınmalı. |
+|5GB+1, diğer dosya biçimleri ve120dk kesintisiz izleme | Başarılı5GBkaynak aktarımı bu ek güvenceleri kapsamıyor. |
+
+Bu maddeler onayla **testten geçmiş sayılmayacak**; teknik kanıtları UNPROVEN kalırken ürün kabul durumları DEFERRED_BY_USER_ACCEPTANCE olacaktır. Erteleme, yeni bir olay çıktığında aynı ödenmiş işi koruyarak inceleme yapılmasını veya ilgili garanti verilmeden önce doğrulamayı engellemez. Ayrıntılı geri dönüş koşulları decision-package.json içinde kayıtlıdır.
+
+Önceden kabul edilen maliyet/hız, tarayıcı/yavaş ağ, Playback ve resume uyarıları aynı kalır. Eski beta regresyonu ve1.000izleyici testi kullanıcı kararıyla kapsam dışıdır; tekrar eklenmez. Kontrollü testnet kabulü Mainnet/Production hazır olma, tüm mimari fazların tamamlanması, yeni deploy, veri silme, ödeme veya yükleme yetkisi değildir.
+
+**Tek sonraki gate: VIDEO_PUBLIC_TESTNET_V1_ACCEPTANCE_CLOSEOUT — ONAY BEKLİYOR.** Bu somut pakete açık onay verilirse yalnız üç canonical belgede altı erteleme ve genel COMPLETED_WITH_WARNINGS kapanışı kaydedilir, kabul döngüsü durur. Kullanıcının paketi gördükten sonra “önerdiğin gibi devam et” demesi de bu belge kapanışına onaydır; aynı onay yeniden istenmez. Onay verilmezse NOT_COMPLETE korunur ve hangi test grubunun gerekli olduğu seçilir; ücretli/canlı test kendiliğinden başlamaz.
+
+Bu tur yalnız current-state, Video V1 planı, bu kabul günlüğü ve `tmp/video-public-testnet-v1-acceptance-decision-20260912/` değişti. Kod/test/config/Git/CI/deploy ve canlı veri/medya işlemi0. Belge derlemesi, explicit-path diff kontrolü ve275korunan dosya kontrolü checks.json içinde. Paket decision-package.json; hazırlık receipt.json ile kaydedildi.
+
+## 59. Kullanıcı onayıyla kontrollü testnet V1 kapanışı — 12 Eylül 2026
+
+**VIDEO_PUBLIC_TESTNET_V1_ACCEPTANCE_CLOSEOUT — COMPLETED_WITH_WARNINGS / KAPALI.** Kullanıcı §58'deki **V1-CONTROLLED-TESTNET-WARNINGS-20260912** karar paketine **“onaylıyorum”** yanıtını verdi. Mevcut kontrollü public-testnet **Video V1 genel kabulü COMPLETED_WITH_WARNINGS olarak tamamlandı**. Kullanıcı onayı kaydedildi; kabul döngüsü durduruldu. **Aktif veya otomatik sonraki V1 gate'i yok.**
+
+| Onaylanan erteleme | Ürün kabul durumu | Teknik kanıt |
+|---|---|---|
+| Hazır bildiriminin gerçekten kaybolması | DEFERRED_BY_USER_ACCEPTANCE | Kontrollü canlı koşu UNPROVEN; mevcut yerel/CI kanıtı korunur |
+| Kuyruğun zorlanmış tekrar teslimi | DEFERRED_BY_USER_ACCEPTANCE | Güncel canlı retry koşulu UNPROVEN; terminal tekrar kabulü korunur |
+| Erken/geç platform alarmı | DEFERRED_BY_USER_ACCEPTANCE | Gerçek kontrollü zamanlama UNPROVEN; yerel saat/restart kanıtı korunur |
+| Bitmemiş işte gerçek24saat sonu + geç ready | DEFERRED_BY_USER_ACCEPTANCE | Gerçek süre sonu birleşimi UNPROVEN; sabit süre/yerel ret kanıtı korunur |
+| Devam eden iş varken yeni kabulleri kapatma | DEFERRED_BY_USER_ACCEPTANCE | Birleşik canlı close/drain koşulu UNPROVEN |
+|5GB+1, diğer biçimler ve120dk kesintisiz izleme | DEFERRED_BY_USER_ACCEPTANCE | Bu ek kabuller UNPROVEN;5GB/120dk kaynak aktarımı ve yayın PASS korunur |
+
+Bu altı grup geçilmiş test olarak yeniden etiketlenmedi. §58'deki anlamları ve yeniden ele alma koşulları geçerlidir; örneğin aktif işler varken ilk planlı close/drain veya yeni biçim/sınır için garanti öncesi ilgili kanıt gerekir. Erteleme, yeni bir arıza görülürse aynı işi koruyarak inceleme yapılmasını engellemez. Eski beta regresyonu ve1.000izleyici testi kullanıcı kararıyla kapsam dışı kalır; tekrar kabul şartı yapılmaz.
+
+**Korunan kabul:** yükleme→Discover→satın alma/izleme/üretici çekimi kayıtları; aynı dosya/iş/TUS resume ve kimlik/son tarih korumaları;5GB/120dk kaynak aktarımı ve yayın;2eşzamanlı yükleme+2ayrı hesapla izleme; zamanında yayımlanan videoya24saat sonrası erişim; sentetik terminal tekrarında2ACK ve10dakikalık sabit durum; public-testnet yerel kurtarma testleri ve PR #198 CI entegrasyonu. Önceden kabul edilmiş maliyet/hız, tarayıcı/yavaş ağ, Playback ve resume uyarıları aynen korunur.
+
+**Kapanışın sınırı:** yalnız mevcut kontrollü testnet V1 kabulüdür. Mainnet/Production açılışı veya tüm mimari fazların kapanışı değildir. Yeni yükleme, ödeme, video/asset silme, servis kapatma, provider/Queue/NEAR/D1 işlemi, deploy veya Git/CI yayını yapılmadı. Önceki kaynak/CI/runtime kanıtı kullanıldı; bu belge kapanışı yeni canlı test veya sağlık ölçümü üretmedi.
+
+Yerel değişiklikler yalnız current-state, Video V1 planı ve bu kabul günlüğündedir; onay/kapanış kanıtı `tmp/video-public-testnet-v1-acceptance-closeout-20260912/` içinde. `approved-decision.json` özgün teklifin SHA256 özetini ve kullanıcı onayını, `acceptance-matrix.json` açık V1 maddesi kalmadığını ve teknik UNPROVEN kayıtlarının korunduğunu kaydeder. Belge derlemesi, explicit-path diff ve275diğer tracked dosya koruma sonucu checks.json'dadır. HEAD/index/status korundu; kapanış belgeleri bu tur commit/push edilmedi.
+
+**Sonuç: kontrollü testnet V1 uyarılarla kabul edildi. Blocker yok; sonraki gate yok.** Aşağıdaki/önceki tarihsel NOT_COMPLETE, USER_DECISION_PENDING ve sonraki-gate önerileri bu kapanışın güncel durumunu değiştirmez.
