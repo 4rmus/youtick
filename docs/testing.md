@@ -221,3 +221,16 @@ deployed storage-byte, operation-count or active-object metric.
 
 Local, mocked and CI results must be reported separately from provider,
 testnet, staging, deployment and production evidence.
+
+## Protected release tooling
+
+Existing local tests for Market code-update policy and release modes (no live writes):
+
+```bash
+node --test workers/livepeer-bridge/scripts/market-code-update.test.mjs
+node --test scripts/release-metadata.test.mjs scripts/cloudflare-release.test.mjs scripts/release-smoke.test.mjs
+```
+
+A refreshed policy keeps both Market maintenance guards true. A live snapshot
+while maintenance is off must reject; local test success does not authorize
+workflow dispatch, maintenance calls or profile activation.
