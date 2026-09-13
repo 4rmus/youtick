@@ -11,6 +11,8 @@ const market = JSON.parse(fs.readFileSync(marketPath, "utf8"));
 const access = JSON.parse(fs.readFileSync(accessPath, "utf8"));
 
 const expectedMarket = [
+  "activate_playback_device",
+  "set_public_upload_full_hd",
   "cancel_bridge_rotation",
   "contract_source_metadata",
   "create_paid_job",
@@ -172,7 +174,19 @@ if (playbackDevice?.kind !== "view"
   throw new Error("market get_playback_device must be a view bound to account and device key");
 }
 
+const activation = market.body.functions.find(({ name }) => name === "activate_playback_device");
+if (activation?.kind !== "call" || !activation.modifiers?.includes("payable")
+  || JSON.stringify(activation.params?.args?.map(({ name }) => name)) !== JSON.stringify(["publication_id", "playback_session"])) {
+  throw new Error("market device activation must be payable and bound to a publication and device authorization");
+}
+
 const availability = market.body.root_schema?.definitions?.PublicationAvailability;
+const fullHd = market.body.functions.find(({ name }) => name === "set_public_upload_full_hd");
+if (fullHd?.kind !== "call" || fullHd.modifiers?.includes("payable")
+  || JSON.stringify(fullHd.params?.args?.map(({ name }) => name)) !== JSON.stringify(["enabled"])
+  || fullHd.params.args[0].type_schema?.type !== "boolean") {
+  throw new Error("market full HD switch must be a non-payable boolean call");
+}
 if (
   JSON.stringify(availability?.enum) !==
   JSON.stringify(["ACTIVE", "SALES_SUSPENDED", "TAKEDOWN"])

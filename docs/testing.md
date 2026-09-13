@@ -9,6 +9,14 @@ npm test -- --run
 npm run test:livepeer-canary
 # Local Brave device storage / mock wallet and chain only
 node scripts/device-session-browser-check.mjs
+# Local Brave + ffmpeg: real player SDK, synthetic media; no provider/wallet calls
+node scripts/player-browser-check.mjs
+# Focused 30-second synthetic source: actual 360p / 720p / 1080p decoding
+node scripts/player-browser-check.mjs --full-hd
+# Combined 120-second 1080p fixture, full controls and native MP4 renewal (still not Safari HLS acceptance):
+node scripts/player-browser-check.mjs --full-hd --extended
+# Local device-activation UI: real React/transaction encoding, mock wallet/chain/token
+node scripts/player-device-browser-check.mjs
 npm run lint
 npm run build
 ```

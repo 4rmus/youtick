@@ -224,7 +224,8 @@ export async function hasLivepeerEntitlement(accountId: string, jobId: string): 
         'has_entitlement',
         { account_id: accountId, publication_id: jobId },
     );
-    return value === true;
+    if (typeof value !== 'boolean') throw new Error('invalid_livepeer_entitlement');
+    return value;
 }
 
 export async function buyLivepeerTicket(

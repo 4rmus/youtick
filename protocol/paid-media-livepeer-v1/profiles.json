@@ -41,5 +41,43 @@
         "encoder": "H.264"
       }
     ]
+  },
+  "fullHd": {
+    "hash": "a6751ecd819f080430d3bea4cab0d7b906cd729993c925ae16c676433fe65752",
+    "profiles": [
+      {
+        "name": "360p",
+        "width": 640,
+        "height": 360,
+        "bitrate": 800000,
+        "fps": 30,
+        "fpsDen": 1,
+        "gop": "2",
+        "profile": "H264Baseline",
+        "encoder": "H.264"
+      },
+      {
+        "name": "720p",
+        "width": 1280,
+        "height": 720,
+        "bitrate": 3000000,
+        "fps": 30,
+        "fpsDen": 1,
+        "gop": "2",
+        "profile": "H264Baseline",
+        "encoder": "H.264"
+      },
+      {
+        "name": "1080p",
+        "width": 1920,
+        "height": 1080,
+        "bitrate": 5000000,
+        "fps": 30,
+        "fpsDen": 1,
+        "gop": "2",
+        "profile": "H264Baseline",
+        "encoder": "H.264"
+      }
+    ]
   }
 }

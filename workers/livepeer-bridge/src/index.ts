@@ -13,7 +13,7 @@ import {
 } from 'near-api-js';
 import { deserialize } from 'borsh';
 import { verifyMessage as verifyNep413Message } from 'near-api-js/nep413';
-import type { CreateUploadResult, MediaSourceType, ProviderVerificationCheckpoint } from './media-provider';
+import type { CreateUploadResult, MediaSourceType, ProviderVerificationCheckpoint, ProviderPlayback } from './media-provider';
 import { MEDIA_SOURCE_FORMATS, supportedProfile } from './media-provider';
 import { LivepeerProvider } from './livepeer-provider';
 import { dependencyFetch } from './dependency-fetch';
@@ -3153,10 +3153,12 @@ export async function requirePublicUploadPolicy(env: Env): Promise<string> {
     if (value.version !== 1 || value.environment !== 'public-testnet' || value.network !== env.NEAR_NETWORK
         || value.market_contract_id !== env.MARKET_CONTRACT_ID
         || value.max_source_bytes !== '5000000000' || value.job_ttl_ms !== '86400000'
-        || value.signed_quote_required !== true || !Array.isArray(value.profiles) || ![1, 2].includes(value.profiles.length)) {
+        || value.signed_quote_required !== true || !Array.isArray(value.profiles) || ![1, 2, 3].includes(value.profiles.length)) {
         throw new Error('deployment_binding_mismatch');
     }
-    const expected = value.profiles.length === 1 ? [profiles.legacy] : [profiles.adaptive, profiles.legacy];
+    const expected = value.profiles.length === 1 ? [profiles.legacy]
+        : value.profiles.length === 2 ? [profiles.adaptive, profiles.legacy]
+            : [profiles.fullHd, profiles.adaptive, profiles.legacy];
     for (const [index, entry] of value.profiles.entries()) {
         const profile = requireObject(entry, 'deployment_binding_mismatch');
         requireExactKeys(profile, ['profile_id', 'profile_config_sha256'], 'deployment_binding_mismatch');
@@ -6103,6 +6105,7 @@ async function issueStatelessPlaybackToken(request: Request, env: Env): Promise<
             token,
             expires_at_ms: String((issuedAtSeconds + ttlSeconds) * 1000),
             hls_url: livepeerHlsUrl(input.body.playback_id),
+            ...(authorization.previewVttUrl ? { preview_vtt_url: authorization.previewVttUrl } : {}),
         });
     } catch (error) {
         const code = safeErrorCode(error);
@@ -6327,6 +6330,7 @@ async function readStatelessPlaybackAuthorization(
     publicationCacheHit: boolean;
     entitlementCacheHit: boolean;
     providerCacheHit: boolean;
+    previewVttUrl?: string;
 }> {
     const publicationCacheKey = await playbackCacheKey(
         env,
@@ -6398,16 +6402,17 @@ async function readStatelessPlaybackAuthorization(
         'provider-policy',
         input.body.playback_id,
     );
-    const providerCacheHit = playbackCacheGet<boolean>(providerCacheKey) === true;
-    if (!providerCacheHit) {
-        await verifyStatelessProviderPolicy(env, input.body.playback_id);
-        playbackCachePut(providerCacheKey, true, Date.now() + PROVIDER_POLICY_CACHE_MS);
+    let providerPolicy = playbackCacheGet<{ previewVttUrl?: string }>(providerCacheKey);
+    const providerCacheHit = providerPolicy !== undefined;
+    if (!providerPolicy) {
+        providerPolicy = await verifyStatelessProviderPolicy(env, input.body.playback_id);
+        playbackCachePut(providerCacheKey, providerPolicy, Date.now() + PROVIDER_POLICY_CACHE_MS);
     }
-    return { publicationCacheHit, entitlementCacheHit, providerCacheHit };
+    return { publicationCacheHit, entitlementCacheHit, providerCacheHit, ...providerPolicy };
 }
 
-async function verifyStatelessProviderPolicy(env: Env, playbackId: string): Promise<void> {
-    let playback: JsonObject;
+async function verifyStatelessProviderPolicy(env: Env, playbackId: string): Promise<{ previewVttUrl?: string }> {
+    let playback: ProviderPlayback;
     try {
         playback = await livepeerProvider(env).readPlayback(playbackId);
     } catch (error) {
@@ -6415,6 +6420,12 @@ async function verifyStatelessProviderPolicy(env: Env, playbackId: string): Prom
         throw new Error('playback_denied');
     }
     if (playback.kind !== 'vod' || playback.policy !== 'jwt') throw new Error('playback_denied');
+    // Optional metadata from the same authorized playback lookup; never fetch it during token issuance.
+    const preview = playback.sources.length <= MAX_PROVIDER_PLAYBACK_OUTPUTS
+        ? playback.sources.find(source => source.kind === 'vtt' && source.url.length <= 2048
+            && validPlaybackUrl(source.url) && !new URL(source.url).search && !new URL(source.url).hash)
+        : undefined;
+    return preview ? { previewVttUrl: preview.url } : {};
 }
 
 async function playbackCacheKey(env: Env, kind: string, value: string): Promise<string> {

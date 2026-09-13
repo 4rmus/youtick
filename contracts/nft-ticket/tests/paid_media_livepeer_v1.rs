@@ -1950,6 +1950,245 @@ fn device_sale_contract() -> Contract {
     market
 }
 
+fn activate_device(market: &mut Contract, user: &str, device: u8, day: u64, signer_key: &str) {
+    let mut ctx = context(user);
+    ctx.signer_account_id(account(user))
+        .signer_account_pk(signer_key.parse().unwrap())
+        .attached_deposit(near_sdk::NearToken::from_yoctonear(1))
+        .block_timestamp((DEVICE_START_MS + day * DEVICE_DAY_MS) * 1_000_000);
+    testing_env!(ctx.build());
+    market.activate_playback_device(
+        "device-job-0".to_string(),
+        serde_json::from_value(device_authorization(device)).unwrap(),
+    );
+}
+
+#[test]
+fn explicit_device_activation_reuses_entitlement_and_is_idempotent_but_recovers_changed_keys() {
+    let mut market = device_sale_contract();
+    device_purchase(&mut market, 0, 1, 0, 2_000_000);
+    let balances = (
+        market.get_platform_balance(),
+        market.get_creator_balance(account("creator.testnet")),
+        market.get_publications_count(),
+    );
+    activate_device(&mut market, "buyer.testnet", 2, 1, UPLOAD_KEY);
+    let first = market
+        .get_playback_device(account("buyer.testnet"), device_key(2))
+        .unwrap();
+    activate_device(&mut market, "buyer.testnet", 2, 20, UPLOAD_KEY);
+    assert_eq!(
+        market.get_playback_device(account("buyer.testnet"), device_key(2)),
+        Some(first)
+    );
+    activate_device(&mut market, "buyer.testnet", 2, 21, &device_key(9));
+    let recovered = market
+        .get_playback_device(account("buyer.testnet"), device_key(2))
+        .unwrap();
+    assert_eq!(recovered.authorizing_public_key, Some(device_key(9)));
+    assert_eq!(
+        recovered.expires_at_ms.0,
+        DEVICE_START_MS + 51 * DEVICE_DAY_MS
+    );
+    activate_device(&mut market, "buyer.testnet", 2, 52, &device_key(9));
+    assert_eq!(
+        market
+            .get_playback_device(account("buyer.testnet"), device_key(2))
+            .unwrap()
+            .expires_at_ms
+            .0,
+        DEVICE_START_MS + 82 * DEVICE_DAY_MS
+    );
+    assert_eq!(
+        balances,
+        (
+            market.get_platform_balance(),
+            market.get_creator_balance(account("creator.testnet")),
+            market.get_publications_count()
+        )
+    );
+    assert!(market.has_entitlement(account("buyer.testnet"), "device-job-0".to_string()));
+}
+
+#[test]
+fn explicit_device_activation_preserves_three_device_limit_and_allows_creator_and_suspended_sales()
+{
+    let mut market = device_sale_contract();
+    device_purchase(&mut market, 0, 1, 0, 2_000_000);
+    testing_env!(context("bridge.testnet").build());
+    market.suspend_livepeer_sales("device-job-0".to_string());
+    testing_env!(context("guardian.testnet").build());
+    market.pause_new_purchases();
+    for device in 2..=4 {
+        activate_device(
+            &mut market,
+            "buyer.testnet",
+            device,
+            u64::from(device),
+            UPLOAD_KEY,
+        );
+    }
+    assert!(market
+        .get_playback_device(account("buyer.testnet"), device_key(1))
+        .is_none());
+    for device in 2..=4 {
+        assert!(market
+            .get_playback_device(account("buyer.testnet"), device_key(device))
+            .is_some());
+    }
+    activate_device(&mut market, "creator.testnet", 1, 5, UPLOAD_KEY);
+    assert!(market
+        .get_playback_device(account("creator.testnet"), device_key(1))
+        .is_some());
+}
+
+#[test]
+fn explicit_device_activation_rejects_wrong_authority_deposit_or_certificate() {
+    let mut market = device_sale_contract();
+    device_purchase(&mut market, 0, 1, 0, 2_000_000);
+    for problem in [
+        "stranger",
+        "relay",
+        "zero deposit",
+        "extra deposit",
+        "duration",
+        "key",
+        "hash",
+    ] {
+        let user = if problem == "stranger" {
+            "stranger.testnet"
+        } else {
+            "buyer.testnet"
+        };
+        let mut ctx = context(if problem == "relay" {
+            "relayer.testnet"
+        } else {
+            user
+        });
+        ctx.signer_account_id(account(user))
+            .signer_account_pk(UPLOAD_KEY.parse().unwrap())
+            .attached_deposit(near_sdk::NearToken::from_yoctonear(match problem {
+                "zero deposit" => 0,
+                "extra deposit" => 2,
+                _ => 1,
+            }));
+        testing_env!(ctx.build());
+        let mut auth = device_authorization(2);
+        if problem == "duration" {
+            auth["authorization_duration_ms"] = "1".into();
+        }
+        if problem == "key" {
+            auth["session_public_key"] = "invalid".into();
+        }
+        if problem == "hash" {
+            auth["certificate_sha256"] = "invalid".into();
+        }
+        must_fail(|| {
+            market.activate_playback_device(
+                "device-job-0".to_string(),
+                serde_json::from_value(auth).unwrap(),
+            )
+        });
+        assert!(market
+            .get_playback_device(account(user), device_key(2))
+            .is_none());
+    }
+    testing_env!(context("guardian.testnet").build());
+    market.freeze_bridge();
+    must_fail(|| activate_device(&mut market, "buyer.testnet", 2, 1, UPLOAD_KEY));
+    assert!(market
+        .get_playback_device(account("buyer.testnet"), device_key(2))
+        .is_none());
+    testing_env!(context("admin.testnet").build());
+    market.unfreeze_bridge();
+    testing_env!(context("governance.testnet").build());
+    market.takedown_livepeer_publication(
+        "device-job-0".to_string(),
+        "GOVERNANCE_DECISION".to_string(),
+        "incident-device".to_string(),
+        FINGERPRINT.to_string(),
+        U64(DEVICE_START_MS),
+    );
+    must_fail(|| activate_device(&mut market, "buyer.testnet", 2, 1, UPLOAD_KEY));
+}
+
+#[test]
+fn explicit_device_activation_preserves_the_storage_runway_guard() {
+    let mut market = device_sale_contract();
+    device_purchase(&mut market, 0, 1, 0, 2_000_000);
+    let mut ctx = context("buyer.testnet");
+    ctx.signer_account_id(account("buyer.testnet"))
+        .signer_account_pk(UPLOAD_KEY.parse().unwrap())
+        .attached_deposit(near_sdk::NearToken::from_yoctonear(1))
+        .account_balance(near_sdk::NearToken::from_yoctonear(1));
+    testing_env!(ctx.build());
+    must_fail(|| {
+        market.activate_playback_device(
+            "device-job-0".to_string(),
+            serde_json::from_value(device_authorization(2)).unwrap(),
+        )
+    });
+    // The mock host does not roll back writes on panic; on-chain atomic rollback is not claimed here.
+}
+
+#[test]
+fn full_hd_switch_preserves_defaults_and_roundtrips_only_profiles() {
+    let (mut market, _, _, _) = public_upload_contract();
+    let before = market.get_public_upload_policy().unwrap();
+    assert_eq!(before.profiles.len(), 2);
+    testing_env!(context("admin.testnet").build());
+    assert_eq!(market.set_public_upload_full_hd(false), before);
+    let enabled = market.set_public_upload_full_hd(true);
+    assert_eq!(enabled.profiles.len(), 3);
+    assert_eq!(&enabled.profiles[1..], before.profiles.as_slice());
+    let registry: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../protocol/paid-media-livepeer-v1/profiles.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        enabled.profiles[0].profile_config_sha256,
+        registry["fullHd"]["hash"].as_str().unwrap()
+    );
+    assert_eq!(market.set_public_upload_full_hd(true), enabled);
+    let mut expected = before.clone();
+    expected.profiles = enabled.profiles;
+    assert_eq!(market.get_public_upload_policy().unwrap(), expected);
+    assert_eq!(market.set_public_upload_full_hd(false), before);
+}
+
+#[test]
+fn full_hd_switch_requires_admin_and_both_maintenance_controls() {
+    let (mut market, _, _, _) = public_upload_contract();
+    let before = market.get_public_upload_policy();
+    let mut mainnet = context("admin.testnet");
+    mainnet.current_account_id(account("market.near"));
+    testing_env!(mainnet.build());
+    must_fail(|| {
+        market.set_public_upload_full_hd(true);
+    });
+    assert_eq!(market.get_public_upload_policy(), before);
+    for actor in ["creator.testnet", "guardian.testnet", "bridge.testnet"] {
+        testing_env!(context(actor).build());
+        must_fail(|| {
+            market.set_public_upload_full_hd(true);
+        });
+        assert_eq!(market.get_public_upload_policy(), before);
+    }
+    testing_env!(context("admin.testnet").build());
+    market.unfreeze_bridge();
+    must_fail(|| {
+        market.set_public_upload_full_hd(true);
+    });
+    testing_env!(context("guardian.testnet").build());
+    market.freeze_bridge();
+    testing_env!(context("admin.testnet").build());
+    market.unpause_new_purchases();
+    must_fail(|| {
+        market.set_public_upload_full_hd(true);
+    });
+    assert_eq!(market.get_public_upload_policy(), before);
+}
+
 #[test]
 fn playback_devices_renew_only_on_new_successful_payments_and_evict_oldest() {
     let mut market = device_sale_contract();

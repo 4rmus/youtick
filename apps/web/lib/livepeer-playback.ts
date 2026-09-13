@@ -24,6 +24,7 @@ type LivepeerPlaybackToken = {
     token: string;
     expires_at_ms: string;
     hls_url: string;
+    preview_vtt_url?: string;
 };
 
 export type LivepeerPlaybackAccess = {
@@ -31,6 +32,7 @@ export type LivepeerPlaybackAccess = {
     hlsUrl: string;
     playbackId: string;
     expiresAtMs: number;
+    previewVttUrl?: string;
 };
 
 type LivepeerPlaybackSessionCallbacks = {
@@ -314,6 +316,7 @@ function toPlaybackAccess(access: LivepeerPlaybackToken): LivepeerPlaybackAccess
         hlsUrl: access.hls_url,
         playbackId: access.playback_id,
         expiresAtMs: Number(access.expires_at_ms),
+        ...(access.preview_vtt_url ? { previewVttUrl: access.preview_vtt_url } : {}),
     };
 }
 
@@ -370,7 +373,18 @@ function parsePlaybackToken(
         || value.hls_url !== livepeerHlsUrl(playbackId)) {
         throw Object.assign(new Error('invalid_livepeer_playback_token'), { status });
     }
-    return value as LivepeerPlaybackToken;
+    const previewVttUrl = safePreviewUrl(value.preview_vtt_url);
+    return {
+        schema: expectedSchema, playback_id: playbackId, token: value.token,
+        expires_at_ms: value.expires_at_ms, hls_url: livepeerHlsUrl(playbackId),
+        ...(previewVttUrl ? { preview_vtt_url: previewVttUrl } : {}),
+    };
+}
+
+export function safePreviewUrl(value: unknown): string | undefined {
+    if (typeof value !== 'string' || value.length > 2048 || !isLivepeerPlaybackUrl(value)) return;
+    const url = new URL(value);
+    if (!url.search && !url.hash && url.pathname.length > 1) return url.href;
 }
 
 function livepeerHlsUrl(playbackId: string): string {

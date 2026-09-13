@@ -15,6 +15,9 @@ const sortedJson = (value) => JSON.stringify(value, (_key, entry) =>
 assert(profiles.legacy.hash === vectors.upload_intent.body.profile_config_sha256, "legacy profile drift");
 assert(profiles.adaptive.hash === createHash("sha256").update(sortedJson({ profiles: profiles.adaptive.profiles })).digest("hex"), "adaptive profile hash drift");
 assert(JSON.stringify(profiles.adaptive.profiles[1]) === JSON.stringify(profiles.legacy.profiles[0]), "legacy 720p settings drift");
+assert(profiles.fullHd.hash === createHash("sha256").update(sortedJson({ profiles: profiles.fullHd.profiles })).digest("hex"), "full HD profile hash drift");
+assert(JSON.stringify(profiles.fullHd.profiles.slice(0, 2)) === JSON.stringify(profiles.adaptive.profiles), "full HD changed existing renditions");
+assert(JSON.stringify(profiles.fullHd.profiles[2]) === JSON.stringify({ ...profiles.legacy.profiles[0], name: "1080p", width: 1920, height: 1080, bitrate: 5000000 }), "full HD settings drift");
 const marketSource = readFileSync(resolve(root, "contracts/nft-ticket/src/lib.rs"), "utf8");
 for (const profile of Object.values(profiles)) assert(marketSource.includes(`"${profile.hash}"`), "Market profile hash drift");
 
