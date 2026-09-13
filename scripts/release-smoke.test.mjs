@@ -844,13 +844,19 @@ for (const mode of ['closed', 'acceptance', 'drain']) test(`public ${mode} check
         sponsoredUploadQuoteReady: accepting, sponsoredUploadRelayReady: accepting,
         webhookQueueReady: enabled, publicBetaRateLimitReady: true };
     let readVersion = 'read-current';
+    const healthResponses = [];
+    const delays = [];
+    let healthRequests = 0;
     const fetchImpl = async (input, init) => {
         const url = new URL(input);
         const headers = new Headers(init.headers);
         if (url.hostname === 'read.test') return Response.json({ status: 'ok', versionId: readVersion,
             network: 'testnet', contractId: 'public-video.testnet', startBlockHeight: '100',
             ingestionEnabled: enabled, backfillEnabled: false, stage: enabled ? 'ENABLED' : 'DISABLED' });
-        if (url.pathname === '/__health') return Response.json(health);
+        if (url.pathname === '/__health') {
+            healthRequests += 1;
+            return Response.json(healthResponses.shift() || health);
+        }
         if (url.pathname === '/api/near-rpc') return Response.json({ jsonrpc: '2.0', result: {} });
         if (init.method === 'OPTIONS') {
             const allowed = headers.get('Origin') === 'https://web.test';
@@ -866,11 +872,43 @@ for (const mode of ['closed', 'acceptance', 'drain']) test(`public ${mode} check
         expectedBridgeVersion: 'bridge-current', expectedBridgeEnabled: enabled,
         expectedUploadReady: accepting, expectedPlaybackReady: enabled, expectedSponsoredUploadReady: accepting,
         expectedPublicBetaRateLimitReady: true, publicTestnetMode: mode, browserRunner: async () => ({}),
+        sleepFn: async (milliseconds) => delays.push(milliseconds),
         expectedReadModel: { url: 'https://read.test', versionId: 'read-current', contractId: 'public-video.testnet', startBlockHeight: '100', enabled } };
     await runReleaseSmoke(options);
     readVersion = 'wrong-version';
     await assert.rejects(() => runReleaseSmoke(options), /release_smoke_read_model_mismatch/);
     readVersion = 'read-current';
     health.operatorMutationEnabled = !enabled;
+    healthRequests = 0;
     await assert.rejects(() => runReleaseSmoke(options), /release_smoke_bridge_not_/);
+    assert.equal(healthRequests, 1);
+    assert.deepEqual(delays, []);
+    health.operatorMutationEnabled = enabled;
+
+    // A previous deployment can serve its own valid policy during a mode transition.
+    const oldAccepting = mode !== 'acceptance';
+    const oldHealth = { ...health, versionId: 'bridge-old', stage: 'ENABLED',
+        providerMutationEnabled: true, operatorMutationEnabled: true, newUploadReady: oldAccepting,
+        playbackReady: true, playbackV2Ready: true, webhookQueueReady: true,
+        sponsoredUploadQuoteReady: oldAccepting, sponsoredUploadRelayReady: oldAccepting };
+    healthResponses.push(oldHealth);
+    healthRequests = 0;
+    await runReleaseSmoke(options);
+    assert.equal(healthRequests, 2);
+    assert.deepEqual(delays, [1_000]);
+
+    healthResponses.push(...Array(6).fill(oldHealth));
+    healthRequests = 0;
+    delays.length = 0;
+    await assert.rejects(() => runReleaseSmoke(options),
+        /release_smoke_bridge_version_mismatch expected=bridge-current observed=bridge-old/);
+    assert.equal(healthRequests, 6);
+    assert.deepEqual(delays, [1_000, 2_000, 4_000, 8_000, 15_000]);
+
+    healthResponses.push({ ...oldHealth, versionId: '' });
+    healthRequests = 0;
+    delays.length = 0;
+    await assert.rejects(() => runReleaseSmoke(options), /release_smoke_bridge_version_invalid/);
+    assert.equal(healthRequests, 1);
+    assert.deepEqual(delays, []);
 });
