@@ -166,6 +166,12 @@ async function bridgeHealth(
             expectStatus(health.response, 200, 'bridge_health');
         }
         const healthJson = expectJson(health.response, health.body, 'bridge_health');
+        if (!VERSION_RE.test(healthJson.versionId || '')) {
+            throw new Error('release_smoke_bridge_version_invalid');
+        }
+        observedVersion = healthJson.versionId;
+        // A stale deployment must not be checked against the target deployment's policy.
+        if (expectedVersion && observedVersion !== expectedVersion) continue;
         const sponsoredUploadsReady = healthJson.sponsoredUploadQuoteReady === true
             && healthJson.sponsoredUploadRelayReady === true;
         const sponsoredUploadsClosed = healthJson.sponsoredUploadQuoteReady === false
@@ -228,11 +234,7 @@ async function bridgeHealth(
                     ? 'release_smoke_bridge_not_enabled'
                     : 'release_smoke_bridge_not_disabled');
         }
-        if (!VERSION_RE.test(healthJson.versionId || '')) {
-            throw new Error('release_smoke_bridge_version_invalid');
-        }
-        observedVersion = healthJson.versionId;
-        if (!expectedVersion || healthJson.versionId === expectedVersion) return healthJson;
+        return healthJson;
     }
     throw new Error(
         `release_smoke_bridge_version_mismatch expected=${expectedVersion} observed=${observedVersion}`,
