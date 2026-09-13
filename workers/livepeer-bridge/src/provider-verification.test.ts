@@ -253,6 +253,68 @@ it.each([true, false])('requires full HD publication outputs to agree with the r
     else await expect(result).rejects.toThrow('provider_playback_mismatch');
 });
 
+it('accepts Livepeer portrait outputs when the HLS list retains landscape profile dimensions', async () => {
+    // Observed HLS labels versus decoded TS/MP4 dimensions on the paid portrait asset.
+    const provider = readyProvider([[1080, 1920], [720, 1280], [360, 640]]);
+    provider.readAsset.mockResolvedValue({ ...await provider.readAsset(), sourceVideo: { width: 1080, height: 1920 } });
+    vi.stubGlobal('fetch', backend(playlist([[1280, 720], [1920, 1080], [640, 360]])));
+    await expect(verifyLivepeerReadyAsset(provider,
+        { ...readyInput, profileConfigSha256: profiles.fullHd.hash }, dependencies))
+        .resolves.toMatchObject({ verifiedSourceBytes: '10' });
+});
+
+it('retains exact matching when HLS already reports portrait dimensions', async () => {
+    const sizes = [[360, 640], [720, 1280], [1080, 1920]];
+    const provider = readyProvider(sizes);
+    provider.readAsset.mockResolvedValue({ ...await provider.readAsset(), sourceVideo: { width: 1080, height: 1920 } });
+    vi.stubGlobal('fetch', backend(playlist(sizes)));
+    await expect(verifyLivepeerReadyAsset(provider,
+        { ...readyInput, profileConfigSha256: profiles.fullHd.hash }, dependencies))
+        .resolves.toMatchObject({ verifiedSourceBytes: '10' });
+});
+
+it.each([
+    { name: 'landscape source', source: [1920, 1080] },
+    { name: 'square source', source: [1920, 1920] },
+    { name: 'wrong source aspect', source: [1080, 2000] },
+    { name: 'mixed MP4 axes', mp4: [[640, 360], [720, 1280], [1080, 1920]] },
+    { name: 'wrong MP4 size', mp4: [[360, 640], [700, 1280], [1080, 1920]] },
+    { name: 'missing upper MP4', mp4: [[360, 640], [720, 1280]] },
+    { name: 'upscaled MP4', mp4: [[360, 640], [720, 1280], [1440, 2560]] },
+    { name: 'mixed HLS axes', hls: [[640, 360], [720, 1280], [1920, 1080]] },
+    { name: 'missing HLS level', hls: [[640, 360], [1920, 1080]] },
+    { name: 'upscaled HLS', hls: [[640, 360], [1280, 720], [2560, 1440]] },
+])('rejects incompatible portrait evidence: $name', async ({ source = [1080, 1920],
+    mp4 = [[360, 640], [720, 1280], [1080, 1920]], hls = [[640, 360], [1280, 720], [1920, 1080]] }) => {
+    const provider = readyProvider(mp4);
+    provider.readAsset.mockResolvedValue({ ...await provider.readAsset(), sourceVideo: { width: source[0], height: source[1] } });
+    vi.stubGlobal('fetch', backend(playlist(hls)));
+    await expect(verifyLivepeerReadyAsset(provider,
+        { ...readyInput, profileConfigSha256: profiles.fullHd.hash }, dependencies))
+        .rejects.toThrow('provider_playback_mismatch');
+});
+
+it.each([undefined, null, { width: '1080', height: 1920 }])(
+    'does not infer a transpose from missing or invalid source dimensions: %j', async (sourceVideo) => {
+        const provider = readyProvider([[360, 640], [720, 1280]]);
+        const asset = await provider.readAsset();
+        Reflect.set(asset, 'sourceVideo', sourceVideo);
+        provider.readAsset.mockResolvedValue(asset);
+        vi.stubGlobal('fetch', backend());
+        await expect(verifyLivepeerReadyAsset(provider, readyInput, dependencies))
+            .rejects.toThrow('provider_playback_mismatch');
+    },
+);
+
+it.each(['0.mp4', '0/first.ts'])('retains denied-access checks for transposed output %s', async (exposed) => {
+    const provider = readyProvider([[360, 640], [720, 1280], [1080, 1920]]);
+    provider.readAsset.mockResolvedValue({ ...await provider.readAsset(), sourceVideo: { width: 1080, height: 1920 } });
+    vi.stubGlobal('fetch', backend(playlist([[640, 360], [1280, 720], [1920, 1080]]), exposed));
+    await expect(verifyLivepeerReadyAsset(provider,
+        { ...readyInput, profileConfigSha256: profiles.fullHd.hash }, dependencies))
+        .rejects.toThrow('provider_playback_exposed');
+});
+
 it.each([16, 17])('counts %i HLS URLs across multiple masters, not per master', async (total) => {
     const alias = 'https://playback.livepeer.studio/alternate/index.m3u8';
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => {

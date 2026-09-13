@@ -85,13 +85,26 @@ export async function verifyLivepeerReadyAsset(
     for (const hlsUrl of new Set([livepeerHlsUrl(input.playbackId), ...hlsUrls])) {
         verifiedHls.push(await verifyAdaptiveHls(hlsUrl, token, expectedProfiles, asset.sourceVideo, context));
     }
-    const variants = verifiedHls.flatMap((hls) => hls.variants);
+    const sourceVideo = asset.sourceVideo;
+    // Livepeer can retain landscape profile labels for portrait HLS media.
+    // Only a uniform transpose corroborated by the source and every MP4 is eligible.
+    const transposeHls = validDimensions(sourceVideo)
+        && sourceVideo.height > sourceVideo.width + DIMENSION_TOLERANCE
+        && mp4Sources.length > 0
+        && mp4Sources.every((output) => validDimensions(output) && sameAspect(sourceVideo, output))
+        && verifiedHls.every((hls) => hls.variants.every((variant) => (
+            variant.width > variant.height + DIMENSION_TOLERANCE
+            && sameAspect(sourceVideo, { width: variant.height, height: variant.width })
+        )));
+    const outputDimensions = (variant: Dimensions) => transposeHls
+        ? { width: variant.height, height: variant.width } : variant;
+    const variants = verifiedHls.flatMap((hls) => hls.variants.map(outputDimensions));
     if (mp4Sources.some((source) => !validDimensions(source)
         || typeof source.bitrate !== 'number' || !Number.isFinite(source.bitrate) || source.bitrate <= 0
         || !variants.some((variant) => sameDimensions(variant, source))
             && !(validDimensions(asset.sourceVideo) && sameDimensions(asset.sourceVideo, source)))
         || mp4Sources.length > 0 && !mp4Sources.some((source) => validDimensions(source)
-            && verifiedHls.some((hls) => sameDimensions(hls.required[hls.required.length - 1], source)))) {
+            && verifiedHls.some((hls) => sameDimensions(outputDimensions(hls.required[hls.required.length - 1]), source)))) {
         throw new Error('provider_playback_mismatch');
     }
     for (const mp4Url of mp4Urls) {
