@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { verifyAdaptiveHls, verifyLivepeerReadyAsset } from './provider-verification';
 import { mediaProfiles } from './media-provider';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
-import { normalizeLivepeerAsset } from './livepeer-provider';
+import { LivepeerTransport, normalizeLivepeerAsset } from './livepeer-provider';
 
 const masterUrl = 'https://playback.livepeer.studio/asset/hls/video/index.m3u8';
 const master = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\n360/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720\n720/index.m3u8\n';
@@ -463,4 +463,25 @@ it('bounds VTT input bytes before issuing thumbnail probes', async () => {
     const f = await longThumbnailFixture(); f.changeVtt(' '.repeat(512 * 1024));
     await expect(verifyLivepeerReadyAsset(f.provider, readyInput, f.deps)).rejects.toThrow('provider_playback_mismatch');
     expect(f.fetchMock.mock.calls.filter(([url]) => f.urls.includes(url))).toHaveLength(0);
+});
+
+it('requests detailed asset metadata without adding the asset option to playback reads', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+        const request = new URL(url);
+        if (request.pathname === '/api/playback/video') {
+            expect(request.search).toBe('');
+            return Response.json({ type: 'vod', meta: { playbackPolicy: { type: 'jwt' }, source: [] } });
+        }
+        expect(request.pathname).toBe('/api/asset/asset');
+        // Studio omits tracks from ordinary asset responses, even when the asset is ready.
+        const tracks = request.searchParams.get('details') === 'true'
+            ? [{ type: 'video', width: 1920, height: 1080 }] : undefined;
+        return Response.json({ id: 'asset', creatorId: {}, playbackPolicy: {}, status: {},
+            videoSpec: { format: 'mp4', duration: 30, tracks } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new LivepeerTransport('test-provider-key');
+    expect((await provider.readAsset('asset')).sourceVideo).toEqual({ width: 1920, height: 1080 });
+    await provider.readPlayback('video');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 });
