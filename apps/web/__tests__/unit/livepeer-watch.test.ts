@@ -15,6 +15,11 @@ const state = vi.hoisted(() => ({
     updateCheckout: vi.fn(),
     verifyUsdc: vi.fn(),
     publicationReady: true,
+    entitlement: false as boolean | undefined,
+    entitlementError: null as Error | null,
+    entitlementFetching: false,
+    refetch: vi.fn(),
+    paymentPanel: vi.fn(),
     queries: [] as Array<{ queryKey: string[]; enabled?: boolean }>,
 }));
 
@@ -25,7 +30,7 @@ vi.mock('@tanstack/react-query', () => ({
         state.queries.push(options);
         return options.queryKey[0] === 'livepeerPublication'
             ? { data: state.publicationReady ? PUBLICATION : undefined, error: null, isLoading: !state.publicationReady }
-            : { data: false, error: null, isLoading: false };
+            : { data: state.entitlement, error: state.entitlementError, isLoading: state.entitlement === undefined, isFetching: state.entitlementFetching, refetch: state.refetch };
     },
     useQueryClient: () => ({
         invalidateQueries: state.invalidateQueries,
@@ -52,7 +57,7 @@ vi.mock('@/components/ui/button', () => ({
 vi.mock('@/components/PageShell', () => ({ PageShell: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('@/components/ScreenState', () => ({ ScreenState: () => null }));
 vi.mock('@/components/LivepeerPlayer', () => ({ LivepeerPlayer: () => null }));
-vi.mock('@/components/MultiAssetPaymentPanel', () => ({ MultiAssetPaymentPanel: () => null }));
+vi.mock('@/components/MultiAssetPaymentPanel', () => ({ MultiAssetPaymentPanel: () => { state.paymentPanel(); return null; } }));
 vi.mock('next/link', () => ({ default: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('next/image', () => ({ default: () => null }));
 vi.mock('lucide-react', () => ({
@@ -102,6 +107,9 @@ describe('Livepeer ticket payment recovery', () => {
         state.featureFlags.enablePlaybackAuthorizerV2 = false;
         state.onPurchase = null;
         state.publicationReady = true;
+        state.entitlement = false;
+        state.entitlementError = null;
+        state.entitlementFetching = false;
         state.queries = [];
         state.getWallet.mockResolvedValue({});
         state.readPublication.mockResolvedValue(PUBLICATION);
@@ -111,6 +119,18 @@ describe('Livepeer ticket payment recovery', () => {
 
     afterEach(() => {
         vi.useRealTimers();
+    });
+
+    it.each(['loading', 'refetching a stale false response', 'failed with a stale false response'])('does not present payment while access is %s', problem => {
+        if (problem === 'loading') state.entitlement = undefined;
+        else if (problem === 'refetching a stale false response') state.entitlementFetching = true;
+        else state.entitlementError = new Error('rpc_failed');
+        const markup = renderToStaticMarkup(React.createElement(LivepeerWatch, { jobId: PUBLICATION.publication_id }));
+        expect(markup).not.toContain('Ticket required');
+        expect(state.paymentPanel).not.toHaveBeenCalled();
+        state.onPurchase?.();
+        expect(state.buyTicket).not.toHaveBeenCalled();
+        if (state.entitlementError) expect(state.refetch).toHaveBeenCalledOnce();
     });
 
     it('starts the entitlement query while publication data is still loading', () => {

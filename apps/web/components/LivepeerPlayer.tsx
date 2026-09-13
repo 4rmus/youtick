@@ -1,37 +1,32 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect, useSyncExternalStore } from 'react';
 import Image from 'next/image';
 import * as Player from '@livepeer/react/player';
 import { getSrc } from '@livepeer/react/external';
-import {
-    Loader2,
-    Maximize,
-    Minimize,
-    Pause,
-    PictureInPicture2,
-    Play,
-    Volume2,
-    VolumeX,
-} from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { ensureSessionGrant } from '@/lib/access-grants';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { ensureDeviceSession } from '@/lib/device-session';
 import { FEATURE_FLAGS } from '@/lib/constants';
 import { recordVideoPlaybackEvents, startVideoMeasurement } from '@/lib/video-measurements';
-import {
-    createLivepeerHlsConfig,
-    startLivepeerPlaybackSession,
-    type LivepeerPlaybackInput,
-} from '@/lib/livepeer-playback';
+import { startLivepeerPlaybackSession, type LivepeerPlaybackInput } from '@/lib/livepeer-playback';
+import { playbackMode } from '@/lib/livepeer-player-media';
+import { playerCopy, playerLanguage, subscribePlayerLanguage, type PlayerLanguage } from '@/lib/player-copy';
+import { LivepeerPlayerSurface, type PlaybackRecovery } from './LivepeerPlayerSurface';
+import { activatePlaybackDevice } from '@/lib/playback-device-activation';
 
 type LivepeerPlayerProps = LivepeerPlaybackInput & {
     title: string;
     poster?: string;
 };
 
-export function LivepeerPlayer({
+export function LivepeerPlayer(props: LivepeerPlayerProps) {
+    return <LivepeerPlayerSession key={`${props.accountId}:${props.jobId}:${props.generation}:${props.playbackId}`} {...props} />;
+}
+
+function LivepeerPlayerSession({
     title,
     poster,
     accountId,
@@ -43,13 +38,18 @@ export function LivepeerPlayer({
     const tokenRef = useRef<string | null>(null);
     const [src, setSrc] = useState<ReturnType<typeof getSrc>>(null);
     const [accessToken, setAccessToken] = useState<string | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const [previewVttUrl, setPreviewVttUrl] = useState<string | undefined>();
+    const [error, setError] = useState<Error | null>(null);
     const [needsSession, setNeedsSession] = useState(false);
     const [verifying, setVerifying] = useState(false);
+    const [activationPending, setActivationPending] = useState(false);
     const verificationRef = useRef<AbortController | null>(null);
     const [attempt, setAttempt] = useState(0);
-    // xhrSetup invokes this getter only for HLS network requests, never during render.
-    const hlsConfig = useMemo(() => createLivepeerHlsConfig(() => tokenRef.current, playbackId), [playbackId]);
+    const language = useSyncExternalStore(subscribePlayerLanguage, playerLanguage, () => 'en' as PlayerLanguage);
+    const copy = playerCopy[language];
+    const [mode, setMode] = useState<'hls' | 'native'>('hls');
+    const recovery = useRef<PlaybackRecovery | null>(null);
+    const input = useMemo(() => ({ accountId, jobId, generation, playbackId }), [accountId, jobId, generation, playbackId]);
 
     useEffect(() => {
         const finishPreparation = startVideoMeasurement('playback_preparation');
@@ -82,8 +82,12 @@ export function LivepeerPlayer({
             return wallet;
         };
 
-        void ensurePlaybackSupport()
-            .then(preparePlayback)
+        void playbackMode()
+            .then((selected) => {
+                if (disposed) throw new Error('livepeer_playback_cancelled');
+                setMode(selected);
+                return preparePlayback();
+            })
             .then((wallet) => {
                 if (disposed) throw new Error('livepeer_playback_cancelled');
                 finishPreparation('completed');
@@ -100,7 +104,9 @@ export function LivepeerPlayer({
                         const nextSrc = getSrc(access.hlsUrl);
                         if (!nextSrc) throw new Error('invalid_livepeer_playback_source');
                         tokenRef.current = access.token;
+                        setActivationPending(false);
                         setAccessToken(access.token);
+                        setPreviewVttUrl(access.previewVttUrl);
                         setSrc((current) => current ?? nextSrc);
                     },
                     onError: (nextError) => {
@@ -109,7 +115,7 @@ export function LivepeerPlayer({
                         setAccessToken(null);
                         setSrc(null);
                         setNeedsSession(isDeviceSessionError(nextError));
-                        setError(playbackErrorMessage(nextError));
+                        setError(nextError);
                     },
                 }, wallet);
             })
@@ -124,9 +130,7 @@ export function LivepeerPlayer({
                 setAccessToken(null);
                 setSrc(null);
                 setNeedsSession(isDeviceSessionError(nextError));
-                setError(playbackErrorMessage(
-                    nextError instanceof Error ? nextError : new Error('livepeer_playback_failed'),
-                ));
+                setError(nextError instanceof Error ? nextError : new Error('livepeer_playback_failed'));
             });
 
         return () => {
@@ -145,7 +149,7 @@ export function LivepeerPlayer({
     };
 
     const verifySession = async () => {
-        if (FEATURE_FLAGS.publicTestnetVideoV1) return;
+        if (FEATURE_FLAGS.publicTestnetVideoV1 && !FEATURE_FLAGS.enablePlaybackAuthorizerV2) return;
         if (verificationRef.current && !verificationRef.current.signal.aborted) return;
         const controller = new AbortController();
         verificationRef.current = controller;
@@ -153,14 +157,18 @@ export function LivepeerPlayer({
         try {
             const wallet = await getWallet();
             controller.signal.throwIfAborted();
-            await ensureDeviceSession(wallet, accountId, controller.signal);
+            if (FEATURE_FLAGS.publicTestnetVideoV1) {
+                await activatePlaybackDevice(wallet, input, controller.signal);
+            } else {
+                await ensureDeviceSession(wallet, accountId, controller.signal);
+            }
             controller.signal.throwIfAborted();
+            setActivationPending(false);
             retry();
         } catch (reason) {
             if (!controller.signal.aborted) {
-                setError(isDeviceSessionError(reason)
-                    ? playbackErrorMessage(reason as Error)
-                    : 'Verification was not completed. Choose Verify session to try again.');
+                setActivationPending(reason instanceof Error && reason.message === 'device_activation_pending');
+                setError(reason instanceof Error ? reason : new Error('device_verification_failed'));
             }
         } finally {
             if (verificationRef.current === controller) {
@@ -171,145 +179,48 @@ export function LivepeerPlayer({
     };
 
     if (!src || !accessToken) {
-        return (
-            <div className="relative flex aspect-video items-center justify-center bg-black p-6 text-center">
-                {poster && (
-                    <Image
-                        fill
-                        priority
-                        unoptimized
-                        src={poster}
-                        alt=""
-                        sizes="(min-width: 1024px) 1024px, 100vw"
-                        className="object-cover"
-                        onError={(event) => { event.currentTarget.hidden = true; }}
-                    />
-                )}
-                <div aria-hidden="true" className="absolute inset-0 bg-black/65" />
-                {error ? (
-                    <div role="alert" className="relative max-w-sm text-white">
-                        <p className="text-sm">{error}</p>
-                        <Button className="mt-4" size="sm" variant="outline" disabled={verifying} onClick={needsSession && !FEATURE_FLAGS.publicTestnetVideoV1 ? () => void verifySession() : retry}>
-                            {verifying ? 'Verifying session…' : needsSession && !FEATURE_FLAGS.publicTestnetVideoV1 ? 'Verify session' : 'Try again'}
-                        </Button>
-                    </div>
-                ) : (
-                    <div role="status" className="relative flex items-center gap-3 text-sm text-zinc-300">
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                        Confirming ticket access
-                    </div>
-                )}
-            </div>
-        );
+        const publicActivation = FEATURE_FLAGS.publicTestnetVideoV1 && FEATURE_FLAGS.enablePlaybackAuthorizerV2;
+        const canActivate = publicActivation && (error?.message === 'device_session_required' || error?.message === 'playback_denied' || activationPending);
+        const primaryVerification = needsSession && !activationPending && (canActivate || !FEATURE_FLAGS.publicTestnetVideoV1);
+        return <div lang={language} className={`relative flex items-center justify-center overflow-hidden rounded-lg bg-black p-6 text-center text-white ${canActivate ? 'min-h-64 sm:aspect-video' : 'aspect-video'}`}>
+            {poster && <Image fill priority unoptimized src={poster} alt="" sizes="(min-width: 1024px) 1024px, 100vw" className="object-cover" onError={event => { event.currentTarget.hidden = true; }} />}
+            <div aria-hidden="true" className="absolute inset-0 bg-black/75" />
+            {error ? <div role="alert" className="relative max-w-sm">
+                <p className="text-sm">{playbackErrorMessage(error, language)}</p>
+                {canActivate && <p className="mt-3 text-xs text-zinc-300">{copy.activationInfo}</p>}
+                <Button className="mt-4 min-h-11" variant="outline" disabled={verifying} onClick={primaryVerification ? () => void verifySession() : retry}>
+                    {verifying ? copy.verifying : primaryVerification ? publicActivation ? copy.activate : copy.verify : activationPending ? copy.checkAgain : copy.retry}
+                </Button>
+                {canActivate && !primaryVerification && <Button className="mt-2 min-h-11" variant="outline" disabled={verifying} onClick={() => void verifySession()}>{copy.activate}</Button>}
+            </div> : <div role="status" className="relative flex items-center gap-3 text-sm">
+                <Loader2 size={20} className="motion-safe:animate-spin" aria-hidden="true" />{copy.checking}
+            </div>}
+        </div>;
     }
 
-    return (
-        <Player.Root
-            key={`${jobId}:${generation}:${playbackId}:${attempt}`}
-            src={src}
-            playbackId={playbackId}
-            jwt={accessToken}
-            preload="metadata"
-            videoQuality="auto"
-            storage={null}
-            onPlaybackEvents={(events) => recordVideoPlaybackEvents(events)}
-        >
-            <Player.Container className="relative overflow-hidden bg-black">
-                <Player.Video
-                    className="h-full w-full"
-                    hlsConfig={hlsConfig}
-                    poster={poster ?? null}
-                    title={title}
-                />
-                <Player.LoadingIndicator className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 text-sm text-white">
-                    <Loader2 className="mr-3 h-5 w-5 animate-spin" />
-                    Loading video
-                </Player.LoadingIndicator>
-                <Player.Controls className="absolute inset-x-0 bottom-0 z-10 flex flex-col-reverse gap-1 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-3 text-white">
-                    <div className="flex items-center gap-3">
-                        <Player.PlayPauseTrigger className="h-8 w-8 rounded p-1 hover:bg-white/10">
-                            <Player.PlayingIndicator asChild matcher={false}>
-                                <Play aria-hidden="true" />
-                            </Player.PlayingIndicator>
-                            <Player.PlayingIndicator asChild>
-                                <Pause aria-hidden="true" />
-                            </Player.PlayingIndicator>
-                        </Player.PlayPauseTrigger>
-                        <Player.Time className="min-w-24 text-xs tabular-nums" />
-                        <Player.MuteTrigger className="h-8 w-8 rounded p-1 hover:bg-white/10">
-                            <Player.VolumeIndicator asChild matcher={false}>
-                                <VolumeX aria-hidden="true" />
-                            </Player.VolumeIndicator>
-                            <Player.VolumeIndicator asChild matcher={true}>
-                                <Volume2 aria-hidden="true" />
-                            </Player.VolumeIndicator>
-                        </Player.MuteTrigger>
-                        <Player.Volume className="relative hidden h-5 w-24 touch-none select-none items-center sm:flex">
-                            <Player.Track className="relative h-1 grow rounded-full bg-white/30">
-                                <Player.Range className="absolute h-full rounded-full bg-white" />
-                            </Player.Track>
-                            <Player.Thumb className="block h-3 w-3 rounded-full bg-white" />
-                        </Player.Volume>
-                        <div className="ml-auto flex items-center gap-2">
-                            <Player.PictureInPictureTrigger className="h-8 w-8 rounded p-1 hover:bg-white/10">
-                                <PictureInPicture2 aria-hidden="true" />
-                            </Player.PictureInPictureTrigger>
-                            <Player.FullscreenTrigger className="h-8 w-8 rounded p-1 hover:bg-white/10">
-                                <Player.FullscreenIndicator asChild matcher={false}>
-                                    <Maximize aria-hidden="true" />
-                                </Player.FullscreenIndicator>
-                                <Player.FullscreenIndicator asChild>
-                                    <Minimize aria-hidden="true" />
-                                </Player.FullscreenIndicator>
-                            </Player.FullscreenTrigger>
-                        </div>
-                    </div>
-                    <Player.Seek className="relative flex h-5 w-full touch-none select-none items-center">
-                        <Player.Track className="relative h-1 grow rounded-full bg-white/30">
-                            <Player.SeekBuffer className="absolute h-full rounded-full bg-white/20" />
-                            <Player.Range className="absolute h-full rounded-full bg-white" />
-                        </Player.Track>
-                        <Player.Thumb className="block h-3 w-3 rounded-full bg-white" />
-                    </Player.Seek>
-                </Player.Controls>
-                <Player.ErrorIndicator
-                    matcher="all"
-                    role="alert"
-                    className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/85 p-6 text-center text-white"
-                >
-                    <p className="text-sm">Playback was interrupted.</p>
-                    <Button className="mt-4" size="sm" variant="outline" onClick={retry}>
-                        Try again
-                    </Button>
-                </Player.ErrorIndicator>
-            </Player.Container>
-        </Player.Root>
-    );
+    return <Player.Root key={attempt}
+        src={mode === 'native' ? src.map(source => ({ ...source, type: 'video' as const })) : src}
+        playbackId={playbackId} jwt={accessToken} preload="metadata" videoQuality="auto" storage={null}
+        onPlaybackEvents={recordVideoPlaybackEvents}>
+        <LivepeerPlayerSurface input={input} title={title} poster={poster} language={language} mode={mode}
+            token={accessToken} tokenRef={tokenRef} recoveryRef={recovery} retry={retry} previewVttUrl={previewVttUrl} />
+    </Player.Root>;
 }
 
 function isDeviceSessionError(error: unknown): boolean {
     return error instanceof Error && error.message.startsWith('device_session_');
 }
 
-function playbackErrorMessage(error: Error): string {
-    if (error.message === 'device_session_storage_unavailable' || error.message === 'device_session_crypto_unavailable') {
-        return 'Secure session storage is unavailable. Enable site storage and use a supported browser.';
-    }
-    if (isDeviceSessionError(error)) return FEATURE_FLAGS.publicTestnetVideoV1
-        ? 'This device has no active viewing session. Your next completed purchase or upload activates it for 30 days.'
-        : 'Verify your session to watch. This is separate from purchasing a ticket.';
-    if (error.message === 'livepeer_playback_unsupported') {
-        return 'This browser cannot play this video.';
-    }
-    if (['livepeer_play_grant_missing', 'livepeer_play_grant_pending', 'livepeer_play_grant_mismatch', 'playback_denied']
-        .includes(error.message)) {
-        return 'Playback access could not be confirmed.';
-    }
-    return 'Playback is temporarily unavailable. Please try again.';
-}
-
-async function ensurePlaybackSupport(): Promise<void> {
-    if (document.createElement('video').canPlayType('application/vnd.apple.mpegurl')) return;
-    const { default: Hls } = await import('hls.js');
-    if (!Hls.isSupported()) throw new Error('livepeer_playback_unsupported');
+function playbackErrorMessage(error: Error, language: PlayerLanguage): string {
+    const copy = playerCopy[language];
+    if (error.message === 'device_activation_pending') return copy.activationPending;
+    if (error.message === 'device_activation_account_changed') return copy.accountChanged;
+    if (['device_activation_disabled', 'device_activation_unavailable'].includes(error.message)) return copy.activationUnavailable;
+    if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(error.message)) return copy.storage;
+    if (isDeviceSessionError(error)) return FEATURE_FLAGS.publicTestnetVideoV1 ? copy.session : copy.legacySession;
+    if (error.message === 'livepeer_playback_unsupported') return copy.unsupported;
+    if (error.message === 'device_verification_failed') return copy.verificationFailed;
+    if (['livepeer_play_grant_missing', 'livepeer_play_grant_pending', 'livepeer_play_grant_mismatch', 'playback_denied'].includes(error.message)) return copy.denied;
+    if (error instanceof TypeError) return copy.network;
+    return copy.unavailable;
 }

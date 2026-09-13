@@ -12,6 +12,7 @@ import { ScreenState } from '@/components/ScreenState';
 import { LivepeerPlayer } from '@/components/LivepeerPlayer';
 import { MultiAssetPaymentPanel } from '@/components/MultiAssetPaymentPanel';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import { playerCopy, playerLanguage, subscribePlayerLanguage, type PlayerLanguage } from '@/lib/player-copy';
 import {
     buyLivepeerTicket,
     formatUsdc,
@@ -31,6 +32,8 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
     const queryClient = useQueryClient();
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
+    const language = React.useSyncExternalStore(subscribePlayerLanguage, playerLanguage, () => 'en' as PlayerLanguage);
+    const copy = playerCopy[language];
     const publicationQuery = useQuery({
         queryKey: ['livepeerPublication', jobId],
         queryFn: () => readLivepeerPublication(jobId),
@@ -49,7 +52,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
 
     const purchase = async () => {
         const publication = publicationQuery.data;
-        if (!accountId || !publication) return;
+        if (!accountId || !publication || entitlementQuery.error || entitlementQuery.isFetching || entitlementQuery.data !== false) return;
         setBusy(true);
         setError(null);
         let convertedCheckout = false;
@@ -192,6 +195,13 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                         title={publication.title}
                         poster={coverUrl ?? undefined}
                     />
+                </div>
+            ) : !isReady || (accountId && (entitlementQuery.error || entitlementQuery.isFetching || entitlementQuery.data !== false)) ? (
+                <div lang={language} className="flex min-h-48 flex-col items-center justify-center gap-4 rounded-2xl border border-zinc-800 bg-black p-6 text-center">
+                    {entitlementQuery.error ? <>
+                        <p role="alert" className="text-sm text-zinc-300">{copy.accessError}</p>
+                        <Button disabled={entitlementQuery.isFetching} onClick={() => void entitlementQuery.refetch()}>{copy.checkAgain}</Button>
+                    </> : <p role="status" className="flex items-center gap-3 text-sm"><Loader2 className="h-5 w-5 motion-safe:animate-spin" aria-hidden="true" />{copy.checking}</p>}
                 </div>
             ) : (
                 <div className="mx-auto max-w-3xl space-y-4">

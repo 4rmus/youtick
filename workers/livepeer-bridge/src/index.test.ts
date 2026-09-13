@@ -792,6 +792,15 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const backend = publicUploadBackend();
         vi.stubGlobal('fetch', backend);
         await expect(requirePublicUploadPolicy(env)).resolves.toBe(profiles.legacy.hash);
+        for (const supported of [[profiles.adaptive, profiles.legacy], [profiles.fullHd, profiles.adaptive, profiles.legacy]]) {
+            vi.stubGlobal('fetch', publicUploadBackend({}, { ...publicUploadPolicy(), profiles: supported.map(profile => ({ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: profile.hash })) }));
+            await expect(requirePublicUploadPolicy(env)).resolves.toBe(supported[0].hash);
+        }
+        for (const invalid of [[profiles.fullHd, profiles.legacy], [profiles.adaptive, profiles.fullHd, profiles.legacy]]) {
+            vi.stubGlobal('fetch', publicUploadBackend({}, { ...publicUploadPolicy(), profiles: invalid.map(profile => ({ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: profile.hash })) }));
+            await expect(requirePublicUploadPolicy(env)).rejects.toThrow('deployment_binding_mismatch');
+        }
+        vi.stubGlobal('fetch', backend);
         await expect(requirePublicUploadPolicy({ ...env, LIVEPEER_NEW_UPLOADS_ENABLED: 'false',
             LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'false', LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'false' }))
             .resolves.toBe(profiles.legacy.hash);
@@ -809,7 +818,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(backend).not.toHaveBeenCalled();
     });
 
-    it.each([profiles.legacy.hash, profiles.adaptive.hash])('admits a public creator with stored profile %s and preserves the paid deadline', async (profileHash) => {
+    it.each([profiles.legacy.hash, profiles.adaptive.hash, profiles.fullHd.hash])('admits a public creator with stored profile %s and preserves the paid deadline', async (profileHash) => {
         const now = Date.now();
         vi.spyOn(Date, 'now').mockReturnValue(now);
         const env = createEnv({ VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_CREATOR_ALLOWLIST: '', LIVEPEER_OPERATOR_JOB_ID: '' });
@@ -827,7 +836,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(first.status, (await first.clone().json() as { error?: string }).error).toBe(201);
         expect(state.values.get('job:v1')).toMatchObject({ absoluteDeadlineAtMs: now - 1000 + 86_400_000 });
         const creation = backend.mock.calls.find(([url]) => String(url).endsWith('/asset/request-upload'));
-        expect(JSON.parse(String(creation?.[1]?.body)).profiles).toEqual(profileHash === profiles.adaptive.hash ? profiles.adaptive.profiles : profiles.legacy.profiles);
+        expect(JSON.parse(String(creation?.[1]?.body)).profiles).toEqual(Object.values(profiles).find(profile => profile.hash === profileHash)!.profiles);
         env.LIVEPEER_NEW_UPLOADS_ENABLED = 'false';
         env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED = 'false';
         expect((await control.fetch(await controlRequest({ body: { expected_source_bytes: '5000000000', profile_config_sha256: profileHash } }))).status).toBe(200);

@@ -93,6 +93,17 @@ describe('Livepeer browser playback', () => {
 
     afterEach(() => vi.useRealTimers());
 
+    it.each([undefined, 'https://evil.test/preview.vtt', 'https://livepeercdn.com/preview.vtt?jwt=secret', 'https://livepeercdn.com/preview.vtt'])(
+        'keeps optional preview metadata from affecting valid playback: %s', async previewUrl => {
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ...tokenResponse(), preview_vtt_url: previewUrl })));
+            const access = vi.fn();
+            const session = await startLivepeerPlaybackSession(INPUT, { onAccess: access });
+            expect(access).toHaveBeenCalledOnce();
+            expect(access.mock.calls[0][0].previewVttUrl).toBe(previewUrl === 'https://livepeercdn.com/preview.vtt' ? previewUrl : undefined);
+            session.destroy();
+        },
+    );
+
     it('enables measured timeline repair only for the diagnosed playback ID and keeps JWT headers', () => {
         const known = createLivepeerHlsConfig(() => 'current.jwt.signature', 'ef819lp2r3anecgq');
         expect(known.pLoader).toBeTypeOf('function');

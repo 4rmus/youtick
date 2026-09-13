@@ -1,6 +1,7 @@
 import { KeyPair, KeyPairSigner, actions, buildDelegateAction, encodeSignedDelegate } from 'near-api-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import handler, { playbackAuthorizationCacheRecordCount, type Env } from './index';
+import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 
 const ORIGIN = 'https://youtick.net';
 const RPC_URL = 'https://rpc.testnet.near.org';
@@ -166,6 +167,7 @@ function playbackRpc(input: {
     availability?: string;
     entitlement?: boolean;
     playbackId?: string;
+    profileHash?: string;
     betaState?: unknown;
     publicUploadPolicy?: unknown;
 }) {
@@ -196,7 +198,7 @@ function playbackRpc(input: {
                 generation: 1,
                 playback_id: input.playbackId ?? PLAYBACK_ID,
                 profile_id: 'paid-media-livepeer-v1',
-                profile_config_sha256: PROFILE_HASH,
+                profile_config_sha256: input.profileHash ?? PROFILE_HASH,
                 availability: input.availability ?? 'ACTIVE',
             });
         }
@@ -266,6 +268,46 @@ function decodePart(value: string): Record<string, unknown> {
 
 describe('stateless playback v2', () => {
     beforeEach(() => vi.restoreAllMocks());
+
+    it('includes a safe preview from the existing provider lookup and preserves it on a cache hit', async () => {
+        const { env } = await createEnv();
+        const signed = await playbackRequest();
+        const dependencies = playbackDependencies(signed);
+        const url = 'https://livepeercdn.com/asset/fixture/thumbnails.vtt';
+        dependencies.provider.mockImplementation(async () => Response.json({ type: 'vod', meta: {
+            playbackPolicy: { type: 'jwt' }, source: [{ type: 'text/vtt', url }],
+        } }));
+        vi.stubGlobal('fetch', dependencies.fetcher);
+        expect(await (await handler.fetch(signed.request, env)).json()).toMatchObject({ preview_vtt_url: url });
+        expect(await (await handler.fetch(await signed.renew(), env)).json()).toMatchObject({ preview_vtt_url: url });
+        expect(dependencies.provider).toHaveBeenCalledOnce();
+    });
+
+    it.each(['https://evil.test/map.vtt', 'https://livepeercdn.com/map.vtt?jwt=private', 'https://user@livepeercdn.com/map.vtt', 'https://livepeercdn.com/map.vtt#fragment'])(
+        'omits an unsafe optional preview without denying playback: %s', async url => {
+            const { env } = await createEnv();
+            const signed = await playbackRequest();
+            const dependencies = playbackDependencies(signed);
+            dependencies.provider.mockImplementation(async () => Response.json({ type: 'vod', meta: {
+                playbackPolicy: { type: 'jwt' }, source: [{ type: 'text/vtt', url }],
+            } }));
+            vi.stubGlobal('fetch', dependencies.fetcher);
+            const response = await handler.fetch(signed.request, env);
+            expect(response.status).toBe(200);
+            expect(await response.json()).not.toHaveProperty('preview_vtt_url');
+        },
+    );
+
+    it('does not disclose preview metadata before entitlement verification', async () => {
+        const { env } = await createEnv();
+        const signed = await playbackRequest();
+        const dependencies = playbackDependencies({ ...signed, entitlement: false });
+        vi.stubGlobal('fetch', dependencies.fetcher);
+        const response = await handler.fetch(signed.request, env);
+        expect(response.status).toBe(403);
+        expect(await response.json()).not.toHaveProperty('preview_vtt_url');
+        expect(dependencies.provider).not.toHaveBeenCalled();
+    });
 
     it('accepts a v2 combined-connection certificate and verifies the final selected account', async () => {
         const { env } = await createEnv();
@@ -759,6 +801,7 @@ async function marketDeviceRequest(delegated = false) {
 
 function marketDeviceDependencies(signed: Awaited<ReturnType<typeof marketDeviceRequest>>, options?: {
     record?: unknown; accessKeyExists?: boolean; accessKeyPermission?: unknown; entitlement?: boolean;
+    profileHash?: string; publicUploadPolicy?: unknown;
 }) {
     const dependencies = playbackDependencies({ ...signed, ...options });
     const fetcher = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
@@ -773,6 +816,34 @@ function marketDeviceDependencies(signed: Awaited<ReturnType<typeof marketDevice
 }
 
 describe('Market-backed 30-day playback devices', () => {
+    it('keeps a published full HD video playable after new uploads return to the 720p policy', async () => {
+        const signed = await marketDeviceRequest();
+        const { env } = await createEnv();
+        env.VIDEO_ENVIRONMENT = 'public-testnet';
+        env.PUBLIC_BETA_RATE_LIMITER = { limit: vi.fn().mockResolvedValue({ success: true }) } as RateLimit;
+        const dependencies = marketDeviceDependencies(signed, {
+            profileHash: profiles.fullHd.hash,
+            publicUploadPolicy: {
+                version: 1, environment: 'public-testnet', network: 'testnet', market_contract_id: MARKET_ID,
+                max_source_bytes: '5000000000', job_ttl_ms: '86400000', signed_quote_required: true,
+                profiles: [profiles.adaptive, profiles.legacy].map(profile => ({ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: profile.hash })),
+            },
+        });
+        vi.stubGlobal('fetch', dependencies.fetcher);
+        const response = await handler.fetch(await signed.renew(), env);
+        expect(response.status, (await response.clone().json() as { error?: string }).error).toBe(200);
+    });
+    it('accepts a newly activated direct device after an earlier missing-record denial without restarting the worker', async () => {
+        const signed = await marketDeviceRequest();
+        const { env, idFromName } = await createEnv();
+        const options: { record: unknown } = { record: null };
+        vi.stubGlobal('fetch', marketDeviceDependencies(signed, options).fetcher);
+        expect((await handler.fetch(await signed.renew(), env)).status).toBe(403);
+        options.record = signed.record;
+        expect((await handler.fetch(await signed.renew(), env)).status).toBe(200);
+        expect(idFromName).not.toHaveBeenCalled();
+    });
+
     it.each([false, true])('uses final records on day 29 without wallet signing or transaction history (delegated=%s)', async (delegated) => {
         const signed = await marketDeviceRequest(delegated);
         vi.spyOn(Date, 'now').mockReturnValue(Number(signed.record.authorized_at_ms) + 29 * 86400000);

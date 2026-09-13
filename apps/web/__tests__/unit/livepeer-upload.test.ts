@@ -267,6 +267,17 @@ describe('Livepeer browser upload', () => {
         expect(await readLivepeerUploadDraft('other.testnet', file)).toBeNull();
     });
 
+    it('resumes a paid full HD job after the policy returns to 720p without a new quote or asset', async () => {
+        const { job, wallet, fetchMock, input } = await publicResumeFixture();
+        job.profile_config_sha256 = profiles.fullHd.hash;
+        near.viewContract.mockImplementation(async (provider, contract, method) => method === 'get_media_job' ? job : policyView(provider, contract, method));
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).resolves.toMatchObject({ created: false, tus_endpoint: INTENT.tus_endpoint });
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).body.profile_config_sha256).toBe(profiles.fullHd.hash);
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce(); // Existing replace_upload_key fixture rejects any payment action.
+        expect(job.upload_key_expires_at_ms).toBe(String(job.created_at_ms + 86_400_000));
+    });
+
     it('blocks wrong files, accounts, expiry and another recovery tab before wallet approval', async () => {
         const { job, wallet, input, fetchMock } = await publicResumeFixture();
         await expect(prepareLivepeerUploadResume(wallet as never, { ...input,
@@ -319,8 +330,9 @@ describe('Livepeer browser upload', () => {
         expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
     });
 
-    it.each([false, true])('records a public payment attempt only at relay submission; definitive rejection=%s', async (rejected) => {
+    it.each([[false, false], [true, false], [false, true], [true, true]])('records a public payment only at relay submission; rejected=%s fullHd=%s', async (rejected, fullHd) => {
         featureFlags.publicTestnetVideoV1 = true;
+        near.viewContract.mockImplementation((provider, contract, method) => { const value=policyView(provider,contract,method); return value && fullHd ? {...value, profiles:[profiles.fullHd,profiles.adaptive,profiles.legacy].map(profile=>({profile_id:'paid-media-livepeer-v1',profile_config_sha256:profile.hash}))}:value; });
         featureFlags.enablePlaybackAuthorizerV2 = true;
         featureFlags.enableSponsoredLivepeerUploads = true;
         vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
@@ -336,7 +348,7 @@ describe('Livepeer browser upload', () => {
         const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
             if (url.endsWith('/v1/sponsored-upload-quotes')) {
                 const request = JSON.parse(String(init.body)).request;
-                expect(request.profile_config_sha256).toBe(profiles.adaptive.hash);
+                expect(request.profile_config_sha256).toBe(fullHd ? profiles.fullHd.hash : profiles.adaptive.hash);
                 return sponsoredQuoteResponse(request);
             }
             expect((await readLivepeerUploadDraft('creator.testnet', file))?.paymentAttempted).toBe(true);

@@ -1606,7 +1606,9 @@ function storedProfileHash(job: Record<string, unknown> | null): string {
 async function currentPublicProfile(): Promise<string> {
     const policy = await viewContract<Record<string, unknown>>(getProvider(), NEAR_CONFIG.marketContractId, 'get_public_upload_policy');
     const entries = policy?.profiles;
-    const expected = Array.isArray(entries) && entries.length === 1 ? [profiles.legacy] : [profiles.adaptive, profiles.legacy];
+    const expected = Array.isArray(entries) && entries.length === 1 ? [profiles.legacy]
+        : Array.isArray(entries) && entries.length === 2 ? [profiles.adaptive, profiles.legacy]
+            : [profiles.fullHd, profiles.adaptive, profiles.legacy];
     if (policy?.environment !== 'public-testnet' || policy.network !== NEAR_NETWORK
         || policy.market_contract_id !== NEAR_CONFIG.marketContractId || policy.version !== 1
         || policy.max_source_bytes !== '5000000000' || policy.job_ttl_ms !== '86400000'

@@ -74,8 +74,12 @@ export function onDeviceSessionCleared(listener: () => void): () => void {
     return () => { listeners.delete(listener); };
 }
 
+export function getDeviceSessionRevision(): number | undefined {
+    return observedRevision;
+}
+
 // IndexedDB structured-clones the non-extractable key; no secret string is serialized.
-async function openStore(): Promise<IDBDatabase> {
+export async function openStore(): Promise<IDBDatabase> {
     if (typeof indexedDB === 'undefined') throw new Error('device_session_storage_unavailable');
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(scope(), 1);
@@ -235,8 +239,8 @@ export async function getDeviceSession(accountId: string): Promise<DeviceSession
         );
     } catch { throw new Error('playback_authorization_unavailable'); }
     if (expectedGeneration !== generation) throw new Error('device_session_cancelled');
-    // Pending/expired devices keep their local key. Only a successful new payment
-    // can authorize it; a lost wallet response can be reconciled after reload.
+    // Pending/expired devices keep their key for payment or explicit activation;
+    // a lost wallet response can be reconciled after reload.
     if (!device || device.session_public_key !== session.certificate.session_public_key
         || device.certificate_sha256 !== await sha256Hex(canonicalDeviceCertificate(session.certificate))
         || typeof device.authorized_at_ms !== 'string' || !/^[0-9]{1,16}$/.test(device.authorized_at_ms)

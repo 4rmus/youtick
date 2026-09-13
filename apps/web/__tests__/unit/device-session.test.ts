@@ -38,6 +38,7 @@ function installStore() {
                             },
                             put(value: unknown, key: string) { jobs.push(() => data.set(key, structuredClone(value))); },
                             clear() { jobs.push(() => data.clear()); },
+                            delete(key: string) { jobs.push(() => data.delete(key)); },
                         };
                         tx.objectStore = () => store;
                         tx.abort = () => { aborted = true; };
@@ -74,6 +75,76 @@ describe('device session', () => {
         config.APP_CONFIG.publicAppUrl = 'https://app.youtick.net';
         databases = installStore();
         chain.view.mockReset().mockResolvedValue(null);
+    });
+
+    it('stores only scoped watch positions and clears finished videos', async () => {
+        const api = await import('@/lib/device-session');
+        await api.preparePlaybackDevice('buyer.testnet');
+        const { openWatchProgress } = await import('@/lib/watch-progress');
+        const input = { accountId: 'buyer.testnet', jobId: 'job-1', generation: 1, playbackId: 'playback-1' };
+        const controller = new AbortController();
+        const writer = (await openWatchProgress(input, controller.signal))!;
+        await writer.save(20, 120, true);
+        const restored = (await openWatchProgress(input, controller.signal))!;
+        expect(restored.position).toEqual({ position: 20, duration: 120, updatedAt: expect.any(Number) });
+        const anotherVideo = (await openWatchProgress({ ...input, generation: 2 }, controller.signal))!;
+        expect(anotherVideo.position).toBeNull();
+        expect(await openWatchProgress({ ...input, accountId: 'other.testnet' }, controller.signal)).toBeNull();
+        await writer.save(119, 120, true);
+        const finished = (await openWatchProgress(input, controller.signal))!;
+        expect(finished.position).toBeNull();
+        for (const record of [writer, restored, anotherVideo, finished]) record.destroy();
+    });
+
+    it.each(['write then logout', 'logout then late write'])('never restores watch history after %s without broadcast delivery', async order => {
+        const api = await import('@/lib/device-session');
+        await api.preparePlaybackDevice('buyer.testnet');
+        const { openWatchProgress } = await import('@/lib/watch-progress');
+        const input = { accountId: 'buyer.testnet', jobId: 'job-1', generation: 1, playbackId: 'playback-1' };
+        const writer = (await openWatchProgress(input, new AbortController().signal))!;
+        if (order === 'write then logout') await writer.save(20, 120, true);
+        vi.resetModules(); // Another tab has the same IDB, but no in-memory invalidation listener.
+        const otherTab = await import('@/lib/device-session');
+        await otherTab.clearDeviceSession();
+        if (order === 'logout then late write') await writer.save(20, 120, true);
+        expect([...databases.values()][0].keys().toArray()).toEqual(['revision']);
+        await otherTab.preparePlaybackDevice('buyer.testnet');
+        await writer.save(30, 120, true);
+        expect([...databases.values()][0].keys().toArray().some(key => key.startsWith('watch-progress:'))).toBe(false);
+        writer.destroy();
+    });
+
+    it('cancels a pending watch recorder and tolerates unavailable storage', async () => {
+        const api = await import('@/lib/device-session');
+        await api.preparePlaybackDevice('buyer.testnet');
+        const { openWatchProgress } = await import('@/lib/watch-progress');
+        const input = { accountId: 'buyer.testnet', jobId: 'job-1', generation: 1, playbackId: 'playback-1' };
+        const controller = new AbortController();
+        const pending = openWatchProgress(input, controller.signal);
+        controller.abort();
+        expect(await pending).toBeNull();
+        vi.stubGlobal('indexedDB', undefined);
+        expect(await openWatchProgress(input, new AbortController().signal)).toBeNull();
+    });
+
+    it('does not let a delayed recorder adopt a replacement session before a logout broadcast arrives', async () => {
+        const api = await import('@/lib/device-session');
+        await api.preparePlaybackDevice('buyer.testnet');
+        const realOpen = api.openStore;
+        let release!: () => void;
+        vi.spyOn(api, 'openStore').mockImplementationOnce(async () => {
+            await new Promise<void>(resolve => { release = resolve; });
+            return realOpen();
+        });
+        const { openWatchProgress } = await import('@/lib/watch-progress');
+        const pending = openWatchProgress({ accountId: 'buyer.testnet', jobId: 'job-1', generation: 1, playbackId: 'playback-1' }, new AbortController().signal);
+        vi.resetModules();
+        const otherTab = await import('@/lib/device-session');
+        await otherTab.clearDeviceSession();
+        await otherTab.preparePlaybackDevice('buyer.testnet');
+        release();
+        expect(await pending).toBeNull();
+        vi.restoreAllMocks();
     });
 
     it('reuses one non-extractable eight-hour key after reload and coalesces parallel preparation', async () => {

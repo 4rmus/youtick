@@ -45,6 +45,9 @@ const PUBLIC_UPLOAD_MAX_SOURCE_BYTES: u128 = 5_000_000_000;
 const LEGACY_UPLOAD_PROFILE_HASH: &str =
     "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77";
 
+const FULL_HD_UPLOAD_PROFILE_HASH: &str =
+    "a6751ecd819f080430d3bea4cab0d7b906cd729993c925ae16c676433fe65752";
+
 const PUBLIC_UPLOAD_PROFILE_HASH: &str =
     "28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2";
 
@@ -1195,19 +1198,7 @@ impl Contract {
         let message: TransferMessage =
             near_sdk::serde_json::from_str(&msg).expect("Invalid purchase message");
         if let Some(session) = &message.playback_session {
-            assert_sha256("certificate_sha256", &session.certificate_sha256);
-            let key: near_sdk::PublicKey = session
-                .session_public_key
-                .parse()
-                .expect("Invalid playback device key");
-            require!(
-                key.curve_type() == near_sdk::CurveType::ED25519,
-                "Invalid playback device key"
-            );
-            require!(
-                session.authorization_duration_ms.0 == PLAYBACK_DEVICE_LIFETIME_MS,
-                "Invalid playback device duration"
-            );
+            assert_playback_session(session);
         }
 
         if message.action.as_deref() == Some("create_paid_job") {
@@ -1578,6 +1569,56 @@ impl Contract {
         })
     }
 
+    #[payable]
+    pub fn activate_playback_device(
+        &mut self,
+        publication_id: String,
+        playback_session: PlaybackSessionAuthorization,
+    ) {
+        require!(
+            env::attached_deposit() == NearToken::from_yoctonear(1),
+            "Attach exactly 1 yoctoNEAR"
+        );
+        let account_id = env::signer_account_id();
+        require!(
+            env::predecessor_account_id() == account_id,
+            "Direct account transaction required"
+        );
+        require!(
+            env::signer_account_pk().curve_type() == near_sdk::CurveType::ED25519,
+            "Invalid authorizing key"
+        );
+        require!(!self.bridge_frozen, "Livepeer bridge is frozen");
+        assert_playback_session(&playback_session);
+        let publication = self
+            .publications
+            .get(&publication_id)
+            .expect("Publication not found");
+        require!(
+            publication.availability != PublicationAvailability::Takedown,
+            "Publication unavailable"
+        );
+        require!(
+            self.has_entitlement(account_id.clone(), publication_id),
+            "Viewing entitlement required"
+        );
+        let signer_key = String::from(&env::signer_account_pk());
+        if self
+            .get_playback_device(
+                account_id.clone(),
+                playback_session.session_public_key.clone(),
+            )
+            .is_some_and(|device| {
+                device.certificate_sha256 == playback_session.certificate_sha256
+                    && device.authorizing_public_key.as_ref() == Some(&signer_key)
+            })
+        {
+            return;
+        }
+        self.authorize_playback_device(&account_id, Some(playback_session));
+        self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+    }
+
     fn authorize_playback_device(
         &mut self,
         account_id: &AccountId,
@@ -1685,6 +1726,55 @@ impl Contract {
         read_raw(PUBLIC_UPLOAD_POLICY_KEY)
     }
 
+    pub fn set_public_upload_full_hd(&mut self, enabled: bool) -> PublicUploadPolicy {
+        self.assert_admin();
+        require!(
+            self.network_id() == "testnet",
+            "Public upload is testnet only"
+        );
+        require!(
+            self.bridge_frozen && self.new_purchases_paused(),
+            "Profile changes require paused purchases and a frozen bridge"
+        );
+        let mut policy = self
+            .get_public_upload_policy()
+            .expect("Public upload policy required");
+        require!(
+            policy.version == 1
+                && policy.environment == "public-testnet"
+                && policy.network == "testnet"
+                && policy.market_contract_id == env::current_account_id()
+                && policy.max_source_bytes.0 == PUBLIC_UPLOAD_MAX_SOURCE_BYTES
+                && policy.job_ttl_ms.0 == PUBLIC_TESTNET_BETA_JOB_TTL_MS
+                && policy.signed_quote_required,
+            "Public upload policy mismatch"
+        );
+        let standard: Vec<PublicUploadProfile> =
+            [PUBLIC_UPLOAD_PROFILE_HASH, LEGACY_UPLOAD_PROFILE_HASH]
+                .iter()
+                .map(|hash| PublicUploadProfile {
+                    profile_id: PROFILE.to_string(),
+                    profile_config_sha256: hash.to_string(),
+                })
+                .collect();
+        let mut full_hd = vec![PublicUploadProfile {
+            profile_id: PROFILE.to_string(),
+            profile_config_sha256: FULL_HD_UPLOAD_PROFILE_HASH.to_string(),
+        }];
+        full_hd.extend(standard.clone());
+        require!(
+            policy.profiles == standard || policy.profiles == full_hd,
+            "Unsupported public upload profiles"
+        );
+        let selected = if enabled { full_hd } else { standard };
+        if policy.profiles != selected {
+            policy.profiles = selected;
+            write_raw(PUBLIC_UPLOAD_POLICY_KEY, &policy);
+            self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        }
+        policy
+    }
+
     pub fn get_public_testnet_beta_job(&self, job_id: String) -> Option<PublicTestnetBetaJob> {
         read_raw(&public_testnet_beta_job_key(&job_id))
     }
@@ -1725,8 +1815,12 @@ impl Contract {
         require!(
             job.expected_source_bytes.0 <= PUBLIC_UPLOAD_MAX_SOURCE_BYTES
                 && job.profile_id == PROFILE
-                && [PUBLIC_UPLOAD_PROFILE_HASH, LEGACY_UPLOAD_PROFILE_HASH]
-                    .contains(&job.profile_config_sha256.as_str()),
+                && [
+                    FULL_HD_UPLOAD_PROFILE_HASH,
+                    PUBLIC_UPLOAD_PROFILE_HASH,
+                    LEGACY_UPLOAD_PROFILE_HASH
+                ]
+                .contains(&job.profile_config_sha256.as_str()),
             "Public upload policy mismatch"
         );
         job.created_at_ms
@@ -2216,6 +2310,22 @@ fn read_raw<T: BorshDeserialize>(key: &[u8]) -> Option<T> {
     env::storage_read(key).map(|value| T::try_from_slice(&value).expect("Invalid raw state"))
 }
 
+fn assert_playback_session(session: &PlaybackSessionAuthorization) {
+    assert_sha256("certificate_sha256", &session.certificate_sha256);
+    let key: near_sdk::PublicKey = session
+        .session_public_key
+        .parse()
+        .expect("Invalid playback device key");
+    require!(
+        key.curve_type() == near_sdk::CurveType::ED25519,
+        "Invalid playback device key"
+    );
+    require!(
+        session.authorization_duration_ms.0 == PLAYBACK_DEVICE_LIFETIME_MS,
+        "Invalid playback device duration"
+    );
+}
+
 fn playback_devices_key(account_id: &AccountId) -> Vec<u8> {
     [PLAYBACK_DEVICE_PREFIX, account_id.as_bytes()].concat()
 }
@@ -2701,6 +2811,29 @@ mod tests {
             contract.require_public_upload_job(&legacy_job),
             contract.require_public_upload_job(&job)
         );
+        let mut full_hd_job = job.clone();
+        full_hd_job.profile_config_sha256 = FULL_HD_UPLOAD_PROFILE_HASH.to_string();
+        let deadline = contract.require_public_upload_job(&full_hd_job);
+        let mut full_hd_request = first.clone();
+        full_hd_request.creator_id = account("fullhd.testnet");
+        full_hd_request.job_id = "public-job-fullhd".to_string();
+        full_hd_request.profile_config_sha256 = FULL_HD_UPLOAD_PROFILE_HASH.to_string();
+        assert!(
+            std::panic::catch_unwind(|| contract.admit_public_upload(&full_hd_request)).is_err()
+        );
+        testing_env!(context("admin.testnet").build());
+        contract.bridge_frozen = true;
+        env::storage_write(NEW_PURCHASES_PAUSED_KEY, &[1]);
+        contract.set_public_upload_full_hd(true);
+        contract.admit_public_upload(&full_hd_request);
+        contract.set_public_upload_full_hd(false);
+        assert_eq!(contract.require_public_upload_job(&full_hd_job), deadline);
+        assert!(
+            std::panic::catch_unwind(|| contract.admit_public_upload(&full_hd_request)).is_err()
+        );
+        contract.bridge_frozen = false;
+        env::storage_remove(NEW_PURCHASES_PAUSED_KEY);
+        testing_env!(context(TESTNET_USDC).build());
         let mut legacy_request = first.clone();
         legacy_request.profile_config_sha256 = LEGACY_UPLOAD_PROFILE_HASH.to_string();
         assert!(

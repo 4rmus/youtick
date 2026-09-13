@@ -20,6 +20,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 it('uses the exact recorded profile and rejects unknown hashes', () => {
     expect(mediaProfiles(profiles.legacy.hash).map((profile) => profile.height)).toEqual([720]);
     expect(mediaProfiles(profiles.adaptive.hash).map((profile) => profile.height)).toEqual([360, 720]);
+    expect(mediaProfiles(profiles.fullHd.hash).map((profile) => profile.height)).toEqual([360, 720, 1080]);
     expect(() => mediaProfiles('a'.repeat(64))).toThrow('unsupported_profile');
 });
 
@@ -33,6 +34,28 @@ it('verifies both authorized renditions and denied child playlists, map and firs
                 && !new Headers(init.headers).has('Livepeer-Jwt'))).toBe(true);
         }
     }
+});
+
+it.each([
+    { source: [1920, 1080], sizes: [[640, 360], [1280, 720], [1920, 1080]], pass: true },
+    { source: [1080, 1920], sizes: [[360, 640], [720, 1280], [1080, 1920]], pass: true },
+    { source: [1600, 1600], sizes: [[360, 360], [720, 720], [1080, 1080]], pass: true },
+    { source: [1402, 1080], sizes: [[468, 360], [934, 720], [1402, 1080]], pass: true },
+    { source: [1280, 720], sizes: [[640, 360], [1280, 720]], pass: true },
+    { source: [854, 480], sizes: [[640, 360], [854, 480]], pass: true },
+    { source: [426, 240], sizes: [[426, 240]], pass: true },
+    { source: [1280, 720], sizes: [[640, 360], [1280, 720], [1920, 1080]], pass: false },
+    { source: [1920, 1080], sizes: [[640, 360], [1280, 720]], pass: false },
+])('verifies full HD against actual source capacity without changing old profiles: %j', async ({ source, sizes, pass }) => {
+    vi.stubGlobal('fetch', backend(playlist(sizes)));
+    const result = verifyAdaptiveHls(masterUrl, 'authorized', profiles.fullHd.profiles, { width: source[0], height: source[1] });
+    if (pass) await expect(result).resolves.toBeDefined();
+    else await expect(result).rejects.toThrow('provider_playback_mismatch');
+});
+
+it('requires source dimensions for the new full HD profile', async () => {
+    vi.stubGlobal('fetch', backend(playlist([[640, 360], [1280, 720], [1920, 1080]])));
+    await expect(verifyAdaptiveHls(masterUrl, 'authorized', profiles.fullHd.profiles)).rejects.toThrow('provider_verification_incomplete');
 });
 
 it.each(['360/index.m3u8', '720/last.ts', '360/init.mp4'])('rejects exposed output %s', async (exposed) => {
@@ -220,6 +243,14 @@ it('shares one manifest/reference budget and probe cache across all provider mas
     await verifyLivepeerReadyAsset(readyProvider([], [alias, masterUrl]), readyInput, dependencies);
     expect(fetchMock.mock.calls.filter(([url]) => url === new URL('0/index.m3u8', masterUrl).toString())).toHaveLength(5);
     expect(fetchMock.mock.calls.filter(([url]) => url === new URL('0/first.ts', masterUrl).toString())).toHaveLength(1);
+});
+
+it.each([true, false])('requires full HD publication outputs to agree with the recorded profile; matching MP4=%s', async matching => {
+    vi.stubGlobal('fetch', backend(playlist([[640, 360], [1280, 720], [1920, 1080]])));
+    const result = verifyLivepeerReadyAsset(readyProvider(matching ? [[1920, 1080]] : [[1280, 720]]),
+        { ...readyInput, profileConfigSha256: profiles.fullHd.hash }, dependencies);
+    if (matching) await expect(result).resolves.toMatchObject({ verifiedSourceBytes: '10' });
+    else await expect(result).rejects.toThrow('provider_playback_mismatch');
 });
 
 it.each([16, 17])('counts %i HLS URLs across multiple masters, not per master', async (total) => {

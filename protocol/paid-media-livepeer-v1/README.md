@@ -21,6 +21,11 @@ evidence; no Worker, web, staging or production runtime is enabled.
   sorted object keys and no whitespace. The legacy hash and signed vectors stay unchanged.
   Public policy orders profiles as current-for-new-jobs, then supported-for-existing-jobs;
   `[legacy]` is accepted for an earlier deployment, `[adaptive, legacy]` for the new initializer.
+- optional full-HD profile SHA-256:
+  `a6751ecd819f080430d3bea4cab0d7b906cd729993c925ae16c676433fe65752`.
+  It appends 1920×1080, 5,000,000 bit/s, 30 fps H.264 Baseline to the unchanged
+  adaptive ladder. New initializers still use `[adaptive, legacy]`; registering
+  the profile in source does not activate it.
   Provider creation and verification use the job's stored hash. Adaptive publication
   verification requires both HLS renditions, denied child playlists, and denied first/last
   segments plus key/map references. These bounded probes do not prove full-video delivery.
@@ -415,7 +420,7 @@ with the existing canonical JSON encoder. No client expiry is authoritative.
 The sponsored quote still binds the existing upload request; the user's delegate
 signature binds the full FT message, including `playback_session`.
 
-Only successful FT acceptance registers/renews the device. Market raw storage
+Successful FT acceptance or explicit existing-ticket activation registers the device. Market raw storage
 keeps at most three entries per account, keyed within that list by device public
 key. Each new accepted payment sets `authorized_at_ms` to the current block time
 and `expires_at_ms` to that time plus 30 days. Expired entries are pruned on a
@@ -424,13 +429,26 @@ watching never renews a record. Refund, duplicate/reconciled payment, and upload
 key replacement do not renew it. Legacy messages without the field retain their
 existing behavior; the Contract Borsh layout does not change.
 
+An existing holder (including the creator) can call
+`activate_playback_device(publication_id, playback_session)` in one direct wallet
+transaction, attaching exactly 1 yoctoNEAR plus the normal network gas fee. The
+contract derives the account from the signer, requires signer = predecessor and
+an Ed25519 signer key, rejects a frozen Bridge or takedown, checks the existing
+entitlement, and reuses the same bounded device registry. Sales suspension and
+paused new purchases do not remove an existing holder's right to activate.
+An identical unexpired device/certificate/authorizing-key record is a no-op;
+a changed signer key or expired record can be explicitly authorized for 30 days.
+The storage runway guard applies to writes. No ticket, USDC charge, publication
+or ledger entry is created. This source API must be deployed to Market before
+the Web activation button is released.
+
 `get_playback_device(account_id, session_public_key)` returns an unexpired record
 or null. The record contains the device public key, certificate hash, authorization
 and expiry times, and `authorizing_public_key`. A direct payment records the
 actual transaction signer key only when signer ID equals the FT sender. A
 delegated payment records null here, never the sponsor's key.
 
-The `/v2/playback-tokens` wire envelope is unchanged. For certificate version 3,
+The `/v2/playback-tokens` request envelope is unchanged. For certificate version 3,
 `certificate_proof` is `{kind: "market", account_id, signed_delegate_base64?}`.
 The Bridge verifies device proof of possession, the final Market device record,
 and current entitlement/publication/provider policy. Direct records require the
@@ -443,12 +461,75 @@ playback. No transaction-history lookup or new server signing key is required.
 Web saves its non-extractable device CryptoKey before asking for the existing
 payment signature, and saves a sponsored delegate proof before submitting the
 relay. Pending/expired records keep the local device key for reconciliation and
-the next genuine payment; they grant no playback. Reload reads final Market state.
+an explicit activation or the next genuine payment; they grant no playback. Reload reads final Market state.
 Logout/account changes clear local authority and invalidate pending work across
 tabs using the persisted revision. Public-testnet never falls back to a separate
-identity signature: after expiry/logout/storage loss, playback waits for a new
-purchase/upload. Other deployments retain the legacy V1/V2 behavior and limits.
+identity signature: after expiry/logout/storage loss, an existing holder chooses
+the explicit device transaction. After a missing wallet reply the Web queries
+the same persistent device key; it never automatically submits another transaction.
+Final record confirmation is followed by normal V2 token issuance; a record alone
+does not prove usable playback. Tokens and their renewals require no wallet action.
+Other deployments retain the legacy V1/V2 behavior and limits.
 
 Existing authorization cache bounds (up to 60 seconds) and issued media JWT
 bounds (up to 180 seconds, capped by device expiry) remain; remote device/key
 removal is not an instantaneous revocation of already issued media tokens.
+
+### Optional authorized seek previews
+
+The V2 token response may include `preview_vtt_url`. It comes from the existing
+provider policy lookup for that same authorized playback ID and shares its cache;
+issuing or renewing a token does not fetch any VTT or image. The field is omitted
+when no safe provider VTT source exists. Only allowed HTTPS provider hosts without
+credentials, query or fragment are exposed. Old clients may ignore the extra
+field; missing/invalid optional metadata must not reject an otherwise valid token.
+Legacy V1 responses continue without this field.
+
+Web fetches the VTT only during a seek preview, using the current `Livepeer-Jwt`
+header, no cookies, no browser cache, and no redirects. Bounds are 1 MiB VTT,
+10,000 cues, 4 MiB per raster image, a 5-second request deadline and at most one
+cached decoded image per active preview. JPEG/PNG/WebP signatures and decoded
+dimensions are checked; each side is at most 8192 pixels and total pixels at most
+16,777,216. Cue intervals are ordered/non-overlapping; `#xywh` is parsed locally
+and never sent as part of the image address. Out-of-bounds crops are not displayed.
+
+Pointer/keyboard movement reuses the current sprite and debounces new images.
+Closing the preview or replacing its source cancels outstanding work and revokes
+Blob URLs. Failed requests can retry after token renewal; missing/broken previews
+show only time and do not change playback authorization or player error state.
+No new provider asset, upload, R2 bucket, public preview proxy or persistent
+thumbnail storage is introduced.
+
+### Controlled full-HD upload policy
+
+`set_public_upload_full_hd(enabled)` is a non-payable admin method, restricted
+to public-testnet policy version 1 and requiring both frozen Bridge and paused
+new purchases. It accepts only the known adaptive/full-HD policy layouts and
+preserves the policy's network, Market, byte, deadline and signed-quote rules.
+Repeated selection of the current state is a no-op. It adds no new ledger event
+or storage layout; the transaction and final policy view record the change.
+
+Enabled policy: `[fullHd, adaptive, legacy]`; disabled policy: `[adaptive, legacy]`.
+Only the first entry selects **new** jobs. Already-paid jobs retain their signed
+profile hash across upload intent, resume, finalization and playback. Disabling
+full HD must not deploy old code that cannot recognize existing full-HD jobs.
+The older `[legacy]` layout remains readable, but is not a supported input to the
+new administrative switch. Creator fees, quotas and the fixed 24-hour deadline
+are unchanged.
+
+For the new full-HD ladder, ready verification requires valid provider source
+dimensions. Output renditions must not exceed the source capacity (allowing
+rotation and the existing two-pixel tolerance). Lower-resolution sources use
+their source-limited required renditions; an upscaled ladder or missing source
+metadata fails closed. Existing legacy/adaptive verification behavior remains
+unchanged. HLS/MP4/profile agreement and all existing authorization/reference
+budgets still apply. Actual provider acceptance is required before activation.
+
+Publish compatible Market, Bridge and Web source with full HD still off. Before
+switching policy, stop new quotes/admission, reconcile submitted payments and
+let outstanding unused 120-second quotes expire. Preserve existing jobs/assets.
+Under the existing maintenance controls, the admin calls the boolean switch;
+verify final policy and compatible serving versions before controlled reopening.
+Provider cost, exact network-fee limits, active jobs and the live canary require
+a fresh, explicitly approved execution package. Local source/fixture results
+do not authorize a live switch or constitute provider/mainnet acceptance.

@@ -339,6 +339,14 @@ function distinctRenditions(candidates: HlsVariant[][], selected: HlsVariant[] =
 function requiredRenditions(
     variants: HlsVariant[], profiles: Dimensions[], source: ProviderAsset['sourceVideo'],
 ): HlsVariant[] {
+    if (profiles.some(profile => profile.height >= 1080)) {
+        if (!validDimensions(source)) throw new Error('provider_verification_incomplete');
+        const short = Math.min(source.width, source.height), long = Math.max(source.width, source.height);
+        if (variants.some(variant => Math.min(variant.width, variant.height) > short + DIMENSION_TOLERANCE
+            || Math.max(variant.width, variant.height) > long + DIMENSION_TOLERANCE)) {
+            throw new Error('provider_playback_mismatch');
+        }
+    }
     for (const measure of [(size: Dimensions) => size.height, (size: Dimensions) => Math.max(size.width, size.height)]) {
         const required = distinctRenditions(profiles.map((profile) => variants.filter((variant) => (
             Math.abs(measure(variant) - measure(profile)) <= DIMENSION_TOLERANCE

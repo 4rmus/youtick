@@ -1,5 +1,14 @@
 # Current state
 
+> 13 Eylül 2026 — [Player V2 yayın ön kontrolü](./player-v2-plan.md#yayın-ön-kontrolü-kapanışı--13-eylül-2026):
+> **COMPLETED_WITH_WARNINGS / NOT_DEPLOYED**. Dört kaynak adımı yerelde hazır;
+> birleşik 120 saniyelik 1080p/native test ve 179 ilgili Web testi geçti.
+> Canlı Market hâlâ adaptive/720p kullanıyor; bakım kontrolleri kapalı. Bridge
+> yükleme/izlemeyi açık bildiriyor. Yeni player canlıya alınmadı.
+> Main `74ae2eb` ve CI `34714711671` başarılı; bu CI yerel Player V2 farkını kapsamıyor.
+> Sıradaki tek gate: açık onayla Player V2 kaynak yayını ve CI. Sözleşme/Web/Bridge
+> yayını, 1080p etkinleştirmesi ve gerçek cihaz/provider kabulü ayrıca açık.
+
 > 12 Eylül 2026 — kullanıcı onayıyla kontrollü testnet Video V1 uyarılı kapanışı.
 > Son kaynak/test entegrasyonu: [`f28b3031cf860d5810c2cb9db0de8b255605f712`](https://github.com/4rmus/youtick/commit/f28b3031cf860d5810c2cb9db0de8b255605f712).
 > Son kayıtlı davranış yayını b53e00e olarak korunur; PR #198 yalnız test/belge içerir, yeni deploy yok.

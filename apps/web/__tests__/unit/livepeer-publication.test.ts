@@ -66,6 +66,11 @@ describe('Livepeer publication UI boundary', () => {
 
     afterEach(() => vi.useRealTimers());
 
+    it.each([null, undefined, 'false', {}, 0])('rejects a malformed entitlement response: %j', async value => {
+        state.viewContract.mockResolvedValue(value);
+        await expect(hasLivepeerEntitlement('buyer.testnet', 'job-001')).rejects.toThrow('invalid_livepeer_entitlement');
+    });
+
     it('uses the original public payment time for expiry and lets a final publication take precedence', async () => {
         vi.useFakeTimers();
         const now = Date.now();
