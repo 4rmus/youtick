@@ -187,7 +187,7 @@ export class LivepeerTransport {
             response = await dependencyFetch(
                 'livepeer_api',
                 kind === 'asset' ? 'asset_read' : 'playback_read',
-                `${API_BASE}/${kind}/${encodeURIComponent(id)}`,
+                `${API_BASE}/${kind}/${encodeURIComponent(id)}${kind === 'asset' ? '?details=true' : ''}`,
                 {
                     headers: { Authorization: `Bearer ${this.apiKey}` },
                     redirect: 'manual',

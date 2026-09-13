@@ -653,7 +653,7 @@ function recoveryBackend(now: number, waitingAgeMs: number) {
                 },
             });
         }
-        if (url === 'https://livepeer.studio/api/asset/asset-123' && !init?.method) {
+        if (url === 'https://livepeer.studio/api/asset/asset-123?details=true' && !init?.method) {
             return Response.json({
                 id: 'asset-123',
                 playbackId: 'playback-123',
@@ -1204,7 +1204,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
                     result: [...new TextEncoder().encode(JSON.stringify(value))],
                 } });
             }
-            if (url.endsWith('/asset/asset-123') && init?.method !== 'DELETE') {
+            if (url.endsWith('/asset/asset-123?details=true') && init?.method !== 'DELETE') {
                 return Response.json({
                     id: 'asset-123',
                     playbackId: 'playback-123',
@@ -2014,7 +2014,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const backend = recoveryBackend(now, 6 * 60 * 60 * 1000);
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const response = await backend(input, init);
-            if (String(input) === 'https://livepeer.studio/api/asset/asset-123' && !init?.method) {
+            if (String(input) === 'https://livepeer.studio/api/asset/asset-123?details=true' && !init?.method) {
                 const asset = await response.json() as Record<string, unknown>;
                 return Response.json({ ...asset, status: { phase, updatedAt: now } });
             }
@@ -2047,7 +2047,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         let unavailable = false;
         let providerReads = 0;
         vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-            if (String(url).endsWith('/asset/asset-123')) {
+            if (String(url).endsWith('/asset/asset-123?details=true')) {
                 providerReads += 1;
                 if (unavailable) return new Response(null, { status: 503 });
             }
@@ -2098,7 +2098,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             if (url.endsWith('/playback/playback-123')) return Response.json({ type: 'vod', meta: {
                 playbackPolicy: { type: 'jwt' }, source: [{ type: 'unknown', url: 'https://private.invalid/secret' }],
             } });
-            if (url.endsWith('/asset/asset-123')) {
+            if (url.endsWith('/asset/asset-123?details=true')) {
                 if (outcome === 'unavailable') return new Response(null, { status: 503 });
                 const asset = await (await backend(input, init)).json() as Record<string, unknown>;
                 return Response.json({ ...asset, status: { phase: outcome === 'mismatch' ? 'ready' : 'processing', updatedAt: now } });
