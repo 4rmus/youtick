@@ -373,11 +373,12 @@ describe('WalletProvider CSP initialization', () => {
         expect(walletTestState.suspendDeviceSession).not.toHaveBeenCalled();
     });
 
-    it('uses Meteor selection on connect and cold restore instead of linked-account ordering', async () => {
+    it('uses Meteor selection on connect and cold restore with duplicate linked accounts', async () => {
         vi.useFakeTimers();
         walletTestState.flags.publicTestnetVideoV1 = true;
         const accounts = [{ accountId: 'utick2.testnet' }, { accountId: 'soteri.testnet' }];
-        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn().mockResolvedValue(accounts) };
+        const linkedAccounts = [accounts[0], accounts[0], accounts[1], accounts[1]];
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn().mockResolvedValue(linkedAccounts) };
         selectMeteor('utick2.testnet');
         const provider = WalletProvider({ children: null });
         walletTestState.handlers['wallet:signIn']({ wallet, accounts: [accounts[0]], source: 'signIn' });
@@ -393,7 +394,7 @@ describe('WalletProvider CSP initialization', () => {
         expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
         walletTestState.cleanup?.();
         walletTestState.stateSetters = [];
-        walletTestState.getConnectedWallet.mockResolvedValue({ wallet, accounts });
+        walletTestState.getConnectedWallet.mockResolvedValue({ wallet, accounts: linkedAccounts });
         WalletProvider({ children: null });
         await vi.advanceTimersByTimeAsync(0);
         expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith('soteri.testnet');
