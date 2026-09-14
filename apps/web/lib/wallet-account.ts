@@ -26,7 +26,8 @@ export function selectedWalletAccount(wallet: { manifest: unknown }, accounts: A
             || selection.identifier.accountId !== selection.account.accountId) throw unavailable();
         const matches = accounts.filter(account => account.accountId === selection.account.accountId
             && (account.publicKey === undefined || account.publicKey === selection.account.publicKey));
-        if (matches.length !== 1) throw unavailable();
+        // Meteor appends a row on each login; compatible repeats identify the same account.
+        if (matches.length === 0) throw unavailable();
         return matches[0];
     } catch {
         throw unavailable();

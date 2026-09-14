@@ -29,12 +29,23 @@ describe('selected wallet account', () => {
         expect(() => selectedWalletAccount(wallet, accounts)).toThrow('wallet_account_selection_required');
     });
 
-    it('requires selected membership and rejects duplicate or malformed linked accounts', () => {
+    it('requires selected membership and rejects malformed linked accounts', () => {
         localStorage.setItem(METEOR_ACCOUNT_STORAGE_KEY, JSON.stringify(selection()));
         expect(() => selectedWalletAccount(wallet, [accounts[0]])).toThrow('wallet_account_selection_required');
-        expect(() => selectedWalletAccount(wallet, [accounts[1], accounts[1]])).toThrow('wallet_account_selection_required');
         expect(() => selectedWalletAccount(wallet, [{ accountId: '../bad' }])).toThrow('wallet_account_selection_required');
         expect(selectedWalletAccount(wallet, [])).toBeNull();
+    });
+
+    it.each([false, true])('accepts repeated compatible identities without changing SDK storage (public keys=%s)', withKeys => {
+        const linked = withKeys ? accounts : accounts.map(({ accountId }) => ({ accountId }));
+        const raw = JSON.stringify({ ...selection(), account: linked[1] });
+        localStorage.setItem(METEOR_ACCOUNT_STORAGE_KEY, raw);
+        vi.mocked(localStorage.setItem).mockClear();
+        const duplicates = [linked[0], linked[0], linked[1], linked[1]];
+        expect(selectedWalletAccount(wallet, duplicates)).toEqual(linked[1]);
+        expect(selectedWalletAccount(wallet, [...duplicates].reverse())).toEqual(linked[1]);
+        expect(localStorage.getItem(METEOR_ACCOUNT_STORAGE_KEY)).toBe(raw);
+        expect(localStorage.setItem).not.toHaveBeenCalled();
     });
 
     it('accepts an account-only combined proof while still requiring the selected identity', () => {
