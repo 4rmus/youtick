@@ -10,6 +10,7 @@ const walletTestState = vi.hoisted(() => ({
     manifestLoaded: undefined as Promise<void> | undefined,
     connectDeviceSession: vi.fn(),
     clearDeviceSession: vi.fn(),
+    suspendDeviceSession: vi.fn(),
     revokeBrowserAuthority: vi.fn(),
     flags: { enablePlaybackAuthorizerV2: false, publicTestnetVideoV1: false },
     handlers: {} as Record<string, (payload: unknown) => void>,
@@ -68,6 +69,7 @@ vi.mock('@hot-labs/near-connect', () => ({
 vi.mock('@/lib/device-session', () => ({
     connectDeviceSession: walletTestState.connectDeviceSession,
     clearDeviceSession: walletTestState.clearDeviceSession,
+    suspendDeviceSession: walletTestState.suspendDeviceSession,
 }));
 vi.mock('@/lib/constants', async (importOriginal) => ({ ...await importOriginal<object>(), FEATURE_FLAGS: walletTestState.flags }));
 vi.mock('@/lib/signless-access-key', () => ({
@@ -89,6 +91,7 @@ describe('WalletProvider CSP initialization', () => {
         walletTestState.manifestLoaded = undefined;
         walletTestState.connectDeviceSession.mockReset();
         walletTestState.clearDeviceSession.mockReset();
+        walletTestState.suspendDeviceSession.mockReset();
         walletTestState.revokeBrowserAuthority.mockReset();
         walletTestState.flags.enablePlaybackAuthorizerV2 = false;
         walletTestState.flags.publicTestnetVideoV1 = false;
@@ -270,6 +273,89 @@ describe('WalletProvider CSP initialization', () => {
         expect(walletTestState.connect).toHaveBeenCalledExactlyOnceWith();
         expect(walletTestState.connectDeviceSession).not.toHaveBeenCalled();
         expect(walletTestState.stateSetters[0]).not.toHaveBeenCalledWith('creator.testnet');
+    });
+
+    it('switches public-testnet accounts without erasing device storage or requesting signatures', async () => {
+        vi.useFakeTimers();
+        walletTestState.flags.publicTestnetVideoV1 = true;
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn() };
+        const provider = WalletProvider({ children: null });
+        walletTestState.connect.mockResolvedValue(wallet);
+        for (const accountId of ['creator.testnet', 'buyer.testnet', 'creator.testnet']) {
+            wallet.getAccounts.mockResolvedValue([{ accountId }]);
+            await provider.props.value.connect();
+            expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith(accountId);
+        }
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+        expect(walletTestState.suspendDeviceSession).toHaveBeenCalledTimes(2);
+        expect(walletTestState.connectDeviceSession).not.toHaveBeenCalled();
+        expect(walletTestState.revokeBrowserAuthority).not.toHaveBeenCalled();
+        await provider.props.value.signOut();
+        expect(walletTestState.clearDeviceSession).toHaveBeenCalled();
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith(null);
+    });
+
+    it('keeps the original account and device after a cancelled switch', async () => {
+        vi.useFakeTimers();
+        walletTestState.flags.publicTestnetVideoV1 = true;
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: async () => [{ accountId: 'creator.testnet' }] };
+        const provider = WalletProvider({ children: null });
+        walletTestState.connect.mockResolvedValueOnce(wallet).mockRejectedValueOnce(new Error('User rejected'));
+        await provider.props.value.connect();
+        await provider.props.value.connect();
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith('creator.testnet');
+        expect(walletTestState.suspendDeviceSession).not.toHaveBeenCalled();
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+    });
+
+    it.each(['logout', 'newer sign-in'])('rejects a pending account switch after %s', async (action) => {
+        vi.useFakeTimers();
+        walletTestState.clearDeviceSession.mockResolvedValue(undefined);
+        walletTestState.flags.publicTestnetVideoV1 = true;
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0] };
+        WalletProvider({ children: null });
+        const signIn = (accountId: string) => walletTestState.handlers['wallet:signIn']({ wallet, accounts: [{ accountId }], source: 'signIn' });
+        signIn('creator.testnet');
+        await vi.advanceTimersByTimeAsync(0);
+        let finish!: () => void;
+        walletTestState.suspendDeviceSession.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+        signIn('stale.testnet');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(finish).toBeTypeOf('function');
+        if (action === 'logout') walletTestState.handlers['wallet:signOut']({});
+        else signIn('newest.testnet');
+        await vi.advanceTimersByTimeAsync(0);
+        finish();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalledWith('stale.testnet');
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith(action === 'logout' ? null : 'newest.testnet');
+    });
+
+    it('does not apply a new account if device suspension fails', async () => {
+        vi.useFakeTimers();
+        walletTestState.flags.publicTestnetVideoV1 = true;
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn() };
+        const provider = WalletProvider({ children: null });
+        walletTestState.connect.mockResolvedValue(wallet);
+        wallet.getAccounts.mockResolvedValueOnce([{ accountId: 'creator.testnet' }]).mockResolvedValueOnce([{ accountId: 'buyer.testnet' }]);
+        await provider.props.value.connect();
+        walletTestState.suspendDeviceSession.mockRejectedValueOnce(new Error('device_session_storage_unavailable'));
+        await provider.props.value.connect();
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalledWith('buyer.testnet');
+        expect(walletTestState.stateSetters[2]).toHaveBeenLastCalledWith(expect.stringContaining('Session verification was not completed'));
+    });
+
+    it('retains device deletion for non-public-testnet account changes', async () => {
+        vi.useFakeTimers();
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn() };
+        const provider = WalletProvider({ children: null });
+        walletTestState.connect.mockResolvedValue(wallet);
+        for (const accountId of ['creator.testnet', 'buyer.testnet']) {
+            wallet.getAccounts.mockResolvedValue([{ accountId }]);
+            await provider.props.value.connect();
+        }
+        expect(walletTestState.clearDeviceSession).toHaveBeenCalledOnce();
+        expect(walletTestState.suspendDeviceSession).not.toHaveBeenCalled();
     });
 
     it('coalesces combined connect and ignores the duplicate sign-in until persistence completes', async () => {

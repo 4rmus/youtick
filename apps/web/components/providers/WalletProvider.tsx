@@ -3,7 +3,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { NearConnector, type Account, type NearWalletBase, type WalletManifest } from '@hot-labs/near-connect';
 import { clearSessionGrantCache } from '@/lib/access-grants';
-import { clearDeviceSession, connectDeviceSession } from '@/lib/device-session';
+import { clearDeviceSession, connectDeviceSession, suspendDeviceSession } from '@/lib/device-session';
 import { FEATURE_FLAGS, NEAR_NETWORK } from '@/lib/constants';
 import { getRpcEndpoints } from '@/lib/rpc-failover';
 import { startVideoMeasurement } from '@/lib/video-measurements';
@@ -99,20 +99,22 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
     const [isReady, setIsReady] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const clearAuth = useCallback(async (id: string | null) => {
+    const clearAuth = useCallback(async (id: string | null, preserveDevice = false) => {
         if (!id) return;
         clearSessionGrantCache(id);
-        await clearDeviceSession();
+        if (preserveDevice) await suspendDeviceSession();
+        else await clearDeviceSession();
         await clearSignlessAccessKey(id);
     }, []);
 
-    const applyWallet = useCallback((wallet: NearWalletBase, accounts: Account[], sessionPrepared = false) => {
+    const applyWallet = useCallback(async (wallet: NearWalletBase, accounts: Account[], sessionPrepared = false) => {
+        const expectedGeneration = authGenerationRef.current;
         const nextAccountId = accounts[0]?.accountId ?? null;
         const previousAccountId = accountIdRef.current;
         if (!sessionPrepared && previousAccountId && previousAccountId !== nextAccountId) {
-            authGenerationRef.current += 1;
-            void clearAuth(previousAccountId).catch(() => setError('Secure session cleanup failed. Please retry disconnect.'));
+            await clearAuth(previousAccountId, FEATURE_FLAGS.publicTestnetVideoV1 && Boolean(nextAccountId));
         }
+        if (expectedGeneration !== authGenerationRef.current) return;
         walletRef.current = wallet;
         accountIdRef.current = nextAccountId;
         setAccountId(nextAccountId);
@@ -146,9 +148,12 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         });
         connector.on('wallet:signIn', ({ wallet, accounts, source }) => {
             if (!mounted || connectingRef.current || source === 'signInAndSignMessage') return;
-            authGenerationRef.current += 1;
-            applyWallet(wallet, accounts);
-            setError(null);
+            const expectedGeneration = ++authGenerationRef.current;
+            void applyWallet(wallet, accounts).then(() => {
+                if (expectedGeneration === authGenerationRef.current) setError(null);
+            }).catch(() => {
+                if (expectedGeneration === authGenerationRef.current) setError('Secure session cleanup failed. Please retry disconnect.');
+            });
         });
         connector.on('wallet:signOut', () => {
             if (!mounted) return;
@@ -190,7 +195,8 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
                 if (!canRestore()) return;
                 const connected = await connector.getConnectedWallet();
                 if (!canRestore()) return;
-                applyWallet(connected.wallet, connected.accounts);
+                await applyWallet(connected.wallet, connected.accounts);
+                if (!canRestore()) return;
                 setError(null);
                 finishRestore('completed');
             })
@@ -246,7 +252,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
                 if (!FEATURE_FLAGS.enablePlaybackAuthorizerV2 || FEATURE_FLAGS.publicTestnetVideoV1) {
                     const wallet = await connector.connect();
                     const accounts = await wallet.getAccounts({ network: NEAR_NETWORK });
-                    if (expectedGeneration === authGenerationRef.current) applyWallet(wallet, accounts);
+                    if (expectedGeneration === authGenerationRef.current) await applyWallet(wallet, accounts);
                 } else {
                     if (accountIdRef.current) await clearAuth(accountIdRef.current);
                     else await clearDeviceSession();
@@ -261,7 +267,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
                         return signedReplyRef.current;
                     }, controller.signal);
                     if (expectedGeneration !== authGenerationRef.current || !connectedWallet) return;
-                    applyWallet(connectedWallet, [{ accountId: session.certificate_proof.account_id }], true);
+                    await applyWallet(connectedWallet, [{ accountId: session.certificate_proof.account_id }], true);
                 }
                 if (expectedGeneration === authGenerationRef.current) setError(null);
             } catch (reason) {

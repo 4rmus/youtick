@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LogOut, Menu, User, X } from 'lucide-react';
+import { ArrowRightLeft, LogOut, Menu, User, X } from 'lucide-react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { getLandingCtas, landingCopy, type LandingLocale } from '@/components/landing/landing-copy';
@@ -70,6 +70,12 @@ export function Navbar() {
                         <div className="flex items-center gap-2 rounded-full border border-near-green/30 bg-black py-1 pl-3 pr-1">
                             <User className="h-3 w-3 text-near-green" />
                             <span className="max-w-[100px] truncate font-mono text-xs text-zinc-400">{accountId}</span>
+                            {FEATURE_FLAGS.publicTestnetVideoV1 && (
+                                <Button aria-label="Switch account" title="Switch account" size="icon" variant="ghost"
+                                    className="h-11 w-11 rounded-full" disabled={!isReady} onClick={() => void connect()}>
+                                    <ArrowRightLeft />
+                                </Button>
+                            )}
                             <Button
                                 aria-label="Disconnect"
                                 size="icon"
@@ -117,6 +123,10 @@ export function Navbar() {
                     {accountId ? (
                         <div className="flex min-h-11 items-center justify-between gap-4">
                             <span className="truncate font-mono text-xs text-zinc-400">{accountId}</span>
+                            {FEATURE_FLAGS.publicTestnetVideoV1 && (
+                                <button type="button" disabled={!isReady} onClick={() => void connect()}
+                                    className="min-h-11 rounded-md text-near-green focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green disabled:opacity-50">Switch account</button>
+                            )}
                             <button type="button" onClick={() => void signOut()} className="min-h-11 rounded-md font-medium text-near-red focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-red">Disconnect</button>
                         </div>
                     ) : (
