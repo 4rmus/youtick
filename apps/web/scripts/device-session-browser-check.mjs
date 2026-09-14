@@ -49,9 +49,18 @@ const bundle = await build({
   });
   assert.equal(restored.cert,initial.cert);assert.equal(restored.exportRejected,true);assert.equal(restored.privateType,'private');assert.equal(restored.other,null);
   await page.evaluate(()=>{window.cleared=0;DeviceSessions.onDeviceSessionCleared(()=>window.cleared++)});
-  const other=await context.newPage();await other.goto(url);await other.evaluate(()=>DeviceSessions.clearDeviceSession());
+  const other=await context.newPage();await other.goto(url);
+  const switchKeys=await page.evaluate(()=>Promise.all(['buyer.testnet','creator.testnet'].map(account=>DeviceSessions.preparePlaybackDevice(account))));
+  await other.evaluate(()=>DeviceSessions.suspendDeviceSession());
+  await page.waitForFunction(()=>window.cleared>0);
+  assert.deepEqual(await page.evaluate(()=>Promise.all(['buyer.testnet','creator.testnet'].map(account=>DeviceSessions.preparePlaybackDevice(account)))),switchKeys);
+  await page.reload();
+  assert.deepEqual(await page.evaluate(()=>Promise.all(['buyer.testnet','creator.testnet'].map(account=>DeviceSessions.preparePlaybackDevice(account)))),switchKeys);
+  await page.evaluate(()=>{window.cleared=0;DeviceSessions.onDeviceSessionCleared(()=>window.cleared++)});
+  await other.evaluate(()=>DeviceSessions.clearDeviceSession());
   await page.waitForFunction(()=>window.cleared>0);
   assert.equal(await page.evaluate(()=>DeviceSessions.getDeviceSession('buyer.testnet')),null);
+  assert.equal(await page.evaluate(()=>DeviceSessions.getDeviceSession('creator.testnet')),null);
   await page.evaluate(()=>{
     window.pending=DeviceSessions.ensureDeviceSession({signMessage:()=>new Promise(resolve=>{window.finishProof=resolve})},'buyer.testnet').then(()=> 'unexpected success', e=>e.message);
   });
@@ -116,7 +125,7 @@ const bundle = await build({
   assert.equal(await raceA.evaluate(()=>DeviceSessions.getDeviceSession('buyer.testnet')),null);
   assert.equal(await raceA.evaluate(()=>window.readClearEvents),1);
   await raceContext.close();
-  const report={browser:await browser.version(),executable:'Brave Browser',mode:'headless isolated profile',origin:'localhost only',wallet:'mock proof; no real signature',checks:{parallelSingleCall:true,reloadSameCertificate:true,nonExtractableBeforeAndAfterReload:true,pkcs8AndJwkExportRejected:true,otherAccountDenied:true,crossTabClear:true,crossTabLateReplyRejected:true,marketDeviceCrossTabSameKey:true,marketDeviceReloadWithoutWallet:true,marketColdReloadDoesNotClearSession:market.clearEvents===0,marketRenewalDay20To50:true,marketExpiryDenied:true,paymentPrepareCrossTabLogoutDenied:true,readBeforeBroadcastStopsPlayer:true}};
+  const report={browser:await browser.version(),executable:'Brave Browser',mode:'headless isolated profile',origin:'localhost only',wallet:'mock proof; no real signature',checks:{accountSwitchKeepsBothKeysAcrossTabsAndReload:true,logoutStillClearsBothKeys:true,parallelSingleCall:true,reloadSameCertificate:true,nonExtractableBeforeAndAfterReload:true,pkcs8AndJwkExportRejected:true,otherAccountDenied:true,crossTabClear:true,crossTabLateReplyRejected:true,marketDeviceCrossTabSameKey:true,marketDeviceReloadWithoutWallet:true,marketColdReloadDoesNotClearSession:market.clearEvents===0,marketRenewalDay20To50:true,marketExpiryDenied:true,paymentPrepareCrossTabLogoutDenied:true,readBeforeBroadcastStopsPlayer:true}};
   console.log(JSON.stringify(report, null, 2));
  } finally {await browser?.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(e=>{console.error(e);process.exitCode=1});

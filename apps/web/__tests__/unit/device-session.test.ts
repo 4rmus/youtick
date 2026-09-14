@@ -77,6 +77,44 @@ describe('device session', () => {
         chain.view.mockReset().mockResolvedValue(null);
     });
 
+    it('suspends work without deleting either account key or progress, and logout still deletes all', async () => {
+        const api = await import('@/lib/device-session');
+        const creator = await api.preparePlaybackDevice('creator.testnet');
+        const buyer = await api.preparePlaybackDevice('buyer.testnet');
+        const { openWatchProgress } = await import('@/lib/watch-progress');
+        const input = { accountId: 'creator.testnet', jobId: 'job-1', generation: 1, playbackId: 'playback-1' };
+        const writer = (await openWatchProgress(input, new AbortController().signal))!;
+        await writer.save(20, 120, true);
+        const stopped = vi.fn();
+        const unsubscribe = api.onDeviceSessionCleared(stopped);
+        await api.suspendDeviceSession();
+        expect(stopped).toHaveBeenCalledOnce();
+        await writer.save(40, 120, true);
+        expect(await api.preparePlaybackDevice('creator.testnet')).toEqual(creator);
+        expect(await api.preparePlaybackDevice('buyer.testnet')).toEqual(buyer);
+        const resumed = (await openWatchProgress(input, new AbortController().signal))!;
+        expect(resumed.position?.position).toBe(20);
+        await api.clearDeviceSession();
+        await resumed.save(50, 120, true);
+        expect([...databases.values()][0].size).toBe(1); // Only logout revision remains.
+        expect(await api.getDeviceSession('creator.testnet')).toBeNull();
+        expect(await api.getDeviceSession('buyer.testnet')).toBeNull();
+        writer.destroy(); resumed.destroy(); unsubscribe();
+    });
+
+    it('rejects a delayed authorization read on account switch while preserving the key', async () => {
+        const api = await import('@/lib/device-session');
+        const authorization = await api.preparePlaybackDevice('buyer.testnet');
+        let finish!: (value: unknown) => void;
+        chain.view.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+        const loading = api.getDeviceSession('buyer.testnet');
+        await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+        await api.suspendDeviceSession();
+        finish(null);
+        await expect(loading).rejects.toThrow('device_session_cancelled');
+        expect(await api.preparePlaybackDevice('buyer.testnet')).toEqual(authorization);
+    });
+
     it('stores only scoped watch positions and clears finished videos', async () => {
         const api = await import('@/lib/device-session');
         await api.preparePlaybackDevice('buyer.testnet');
@@ -215,7 +253,7 @@ describe('device session', () => {
         },
     );
 
-    it.each(['logout', 'abort', 'other tab'])('rejects a late proof after %s and permits a new explicit attempt', async (reason) => {
+    it.each(['logout', 'abort', 'other tab', 'account switch', 'other-tab account switch'])('rejects a late proof after %s and permits a new explicit attempt', async (reason) => {
         const api = await import('@/lib/device-session');
         let finish!: (value: ReturnType<typeof proof>) => void;
         const wallet = { signMessage: vi.fn(() => new Promise<ReturnType<typeof proof>>((resolve) => { finish = resolve; })) };
@@ -224,9 +262,12 @@ describe('device session', () => {
         const rejected = expect(request).rejects.toThrow('device_session_cancelled');
         await vi.waitFor(() => expect(wallet.signMessage).toHaveBeenCalledOnce());
         if (reason === 'abort') controller.abort();
-        else if (reason === 'other tab') {
+        else if (reason === 'account switch') await api.suspendDeviceSession();
+        else if (reason === 'other tab' || reason === 'other-tab account switch') {
             vi.resetModules();
-            await (await import('@/lib/device-session')).clearDeviceSession();
+            const otherTab = await import('@/lib/device-session');
+            if (reason === 'other tab') await otherTab.clearDeviceSession();
+            else await otherTab.suspendDeviceSession();
         } else await api.clearDeviceSession();
         finish(proof());
         await rejected;

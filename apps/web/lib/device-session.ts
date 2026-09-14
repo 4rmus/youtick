@@ -348,6 +348,15 @@ async function readValidDeviceSession(accountId: string, invalidated?: () => voi
 }
 
 export async function clearDeviceSession(): Promise<void> {
+    return updateDeviceSession(true);
+}
+
+// Account switches stop in-flight work across tabs without deleting device keys or progress.
+export async function suspendDeviceSession(): Promise<void> {
+    return updateDeviceSession(false);
+}
+
+async function updateDeviceSession(clear: boolean): Promise<void> {
     invalidate();
     if (typeof window === 'undefined' || typeof indexedDB === 'undefined') return;
     const db = await openStore();
@@ -357,7 +366,7 @@ export async function clearDeviceSession(): Promise<void> {
         const store = transaction.objectStore('sessions');
         const revision = store.get('revision');
         revision.onsuccess = () => {
-            store.clear();
+            if (clear) store.clear();
             clearedRevision = (revision.result ?? 0) + 1;
             store.put(clearedRevision, 'revision');
         };
