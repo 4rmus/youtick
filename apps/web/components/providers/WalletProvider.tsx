@@ -12,6 +12,7 @@ import {
     revokeBrowserAuthority,
 } from '@/lib/signless-access-key';
 import type { WalletInstance } from '@/lib/types';
+import { METEOR_ACCOUNT_STORAGE_KEY, selectedWalletAccount } from '@/lib/wallet-account';
 import {
     PINNED_WALLET_MANIFEST,
     isPinnedMeteorManifest,
@@ -41,10 +42,23 @@ function sponsoredDelegateWindow(wallet: NearWalletBase, trusted: boolean): numb
     return observed && observed <= SPONSORED_DELEGATE_MAX_BLOCKS ? observed : null;
 }
 
-export function createWalletAdapter(wallet: NearWalletBase, trusted = false): WalletInstance {
+export function createWalletAdapter(
+    wallet: NearWalletBase,
+    trusted = false,
+    binding?: { accountId: string; isCurrent: () => boolean },
+): WalletInstance {
     const delegateWindow = sponsoredDelegateWindow(wallet, trusted);
+    const currentAccount = async () => {
+        if (binding && !binding.isCurrent()) throw new Error('wallet_account_changed');
+        const selected = selectedWalletAccount(wallet, await wallet.getAccounts({ network: NEAR_NETWORK }));
+        if (!selected || (binding && (!binding.isCurrent() || selected.accountId !== binding.accountId))) {
+            throw new Error('wallet_account_changed');
+        }
+        return selected;
+    };
     return {
         async signAndSendTransaction(params) {
+            await currentAccount();
             return (await wallet.signAndSendTransaction({
                 network: NEAR_NETWORK,
                 receiverId: params.receiverId,
@@ -52,21 +66,25 @@ export function createWalletAdapter(wallet: NearWalletBase, trusted = false): Wa
             }) || {}) as object;
         },
         async signAndSendTransactions(params) {
+            await currentAccount();
             return await wallet.signAndSendTransactions({
                 network: NEAR_NETWORK,
                 transactions: params.transactions as Parameters<NearWalletBase['signAndSendTransactions']>[0]['transactions'],
             }) as object[] | void;
         },
         async getAccounts() {
-            return wallet.getAccounts({ network: NEAR_NETWORK });
+            return [await currentAccount()];
         },
         async signMessage(params) {
-            return wallet.signMessage({
+            const selected = await currentAccount();
+            const response = await wallet.signMessage({
                 network: NEAR_NETWORK,
                 message: params.message,
                 recipient: params.recipient,
                 nonce: params.nonce,
             });
+            if (response.accountId !== selected.accountId) throw new Error('wallet_account_changed');
+            return response;
         },
         ...(delegateWindow
             && typeof wallet.signDelegateActions === 'function'
@@ -75,6 +93,7 @@ export function createWalletAdapter(wallet: NearWalletBase, trusted = false): Wa
                     delegateActions: Array<{ receiverId: string; actions: unknown[] }>;
                     blockHeightTtl?: number;
                 }) {
+                    await currentAccount();
                     return wallet.signDelegateActions({
                         network: NEAR_NETWORK,
                         delegateActions: params.delegateActions as Parameters<NearWalletBase['signDelegateActions']>[0]['delegateActions'],
@@ -109,7 +128,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
 
     const applyWallet = useCallback(async (wallet: NearWalletBase, accounts: Account[], sessionPrepared = false) => {
         const expectedGeneration = authGenerationRef.current;
-        const nextAccountId = accounts[0]?.accountId ?? null;
+        const nextAccountId = selectedWalletAccount(wallet, accounts)?.accountId ?? null;
         const previousAccountId = accountIdRef.current;
         if (!sessionPrepared && previousAccountId && previousAccountId !== nextAccountId) {
             await clearAuth(previousAccountId, FEATURE_FLAGS.publicTestnetVideoV1 && Boolean(nextAccountId));
@@ -139,6 +158,21 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             cspNonce,
         });
         connectorRef.current = connector;
+
+        const onSelectionChanged = (event: StorageEvent) => {
+            if (event.storageArea !== localStorage || (event.key !== null && event.key !== METEOR_ACCOUNT_STORAGE_KEY)
+                || !walletRef.current || !isPinnedMeteorManifest(walletRef.current.manifest)) return;
+            const previousAccountId = accountIdRef.current;
+            const expectedGeneration = ++authGenerationRef.current;
+            walletRef.current = null;
+            accountIdRef.current = null;
+            setAccountId(null);
+            setError('Your wallet account changed in another tab. Reload this page to continue.');
+            void clearAuth(previousAccountId, FEATURE_FLAGS.publicTestnetVideoV1).catch(() => {
+                if (mounted && expectedGeneration === authGenerationRef.current) setError('Secure session cleanup failed. Please retry disconnect.');
+            });
+        };
+        window.addEventListener('storage', onSelectionChanged);
 
         connector.on('wallet:signInAndSignMessage', ({ accounts }) => {
             if (mounted && connectingRef.current) {
@@ -203,14 +237,18 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             .catch((reason: unknown) => {
                 if (!canRestore()) return;
                 let disconnected = false;
+                let selectionRequired = false;
                 try {
-                    disconnected = reason instanceof Error
-                        && ['No wallet selected', 'No accounts found'].includes(reason.message);
+                    const message = reason instanceof Error ? reason.message : '';
+                    disconnected = ['No wallet selected', 'No accounts found'].includes(message);
+                    selectionRequired = message === 'wallet_account_selection_required';
                 } catch {
                     // Unreadable SDK errors still get a fixed, non-sensitive message.
                 }
                 finishRestore(disconnected ? 'disconnected' : 'failed');
-                setError(disconnected ? null : 'Your wallet connection could not be restored. Reload this page to try again.');
+                setError(disconnected ? null : selectionRequired
+                    ? 'Your selected wallet account could not be verified. Choose Connect wallet to select your account.'
+                    : 'Your wallet connection could not be restored. Reload this page to try again.');
             })
             .finally(() => {
                 clearTimeout(timeoutId);
@@ -225,6 +263,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             connectAbortRef.current?.abort();
             authGenerationRef.current += 1;
             connector.removeAllListeners();
+            window.removeEventListener('storage', onSelectionChanged);
             if (connectorRef.current === connector) connectorRef.current = null;
             pinnedWalletRef.current = null;
         };
@@ -233,9 +272,19 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
     const getWallet = useCallback(async (): Promise<WalletInstance> => {
         const connector = connectorRef.current;
         if (!connector) throw new Error('Wallet connector is not ready');
+        const accountId = accountIdRef.current;
+        const expectedGeneration = authGenerationRef.current;
+        if (!accountId) throw new Error('Wallet is not connected');
         const wallet = walletRef.current ?? await connector.wallet();
+        if (expectedGeneration !== authGenerationRef.current || accountId !== accountIdRef.current) {
+            throw new Error('wallet_account_changed');
+        }
         walletRef.current = wallet;
-        return createWalletAdapter(wallet, wallet === pinnedWalletRef.current);
+        return createWalletAdapter(wallet, wallet === pinnedWalletRef.current, {
+            accountId,
+            isCurrent: () => expectedGeneration === authGenerationRef.current
+                && accountId === accountIdRef.current && wallet === walletRef.current,
+        });
     }, []);
 
     const connect = useCallback((): Promise<void> => {

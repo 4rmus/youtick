@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 const walletTestState = vi.hoisted(() => ({
     cleanup: undefined as void | (() => void),
@@ -14,6 +14,7 @@ const walletTestState = vi.hoisted(() => ({
     revokeBrowserAuthority: vi.fn(),
     flags: { enablePlaybackAuthorizerV2: false, publicTestnetVideoV1: false },
     handlers: {} as Record<string, (payload: unknown) => void>,
+    storageListener: undefined as undefined | ((event: StorageEvent) => void),
     registeredWallets: [] as Array<Record<string, unknown>>,
     stateSetters: [] as ReturnType<typeof vi.fn>[],
 }));
@@ -80,7 +81,18 @@ vi.mock('@/lib/signless-access-key', () => ({
 import { WalletProvider, createWalletAdapter } from '@/components/providers/WalletProvider';
 import { PINNED_WALLET_MANIFEST } from '@/lib/pinned-wallet-manifest';
 
+const selectionKey = 'meteor-wallet:meteor-account-data';
+function selectMeteor(accountId: string) {
+    localStorage.setItem(selectionKey, JSON.stringify({ account: { accountId }, identifier: { accountId, blockchain: 'near', network: 'testnet' } }));
+}
+
 describe('WalletProvider CSP initialization', () => {
+    beforeEach(() => {
+        Object.assign(window, {
+            addEventListener: vi.fn((name, fn) => { if (name === 'storage') walletTestState.storageListener = fn; }),
+            removeEventListener: vi.fn(),
+        });
+    });
     afterEach(() => {
         walletTestState.cleanup?.();
         walletTestState.cleanup = undefined;
@@ -100,6 +112,9 @@ describe('WalletProvider CSP initialization', () => {
         walletTestState.stateSetters = [];
         vi.useRealTimers();
         vi.restoreAllMocks();
+        delete (window as Partial<Window>).addEventListener;
+        delete (window as Partial<Window>).removeEventListener;
+        walletTestState.storageListener = undefined;
     });
 
     it('passes the request nonce and stops waiting for a stale wallet restore', async () => {
@@ -125,7 +140,7 @@ describe('WalletProvider CSP initialization', () => {
         const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
         let release!: () => void;
         const waiting = new Promise<void>((resolve) => { release = resolve; });
-        const restored = { wallet: { manifest: PINNED_WALLET_MANIFEST.wallets[0] }, accounts: [{ accountId: 'creator.testnet' }] };
+        const restored = { wallet: { manifest: { id: 'other-wallet' } }, accounts: [{ accountId: 'creator.testnet' }] };
         if (stage === 'manifest') walletTestState.manifestLoaded = waiting;
         walletTestState.getConnectedWallet.mockImplementation(async () => {
             if (stage === 'accounts') await waiting;
@@ -159,7 +174,7 @@ describe('WalletProvider CSP initialization', () => {
         walletTestState.getConnectedWallet.mockReturnValue(new Promise((resolve) => { release = resolve; }));
         const provider = WalletProvider({ children: null });
         await vi.advanceTimersByTimeAsync(0);
-        const nextWallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn().mockResolvedValue([{ accountId: 'new.testnet' }]) };
+        const nextWallet = { manifest: { id: 'other-wallet' }, getAccounts: vi.fn().mockResolvedValue([{ accountId: 'new.testnet' }]) };
         if (action === 'unmount') {
             walletTestState.cleanup?.();
             walletTestState.cleanup = undefined;
@@ -201,7 +216,7 @@ describe('WalletProvider CSP initialization', () => {
         walletTestState.manifestLoaded = new Promise<void>((resolve) => { release = resolve; });
         walletTestState.connect.mockImplementation(async () => {
             await walletTestState.manifestLoaded;
-            return { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: async () => [{ accountId: 'new.testnet' }] };
+            return { manifest: { id: 'other-wallet' }, getAccounts: async () => [{ accountId: 'new.testnet' }] };
         });
         const provider = WalletProvider({ children: null });
         await vi.advanceTimersByTimeAsync(5_000);
@@ -242,7 +257,7 @@ describe('WalletProvider CSP initialization', () => {
         vi.useFakeTimers();
         const getAccounts = vi.fn().mockResolvedValue([{ accountId: 'creator.testnet' }]);
         walletTestState.connect.mockResolvedValue({
-            manifest: PINNED_WALLET_MANIFEST.wallets[0],
+            manifest: { id: 'other-wallet' },
             getAccounts,
         });
         const provider = WalletProvider({ children: null }) as unknown as {
@@ -262,7 +277,7 @@ describe('WalletProvider CSP initialization', () => {
         walletTestState.flags.publicTestnetVideoV1 = true;
         let finish!: (accounts: Array<{ accountId: string }>) => void;
         const getAccounts = vi.fn(() => new Promise<Array<{ accountId: string }>>((resolve) => { finish = resolve; }));
-        walletTestState.connect.mockResolvedValue({ manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts });
+        walletTestState.connect.mockResolvedValue({ manifest: { id: 'other-wallet' }, getAccounts });
         const provider = WalletProvider({ children: null });
         const first = provider.props.value.connect();
         const second = provider.props.value.connect();
@@ -278,7 +293,7 @@ describe('WalletProvider CSP initialization', () => {
     it('switches public-testnet accounts without erasing device storage or requesting signatures', async () => {
         vi.useFakeTimers();
         walletTestState.flags.publicTestnetVideoV1 = true;
-        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn() };
+        const wallet = { manifest: { id: 'other-wallet' }, getAccounts: vi.fn() };
         const provider = WalletProvider({ children: null });
         walletTestState.connect.mockResolvedValue(wallet);
         for (const accountId of ['creator.testnet', 'buyer.testnet', 'creator.testnet']) {
@@ -298,7 +313,7 @@ describe('WalletProvider CSP initialization', () => {
     it('keeps the original account and device after a cancelled switch', async () => {
         vi.useFakeTimers();
         walletTestState.flags.publicTestnetVideoV1 = true;
-        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: async () => [{ accountId: 'creator.testnet' }] };
+        const wallet = { manifest: { id: 'other-wallet' }, getAccounts: async () => [{ accountId: 'creator.testnet' }] };
         const provider = WalletProvider({ children: null });
         walletTestState.connect.mockResolvedValueOnce(wallet).mockRejectedValueOnce(new Error('User rejected'));
         await provider.props.value.connect();
@@ -312,7 +327,7 @@ describe('WalletProvider CSP initialization', () => {
         vi.useFakeTimers();
         walletTestState.clearDeviceSession.mockResolvedValue(undefined);
         walletTestState.flags.publicTestnetVideoV1 = true;
-        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0] };
+        const wallet = { manifest: { id: 'other-wallet' } };
         WalletProvider({ children: null });
         const signIn = (accountId: string) => walletTestState.handlers['wallet:signIn']({ wallet, accounts: [{ accountId }], source: 'signIn' });
         signIn('creator.testnet');
@@ -334,7 +349,7 @@ describe('WalletProvider CSP initialization', () => {
     it('does not apply a new account if device suspension fails', async () => {
         vi.useFakeTimers();
         walletTestState.flags.publicTestnetVideoV1 = true;
-        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn() };
+        const wallet = { manifest: { id: 'other-wallet' }, getAccounts: vi.fn() };
         const provider = WalletProvider({ children: null });
         walletTestState.connect.mockResolvedValue(wallet);
         wallet.getAccounts.mockResolvedValueOnce([{ accountId: 'creator.testnet' }]).mockResolvedValueOnce([{ accountId: 'buyer.testnet' }]);
@@ -347,7 +362,7 @@ describe('WalletProvider CSP initialization', () => {
 
     it('retains device deletion for non-public-testnet account changes', async () => {
         vi.useFakeTimers();
-        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn() };
+        const wallet = { manifest: { id: 'other-wallet' }, getAccounts: vi.fn() };
         const provider = WalletProvider({ children: null });
         walletTestState.connect.mockResolvedValue(wallet);
         for (const accountId of ['creator.testnet', 'buyer.testnet']) {
@@ -358,11 +373,138 @@ describe('WalletProvider CSP initialization', () => {
         expect(walletTestState.suspendDeviceSession).not.toHaveBeenCalled();
     });
 
+    it('uses Meteor selection on connect and cold restore instead of linked-account ordering', async () => {
+        vi.useFakeTimers();
+        walletTestState.flags.publicTestnetVideoV1 = true;
+        const accounts = [{ accountId: 'utick2.testnet' }, { accountId: 'soteri.testnet' }];
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: vi.fn().mockResolvedValue(accounts) };
+        selectMeteor('utick2.testnet');
+        const provider = WalletProvider({ children: null });
+        walletTestState.handlers['wallet:signIn']({ wallet, accounts: [accounts[0]], source: 'signIn' });
+        await vi.advanceTimersByTimeAsync(0);
+        walletTestState.connect.mockImplementation(async () => {
+            selectMeteor('soteri.testnet');
+            walletTestState.handlers['wallet:signIn']({ wallet, accounts: [accounts[1]], source: 'signIn' });
+            return wallet;
+        });
+        await provider.props.value.connect();
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith('soteri.testnet');
+        expect(await (await provider.props.value.getWallet()).getAccounts()).toEqual([accounts[1]]);
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+        walletTestState.cleanup?.();
+        walletTestState.stateSetters = [];
+        walletTestState.getConnectedWallet.mockResolvedValue({ wallet, accounts });
+        WalletProvider({ children: null });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith('soteri.testnet');
+    });
+
+    it('requires explicit selection on cold restore when linked Meteor accounts have no selected signer', async () => {
+        vi.useFakeTimers();
+        walletTestState.getConnectedWallet.mockResolvedValue({ wallet: { manifest: PINNED_WALLET_MANIFEST.wallets[0] }, accounts: [{ accountId: 'utick2.testnet' }, { accountId: 'soteri.testnet' }] });
+        WalletProvider({ children: null });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalled();
+        expect(walletTestState.stateSetters[2]).toHaveBeenLastCalledWith(expect.stringContaining('Choose Connect wallet'));
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+    });
+
+    it('stops stale adapters after another tab selects an account without deleting devices', async () => {
+        vi.useFakeTimers();
+        walletTestState.flags.publicTestnetVideoV1 = true;
+        selectMeteor('utick2.testnet');
+        const send = vi.fn();
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: async () => [{ accountId: 'utick2.testnet' }, { accountId: 'soteri.testnet' }], signAndSendTransaction: send };
+        const provider = WalletProvider({ children: null });
+        walletTestState.connect.mockResolvedValue(wallet);
+        await provider.props.value.connect();
+        const adapter = await provider.props.value.getWallet();
+        selectMeteor('soteri.testnet');
+        walletTestState.storageListener?.({ key: selectionKey, storageArea: localStorage } as StorageEvent);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith(null);
+        expect(walletTestState.suspendDeviceSession).toHaveBeenCalledOnce();
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+        await expect(adapter.signAndSendTransaction({ receiverId: 'market.testnet', actions: [] })).rejects.toThrow('wallet_account_changed');
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['signAndSendTransaction', { receiverId: 'market.testnet', actions: [] }],
+        ['signAndSendTransactions', { transactions: [] }],
+        ['signDelegateActions', { delegateActions: [] }],
+        ['signMessage', { message: 'public challenge', recipient: 'market.testnet', nonce: new Uint8Array(32) }],
+    ] as const)('checks the selected account immediately before %s, even without a storage event', async (method, params) => {
+        const send = vi.fn().mockResolvedValue({ accountId: 'soteri.testnet' });
+        const wallet = {
+            manifest: PINNED_WALLET_MANIFEST.wallets[0],
+            getAccounts: vi.fn().mockResolvedValue([{ accountId: 'utick2.testnet' }, { accountId: 'soteri.testnet' }]),
+            signAndSendTransaction: send, signAndSendTransactions: send, signDelegateActions: send, signMessage: send,
+        };
+        selectMeteor('soteri.testnet');
+        const adapter = createWalletAdapter(wallet as never, true, { accountId: 'soteri.testnet', isCurrent: () => true });
+        expect(await adapter.getAccounts?.()).toEqual([{ accountId: 'soteri.testnet' }]);
+        await adapter[method]!(params as never);
+        expect(send).toHaveBeenCalledOnce();
+        send.mockClear();
+        selectMeteor('utick2.testnet');
+        await expect(adapter[method]!(params as never)).rejects.toThrow('wallet_account_changed');
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it('rejects a signer change while an account read is pending', async () => {
+        selectMeteor('soteri.testnet');
+        let finish!: (value: Array<{ accountId: string }>) => void;
+        const send = vi.fn();
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0], getAccounts: () => new Promise<Array<{ accountId: string }>>(resolve => { finish = resolve; }), signAndSendTransaction: send };
+        const adapter = createWalletAdapter(wallet as never, true, { accountId: 'soteri.testnet', isCurrent: () => true });
+        const signing = adapter.signAndSendTransaction({ receiverId: 'market.testnet', actions: [] });
+        selectMeteor('utick2.testnet');
+        finish([{ accountId: 'utick2.testnet' }, { accountId: 'soteri.testnet' }]);
+        await expect(signing).rejects.toThrow('wallet_account_changed');
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it('rejects an old adapter after a local wallet switch', async () => {
+        vi.useFakeTimers();
+        walletTestState.flags.publicTestnetVideoV1 = true;
+        const send = vi.fn();
+        const original = { manifest: { id: 'other-wallet' }, getAccounts: async () => [{ accountId: 'creator.testnet' }], signAndSendTransaction: send };
+        const next = { manifest: { id: 'next-wallet' }, getAccounts: async () => [{ accountId: 'buyer.testnet' }] };
+        const provider = WalletProvider({ children: null });
+        walletTestState.connect.mockResolvedValueOnce(original).mockResolvedValueOnce(next);
+        await provider.props.value.connect();
+        const stale = await provider.props.value.getWallet();
+        await provider.props.value.connect();
+        await expect(stale.signAndSendTransaction({ receiverId: 'market.testnet', actions: [] })).rejects.toThrow('wallet_account_changed');
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it('keeps pinned Meteor combined sign-in compatible with account-only proof metadata', async () => {
+        vi.useFakeTimers();
+        walletTestState.flags.enablePlaybackAuthorizerV2 = true;
+        const accountId = 'soteri.testnet';
+        const signed = { accountId, publicKey: 'message-signing-key', signature: 'proof' };
+        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0] };
+        walletTestState.connect.mockImplementation(async () => {
+            localStorage.setItem(selectionKey, JSON.stringify({ account: { accountId, publicKey: 'primary-wallet-key' }, identifier: { accountId, network: 'testnet', blockchain: 'near' } }));
+            walletTestState.handlers['wallet:signInAndSignMessage']({ accounts: [{ accountId, signedMessage: signed }] });
+            return wallet;
+        });
+        walletTestState.connectDeviceSession.mockImplementation(async sign => {
+            expect(await sign({ message: 'certificate', recipient: 'market.testnet', nonce: new Uint8Array(32) })).toEqual(signed);
+            return { certificate_proof: { account_id: accountId } };
+        });
+        const provider = WalletProvider({ children: null });
+        await provider.props.value.connect();
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith(accountId);
+    });
+
     it('coalesces combined connect and ignores the duplicate sign-in until persistence completes', async () => {
         vi.useFakeTimers();
         walletTestState.flags.enablePlaybackAuthorizerV2 = true;
         const signedMessage = { accountId: 'creator.testnet', publicKey: 'wallet-public-key', signature: 'wallet-signature' };
-        const wallet = { manifest: PINNED_WALLET_MANIFEST.wallets[0] };
+        const wallet = { manifest: { id: 'other-wallet' } };
         const params = { message: 'certificate-v2', recipient: 'market.testnet', nonce: new Uint8Array(32) };
         let persist!: () => void;
         walletTestState.connect.mockImplementation(async () => {
@@ -414,8 +556,10 @@ describe('WalletProvider CSP initialization', () => {
         const signDelegateActions = vi.fn().mockResolvedValue({
             signedDelegateActions: ['signed-delegate'],
         });
+        selectMeteor('creator.testnet');
         const supported = createWalletAdapter({
             manifest: PINNED_WALLET_MANIFEST.wallets[0],
+            getAccounts: async () => [{ accountId: 'creator.testnet' }],
             signDelegateActions,
         } as never, true);
         await expect(supported.signDelegateActions?.({
