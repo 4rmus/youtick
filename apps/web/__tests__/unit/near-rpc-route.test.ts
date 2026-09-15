@@ -3,6 +3,16 @@ import { POST } from '@/app/api/near-rpc/route';
 import { POST as BROADCAST } from '@/app/api/near-rpc/broadcast/route';
 
 describe('/api/near-rpc route', () => {
+    function pendingBodyResponse(signal: AbortSignal): Response {
+        return new Response(new ReadableStream({
+            start(controller) {
+                signal.addEventListener('abort', () => {
+                    controller.error(new DOMException('aborted', 'AbortError'));
+                }, { once: true });
+            },
+        }), { status: 200 });
+    }
+
     afterEach(() => {
         vi.restoreAllMocks();
         vi.useRealTimers();
@@ -322,5 +332,72 @@ describe('/api/near-rpc route', () => {
 
         await expect(responsePromise).resolves.toMatchObject({ status: 200 });
         expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['read', 'broadcast'] as const)('bounds a pending %s response body without replaying broadcasts', async mode => {
+        vi.useFakeTimers();
+        vi.resetModules();
+        const { POST: read } = await import('@/app/api/near-rpc/route');
+        const { POST: broadcast } = await import('@/app/api/near-rpc/broadcast/route');
+        const fetchMock = vi.fn()
+            .mockImplementationOnce((_url: string, init: RequestInit) => Promise.resolve(pendingBodyResponse(init.signal!)))
+            .mockResolvedValueOnce(Response.json({ jsonrpc: '2.0', result: 'fallback' }));
+        vi.stubGlobal('fetch', fetchMock);
+        const result: { response?: Response } = {};
+        void (mode === 'read' ? read : broadcast)(new Request('http://localhost:3001/api/near-rpc', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', method: mode === 'read' ? 'status' : 'send_tx', params: [] }),
+        })).then(response => { result.response = response; });
+
+        await vi.advanceTimersByTimeAsync(2_501);
+
+        expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+        expect(result.response?.status).toBe(mode === 'read' ? 200 : 504);
+        expect(fetchMock).toHaveBeenCalledTimes(mode === 'read' ? 2 : 1);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('stops pending response bodies at the total read deadline', async () => {
+        vi.useFakeTimers();
+        vi.resetModules();
+        const { POST: read } = await import('@/app/api/near-rpc/route');
+        const fetchMock = vi.fn((_url: string, init: RequestInit) => Promise.resolve(pendingBodyResponse(init.signal!)));
+        vi.stubGlobal('fetch', fetchMock);
+        const result: { response?: Response } = {};
+        void read(new Request('http://localhost:3001/api/near-rpc', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', method: 'status', params: [] }),
+        })).then(response => { result.response = response; });
+
+        await vi.advanceTimersByTimeAsync(6_001);
+
+        expect(result.response?.status).toBe(504);
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(fetchMock.mock.calls.every(([, init]) => init.signal?.aborted)).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('propagates caller cancellation during the response body without starting another upstream', async () => {
+        vi.useFakeTimers();
+        vi.resetModules();
+        const { POST: read } = await import('@/app/api/near-rpc/route');
+        const fetchMock = vi.fn((_url: string, init: RequestInit) => Promise.resolve(pendingBodyResponse(init.signal!)));
+        vi.stubGlobal('fetch', fetchMock);
+        const caller = new AbortController();
+        const result: { response?: Response } = {};
+        void read(new Request('http://localhost:3001/api/near-rpc', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: caller.signal,
+            body: JSON.stringify({ jsonrpc: '2.0', method: 'status', params: [] }),
+        })).then(response => { result.response = response; });
+        await vi.advanceTimersByTimeAsync(1);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        caller.abort();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(fetchMock.mock.calls[0][1].signal?.aborted).toBe(true);
+        expect(result.response?.status).toBe(502);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(vi.getTimerCount()).toBe(0);
     });
 });
