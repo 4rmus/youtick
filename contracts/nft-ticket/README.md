@@ -27,7 +27,7 @@ The contract supports:
   and recovery remain available, and both transitions emit governance events;
 - globally unique asset hash and playback ID bindings;
 - mutable sale availability separated from immutable publication identity;
-- Circle USDC tickets at 2 USDC or more with a 98% creator / 2% platform split;
+- Circle USDC tickets at 2 USDC or more with a 95% creator / 5% platform split;
 - durable entitlement history and withdrawal liability restoration.
 - NEAR withdrawal bounded by its recorded liability, storage staking and the
   configured operational reserve, with `get_storage_reserve_status` exposing

@@ -5,7 +5,7 @@ const MICRO_USDC = 1_000_000n;
 
 export function calculateTicketSplit(ticketPrice: string, ticketCount: bigint) {
     const ticketPriceMicroUsdc = BigInt(parseLivepeerPriceUsdc(ticketPrice));
-    const platformPerTicketMicroUsdc = ticketPriceMicroUsdc / 50n;
+    const platformPerTicketMicroUsdc = ticketPriceMicroUsdc / 20n;
     const grossMicroUsdc = ticketPriceMicroUsdc * ticketCount;
     const platformMicroUsdc = platformPerTicketMicroUsdc * ticketCount;
 

@@ -1319,7 +1319,7 @@ impl Contract {
             return PromiseOrValue::Value(amount);
         }
 
-        let platform_amount = amount.0 / 50;
+        let platform_amount = amount.0 / 20;
         let creator_amount = amount.0 - platform_amount;
         let creator_balance = self
             .creator_balances

@@ -20,6 +20,11 @@ describe('bilingual landing', () => {
         expect(landingCopy.tr.audience.creator.benefits).toContain('Video içeriği yükle, işleme tamamlanınca yayınla.');
         expect(landingCopy.tr.audience.creator.benefits).toContain('Bilet fiyatını belirle.');
         expect(landingCopy.tr.roi.uploadFeeTitle).toBe('YouTick yükleme ücreti');
+        expect(landingCopy.en.audience.creator.benefits).toContain('Keep 95% of each paid ticket sale.');
+        expect(landingCopy.tr.audience.creator.benefits).toContain('Her ücretli bilet satışının %95’ini al.');
+        expect(landingCopy.en.roi.platformFee).toBe('5% platform fee');
+        expect(landingCopy.tr.roi.platformFee).toBe('%5 platform ücreti');
+        expect(JSON.stringify(landingCopy)).not.toMatch(/98%|%98|2%|%2/);
     });
 
     it('contains only current media architecture in landing copy', () => {
@@ -52,24 +57,29 @@ describe('bilingual landing', () => {
     });
 
     it('matches the contract per-ticket split with exact micro-USDC arithmetic', () => {
+        expect(calculateTicketSplit('2', 1n)).toEqual({
+            grossMicroUsdc: 2_000_000n,
+            platformMicroUsdc: 100_000n,
+            creatorMicroUsdc: 1_900_000n,
+        });
         expect(calculateTicketSplit('12', 800n)).toEqual({
             grossMicroUsdc: 9_600_000_000n,
-            platformMicroUsdc: 192_000_000n,
-            creatorMicroUsdc: 9_408_000_000n,
+            platformMicroUsdc: 480_000_000n,
+            creatorMicroUsdc: 9_120_000_000n,
         });
         expect(calculateTicketSplit('2.000049', 2n)).toEqual({
             grossMicroUsdc: 4_000_098n,
-            platformMicroUsdc: 80_000n,
-            creatorMicroUsdc: 3_920_098n,
+            platformMicroUsdc: 200_004n,
+            creatorMicroUsdc: 3_800_094n,
         });
         expect(calculateTicketSplit('100.000001', 100_000n)).toEqual({
             grossMicroUsdc: 10_000_000_100_000n,
-            platformMicroUsdc: 200_000_000_000n,
-            creatorMicroUsdc: 9_800_000_100_000n,
+            platformMicroUsdc: 500_000_000_000n,
+            creatorMicroUsdc: 9_500_000_100_000n,
         });
         expect(() => calculateTicketSplit('1.999999', 1n)).toThrow('invalid_ticket_price');
-        expect(formatMicroUsdc(9_408_000_000n, 'en')).toBe('9,408 USDC');
-        expect(formatMicroUsdc(9_408_000_000n, 'tr')).toBe('9.408 USDC');
+        expect(formatMicroUsdc(9_120_000_000n, 'en')).toBe('9,120 USDC');
+        expect(formatMicroUsdc(9_120_000_000n, 'tr')).toBe('9.120 USDC');
     });
 
     it('ships the Turkish static route, locale alternates, and both optimized images', async () => {
