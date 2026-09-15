@@ -1,6 +1,39 @@
 # YouTick Player V2 — ortak oynatıcı
 
+## Güncel Safari sonucu ve yayın durumu — 15 Eylül 2026
+
+**PLAYER_V2_RPC_SAFARI_ACCEPTANCE — COMPLETED_WITH_WARNINGS.** Safari/Mac, mevcut `utick2.testnet` cihazı ve M2 trace biletiyle video doğal olarak sona ulaştı. SDK play→ended aralığı **600,682 saniye**; oynarken dört doğal yenileme **530 / 625 / 1065 / 634 ms** içinde tamamlandı. Önceki `playback_authorization_unavailable` hatası bu koşuda gözlenmedi; tüm geçmiş kesintilerin çözüldüğü sonucu çıkarılmaz.
+
+Konsol odağı kararsızdı; bazı ölçüm komutları video kısayollarına ulaştı. Son bağımsız ilerleme sayacı alınamadığı için **kesintisiz 600 saniye gerçek video ilerlemesi ve 20 planlı sarma doğrulanmış sayılmaz**. Kısa `stalled` kayıtları ve Livepeer analiz/raporlama bağlantı uyarıları korundu. Video bittikten sonraki beşinci yenileme **7841 ms** sürdü ve başarılı oldu; nedeni belirlenmedi. Belgeleme onayı bu gecikmeyi kabul edilmiş performans istisnasına dönüştürmez.
+
+Kanıtlar ayrı tutulur: LOCAL_TEST — 23 test, TypeScript ve lint geçti. [PR #208](https://github.com/4rmus/youtick/pull/208), main `74887782617f8b69ab6b11a095212f2e7e7c8b3e` sürümüne birleşti. [Main CI](https://github.com/4rmus/youtick/actions/runs/34981949868) ve [korumalı public-testnet dağıtımı](https://github.com/4rmus/youtick/actions/runs/34983610788) başarılı. Mevcut `acceptance` yapılandırması korundu; dağıtım anahtarı tekrar kapatıldı. Public-testnet dağıtım/sağlık kanıtı Safari kabulünün yerine geçmez; production/mainnet sonucu çıkarılmaz. Bu belge turunda test veya dağıtım tekrarlanmadı.
+
+Geçici gözlemci sayfa yenilemesiyle kaldırıldı; duraklatılmış video ve bağlı hesap doğrulandı, ana sayfaya dönüldü. Safari koşusunda yeni imza, ödeme, cihaz kaydı veya upload yapılmadı. Kanıtlar: `tmp/player-v2-rpc-safari-acceptance-20260915/{receipt.json,closeout.md}` ve `tmp/player-v2-rpc-deploy-20260915/closeout.md`.
+
+Genel kabul **açık**: bağımsız Safari ilerleme/sarma ölçümü, native HLS, fiziksel telefon ve kare kaynak eksikleri kapanmadı. Kabul edilmiş 10 Mbps ve 8,02 saniye başlangıç süresi yeniden açılmaz. **Tek sonraki gate: PLAYER_V2_ACCEPTANCE_DOCS_PUBLICATION** — güncel main ile uzlaştırılan üç belgeli adayı commit/push ve PR ile yayımlamak. Bu kayıt commit/push veya yeni canlı işlem başlatmaz. Aşağıdaki önceki sonuçlar ve “güncel/sonraki gate” ifadeleri tarihsel kayıttır; bu bölüm önceliklidir.
+
+
 13 Eylül 2026 — Kullanıcının uygulama için verdiği nihai planın kaydı.
+
+## Güncel durum — 15 Eylül 2026
+
+**Son Chrome uzun oturum sonucu — COMPLETED_WITH_WARNINGS:** sarma sıçramaları hariç601,119s video ilerlemesi,20oynarken sarma grubu ve6oturum token yenilemesi kaydedildi. Olay sayacı620,054s, SDK sayacı769,168s bildirdi; uyuşmazlık nedeniyle SDK değeri gerçek oynatma bütçesi kanıtı sayılmadı. İki SDK hata olayı ve oturumdaki duraklama korunur; kesintisiz/hatasız kabulü yok. Sayılabilir sarma gruplarının en uzunu2,808s. Konum0, yenileme erişimi ve temiz sekme durumu doğrulandı; yeni imza/ödeme yok. Güncel tek sonraki gate **PLAYER_V2_SAFARI_LONG_SESSION_LIVE**: Safari/utick2 mevcut yetkisiyle aynı haklı M2 trace kaynağında10dakika/2yenileme/20sarma, en fazla12dakika oynatma ve30dakika duvar saati. Safari'nin HLS.js yolu native HLS kabulü sayılmaz. Bu belge turunda test başlamadı; aşağıdaki Chrome önerisi tarihsel kayıttır.
+
+**Son uzun oturum sonucu:** Edge/soteri aynı sayfada620,1175s gerçek oynatma, oynarken3başarılı yenileme ve20sarma toparlanması tamamladı. Sonuç COMPLETED_WITH_WARNINGS: aradaki duraklama sayılmadı; kesintisiz10dakika iddiası yok, üç sarma3s hedefini aştı (en çok14,498s), SDK konsol toplamı kısmi. Süre önceden kurulan olay bazlı sayaçla doğrulandı; konum0 ve temiz sayfa geri yüklendi. Güncel tek sonraki gate **PLAYER_V2_CHROME_LONG_SESSION_LIVE**: Chrome/utick2 mevcut yetkisiyle, envanterde hakkı bulunan600,026s M2 trace yayını (`lp-491fb8eb-451f-4fc6-918e-b94d6876fc02`);10dakika gerçek oynatma/2yenileme/20sarma, en fazla12dakika oynatma ve30dakika duvar saati. Başlamadan güncel hak/cihaz kontrol edilir; yeni bilet veya cihaz işlemi yapılmaz. Bu belge turunda yeni test başlamadı; aşağıdaki eski Edge önerileri tekrarlanmaz.
+
+**Son önizleme sonucu:** gerçek uygulamada tek sentetik VTT401sonrası zaman-only görünümü, doğal token yenilenince aynı DOM bileşeninde203×360 resmin geri gelmesi doğrulandı. Video oynatma/imza/ödeme0;6önizleme isteği. İşlevsel PASS, hazırlık dahil428,636s süre5dakika sınırını aştığından COMPLETED_WITH_WARNINGS. Geçici müdahale ve test sekmesi kaldırıldı. Gerçek provider kesintisi veya fiziksel dokunma testi sayılmaz. Güncel tek sonraki gate **PLAYER_V2_EDGE_LONG_SESSION_LIVE**: mevcut Edge/soteri yetkisiyle uzun oturum (10dakika oynatma, en az2yenileme/20sarma; toplam en fazla12dakika oynatma ve30dakika duvar saati). Bu belge turu yalnız sonuçları kaydeder, yeni koşu başlatmaz; aşağıdaki eski önizleme hazırlığı önerileri tekrarlanmaz.
+
+**Son sarma sonucu:** oynarken üç tampon içi ve üç tampon dışı örnek aynı tarayıcı saatiyle ölçüldü; tamamı yeniden oynadı. Tampon içi16–25,8ms, tampon dışı1,130/2,637/4,442s. Bir örnek3s hedefini aştığından COMPLETED_WITH_WARNINGS olarak kaydedildi. Yeni imza/ödeme yok; eski konum ve temiz sayfa durumu korundu. Ölçüm artık eksik değil; aşım gizlenmedi veya ayrıca kullanıcı kabulüyle kapatılmış sayılmadı. Güncel tek sonraki gate **PLAYER_V2_PREVIEW_ERROR_RECOVERY_PREFLIGHT**: mevcut hata-toparlanma kanıtı ve güvenli kontrol kapsamını hazırlamak. Aşağıdaki önceki sarma önerileri tarihsel kayıttır.
+
+**Son kabul güncellemesi:** Brave'de sertifika korunumu, fare/doğal yenileme önizlemesi ve düşük giriş uyumu; Safari, Chrome ve Edge'de kısa gerçek oynatma doğrulandı. Chrome/utick2 ve Edge/soteri cihaz işlemleri ayrı kullanıcı onayıyla kesinleşti; yerel sertifikalar zincirle eşleşti ve yenileme sonrası erişim korundu. Chrome30,251s oynatma/0bekleme; Edge30,209s oynatma/336ms bekleme, ikisinde hata0 ve son görüntü1080×1920. Bu kısa koşular uzun oturum veya native HLS kabulü değildir. Mevcut12yayında kare kaynak yok. Güncel kalan kapsam [kabul raporundadır](./player-v2-acceptance-closeout.md#açık-kalan-kabul-grupları). Tek sonraki gate **PLAYER_V2_PLAYING_SEEK_RECOVERY**: mevcut Brave yetkisiyle oynarken sarma-toparlanma süresini ölçmek; yeni cihaz/imza gerektiren hazırlık tekrarlanmaz. Bu belge güncellemesinde yeni test başlatılmadı.
+
+**Son kullanıcı kararı:** 10Mbps profil kalibrasyonu ve kontrollü koşuda ölçülen başlangıç süreleri **kullanıcı kabulüyle kapatıldı**.10başlangıç örneğinin ilk-kare ortancası8,02s;20duraklatılmış sarma hedefi doğrulandı. Kullanıcı bu süreleri makul buldu; yeniden kalibrasyon veya başlangıç gecikmesi teşhisi yapılmayacak.2,48Mbps kalibrasyon ölçümü ve eski3s hedefinin karşılanmadığı teknik kayıt korunur. Ölçülmemiş seek→playing süresi, native HLS ve diğer platform maddeleri açık kalır; genel kabulün tamamı kapanmış sayılmaz. Bu aşamada yeni gate/test başlatılmıyor. Aşağıdaki önceki sonraki-adım ifadelerinin yerini bu karar alır.
+
+Beş ana aşamanın ilk dördünün kaynak uygulaması main'e alınmış ve public-testnet'te yayımlanmıştır. Genel kabul aşaması kısmen doğrulanmıştır; planın tamamı kapanmış değildir. İki hesaplı Brave/bilet/yenileme kontrollerinin son sonucu **COMPLETED_WITH_WARNINGS**. Yeni yüklemelerin varsayılanı **adaptive/720p**; mevcut kontrollü 1080p yayınlar oynatılabilir.
+
+Güncel kaynak `bef0d43468b8b4671e82b8a8bffa5617c3c25e63`; [main CI34847682414](https://github.com/4rmus/youtick/actions/runs/34847682414) ve [korumalı testnet yayını34849181974](https://github.com/4rmus/youtick/actions/runs/34849181974) başarılı. Yapılanlar, kalan kabul grupları, imza yenilemelerinin nedeni ve kanıt sınırları [Player V2 kabul kapanış raporunda](./player-v2-acceptance-closeout.md) toplanmıştır.
+
+Aşağıdaki tarihli kapanışlar kendi günlerinin kayıtlarıdır. Eski `NOT_DEPLOYED` ve “sonraki gate” ifadeleri güncel durum yerine kullanılmamalıdır. Brave uzun koşusunda634,398s oynatma,5token yenilemesi ve20planlı sarma; gerçek Livepeer önizlemesinde640×360 resim; Safari'de mevcut biletle kısa oynatma/sarma/yenileme ve12.saniyeden devam doğrulandı. Safari sonucu HLS.js yoludur, native HLS kabulü değildir. [Genel kabul ön hazırlığındaki güncel matris](./player-v2-general-acceptance-preflight.md) kalanları gösterir. Tek sonraki aşama **PLAYER_V2_CONTROLLED_PERFORMANCE_PREFLIGHT**: mevcut Brave yetkisiyle10Mbps ölçüm yöntemini ve somut test sınırlarını hazırlamak; bu belge yeni test, işlem veya yayın yetkisi vermez.
 
 ## Kapsam ve kararlar
 
@@ -22,11 +55,11 @@ Her seferinde yalnız bir gate uygulanır, doğrulanır, kanıtı kaydedilir ve 
 
 | Gate | Amaç | Durum |
 |---|---|---|
-| PLAYER_V2_SHARED_PLAYER_SOURCE | Ortak arayüz, medya uyumluluğu, kontroller, dil, yerel devam | COMPLETED_WITH_WARNINGS / LOCAL_TEST / NOT_DEPLOYED |
-| PLAYER_V2_SINGLE_APPROVAL_ACCESS | Hak sorgusu loading/error ayrımı, tek cihaz işlemi | COMPLETED_WITH_WARNINGS / LOCAL_TEST / NOT_DEPLOYED |
-| PLAYER_V2_LIVEPEER_PREVIEWS | Yetkili mevcut VTT/resimlerini bağlama | COMPLETED_WITH_WARNINGS / LOCAL_TEST / NOT_DEPLOYED |
-| PLAYER_V2_FULL_HD | Eski/yeni profil uyumluluğu ve kontrollü etkinleştirme | Kaynak hazır; canlı etkinleştirme yapılmadı |
-| PLAYER_V2_ACCEPTANCE | Gerçek cihaz/provider kabulü | Başlatılmadı |
+| PLAYER_V2_SHARED_PLAYER_SOURCE | Ortak arayüz, medya uyumluluğu, kontroller, dil, yerel devam | Kaynak ve testnet yayını tamamlandı; fiziksel cihaz kabulü eksik |
+| PLAYER_V2_SINGLE_APPROVAL_ACCESS | Hak sorgusu loading/error ayrımı, tek cihaz işlemi | Kaynak/yayın tamamlandı; iki hesapta FINAL cihaz işlemleri ve yenileme sonrası erişim doğrulandı |
+| PLAYER_V2_LIVEPEER_PREVIEWS | Yetkili mevcut VTT/resimlerini bağlama | Gerçek VTT/resim/CORS, klavye, fare/doğal yenileme ve tek sentetik401sonrası aynı bileşende toparlanma geçti; fiziksel dokunma/geniş matris açık |
+| PLAYER_V2_FULL_HD | Eski/yeni profil uyumluluğu ve kontrollü etkinleştirme | Kontrollü yatay/dikey yayın ve 1080p çözme doğrulandı; yeni yükleme varsayılanı tekrar720p |
+| PLAYER_V2_ACCEPTANCE | Gerçek cihaz/provider kabulü | Başlatıldı, kısmen doğrulandı; genel kabul tamamlanmadı |
 
 ### İlk gate sınırı
 
@@ -133,6 +166,8 @@ Kanıt paketi: `tmp/player-v2-release-preflight-20260913/receipt.json`, `activat
 4. Gerçek Livepeer yatay/kare/dikey/düşük kaynak çıktıları, VTT/CORS, fiziksel telefon/Safari HLS,10dk/2yenileme/20sarma ve hız hedefleri **UNPROVEN**. Yerel geniş testin kapanması giderildi; bu dış kabulü kapatmaz. Gerçek hesap, dosya hash'i, ödeme sayısı/tutarı, bütçe ve durma koşulları ayrı canlı kabul paketinde tamamlanır.
 
 Commit/push/PR/merge, yeni CI tetikleme, deploy, canlı yönetici işlemi, ödeme veya upload yapılmadı. **Bu gate kapalıdır; sonraki gate otomatik başlamaz.**
+
+> Aşağıdaki bölüm main üzerinde bulunan tarihsel yayın hazırlığıdır; eski işlem önerileri yeni yetki veya güncel durum değildir. Üstteki 15 Eylül sonucu önceliklidir.
 
 ## Canlı yayın paketi — 13 Eylül 2026
 
