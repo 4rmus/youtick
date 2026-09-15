@@ -5,8 +5,8 @@
   "access_contract_id": "video-access-v1-260907.youtick-dev-v3.testnet",
   "bridge_operator_account_id": "video-operator-v1-260907.youtick-dev-v3.testnet",
   "deploy_public_key": "ed25519:DgvpZKz9JixHMh2MENjNwZGrHXGo4P4EwF9LBiKNEikd",
-  "expected_current_code_hash": "HyMxZxV2bF7NZjuUUxFFKcJEDc6pJCvwCERR7gUFCesB",
-  "expected_current_wasm_bytes": 366633,
+  "expected_current_code_hash": "BwX8m9esvWniSeE2VrWk5byRBSqAD313DYsVERZshVoY",
+  "expected_current_wasm_bytes": 376382,
   "max_deploy_cost_yocto": "100000000000000000000000",
   "expected_governance": {
     "state_version": 2,
@@ -30,7 +30,7 @@
   },
   "expected_bridge_key": {
     "public_key": "ed25519:2D73h6d2q1GnnDBX7y9R5k8QG55PtaVVA7wm9vRroerS",
-    "allowance": "96267314587431600000000",
+    "allowance": "95517196951751100000000",
     "receiver_id": "video-market-v1-260907.youtick-dev-v3.testnet",
     "method_names": [
       "finalize_livepeer_publication",
