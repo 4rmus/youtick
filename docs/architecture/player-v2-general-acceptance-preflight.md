@@ -1,5 +1,16 @@
 # Player V2 — genel kabul ön hazırlığı
 
+## Nihai kullanıcı kabulü — 15 Eylül 2026
+
+**Player V2 mevcut kapsamı: COMPLETED_WITH_WARNINGS / CLOSED.** Kullanıcı, ölçüm sınırlarını tekrar test şartı olmaktan çıkarmayı ve native HLS, fiziksel telefon/dokunma, kare video ve ek önizleme senaryolarını sonraki sürüme bırakmayı açıkça kabul etti. Bu maddeler mevcut kapsamın kapanmasını engellemez; teknik olarak doğrulanmamış sonuçlar **UNPROVEN** kalır.
+
+Mevcut uygulama, public-testnet yayını ve kaydedilmiş masaüstü kabul kanıtları esas alınmıştır. Safari'nin bağımsız kesintisiz ilerleme/20 sarma ölçümü eksikliği, kısa duraksamalar, analiz bağlantısı uyarıları ve video bittikten sonraki 7841 ms yenileme kaydı korunur. Bunlar bu kapanışta yeni ölçüm veya optimizasyon zorunluluğu değildir; hata nedenlerinin tamamı çözülmüş veya bütün testler geçmiş sayılmaz. Önceki 10 Mbps ve 8,02 saniye başlangıç süresi kullanıcı kabulleri geçerlidir.
+
+Telefon/dokunma, native HLS, kare kaynak ve ek önizleme kontrolleri **kullanıcı kararıyla ertelendi**; bu kayıt yeni sürüm çalışmasını otomatik başlatmaz. Provider'ın kesin ek fatura tutarı ve tarihsel anahtar kaybının nedeni hakkında yeni bir doğrulama iddiası yoktur. Production/mainnet hazırlığı veya tüm cihazlarda uyumluluk sonucu çıkarılmaz.
+
+**Aktif uygulama gate'i kalmadı.** Bu karar yalnız mevcut Player V2 kapsamını kapatır; yeni test, imza, ödeme, cihaz işlemi, kod değişikliği veya dağıtım gerektirmez. Aşağıdaki “genel kabul açık” ve “sonraki gate” ifadeleri önceki tarihlere ait durumlardır; nihai durum bu bölümdür. Bu bölüm kullanıcının nihai kapsam ve kapanış kararını kaydeder.
+
+
 ## Güncel Safari sonucu ve yayın durumu — 15 Eylül 2026
 
 **PLAYER_V2_RPC_SAFARI_ACCEPTANCE — COMPLETED_WITH_WARNINGS.** Safari/Mac, mevcut `utick2.testnet` cihazı ve M2 trace biletiyle video doğal olarak sona ulaştı. SDK play→ended aralığı **600,682 saniye**; oynarken dört doğal yenileme **530 / 625 / 1065 / 634 ms** içinde tamamlandı. Önceki `playback_authorization_unavailable` hatası bu koşuda gözlenmedi; tüm geçmiş kesintilerin çözüldüğü sonucu çıkarılmaz.
