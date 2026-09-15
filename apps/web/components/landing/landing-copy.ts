@@ -106,7 +106,7 @@ export const landingCopy = {
                 benefits: [
                     'Upload video content and publish when processing is complete.',
                     'Set the ticket price.',
-                    'Keep 98% of each paid ticket sale.',
+                    'Keep 95% of each paid ticket sale.',
                 ],
             },
             viewer: {
@@ -135,7 +135,7 @@ export const landingCopy = {
             previewPrice: '12 USDC',
             previewDetails: [
                 { label: 'Video', value: 'Livepeer playback' },
-                { label: 'Ticket split', value: '98% / 2%' },
+                { label: 'Ticket split', value: '95% / 5%' },
                 { label: 'Access', value: 'Confirmed before play' },
             ],
         },
@@ -153,7 +153,7 @@ export const landingCopy = {
         roi: {
             eyebrow: 'Fee model',
             title: 'See the paid-ticket split before you publish.',
-            description: 'YouTick records 98% as creator share and 2% as platform fee for each paid ticket.',
+            description: 'YouTick records 95% as creator share and 5% as platform fee for each paid ticket.',
             presets: [
                 { label: 'Short film', price: '6', sales: 250 },
                 { label: 'Concert recording', price: '12', sales: 800 },
@@ -165,7 +165,7 @@ export const landingCopy = {
             estimatedSales: 'Estimated sales',
             totalSales: 'Total ticket sales',
             creatorShare: 'Estimated creator share',
-            platformFee: '2% platform fee',
+            platformFee: '5% platform fee',
             creatorShareDescription: 'The creator share after the platform fee.',
             estimateNote: 'Estimate only. Taxes, refunds, wallet fees, and publishing costs are not included.',
             uploadFeeTitle: 'YouTick upload fee',
@@ -179,7 +179,7 @@ export const landingCopy = {
                 { title: 'One release flow', description: 'Create the screening, set the ticket price, and publish without piecing together separate tools.' },
                 { title: 'Direct audience sales', description: 'Bring viewers to your own ticketed screening instead of another generic video page.' },
                 { title: 'Ticket-checked viewing', description: 'YouTick confirms the connected account’s ticket before issuing short-lived playback access.' },
-                { title: 'Clear revenue model', description: 'See the USDC price and the 98% / 2% ticket split before publishing.' },
+                { title: 'Clear revenue model', description: 'See the USDC price and the 95% / 5% ticket split before publishing.' },
             ],
             technologyLabel: 'Built with Livepeer, NEAR, and USDC',
         },
@@ -233,7 +233,7 @@ export const landingCopy = {
                 benefits: [
                     'Video içeriği yükle, işleme tamamlanınca yayınla.',
                     'Bilet fiyatını belirle.',
-                    'Her ücretli bilet satışının %98’ini al.',
+                    'Her ücretli bilet satışının %95’ini al.',
                 ],
             },
             viewer: {
@@ -262,7 +262,7 @@ export const landingCopy = {
             previewPrice: '12 USDC',
             previewDetails: [
                 { label: 'Video', value: 'Livepeer ile izleme' },
-                { label: 'Bilet payı', value: '%98 / %2' },
+                { label: 'Bilet payı', value: '%95 / %5' },
                 { label: 'Erişim', value: 'İzleme öncesi doğrulama' },
             ],
         },
@@ -280,7 +280,7 @@ export const landingCopy = {
         roi: {
             eyebrow: 'Ücret modeli',
             title: 'Yayınlamadan önce ücretli bilet paylaşımını gör.',
-            description: 'YouTick her ücretli bilette %98’i üretici payı, %2’yi platform ücreti olarak kaydeder.',
+            description: 'YouTick her ücretli bilette %95’i üretici payı, %5’i platform ücreti olarak kaydeder.',
             presets: [
                 { label: 'Kısa film', price: '6', sales: 250 },
                 { label: 'Konser kaydı', price: '12', sales: 800 },
@@ -292,7 +292,7 @@ export const landingCopy = {
             estimatedSales: 'Tahmini satış',
             totalSales: 'Toplam bilet satışı',
             creatorShare: 'Tahmini üretici payı',
-            platformFee: '%2 platform ücreti',
+            platformFee: '%5 platform ücreti',
             creatorShareDescription: 'Platform ücreti sonrasında üreticiye kalan pay.',
             estimateNote: 'Yalnızca tahmindir. Vergiler, iadeler, cüzdan ücretleri ve yayın maliyetleri dahil değildir.',
             uploadFeeTitle: 'YouTick yükleme ücreti',
@@ -306,7 +306,7 @@ export const landingCopy = {
                 { title: 'Tek yayın akışı', description: 'Gösterimi oluştur, bilet fiyatını belirle ve ayrı araçları birleştirmeden yayınla.' },
                 { title: 'Doğrudan izleyiciye satış', description: 'İzleyicini genel bir video sayfası yerine kendi biletli gösterimine getir.' },
                 { title: 'Bilet kontrollü izleme', description: 'YouTick, kısa süreli izleme erişimi vermeden önce bağlı hesabın biletini doğrular.' },
-                { title: 'Açık gelir modeli', description: 'Yayınlamadan önce USDC fiyatını ve %98 / %2 bilet paylaşımını gör.' },
+                { title: 'Açık gelir modeli', description: 'Yayınlamadan önce USDC fiyatını ve %95 / %5 bilet paylaşımını gör.' },
             ],
             technologyLabel: 'Livepeer, NEAR ve USDC ile geliştirildi',
         },

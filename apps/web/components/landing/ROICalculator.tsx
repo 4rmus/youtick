@@ -107,7 +107,7 @@ export function ROICalculator({ locale, copy }: Props) {
                             <dl className="mt-5 grid gap-3 sm:grid-cols-2">
                                 <div className="rounded-md border border-white/10 bg-black/50 p-4">
                                     <dt className="text-xs uppercase tracking-wide text-zinc-500">{locale === 'tr' ? 'Üretici payı' : 'Creator share'}</dt>
-                                    <dd className="mt-1 text-2xl font-black text-white">98%</dd>
+                                    <dd className="mt-1 text-2xl font-black text-white">95%</dd>
                                 </div>
                                 <div className="rounded-md border border-white/10 bg-black/50 p-4">
                                     <dt className="text-xs uppercase tracking-wide text-zinc-500">{copy.platformFee}</dt>

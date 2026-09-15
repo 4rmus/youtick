@@ -911,7 +911,7 @@ fn creator_can_replace_an_unpublished_upload_key_without_a_second_charge() {
 }
 
 #[test]
-fn ticket_minimum_is_two_usdc_and_existing_two_percent_split_is_unchanged() {
+fn ticket_minimum_is_two_usdc_and_platform_split_is_five_percent() {
     let mut contract = contract();
     must_fail(|| {
         create_job_with(
@@ -947,9 +947,9 @@ fn ticket_minimum_is_two_usdc_and_existing_two_percent_split_is_unchanged() {
     assert!(matches!(purchase, PromiseOrValue::Value(U128(0))));
     assert_eq!(
         contract.get_creator_balance(account("creator.testnet")),
-        U128(1_960_001),
+        U128(1_900_001),
     );
-    assert_eq!(contract.get_platform_balance(), U128(540_000));
+    assert_eq!(contract.get_platform_balance(), U128(600_000));
 }
 
 #[test]
@@ -1138,6 +1138,8 @@ fn economic_lifecycle_emits_rebuildable_events_without_upload_capabilities() {
     assert_eq!(purchased["event"], "entitlement_purchased");
     assert_eq!(purchased["data"][0]["account_id"], "buyer.testnet");
     assert_eq!(purchased["data"][0]["amount"], "2000000");
+    assert_eq!(purchased["data"][0]["creator_amount"], "1900000");
+    assert_eq!(purchased["data"][0]["platform_amount"], "100000");
 
     testing_env!(context("platform.testnet").build());
     contract.rotate_quote_public_key(2, Base64VecU8(vec![2; 32]));

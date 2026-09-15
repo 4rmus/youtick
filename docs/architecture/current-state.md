@@ -1,5 +1,18 @@
 # Current state
 
+> 15 Eylül 2026 — **Bilet komisyonu kaynak güncellemesi / LOCAL_STATIC + LOCAL_TEST / NOT_DEPLOYED**.
+> Sözleşme ve landing hesaplayıcısı yeni satışlarda **%5 platform / %95 üretici**
+> paylaşımını kullanır. Platform payı her bilette tam micro-USDC'ye aşağı yuvarlanır;
+> kalan üreticiye gider. 2 USDC biletin payları 0,10 / 1,90 USDC'dir.
+> TR/EN landing metinleri ve protokol/sözleşme belgeleri eşleşir. Eski videolara
+> özel oran veya veri taşıma yok; geçmiş satışlar ve birikmiş bakiyeler yeniden hesaplanmaz.
+> Rust 1.86.0 ile 11 lib + 40 ödeme/protokol testi, fmt, clippy ve WASM build geçti.
+> Landing 5/5, hedefli lint, Web ve doküman build'leri geçti; Web build CI'daki testnet örnek
+> kimlikleri ve kapalı ürün flag'iyle çalıştı. Yerel Brave'da iki dil, dört hazır
+> hesap seçeneği, fiyat/adet sınırları ve 12 × 800 → 480 / 9.120 USDC doğrulandı.
+> Vite/Next araç uyarıları ayrı kalır. Bu yerel doğrulamada CI, canlı ödeme ve deploy çalıştırılmadı;
+> bu kaynak değişikliği servis edilen komisyonun değiştiğini kanıtlamaz.
+
 > 13 Eylül 2026 — [Player V2 canlı yayın paketi](./player-v2-plan.md#canlı-yayın-paketi--13-eylül-2026):
 > **Kaynak main'de / NOT_DEPLOYED.** PR #200, `9810c99`; main CI34747635987
 > 13/13 başarılı, sözleşme çıktısı ve GitHub imzaları doğrulandı.

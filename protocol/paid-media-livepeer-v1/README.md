@@ -39,7 +39,8 @@ evidence; no Worker, web, staging or production runtime is enabled.
 - sponsored upload delegate gas: fixed `100_000_000_000_000` gas with exactly
   one yoctoNEAR attached;
 - ticket minimum: `2_000_000` micro-USDC; larger integer micro-USDC values are
-  allowed and the existing 98/2 creator/platform split is unchanged;
+  allowed with a 95/5 creator/platform split; platform share is rounded down
+  per ticket to whole micro-USDC and the remainder goes to the creator;
 - initial browser claim: desktop Chrome and desktop Edge only;
 - operator methods: `finalize_livepeer_publication` and
   `suspend_livepeer_sales`, both with zero deposit;
