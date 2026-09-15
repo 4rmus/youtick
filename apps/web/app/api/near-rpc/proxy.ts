@@ -262,7 +262,8 @@ async function fetchWithTimeout(
     body: string,
     requestSignal: AbortSignal,
     timeoutMs: number,
-): Promise<Response | null> {
+    mode: RpcMode,
+): Promise<{ response: Response; transientFailure: boolean } | null> {
     const controller = new AbortController();
     const abort = () => controller.abort();
     if (requestSignal.aborted) controller.abort();
@@ -272,12 +273,19 @@ async function fetchWithTimeout(
     try {
         const headers = new Headers({ 'Content-Type': 'application/json' });
         if (upstream.authorization) headers.set('Authorization', upstream.authorization);
-        return await fetch(upstream.url, {
+        const response = await fetch(upstream.url, {
             method: 'POST',
             headers,
             body,
             signal: controller.signal,
         });
+        const transientFailure = response.status === 429 || response.status >= 500;
+        if (mode === 'read' && transientFailure) {
+            await response.body?.cancel();
+            return { response, transientFailure };
+        }
+        // Keep the timeout and caller cancellation attached through body delivery.
+        return { response: await boundedUpstreamResponse(response, controller.signal), transientFailure };
     } catch {
         return null;
     } finally {
@@ -286,7 +294,7 @@ async function fetchWithTimeout(
     }
 }
 
-async function boundedUpstreamResponse(upstream: Response): Promise<Response> {
+async function boundedUpstreamResponse(upstream: Response, signal: AbortSignal): Promise<Response> {
     let body: Uint8Array | null;
     try {
         body = await readLimitedBody(
@@ -294,7 +302,9 @@ async function boundedUpstreamResponse(upstream: Response): Promise<Response> {
             upstream.headers.get('content-length'),
             MAX_RESPONSE_BYTES,
         );
-    } catch {
+        signal.throwIfAborted();
+    } catch (error) {
+        if (signal.aborted) throw error;
         return errorResponse(502, 'NEAR RPC unavailable');
     }
     if (!body) return errorResponse(502, 'NEAR RPC response too large');
@@ -340,31 +350,32 @@ export async function handleNearRpcRequest(request: Request, mode: RpcMode): Pro
     const candidates = mode === 'broadcast' ? upstreams.slice(0, 1) : upstreams;
 
     for (const upstream of candidates) {
+        if (request.signal.aborted) break;
         const now = Date.now();
         if (isCircuitOpen(upstream.label, now)) continue;
         const remainingMs = deadline - now;
         if (remainingMs <= 0) break;
 
         const startedAt = Date.now();
-        const response = await fetchWithTimeout(
+        const result = await fetchWithTimeout(
             upstream,
             body,
             request.signal,
             Math.min(UPSTREAM_TIMEOUT_MS, remainingMs),
+            mode,
         );
-        if (!response) {
+        if (!result) {
             recordCircuit(upstream.label, true, Date.now());
             logUpstream(upstream, mode, payload.method, 0, startedAt, 'network_error');
             continue;
         }
 
-        const transientFailure = response.status === 429 || response.status >= 500;
+        const { response, transientFailure } = result;
         recordCircuit(upstream.label, transientFailure, Date.now());
         logUpstream(upstream, mode, payload.method, response.status, startedAt, transientFailure ? 'transient' : 'ok');
         if (mode === 'broadcast' || !transientFailure) {
-            return boundedUpstreamResponse(response);
+            return response;
         }
-        await response.body?.cancel();
     }
 
     return errorResponse(Date.now() >= deadline ? 504 : 502, 'NEAR RPC unavailable');
