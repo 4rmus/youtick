@@ -166,6 +166,12 @@ test("public-testnet packages an isolated closed target without changing legacy 
   assert.equal(manifest.targets["public-testnet"].web.worker, "youtick-web-public-testnet");
   assertSuccess(run(["verify", "--artifact-dir", release.artifactDir, "--sha", SHA,
     "--web-lock", release.webLock, "--bridge-lock", release.bridgeLock]));
+  assertSuccess(run(["config", "--environment", "public-testnet", "--output", configPath], {
+    ...publicEnv("public-testnet"), PUBLIC_TESTNET_ALLOWED_ORIGINS: "https://public-testnet.youtick.net,http://localhost:3000",
+  }));
+  assertSuccess(run([...release.manifestArgs, "--public-testnet-config", configPath, "--web-public-testnet", bundlePath]));
+  assertSuccess(run(["verify", "--artifact-dir", release.artifactDir, "--sha", SHA,
+    "--web-lock", release.webLock, "--bridge-lock", release.bridgeLock]));
 });
 
 test("public-testnet rejects open flags and reused beta resources", () => {
@@ -182,6 +188,41 @@ test("public-testnet rejects open flags and reused beta resources", () => {
     const result = run(["config", "--environment", "public-testnet", "--output", join(root, "config.json")],
       { ...publicEnv("public-testnet"), ...override });
     assert.notEqual(result.status, 0);
+  }
+});
+
+test("public-testnet accepts only the optional exact localhost lab origin without changing other settings", () => {
+  const root = mkdtempSync(join(tmpdir(), "youtick-public-lab-origin-"));
+  const output = join(root, "config.json");
+  const env = publicEnv("public-testnet");
+  assertSuccess(run(["config", "--environment", "public-testnet", "--output", output], env));
+  const base = JSON.parse(readFileSync(output));
+  assert.equal(base.bridge.ALLOWED_ORIGINS, "https://public-testnet.youtick.net");
+  env.PUBLIC_TESTNET_ALLOWED_ORIGINS += ",http://localhost:3000";
+  assertSuccess(run(["config", "--environment", "public-testnet", "--output", output], env));
+  const lab = JSON.parse(readFileSync(output));
+  assert.equal(lab.bridge.ALLOWED_ORIGINS, "http://localhost:3000,https://public-testnet.youtick.net");
+  lab.bridge.ALLOWED_ORIGINS = base.bridge.ALLOWED_ORIGINS;
+  assert.deepEqual(lab, base);
+});
+
+test("localhost lab origin does not permit other addresses or weaken Preview and Production", () => {
+  const root = mkdtempSync(join(tmpdir(), "youtick-invalid-lab-origin-"));
+  for (const origin of ["*", "http://localhost:3001", "http://127.0.0.1:3000", "http://[::1]:3000",
+    "https://localhost:3000", "http://localhost:3000/path", "http://localhost:3000/", "http://user@localhost:3000",
+    "http://localhost:3000?x=1", "http://localhost:3000#x", "http://localhost.evil.test:3000", "https://other.youtick.net"]) {
+    const result = run(["config", "--environment", "public-testnet", "--output", join(root, "bad.json")], {
+      ...publicEnv("public-testnet"), PUBLIC_TESTNET_ALLOWED_ORIGINS: `https://public-testnet.youtick.net,${origin}`,
+    });
+    assert.notEqual(result.status, 0, origin);
+  }
+  assert.notEqual(run(["config", "--environment", "public-testnet", "--output", join(root, "missing-public.json")], {
+    ...publicEnv("public-testnet"), PUBLIC_TESTNET_ALLOWED_ORIGINS: "http://localhost:3000",
+  }).status, 0);
+  for (const environment of ["preview", "production"]) {
+    const env = publicEnv(environment);
+    env[`${environment.toUpperCase()}_ALLOWED_ORIGINS`] += ",http://localhost:3000";
+    assert.notEqual(run(["config", "--environment", environment, "--output", join(root, `${environment}.json`)], env).status, 0);
   }
 });
 
@@ -989,6 +1030,7 @@ test("public packets build and verify without any Preview or Production artifact
   const bundle = join(release.artifactDir, "web-public-testnet.tar.gz");
   assertSuccess(run(["config", "--environment", "public-testnet", "--output", base], {
     ...publicEnv("public-testnet"), PUBLIC_TESTNET_NEAR_SPONSOR_RELAYER_ACCOUNT_ID: "public-relayer.testnet",
+    PUBLIC_TESTNET_ALLOWED_ORIGINS: "http://localhost:3000,https://public-testnet.youtick.net",
     PUBLIC_TESTNET_NEAR_SPONSOR_RELAYER_KEY_EPOCH: "1",
     PUBLIC_TESTNET_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: "",
     PUBLIC_TESTNET_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: "",
@@ -1001,6 +1043,7 @@ test("public packets build and verify without any Preview or Production artifact
   for (const mode of ["closed", "acceptance", "drain"]) {
     assertSuccess(run(["config", "--environment", "public-testnet", "--input", base, "--mode", mode, "--output", config]));
     const packet = JSON.parse(readFileSync(config));
+    assert.equal(packet.bridge.ALLOWED_ORIGINS, "http://localhost:3000,https://public-testnet.youtick.net");
     assert.equal(packet.bridge.LIVEPEER_NEW_UPLOADS_ENABLED, String(mode === "acceptance"));
     assert.equal(packet.bridge.LIVEPEER_OPERATOR_MUTATIONS_ENABLED, String(mode !== "closed"));
     assert.equal(packet.bridge.LIVEPEER_PROVIDER_MUTATIONS_ENABLED, String(mode !== "closed"));

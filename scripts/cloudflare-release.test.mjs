@@ -2270,6 +2270,33 @@ for (const mode of ['acceptance', 'drain', 'closed']) test(`public ${mode} keeps
     assert.ok(fake.apiCalls.filter((call) => call.path.includes('/queues')).every((call) => call.method === 'GET'));
 });
 
+test('public lab origin reaches only the intended Bridge configuration in a mocked release', async (t) => {
+    const release = publicModeRelease(t, 'acceptance');
+    const config = JSON.parse(readFileSync(release.configPath));
+    const origins = 'http://localhost:3000,https://public-testnet.youtick.net';
+    config.bridge.ALLOWED_ORIGINS = origins;
+    writeFileSync(release.configPath, canonicalJson(config));
+    release.manifest.configs['public-testnet'] = record(release.configPath);
+    writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+    const fake = makeFakeWrangler(release, { publicMode: 'acceptance', workers: {
+        [TARGETS['public-testnet'].web.worker]: { traffic: [{ version_id: 'web-old', percentage: 100 }] },
+        [TARGETS['public-testnet'].bridge.worker]: { traffic: [{ version_id: 'bridge-old', percentage: 100 }] },
+        [PUBLIC_TESTNET_READ_MODEL.worker]: { traffic: [{ version_id: 'read-model-old', percentage: 100 }] },
+    } });
+    await deployFixture(release, fake, async () => ({ ok: true }), { target: 'public-testnet' });
+    const withOrigins = calls(fake).filter((args) => args.includes(`ALLOWED_ORIGINS:${origins}`));
+    assert.ok(withOrigins.length > 0);
+    assert.ok(withOrigins.every((args) => args.includes(TARGETS['public-testnet'].bridge.worker)));
+
+    config.bridge.ALLOWED_ORIGINS += ',http://localhost:3001';
+    writeFileSync(release.configPath, canonicalJson(config));
+    release.manifest.configs['public-testnet'] = record(release.configPath);
+    writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+    const before = calls(fake).length;
+    await assert.rejects(() => deployFixture(release, fake, async () => ({}), { target: 'public-testnet' }), /public_testnet_origins_invalid/);
+    assert.equal(calls(fake).length, before);
+});
+
 test('public activation requires an already closed deployment and provisioned queue consumer', async (t) => {
     const release = publicModeRelease(t, 'acceptance');
     for (const queueMissing of [true, false]) {
