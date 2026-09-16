@@ -17,6 +17,7 @@ const PREVIEW_CONTRACT_IDS = Object.freeze({
   access: "lp-arch-access-v2-260809.youtick-dev-v3.testnet",
 });
 const PREVIEW_READ_MODEL_ORIGIN = "https://read-preview.youtick.net";
+const PUBLIC_TESTNET_LAB_ORIGIN = "http://localhost:3000";
 const PAYMENT_ASSET_IDS = new Set([
   "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
   "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
@@ -472,7 +473,8 @@ function buildConfig(environment) {
       bridge.ALLOWED_ORIGINS.split(",")
         .map((entry) => entry.trim())
         .filter(Boolean)
-        .map((entry) => normalizeOrigin(entry, "ALLOWED_ORIGINS")),
+        .map((entry) => environment === "public-testnet" && entry === PUBLIC_TESTNET_LAB_ORIGIN
+          ? entry : normalizeOrigin(entry, "ALLOWED_ORIGINS")),
     ),
   ].sort();
   if (!allowedOrigins.includes(expectedWebOrigin)) {
@@ -545,7 +547,7 @@ export function validatePublicTestnetConfig(config) {
   if (new Set(contracts).size !== 2 || contracts.some((id) => !/^[a-z0-9][a-z0-9._-]*\.testnet$/.test(id)
       || Object.values(PREVIEW_CONTRACT_IDS).includes(id))) fail("public_testnet_contracts_not_isolated");
   if (web.NEXT_PUBLIC_APP_URL !== `https://${PUBLIC_TESTNET_TARGET.web.domain}`
-      || bridge.ALLOWED_ORIGINS !== web.NEXT_PUBLIC_APP_URL
+      || ![web.NEXT_PUBLIC_APP_URL, `${PUBLIC_TESTNET_LAB_ORIGIN},${web.NEXT_PUBLIC_APP_URL}`].includes(bridge.ALLOWED_ORIGINS)
       || web.NEXT_PUBLIC_LIVEPEER_BRIDGE_URL !== `https://${PUBLIC_TESTNET_TARGET.bridge.domain}`
       || bridge.LIVEPEER_JWT_ISSUER !== web.NEXT_PUBLIC_APP_URL) fail("public_testnet_origins_invalid");
   const mode = publicTestnetMode(config);
