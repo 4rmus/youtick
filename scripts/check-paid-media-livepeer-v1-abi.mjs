@@ -21,6 +21,7 @@ const expectedMarket = [
   "finalize_livepeer_publication",
   "freeze_bridge",
   "ft_on_transfer",
+  "get_compact_upload_version",
   "get_creator_balance",
   "get_governance_state",
   "get_media_job",

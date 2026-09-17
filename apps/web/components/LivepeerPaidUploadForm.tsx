@@ -121,7 +121,14 @@ export function getLivepeerPublicationView(query: {
 }
 
 export function LivepeerPaidUploadForm() {
-    const { accountId, connect, getWallet, isReady } = useWallet();
+    return <LivepeerPaidUploadFormContent {...useWallet()} />;
+}
+
+export function LivepeerPaidUploadFormContent({ accountId, connect, getWallet, isReady, onBusyChange, allowUploadKeyReplacement = true, jobHref }: Pick<ReturnType<typeof useWallet>, 'accountId' | 'connect' | 'getWallet' | 'isReady'> & {
+    onBusyChange?: (busy: boolean) => void;
+    allowUploadKeyReplacement?: boolean;
+    jobHref?: (jobId: string) => string;
+}) {
     const [file, setFile] = React.useState<File | null>(null);
     const [fileError, setFileError] = React.useState<string | null>(null);
     const [title, setTitle] = React.useState('');
@@ -132,6 +139,7 @@ export function LivepeerPaidUploadForm() {
     const [status, setStatus] = React.useState<string | null>(null);
     const [error, setError] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState(false);
+    React.useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
     const [resumeAvailable, setResumeAvailable] = React.useState(false);
     const operation = React.useRef<AbortController | null>(null);
     const [uploadStage, setUploadStage] = React.useState<UploadStage>('draft');
@@ -530,7 +538,7 @@ export function LivepeerPaidUploadForm() {
         setFailedStep(null);
         setStatus('Checking your existing upload…');
         try {
-            const result = await prepareLivepeerUploadResume(await getWallet(), { accountId, jobId, file, signal: controller.signal });
+            const result = await prepareLivepeerUploadResume(await getWallet(), { accountId, jobId, file, signal: controller.signal, allowUploadKeyReplacement });
             controller.signal.throwIfAborted();
             moveUploadStage('draft');
             if ('state' in result) {
@@ -602,10 +610,10 @@ export function LivepeerPaidUploadForm() {
             </div>
 
             {!jobId && accountId && trackedUpload?.accountId === accountId && (
-                <LivepeerUploadStatus accountId={accountId} jobId={trackedUpload.jobId} />
+                <LivepeerUploadStatus accountId={accountId} jobId={trackedUpload.jobId} jobHref={jobHref} />
             )}
             {jobId && (
-                <Link className="text-sm underline" href={`/upload?job=${encodeURIComponent(jobId)}`}>
+                <Link className="text-sm underline" href={jobHref?.(jobId) ?? `/upload?job=${encodeURIComponent(jobId)}`}>
                     Upload status link — bookmark to return later
                 </Link>
             )}
@@ -682,7 +690,7 @@ export function LivepeerPaidUploadForm() {
 
                     {file && !fileError && (
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
-                            <ol aria-label="Publication progress" className="grid gap-3 sm:grid-cols-5">
+                            <ol aria-label="Publication progress" className="grid grid-cols-[repeat(auto-fit,minmax(7rem,1fr))] gap-3">
                                 {UPLOAD_STEPS.map((label, index) => {
                                     const state = UPLOAD_STAGE_STATE[displayedStage];
                                     const failed = displayedFailedStep === index;
@@ -722,7 +730,7 @@ export function LivepeerPaidUploadForm() {
                     {!accountId ? (
                         <Button onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>
                     ) : publicationReady && jobId ? (
-                        <Button asChild className="w-full"><Link href={`/watch?job=${encodeURIComponent(jobId)}`}>Open publication</Link></Button>
+                        <Button asChild className="w-full"><Link href={jobHref?.(jobId) ?? `/watch?job=${encodeURIComponent(jobId)}`}>Open publication</Link></Button>
                     ) : publicationExpired ? (
                         <Button className="w-full" disabled>Publication deadline passed</Button>
                     ) : resumeAvailable ? (
@@ -764,7 +772,7 @@ function formatMicroUsdc(value: string): string {
     return `${amount / 1_000_000n}.${fraction.padEnd(2, '0')}`;
 }
 
-export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; jobId: string }) {
+export function LivepeerUploadStatus({ accountId, jobId, jobHref }: { accountId: string; jobId: string; jobHref?: (jobId: string) => string }) {
     const query = useQuery({
         queryKey: ['livepeerSavedUpload', accountId, jobId],
         queryFn: async () => {
@@ -793,14 +801,14 @@ export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; 
             </CardHeader>
             <CardContent className="space-y-3">
                 {progress?.publication ? (
-                    <Button asChild><Link href={`/watch?job=${encodeURIComponent(jobId)}`}>Open publication</Link></Button>
+                    <Button asChild><Link href={jobHref?.(jobId) ?? `/watch?job=${encodeURIComponent(jobId)}`}>Open publication</Link></Button>
                 ) : (
                     <p className="text-sm text-muted-foreground">
                         {progress && !progress.expired && 'Livepeer processing details are unavailable in this view. '}
                         No new payment or upload has been started.
                     </p>
                 )}
-                <Link className="text-sm underline" href={`/upload?job=${encodeURIComponent(jobId)}`}>
+                <Link className="text-sm underline" href={jobHref?.(jobId) ?? `/upload?job=${encodeURIComponent(jobId)}`}>
                     Upload status link — bookmark to return later
                 </Link>
             </CardContent>
@@ -816,8 +824,25 @@ function fileValidationMessage(error: 'empty_file' | 'source_limit_exceeded' | '
     return 'Choose an MP4, MOV, AVI, WebM, WMV, MKV or FLV video file.';
 }
 
-function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): string {
+export function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): string {
     const code = reason instanceof Error ? reason.message : '';
+    if (code === 'google_upload_completion_expired') return 'The sponsor wallet returned a transaction, but the authorization expired before upload signing could be confirmed. Keep this upload and reconcile that transaction; do not pay again.';
+    if (code === 'google_upload_completion_pending') return 'The sponsor wallet returned a transaction, but upload signing could not be confirmed. Keep this upload and reconcile that transaction; do not request another signature.';
+    if (code === 'authorization_expired' || code === 'review_expired') return 'Google approval or the upload review expired before the sponsor request. No sponsor payment was requested; keep this upload for a fresh review.';
+    if (code === 'livepeer_upload_key_recovery_unavailable') return 'This paid upload needs its original valid upload key. The Google trial cannot replace it. Keep this upload and browser data for review; do not pay again.';
+    if (code === 'device_session_required') return 'The existing playback device could not be verified. Keep this paid upload and browser data for review; no new device or payment was requested.';
+    if (/^signing_check_failed: (prepare-upload|authorize-upload) \/ compact_upload_unavailable$/.test(code)) return 'Google upload is waiting for a compatible upload service. No new sponsor payment was requested; keep this upload for review.';
+    if (code === 'signing_check_failed' || code.startsWith('signing_check_failed: ')) {
+        return `The upload authorization check failed (${code}). Keep this upload and check the existing attempt before retrying.`;
+    }
+    if (code === 'unapproved_claims') return 'The Google approval contains unsupported claims (unapproved_claims). No new sponsor payment was requested; keep this upload for review.';
+    if (code === 'signing_already_started' || code === 'outer_unknown') return 'A Google signing attempt already started or its result is uncertain. Keep this upload and check that transaction before requesting another signature.';
+    if (code === 'upload_cancelled') return 'Upload approval cancelled. No new signing payment was requested.';
+    if (code === 'google_upload_action_unsupported') return 'This operation is not available in the Google upload trial. Keep the existing upload and account state for review.';
+    if (['signing_approval_access_denied', 'signing_approval_login_required', 'signing_approval_consent_required',
+        'signing_approval_timeout', 'signing_approval_cancelled', 'signing_approval_popup_open_error', 'signing_approval_failed'].includes(code.split(':', 1)[0])) {
+        return `Google transaction approval could not be completed (${code}). No sponsor payment was requested. Keep this upload for review.`;
+    }
     if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(code)) {
         return 'Enable secure site storage and use a supported browser before continuing. No payment was sent.';
     }

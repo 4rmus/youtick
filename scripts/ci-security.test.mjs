@@ -212,6 +212,27 @@ test('fresh public-testnet bootstrap is reviewed, durable before send and never 
     assert.doesNotMatch(helper, /runMarketCodeUpdate|sendTransactionUntil|signAndSendTransaction/);
 });
 
+test('shared compact paths select every consumer while docs stay scoped', async () => {
+    const source = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const mapping = source.slice(source.indexOf('name: Map changed paths to CI jobs'));
+    const start = mapping.indexOf('case "${path}" in');
+    const end = mapping.indexOf('esac', start);
+    assert.ok(start >= 0 && end > start);
+    const shell = `web=false; bridge=false; contracts=false; protocol=false; docs=false
+set_all() { web=true; bridge=true; contracts=true; protocol=true; docs=true; }
+${mapping.slice(start, end + 4)}
+printf '%s %s %s %s %s' "$web" "$bridge" "$contracts" "$protocol" "$docs"`;
+    for (const [path, expected] of [
+        ['protocol/paid-media-livepeer-v1/compact-upload.ts', 'true true true true false'],
+        ['protocol/paid-media-livepeer-v1/compact-upload-vectors.json', 'true true true true false'],
+        ['docs/testing.md', 'false false false false true'],
+    ]) {
+        assert.equal(execFileSync('bash', ['-euo', 'pipefail', '-c', shell], {
+            env: { ...process.env, path }, encoding: 'utf8',
+        }), expected, path);
+    }
+});
+
 test('web CI verifies the immutable sponsored-wallet executor', async () => {
     const source = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
     const web = source.slice(source.indexOf('  web:'), source.indexOf('  livepeer-bridge:'));

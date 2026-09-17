@@ -22,8 +22,8 @@ const featureFlags = vi.hoisted(() => ({
     publicTestnetVideoV1: false,
 }));
 
-const device = vi.hoisted(() => ({ prepare: vi.fn(), remember: vi.fn() }));
-vi.mock('@/lib/device-session', () => ({ preparePlaybackDevice: device.prepare, rememberPlaybackDelegate: device.remember }));
+const device = vi.hoisted(() => ({ prepare: vi.fn(), remember: vi.fn(), get: vi.fn() }));
+vi.mock('@/lib/device-session', () => ({ preparePlaybackDevice: device.prepare, rememberPlaybackDelegate: device.remember, getDeviceSession: device.get }));
 
 vi.mock('@/lib/signless-access-key', () => ({ signAndSendWithSignlessProvision: vi.fn() }));
 
@@ -239,6 +239,7 @@ describe('Livepeer browser upload', () => {
         featureFlags.enablePlaybackAuthorizerV2 = false;
         device.prepare.mockReset().mockResolvedValue({ session_public_key: 'ed25519:device', certificate_sha256: 'a'.repeat(64), authorization_duration_ms: '2592000000' });
         device.remember.mockReset().mockResolvedValue(undefined);
+        device.get.mockReset().mockResolvedValue({ certificate: { version: '3' } });
         featureFlags.publicTestnetBeta = false;
         featureFlags.publicTestnetVideoV1 = false;
         near.viewContract.mockReset().mockImplementation(policyView);
@@ -265,6 +266,45 @@ describe('Livepeer browser upload', () => {
         const saved = Array.from({ length: localStorage.length }, (_, i) => localStorage.getItem(localStorage.key(i)!));
         expect(JSON.stringify(saved)).not.toMatch(/ed25519:|tus_endpoint|secretKey|signedDelegate|origin.livepeer/);
         expect(await readLivepeerUploadDraft('other.testnet', file)).toBeNull();
+    });
+
+    it('blocks key replacement for the Google pilot before changing either storage', async () => {
+        const { wallet, fetchMock, input } = await publicResumeFixture();
+        sessionStorage.clear();
+        const draft = await readLivepeerUploadDraft(input.accountId, input.file);
+        vi.mocked(sessionStorage.setItem).mockClear(); vi.mocked(localStorage.setItem).mockClear();
+        await expect(prepareLivepeerUploadResume(wallet as never, { ...input, allowUploadKeyReplacement: false }))
+            .rejects.toThrow('livepeer_upload_key_recovery_unavailable');
+        expect(sessionStorage.setItem).not.toHaveBeenCalled(); expect(localStorage.setItem).not.toHaveBeenCalled();
+        expect(wallet.getAccounts).not.toHaveBeenCalled(); expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(await readLivepeerUploadDraft(input.accountId, input.file)).toEqual(draft);
+    });
+
+    it.each(['valid', 'expired-key', 'different-key', 'missing-device', 'expired-local-key', 'invalid-local-key'])('Google paid-job resume preserves keys: %s', async (condition) => {
+        const { wallet, fetchMock, input, job } = await publicResumeFixture();
+        await prepareLivepeerUploadResume(wallet as never, input);
+        wallet.signAndSendTransaction.mockClear(); fetchMock.mockClear(); device.prepare.mockClear();
+        if (condition === 'expired-key') job.upload_key_expires_at_ms = String(Date.now() - 1);
+        if (condition === 'different-key') job.upload_public_key = 'ed25519:different';
+        if (condition === 'missing-device') device.get.mockResolvedValue(null);
+        if (condition === 'expired-local-key' || condition === 'invalid-local-key') {
+            const storageKey = Array.from({ length: sessionStorage.length }, (_, i) => sessionStorage.key(i)!)
+                .find(key => key.startsWith('youtick:livepeer-job-session:'))!;
+            const value = JSON.parse(sessionStorage.getItem(storageKey)!);
+            sessionStorage.setItem(storageKey, condition === 'invalid-local-key' ? 'invalid-json'
+                : JSON.stringify({ ...value, uploadKeyExpiresAtMs: String(Date.now() - 1) }));
+        }
+        const saved = () => Array.from({ length: sessionStorage.length }, (_, i) => sessionStorage.getItem(sessionStorage.key(i)!));
+        const previous = saved();
+        const result = prepareLivepeerUploadResume(wallet as never, { ...input, allowUploadKeyReplacement: false });
+        if (condition === 'valid') await expect(result).resolves.toMatchObject({ created: false });
+        else {
+            await expect(result).rejects.toThrow(condition === 'missing-device' ? 'device_session_required' : 'livepeer_upload_key_recovery_unavailable');
+            expect(fetchMock).not.toHaveBeenCalled();
+        }
+        expect(saved()).toEqual(previous);
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled(); expect(device.prepare).not.toHaveBeenCalled();
     });
 
     it('resumes a paid full HD job after the policy returns to 720p without a new quote or asset', async () => {

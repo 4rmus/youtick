@@ -1,7 +1,11 @@
+import compactVectors from '../../../protocol/paid-media-livepeer-v1/compact-upload-vectors.json';
+import { packCompactUpload } from '../../../protocol/paid-media-livepeer-v1/compact-upload';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     Account,
+    PublicKey,
+    baseEncode,
     KeyPair,
     KeyPairSigner,
     actions,
@@ -11,6 +15,7 @@ import {
 import vectors from '../../../protocol/paid-media-livepeer-v1/golden-vectors.json';
 import handler, {
     LivepeerControl,
+    parseSponsoredUploadRelayRequest,
     formatLog,
     forwardUploadIntent,
     jobObjectName,
@@ -20,6 +25,7 @@ import handler, {
 } from './index';
 import { LivepeerTransport } from './livepeer-provider';
 
+const base64Decode = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const ORIGIN = 'https://app.youtick.net';
 const RPC_URL = 'https://rpc.testnet.near.org';
 const CONTRACT_ID = 'paid-media-livepeer-v1.testnet';
@@ -229,12 +235,13 @@ async function signedSponsoredRelay(
         nonce?: bigint;
         maxBlockHeight?: bigint;
         accountBlockHeight?: number;
+        compact?: boolean;
         playbackSession?: unknown;
     },
 ): Promise<Request> {
     const quote = quoteResponse.quote as Record<string, unknown>;
     const request = quoteResponse.request as Record<string, unknown>;
-    const message = JSON.stringify({
+    let message = JSON.stringify({
         action: 'create_paid_job',
         creator_id: overrides?.creatorId ?? request.creator_id,
         job_id: overrides?.jobId ?? request.job_id,
@@ -249,10 +256,13 @@ async function signedSponsoredRelay(
         sponsor_quote_signature: overrides?.quoteSignature ?? quoteResponse.signature,
         ...(overrides?.playbackSession !== undefined ? { playback_session: overrides.playbackSession } : {}),
     });
+    if (overrides?.compact) message = await packCompactUpload(JSON.parse(message), key => PublicKey.fromString(key).data, {
+        network: 'testnet', market: CONTRACT_ID, creator: String(request.creator_id), usdc: TESTNET_USDC, keyString: bytes => `ed25519:${baseEncode(bytes)}`,
+    });
     const actionsToSign = [actions.functionCall(overrides?.methodName ?? 'ft_transfer_call', {
         receiver_id: overrides?.innerReceiverId ?? CONTRACT_ID,
         amount: overrides?.amount ?? String(quote.total_fee_usdc),
-        memo: 'YouTick creator upload fee',
+        ...(overrides?.compact ? {} : { memo: 'YouTick creator upload fee' }),
         msg: message,
     }, overrides?.gas ?? 100_000_000_000_000n, overrides?.deposit ?? 1n)];
     const delegate = buildDelegateAction({
@@ -982,6 +992,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         );
         expect(await health.json()).toMatchObject({
             versionId: 'worker-version-test',
+            compactUpload: { version: 1, network: 'testnet', market: CONTRACT_ID },
             stage: 'DISABLED',
             publicControlImplemented: true,
             providerMutationEnabled: false,
@@ -1254,13 +1265,15 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1);
     });
 
-    it.each([false, true])('issues one fixed sponsor quote and relays only the exact creator upload once; playback=%s', async (withPlayback) => {
+    it.each([false, true, 'compact'])('issues one fixed sponsor quote and relays only the exact creator upload once; playback=%s', async (withPlayback) => {
         const now = vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
         const runtime = sponsoredRuntime({
             LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true',
         });
         const userSigner = KeyPairSigner.fromSecretKey(KeyPair.fromRandom('ed25519').toString());
         let jobCreated = false;
+        let reconciliationReady = true;
+        let blockHeight = 1_000;
         let sendCount = 0;
         let usdcBalance = '600000';
         let blockTimestampNanosec = '1785589300000000000';
@@ -1272,7 +1285,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             if (method === 'block') {
                 return Response.json({ result: { header: {
                     hash: BLOCK_HASH,
-                    height: 1_000,
+                    height: blockHeight,
                     timestamp_nanosec: blockTimestampNanosec,
                 } } });
             }
@@ -1281,6 +1294,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
                 return Response.json({ error: { cause: { name: 'TIMEOUT_ERROR' } } });
             }
             if (method === 'tx') {
+                if (!reconciliationReady) return Response.json({error:{cause:{name:'UNKNOWN_TRANSACTION'}}});
                 jobCreated = true;
                 return Response.json({ result: { status: { SuccessValue: '' } } });
             }
@@ -1391,9 +1405,16 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(sendCount).toBe(0);
 
         const relayRequest = await signedSponsoredRelay(quoteBody, userSigner, {
-            accountBlockHeight: 1_200,
+            accountBlockHeight: 1_200, compact: withPlayback === 'compact',
             ...(withPlayback ? { playbackSession: { session_public_key: vectors.upload_intent.envelope.session_public_key, certificate_sha256: 'a'.repeat(64), authorization_duration_ms: '2592000000' } } : {}),
         });
+        for (const height of [999,1201]) {
+            blockHeight=height;
+            const stale=await handler.fetch(relayRequest.clone(),runtime.env);
+            expect(stale.status).toBe(400); expect(await stale.json()).toMatchObject({reason:'freshness'});
+            expect(sendCount).toBe(0); expect(runtime.admissionState.values.has('admission:v1')).toBe(false);
+        }
+        blockHeight=1200; // The quote's last block is inclusive; delegate headroom remains 200.
         now.mockReturnValue(1_785_589_420_001);
         const expired = await handler.fetch(relayRequest.clone(), runtime.env);
         expect(expired.status).toBe(400);
@@ -1425,7 +1446,16 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(runtime.admissionState.values.has('admission:v1')).toBe(true);
         expect(runtime.relayerState.alarms).toHaveLength(1);
 
+        blockHeight=1500;
         now.mockReturnValue(1_785_589_500_000);
+        reconciliationReady=false;
+        const saved=structuredClone(runtime.relayerState.values.get('sponsor-relay:job-sponsored'));
+        const unknown=await handler.fetch(relayRequest.clone(),runtime.env);
+        expect(unknown.status).toBe(202);
+        await new LivepeerControl(runtime.relayerState.state,runtime.env).alarm();
+        expect(runtime.relayerState.values.get('sponsor-relay:job-sponsored')).toEqual(saved);
+        expect(sendCount).toBe(1);
+        reconciliationReady=true;
         const reconciled = await handler.fetch(relayRequest.clone(), runtime.env);
         expect(reconciled.status).toBe(200);
         expect(await reconciled.json()).toMatchObject({
@@ -3749,5 +3779,50 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(operatorState.values.get('outbox:archive-scan-1')).toMatchObject({
             archive: { status: 'RETRY', attempts: 1 },
         });
+    });
+});
+
+describe('cross-language compact vectors', () => {
+    it.each(compactVectors)('verifies the shared quote and delegate for $request.job_id', async vector => {
+        // Public deterministic test seed, never a provider credential.
+        const privatePkcs8 = new Uint8Array([...new Uint8Array([0x30,0x2e,2,1,0,0x30,5,6,3,0x2b,0x65,0x70,4,0x22,4,0x20]), ...new Uint8Array(32).fill(121)]);
+        const runtime = sponsoredRuntime({MARKET_CONTRACT_ID:'market.testnet',CREATOR_FEE_QUOTE_PRIVATE_KEY:base64Encode(privatePkcs8)});
+        const input = () => new Request('https://bridge.invalid/',{method:'POST',body:JSON.stringify({signed_delegate_base64:vector.signed_delegate_base64})});
+        const parsed=await parseSponsoredUploadRelayRequest(input(),runtime.env);
+        expect(parsed.request).toEqual(vector.request); expect(parsed.quote).toEqual(vector.quote);
+        expect(parsed.hasPlaybackSession).toBe(true);
+        await expect(parseSponsoredUploadRelayRequest(input(),{...runtime.env,MARKET_CONTRACT_ID:'wrong.testnet'})).rejects.toThrow();
+        const altered=base64Decode(vector.signed_delegate_base64); altered[altered.length-1]^=1;
+        await expect(parseSponsoredUploadRelayRequest(new Request('https://bridge.invalid/',{method:'POST',body:JSON.stringify({signed_delegate_base64:base64Encode(altered)})}),runtime.env)).rejects.toThrow();
+    });
+});
+
+describe('last sponsored-send freshness check', () => {
+    it.each(['block','time'])('does not send when %s expires during signing/storage waits', async expired => {
+        const now=vi.spyOn(Date,'now').mockReturnValue(1785589300000);
+        const runtime=sponsoredRuntime({LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED:'true'});
+        const signer=KeyPairSigner.fromSecretKey(KeyPair.fromRandom('ed25519').toString());
+        let late=false; let reads=0; let height=1000; let sends=0;
+        vi.stubGlobal('fetch',vi.fn(async (_url: RequestInfo | URL,init?:RequestInit) => {
+            const {method,params}=JSON.parse(String(init?.body));
+            if(method==='block') {
+                if(late && ++reads===2) { if(expired==='block') height=1201; else now.mockReturnValue(1785589420001); }
+                return Response.json({result:{header:{hash:BLOCK_HASH,height,timestamp_nanosec:String(BigInt(Date.now())*1000000n)}}});
+            }
+            if(method==='send_tx') { sends++; throw Error('unexpected_broadcast'); }
+            if(method==='query' && params.request_type==='view_access_key') return Response.json({result:{nonce:params.account_id===SPONSOR_RELAYER_ID?20:10,permission:'FullAccess',block_hash:BLOCK_HASH}});
+            if(method==='query' && params.method_name==='ft_balance_of') return Response.json({result:{result:[...new TextEncoder().encode('"600000"')]}});
+            if(method==='query' && params.method_name==='get_media_job') return Response.json({result:{block_hash:BLOCK_HASH,result:[...new TextEncoder().encode('null')]}});
+            throw Error(`unexpected_rpc:${method}:${params?.method_name}`);
+        }));
+        const quoteResponse=await handler.fetch(sponsoredQuoteRequest(),runtime.env);
+        expect(quoteResponse.status).toBe(200);
+        const quote=await quoteResponse.json() as Record<string,unknown>;
+        const request=await signedSponsoredRelay(quote,signer,{maxBlockHeight:1400n});
+        late=true;
+        const rejected=await handler.fetch(request,runtime.env);
+        expect(rejected.status).toBe(400); expect(await rejected.json()).toMatchObject({reason:'freshness'});
+        expect(sends).toBe(0);
+        expect(runtime.relayerState.values.get('sponsor-relay:job-sponsored')).toMatchObject({state:'SIGNED'});
     });
 });

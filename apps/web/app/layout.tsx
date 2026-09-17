@@ -8,6 +8,7 @@ import { QueryProvider } from '@/components/providers/QueryProvider';
 import { WalletProvider } from '@/components/providers/WalletProvider';
 import { PublicTestnetBetaBanner } from '@/components/PublicTestnetBetaBanner';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import { AuthLabBoundary } from '@/components/AuthLabBoundary';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
 
@@ -24,13 +25,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     return (
         <html lang="en" data-scroll-behavior="smooth">
             <body className={`${geist.variable} min-h-screen bg-black text-white antialiased`}>
-                <QueryProvider>
-                    {(FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1) && <PublicTestnetBetaBanner />}
-                    <WalletProvider cspNonce={cspNonce}>
-                        <Navbar />
-                        <main>{children}</main>
-                    </WalletProvider>
-                </QueryProvider>
+                <AuthLabBoundary lab={children}>
+                    <QueryProvider>
+                        {(FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1) && <PublicTestnetBetaBanner />}
+                        <WalletProvider cspNonce={cspNonce}>
+                            <Navbar />
+                            <main>{children}</main>
+                        </WalletProvider>
+                    </QueryProvider>
+                </AuthLabBoundary>
             </body>
         </html>
     );

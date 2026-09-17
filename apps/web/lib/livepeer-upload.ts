@@ -1,4 +1,4 @@
-import { preparePlaybackDevice, rememberPlaybackDelegate, type PlaybackSessionAuthorization } from './device-session';
+import { getDeviceSession, preparePlaybackDevice, rememberPlaybackDelegate, type PlaybackSessionAuthorization } from './device-session';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { Upload, type DetailedError } from 'tus-js-client';
 import {
@@ -711,7 +711,7 @@ async function submitSponsoredUploadRelay(
     });
 }
 
-async function parseSponsoredUploadQuote(
+export async function parseSponsoredUploadQuote(
     value: Record<string, unknown>,
     request: Record<string, string>,
 ): Promise<SignedSponsoredUploadQuote> {
@@ -1044,7 +1044,7 @@ export async function requestLivepeerUploadIntent(input: UploadIntentInput): Pro
 }
 
 export async function prepareLivepeerUploadResume(wallet: WalletInstance, input: {
-    accountId: string; jobId: string; file: File; signal?: AbortSignal;
+    accountId: string; jobId: string; file: File; signal?: AbortSignal; allowUploadKeyReplacement?: boolean;
 }): Promise<LivepeerUploadIntent | LivepeerUploadStatus> {
     requireFeature();
     if (!FEATURE_FLAGS.publicTestnetVideoV1) throw new Error('livepeer_resume_unavailable');
@@ -1066,9 +1066,10 @@ export async function prepareLivepeerUploadResume(wallet: WalletInstance, input:
             profile_id: PROFILE_ID, profile_config_sha256: storedProfileHash(progress.job),
         };
         if (!samePaidJob(progress.job, request, 'USDC')) throw new Error('livepeer_paid_job_conflict');
-        let session = loadLivepeerJobSessionKey(input.accountId, input.jobId);
+        let session = loadLivepeerJobSessionKey(input.accountId, input.jobId, input.allowUploadKeyReplacement === false);
         if (session?.keyPair.getPublicKey().toString() !== progress.job.upload_public_key
             || Number(progress.job.upload_key_expires_at_ms) <= Date.now()) {
+            if (input.allowUploadKeyReplacement === false) throw new Error('livepeer_upload_key_recovery_unavailable');
             if (draft.keyReplacementPending
                 && await sha256Hex(progress.job.upload_public_key) !== draft.keyReplacementFingerprint) {
                 throw new Error('livepeer_key_replacement_pending');
@@ -1111,6 +1112,9 @@ export async function prepareLivepeerUploadResume(wallet: WalletInstance, input:
             session = loadLivepeerJobSessionKey(input.accountId, input.jobId);
         }
         if (!session) throw new Error('livepeer_session_key_missing');
+        if (input.allowUploadKeyReplacement === false && (await getDeviceSession(input.accountId))?.certificate.version !== '3') {
+            throw new Error('device_session_required');
+        }
         setUploadDraftFlag(input.accountId, input.jobId, 'keyReplacementPending', false);
         input.signal?.throwIfAborted();
         return requestLivepeerUploadIntent({
@@ -1467,7 +1471,7 @@ function clearSponsoredDelegate(accountId: string, jobId: string): void {
     }
 }
 
-function loadLivepeerJobSessionKey(accountId: string, jobId: string): LivepeerJobSession | null {
+function loadLivepeerJobSessionKey(accountId: string, jobId: string, preserveInvalid = false): LivepeerJobSession | null {
     if (typeof window === 'undefined') return null;
     const storageKey = livepeerJobSessionStorageKey(accountId, jobId);
     const raw = sessionStorage.getItem(storageKey);
@@ -1500,6 +1504,7 @@ function loadLivepeerJobSessionKey(accountId: string, jobId: string): LivepeerJo
             sponsoredDelegateBase64: value.sponsoredDelegateBase64,
         };
     } catch {
+        if (preserveInvalid) return null;
         try {
             sessionStorage.removeItem(storageKey);
         } catch {

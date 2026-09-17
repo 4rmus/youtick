@@ -1,4 +1,6 @@
-import { KeyPair, KeyPairSigner, actions, buildDelegateAction, encodeSignedDelegate } from 'near-api-js';
+import { packCompactUpload, unpackCompactUpload } from '../../../protocol/paid-media-livepeer-v1/compact-upload';
+import compactVectors from '../../../protocol/paid-media-livepeer-v1/compact-upload-vectors.json';
+import { KeyPair, KeyPairSigner, PublicKey, baseEncode, actions, buildDelegateAction, encodeSignedDelegate } from 'near-api-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import handler, { playbackAuthorizationCacheRecordCount, type Env } from './index';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
@@ -753,7 +755,7 @@ describe('stateless playback v2', () => {
 });
 
 
-async function marketDeviceRequest(delegated = false) {
+async function marketDeviceRequest(delegated: boolean | 'compact' = false) {
     const wallet = KeyPair.fromRandom('ed25519');
     const device = KeyPair.fromRandom('ed25519');
     const certificate = {
@@ -764,12 +766,19 @@ async function marketDeviceRequest(delegated = false) {
     const hash = await sha256(canonicalJson(certificate));
     const proof: Record<string, unknown> = { account_id: ACCOUNT_ID, kind: 'market' };
     if (delegated) {
+        let compact: string | undefined;
+        if(delegated === 'compact') {
+            const ctx={network:'testnet',market:MARKET_ID,creator:ACCOUNT_ID,usdc:'3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af',keyString:(b:Uint8Array)=>`ed25519:${baseEncode(b)}`};
+            const msg=await unpackCompactUpload(compactVectors[0].compact_message,ctx);
+            msg.playback_session={session_public_key:certificate.session_public_key,certificate_sha256:hash,authorization_duration_ms:'2592000000'};
+            compact=await packCompactUpload(msg,key=>PublicKey.fromString(key).data,ctx);
+        }
         const delegate = buildDelegateAction({
             senderId: ACCOUNT_ID, receiverId: '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af',
             publicKey: wallet.getPublicKey(), nonce: 1n, maxBlockHeight: 200n,
             actions: [actions.functionCall('ft_transfer_call', {
-                receiver_id: MARKET_ID, amount: '600000', memo: 'YouTick creator upload fee',
-                msg: JSON.stringify({ action: 'create_paid_job', creator_id: ACCOUNT_ID,
+                receiver_id: MARKET_ID, amount: '600000', ...(compact ? {} : {memo: 'YouTick creator upload fee'}),
+                msg: compact ?? JSON.stringify({ action: 'create_paid_job', creator_id: ACCOUNT_ID,
                     playback_session: { session_public_key: certificate.session_public_key, certificate_sha256: hash, authorization_duration_ms: '2592000000' } }),
             }, 100_000_000_000_000n, 1n)],
         });
@@ -844,7 +853,7 @@ describe('Market-backed 30-day playback devices', () => {
         expect(idFromName).not.toHaveBeenCalled();
     });
 
-    it.each([false, true])('uses final records on day 29 without wallet signing or transaction history (delegated=%s)', async (delegated) => {
+    it.each([false, true, 'compact'] as const)('uses final records on day 29 without wallet signing or transaction history (delegated=%s)', async (delegated) => {
         const signed = await marketDeviceRequest(delegated);
         vi.spyOn(Date, 'now').mockReturnValue(Number(signed.record.authorized_at_ms) + 29 * 86400000);
         const { env, idFromName } = await createEnv();

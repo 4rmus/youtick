@@ -18,7 +18,16 @@ vi.mock('@tanstack/react-query', () => ({
 vi.mock('@/lib/livepeer-publication', () => ({ readLivepeerUploadProgress: state.read }));
 vi.mock('@/lib/livepeer-upload', () => ({ rememberLivepeerUploadJob: state.remember }));
 
-import { getLivepeerPublicationView, LivepeerUploadStatus } from '@/components/LivepeerPaidUploadForm';
+import { getLivepeerPublicationView, LivepeerUploadStatus, uploadErrorMessage } from '@/components/LivepeerPaidUploadForm';
+
+it('separates pre-payment expiry from uncertain post-sponsor completion and key loss', () => {
+    expect(uploadErrorMessage(new Error('authorization_expired'), true)).toContain('No sponsor payment was requested');
+    const afterSponsor = uploadErrorMessage(new Error('google_upload_completion_expired'), true);
+    expect(afterSponsor).toContain('reconcile that transaction');
+    expect(afterSponsor).not.toContain('No sponsor payment');
+    expect(uploadErrorMessage(new Error('google_upload_completion_pending'), true)).toContain('do not request another signature');
+    expect(uploadErrorMessage(new Error('livepeer_upload_key_recovery_unavailable'), true)).toContain('cannot replace it');
+});
 
 const progress = { job: { creator_id: 'creator.testnet' }, publication: null, expired: false };
 const render = () => renderToStaticMarkup(React.createElement(LivepeerUploadStatus, {
@@ -62,6 +71,15 @@ describe('upload status after closing its tab', () => {
         expect(html).toContain('publication deadline has passed');
         expect(html).not.toContain('/watch');
         expect(html).not.toContain('<button');
+    });
+
+    it('keeps both the publication and status links inside the Google lab when supplied', () => {
+        state.query.data = { ...progress, publication: { publication_id: 'job-001' } };
+        const html = renderToStaticMarkup(React.createElement(LivepeerUploadStatus, {
+            accountId: 'creator.testnet', jobId: 'job-001', jobHref: job => `/auth-lab?job=${encodeURIComponent(job)}`,
+        }));
+        expect(html.match(/href="\/auth-lab\?job=job-001"/g)).toHaveLength(2);
+        expect(html).not.toContain('href="/watch'); expect(html).not.toContain('href="/upload');
     });
 
     it('hides stale publication data when the current status cannot be verified', () => {
@@ -130,4 +148,9 @@ describe('publication view shared by the form status, alert and button', () => {
         expect(view.kind).toBe('unknown_error');
         expect(JSON.stringify(view)).not.toContain(raw);
     });
+});
+
+it('explains unavailable compact deployment without suggesting a payment retry', () => {
+    expect(uploadErrorMessage(new Error('signing_check_failed: prepare-upload / compact_upload_unavailable'),true)).toContain('No new sponsor payment');
+    expect(uploadErrorMessage(new Error('signing_check_failed: complete-upload / compact_upload_unavailable'),true)).not.toContain('No new sponsor payment');
 });

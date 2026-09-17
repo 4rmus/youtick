@@ -1,3 +1,4 @@
+mod compact_upload;
 use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{Base64VecU8, U128, U64};
@@ -1185,6 +1186,10 @@ impl Contract {
         publication
     }
 
+    pub fn get_compact_upload_version(&self) -> u8 {
+        1
+    }
+
     pub fn ft_on_transfer(
         &mut self,
         sender_id: AccountId,
@@ -1195,8 +1200,11 @@ impl Contract {
             env::predecessor_account_id() == self.usdc_contract_id(),
             "Only Circle USDC is accepted"
         );
-        let message: TransferMessage =
-            near_sdk::serde_json::from_str(&msg).expect("Invalid purchase message");
+        let message: TransferMessage = if msg.starts_with("yt:u1:") {
+            compact_upload::decode(&msg, self, &sender_id)
+        } else {
+            near_sdk::serde_json::from_str(&msg).expect("Invalid purchase message")
+        };
         if let Some(session) = &message.playback_session {
             assert_playback_session(session);
         }
