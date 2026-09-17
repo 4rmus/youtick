@@ -92,6 +92,7 @@ fn public_upload_contract() -> (Contract, PaidJobRequest, SponsoredUploadQuote, 
 #[test]
 fn public_upload_starts_closed_and_accepts_only_an_exact_signed_five_gb_job() {
     let (mut contract, request, quote, signature) = public_upload_contract();
+    assert_eq!(contract.get_compact_upload_version(), 1);
     let policy = contract.get_public_upload_policy().unwrap();
     assert_eq!(policy.market_contract_id, account("market.testnet"));
     assert_eq!(policy.max_source_bytes, U128(5_000_000_000));
@@ -2304,4 +2305,90 @@ fn sponsored_upload_authorizes_creator_device_without_using_relayer_key() {
         market.get_playback_device(request.creator_id, device_key(1)),
         Some(first)
     );
+}
+
+#[test]
+fn compact_upload_cross_language_vectors_preserve_payment_and_device() {
+    let vectors: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../protocol/paid-media-livepeer-v1/compact-upload-vectors.json"
+    ))
+    .unwrap();
+    for vector in vectors.as_array().unwrap() {
+        near_sdk::mock::with_mocked_blockchain(|blockchain| {
+            blockchain.take_storage();
+        });
+        testing_env!(context("market.testnet").build());
+        let mut market = Contract::new_public_testnet(MarketInitConfig {
+            platform_account_id: account("platform.testnet"),
+            bridge_account_id: account("bridge.testnet"),
+            takedown_authority_id: account("governance.testnet"),
+            admin_account_id: account("admin.testnet"),
+            guardian_account_id: account("guardian.testnet"),
+            quote_public_key: serde_json::from_value(vector["public_key"].clone()).unwrap(),
+            quote_key_version: 1,
+            near_operational_reserve: U128(1_000_000_000_000_000_000_000_000),
+        });
+        testing_env!(context("admin.testnet").build());
+        market.unpause_new_purchases();
+        let request: PaidJobRequest = serde_json::from_value(vector["request"].clone()).unwrap();
+        let quote: SponsoredUploadQuote = serde_json::from_value(vector["quote"].clone()).unwrap();
+        let message = vector["compact_message"].as_str().unwrap().to_string();
+        let device = vector["normal_message"]["playback_session"]["session_public_key"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let mut ctx = context(TESTNET_USDC);
+        ctx.signer_account_id(account("relayer.testnet"));
+        testing_env!(ctx.build());
+        for bad in [
+            format!("{}!", message),
+            message.replace("yt:u1:", "yt:u2:"),
+            message[..message.len() - 4].to_string(),
+        ] {
+            must_fail(|| {
+                market.ft_on_transfer(request.creator_id.clone(), quote.total_fee_usdc, bad);
+            });
+        }
+        must_fail(|| {
+            market.ft_on_transfer(
+                account("wrong.testnet"),
+                quote.total_fee_usdc,
+                message.clone(),
+            );
+        });
+        must_fail(|| {
+            market.ft_on_transfer(request.creator_id.clone(), U128(1), message.clone());
+        });
+        assert_eq!(market.get_platform_balance(), U128(0));
+        assert!(matches!(
+            market.ft_on_transfer(
+                request.creator_id.clone(),
+                quote.total_fee_usdc,
+                message.clone()
+            ),
+            PromiseOrValue::Value(U128(0))
+        ));
+        let job = market.get_media_job(request.job_id.clone()).unwrap();
+        assert_eq!(job.title, request.title);
+        assert_eq!(job.price_usdc, request.price_usdc);
+        assert_eq!(job.fee_quote_hash, Some(quote.quote_id));
+        let authorized = market
+            .get_playback_device(request.creator_id.clone(), device.clone())
+            .unwrap();
+        assert_eq!(
+            authorized.certificate_sha256,
+            vector["normal_message"]["playback_session"]["certificate_sha256"]
+                .as_str()
+                .unwrap()
+        );
+        assert_eq!(authorized.authorizing_public_key, None);
+        assert!(
+            matches!(market.ft_on_transfer(request.creator_id.clone(), quote.total_fee_usdc, message), PromiseOrValue::Value(value) if value == quote.total_fee_usdc)
+        );
+        assert_eq!(market.get_platform_balance(), quote.total_fee_usdc);
+        assert_eq!(
+            market.get_playback_device(request.creator_id, device),
+            Some(authorized)
+        );
+    }
 }

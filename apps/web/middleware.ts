@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { NEAR_AUTH_LAB_PATH, nearAuthLabEnabled } from './lib/near-auth-lab';
 
 function requestNonce(): string {
     const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -26,6 +27,12 @@ function contentSecurityPolicy(nonce: string): string {
 }
 
 export function middleware(request: NextRequest): NextResponse {
+    if (nearAuthLabEnabled(process.env.NODE_ENV, process.env.NEAR_AUTH_LAB_ENABLED, process.env.NEXT_PUBLIC_NEAR_NETWORK)
+        && request.nextUrl.pathname !== NEAR_AUTH_LAB_PATH && !request.nextUrl.pathname.startsWith('/_next/')) {
+        const response = NextResponse.redirect(new URL(NEAR_AUTH_LAB_PATH, request.url));
+        response.headers.set('Cache-Control', 'no-store');
+        return response;
+    }
     const nonce = requestNonce();
     const csp = contentSecurityPolicy(nonce);
     const requestHeaders = new Headers(request.headers);
@@ -41,10 +48,6 @@ export const config = {
     matcher: [
         {
             source: '/((?!api|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)',
-            missing: [
-                { type: 'header', key: 'next-router-prefetch' },
-                { type: 'header', key: 'purpose', value: 'prefetch' },
-            ],
         },
     ],
 };

@@ -1,3 +1,4 @@
+import { COMPACT_UPLOAD_PREFIX, unpackCompactUpload } from '../../../protocol/paid-media-livepeer-v1/compact-upload';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { base58Decode } from './base58';
 import {
@@ -749,6 +750,7 @@ const bridgeWorker = {
             return json({
                 status: 'ok',
                 service: 'livepeer-bridge',
+                compactUpload: { version: 1, network: env.NEAR_NETWORK, market: env.MARKET_CONTRACT_ID },
                 versionId: env.CF_VERSION_METADATA.id,
                 stage: env.LIVEPEER_BRIDGE_ENABLED === 'true' ? 'ENABLED' : 'DISABLED',
                 publicControlImplemented: PUBLIC_CONTROL_REQUESTS_IMPLEMENTED,
@@ -3889,7 +3891,7 @@ async function sponsorRelayerControlObject(env: Env): Promise<DurableObjectStub>
     ].join(':')));
 }
 
-async function parseSponsoredUploadRelayRequest(
+export async function parseSponsoredUploadRelayRequest(
     request: Request,
     env: Env,
 ): Promise<ParsedSponsoredDelegate> {
@@ -3964,18 +3966,18 @@ async function parseSponsoredUploadRelayRequest(
     } catch {
         throw new Error(shapeCode);
     }
-    requireExactKeys(ftArgs, [
-        'receiver_id', 'amount', 'memo', 'msg',
-    ], shapeCode);
+    const compact = typeof ftArgs.msg === 'string' && ftArgs.msg.startsWith(COMPACT_UPLOAD_PREFIX);
+    requireExactKeys(ftArgs, compact ? ['receiver_id', 'amount', 'msg'] : ['receiver_id', 'amount', 'memo', 'msg'], shapeCode);
     if (ftArgs.receiver_id !== env.MARKET_CONTRACT_ID
         || typeof ftArgs.amount !== 'string'
-        || ftArgs.memo !== 'YouTick creator upload fee'
+        || (!compact && ftArgs.memo !== 'YouTick creator upload fee')
         || typeof ftArgs.msg !== 'string') {
         throw new Error(shapeCode);
     }
     let message: JsonObject;
     try {
-        message = requireObject(JSON.parse(ftArgs.msg), shapeCode);
+        message = requireObject(compact ? await unpackCompactUpload(ftArgs.msg, { network: env.NEAR_NETWORK!, market: env.MARKET_CONTRACT_ID!,
+            creator: delegate.senderId, usdc: usdcContractId(env), keyString: bytes => `ed25519:${baseEncode(bytes)}` }) : JSON.parse(ftArgs.msg), shapeCode);
     } catch {
         throw new Error(shapeCode);
     }
@@ -4177,6 +4179,15 @@ function sponsoredQuoteIsFresh(input: ParsedSponsoredDelegate): boolean {
         && expiresAt - issuedAt <= BigInt(CREATOR_FEE_QUOTE_LIFETIME_MS);
 }
 
+function requireSponsoredQuoteFresh(input: ParsedSponsoredDelegate, height: number): void {
+    if (!sponsoredQuoteIsFresh(input)
+        || BigInt(height) < BigInt(input.quote.quote_block_height)
+        || BigInt(height) > BigInt(input.quote.max_delegate_block_height)
+        || BigInt(height) >= input.maxBlockHeight) {
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.freshness);
+    }
+}
+
 async function relaySponsoredUpload(
     state: DurableObjectState,
     env: Env,
@@ -4255,6 +4266,7 @@ async function relaySponsoredUpload(
         readSponsorRelayerAccessKey(env),
         readUsdcBalance(env, input.request.creator_id),
     ]);
+    requireSponsoredQuoteFresh(input, block.height);
     if (input.nonce !== creatorAccessKey.nonce + 1n
         || input.maxBlockHeight <= BigInt(block.height)
         || input.maxBlockHeight > BigInt(input.quote.max_delegate_block_height)
@@ -4340,6 +4352,9 @@ async function relaySponsoredUpload(
         await state.storage.put(key, record);
     }
 
+    // Reconcile existing broadcasts above; only a new send requires a fresh quote.
+    const latestBlock = await readFinalBlock(env);
+    requireSponsoredQuoteFresh(input, latestBlock.height);
     let broadcast: 'sent' | 'invalid_nonce' | 'failed' | 'unknown';
     try {
         broadcast = await sendTransaction(env, record.signedTxBase64!);
@@ -6253,7 +6268,9 @@ async function verifyPlaybackDelegate(env: Env, input: PlaybackV2Request): Promi
         if (!call || call.methodName !== 'ft_transfer_call' || call.deposit !== 1n) throw new Error('playback_denied');
         const args = JSON.parse(new TextDecoder().decode(Uint8Array.from(call.args))) as JsonObject;
         if (args.receiver_id !== env.MARKET_CONTRACT_ID || typeof args.msg !== 'string') throw new Error('playback_denied');
-        const message = JSON.parse(args.msg) as JsonObject;
+        const message = typeof args.msg === 'string' && args.msg.startsWith(COMPACT_UPLOAD_PREFIX)
+            ? await unpackCompactUpload(args.msg, { network: env.NEAR_NETWORK!, market: env.MARKET_CONTRACT_ID!, creator: input.request.account_id,
+                usdc: usdcContractId(env), keyString: bytes => `ed25519:${baseEncode(bytes)}` }) : JSON.parse(args.msg) as JsonObject;
         const authorization = parsePlaybackSessionAuthorization(message.playback_session);
         if (message.action !== 'create_paid_job' || message.creator_id !== input.request.account_id
             || authorization.session_public_key !== input.certificate.session_public_key

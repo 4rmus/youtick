@@ -1,0 +1,10 @@
+--- a/packages/auth0/src/actions/authorize-app.action.js
++++ b/packages/auth0/src/actions/authorize-app.action.js
+@@ -212,7 +212,6 @@
+             }
+             return value;
+         },
+-        2,
+     );
+ }
+ 

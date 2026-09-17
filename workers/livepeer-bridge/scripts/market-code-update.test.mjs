@@ -444,6 +444,36 @@ test('public artifacts cannot be used for Preview or an arbitrary target', async
     await assert.rejects(artifactFixture('production'), /market_code_update_target_invalid/);
 });
 
+test('public policy pins the reviewed code and allowance without loosening maintenance or budget', async () => {
+    const policy = JSON.parse(await readFile(new URL('./market-code-update-public-testnet-policy.json', import.meta.url), 'utf8'));
+    assert.equal(policy.expected_current_code_hash, '5DsjPD8zDFjhMWF8ro1ATi9xWY1YjGATfw31hVc7H7y');
+    assert.equal(policy.expected_current_wasm_bytes, 376382);
+    assert.equal(policy.expected_bridge_key.allowance, '95143292519868900000000');
+    assert.equal(policy.max_deploy_cost_yocto, '100000000000000000000000');
+    assert.equal(policy.expected_governance.bridge_frozen, true);
+    assert.equal(policy.expected_governance.new_purchases_paused, true);
+    assert.deepEqual(policy.expected_bridge_key.method_names, ['finalize_livepeer_publication', 'suspend_livepeer_sales']);
+});
+
+test('public stale policy and active runtime are rejected before sending', async (t) => {
+    for (const failure of ['old code', 'old allowance', 'active runtime']) {
+        await t.test(failure, async () => {
+            const fixture = await runtimeFixture({ target: 'public-testnet', bridgeAllowance: '95143292519868900000000' });
+            if (failure === 'old code') fixture.policy.expected_current_code_hash = 'BwX8m9esvWniSeE2VrWk5byRBSqAD313DYsVERZshVoY';
+            if (failure === 'old allowance') fixture.policy.expected_bridge_key.allowance = '95517196951751100000000';
+            await writeFile(fixture.input.policyPath, JSON.stringify(fixture.policy));
+            // The fixture reads this object as runtime state; the policy file stays closed.
+            if (failure === 'active runtime') {
+                fixture.policy.expected_governance.bridge_frozen = false;
+                fixture.policy.expected_governance.new_purchases_paused = false;
+            }
+            await assert.rejects(runMarketCodeUpdate(fixture.input), failure === 'old allowance'
+                ? /market_code_update_bridge_key_mismatch/ : /market_code_update_runtime_mismatch/);
+            assert.equal(fixture.deployCalls.length, 0);
+        });
+    }
+});
+
 test('public code update sends once and probes the device view at the verified final block', async () => {
     const fixture = await runtimeFixture({ target: 'public-testnet' });
     const evidence = await runMarketCodeUpdate(fixture.input);

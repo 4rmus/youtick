@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "skipLibCheck": false,
+    "incremental": false,
+    "noEmit": true
+  },
+  "include": ["lib/near-auth-lab.ts", "app/api/auth-lab/session/route.ts", "app/api/auth-lab/account/route.ts", "app/api/auth-lab/signing/route.ts"]
+}
