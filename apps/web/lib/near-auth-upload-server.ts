@@ -1,10 +1,11 @@
 import { COMPACT_UPLOAD_PREFIX, packCompactUpload, unpackCompactUpload } from '../../../protocol/paid-media-livepeer-v1/compact-upload';
+import { hasTitleContent } from '../../../protocol/paid-media-livepeer-v1/title';
 import { EncryptJWT, jwtDecrypt } from 'jose';
 import { actions, baseEncode, buildDelegateAction, encodeDelegateAction, encodeSignedDelegate, PublicKey, Signature } from 'near-api-js';
 import { nearAuthAccountPreflight } from './near-auth-account-preflight';
 import { checkSigningAccount, rpc, sessionKey, verifyApproval, verifyMpcResponse } from './near-auth-signing-server';
 import { parseSponsoredUploadQuote } from './livepeer-upload';
-import { ticketConfig, ticketRequest } from './near-auth-ticket-purchase';
+import { canUsePlaybackDevice, ticketConfig, ticketRequest } from './near-auth-ticket-purchase';
 import { NEAR_CONFIG } from './constants';
 
 function uploadConfig() {
@@ -45,7 +46,7 @@ async function uploadArgs(encoded: unknown, accountId: string, origin: string) {
         request[field] = msg[field];
     }
     if (request.creator_id !== accountId || !/^[A-Za-z0-9._:-]{1,128}$/.test(request.job_id)
-        || !request.title.trim() || Buffer.byteLength(request.title) > 200
+        || !hasTitleContent(request.title) || Buffer.byteLength(request.title) > 200
         || !/^[1-9][0-9]{0,19}$/.test(request.price_usdc) || BigInt(request.price_usdc) < 2_000_000n
         || !/^[1-9][0-9]{0,9}$/.test(request.expected_source_bytes) || BigInt(request.expected_source_bytes) > 5_000_000_000n
         || request.profile_id !== 'paid-media-livepeer-v1' || !/^[a-f0-9]{64}$/.test(request.profile_config_sha256)
@@ -100,8 +101,10 @@ async function checkUpload(delegate: ReturnType<typeof buildDelegateAction>, spo
         || typeof balance !== 'string' || !/^[0-9]{1,39}$/.test(balance) || BigInt(balance) < BigInt(parsed.quote.total_fee_usdc)
         || !buyerStorage || !marketStorage || typeof buyerStorage.total !== 'string' || typeof marketStorage.total !== 'string'
         || !/^[1-9][0-9]{0,38}$/.test(buyerStorage.total) || !/^[1-9][0-9]{0,38}$/.test(marketStorage.total)) throw new Error('upload_not_ready');
-    // ponytail: first-device pilot only; do not risk eviction or reinterpret existing binary records.
-    if (devices.block_hash !== key.block_hash || !Array.isArray(devices.values) || devices.values.length) throw new Error('upload_first_device_only');
+    if (devices.block_hash !== key.block_hash || !await canUsePlaybackDevice(devices.values, parsed.playbackSession,
+        () => view(config.market, 'get_playback_device', {
+            account_id: delegate.senderId, session_public_key: parsed.playbackSession.session_public_key,
+        }))) throw new Error('upload_first_device_only');
     const latest = await rpc('block', { finality: 'final' });
     checkHeight(latest.header?.height);
     if (BigInt(parsed.quote.expires_at_ms) <= BigInt(Date.now())) throw new Error('authorization_expired');
@@ -160,9 +163,13 @@ async function readUpload(ticket: unknown, subject: string, origin: string) {
     return { delegate, parsed, sponsor: payload.sponsor, bytes: encodeDelegateAction(delegate), expiresAtMs: payload.exp! * 1000 };
 }
 
-export async function authorizeGoogleUpload(subject: string, origin: string, ticket: unknown, token: unknown) {
+export async function authorizeGoogleUpload(subject: string, origin: string, ticket: unknown, token: unknown,
+    onCheck?: (stage: 'upload_review' | 'google_approval' | 'upload_preflight') => void) {
+    onCheck?.('upload_review');
     const intent = await readUpload(ticket, subject, origin);
+    onCheck?.('google_approval');
     const approved = await verifyApproval(token, subject, intent.bytes);
+    onCheck?.('upload_preflight');
     await checkUpload(intent.delegate, intent.sponsor, intent.parsed, true);
     if (Math.min(approved.expiresAtMs, intent.expiresAtMs) <= Date.now()) throw new Error('authorization_expired');
     return { approvalExpiresAtMs: approved.expiresAtMs, receiverId: 'fast-auth.testnet', actions: [{ type: 'FunctionCall' as const, params: { methodName: 'sign',

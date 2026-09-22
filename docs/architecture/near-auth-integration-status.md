@@ -1,45 +1,383 @@
 # NEAR Auth — mimari değerlendirme ve güncel entegrasyon planı
 
-17 Eylül 2026. Bu belge social login pilotunun tek güncel durum ve plan kaydıdır.
-Eski gate raporları tarihsel kanıttır; onların sonraki-adım bölümleri otomatik
-olarak güncel talimat veya yeni ödeme yetkisi oluşturmaz.
+22 Eylül 2026. Bu belge social login pilotunun güncel durum ve plan kaydıdır.
+Aşağıdaki tarihli incelemeler geçmiş kanıttır; eski sonraki-adım ifadeleri yeni
+imza, ödeme veya yayın yetkisi oluşturmaz.
 
-## Güncel karar
+## Güncel durum
 
-Gate: `NEAR_AUTH_ARCHITECTURE_PLAN_REVIEW` — **COMPLETED_WITH_WARNINGS**.
-Mimari inceleme ve plan güncellemesi tamamlandı; uygulama düzeltmesi veya canlı
-kabul yapılmadı. Kullanıcı son hatayı **Google onayında `access_denied`** olarak
-doğruladı. Yeni hata açıklaması/payload alınmadı; 24 KB ayrıntısı 16 Eylül
-[kayıtlı teşhisine](./near-auth-prompt-size.md) dayanır.
+Güncel gate: `NEAR_AUTH_V1_PASSKEY_ACCEPTANCE` — **COMPLETED_WITH_WARNINGS / creator ve buyer doğrulandı**.
+[Passkey kabul kaydı](./near-auth-v1-passkey-acceptance.md): bağımsız
+`9db6cb…59d21a` kimliğiyle yükleme/yayın/creator izleme sonrasında Distance
+bileti **2 test USDC** ile alındı. Final **269763820**: hak true, USDC 0.
+Kullanıcı kimlik onayını **passkey ile verdiğini** ve videonun sorunsuz
+oynadığını teyit etti. Gerçek **720p**, reload sonrası hak/oturum ve
+**0:46'dan devam etme** doğrulandı. Kod veya eski deneme kaydı değişmedi.
+Tam işlem/sponsor makbuzları, ayrı logout/login, ikinci cihaz ve Production
+kabulü bu sonuçtan ayrıdır. Ana uygulamadaki giriş yöntemi henüz bu lab
+kabulüyle otomatik değişmiş değildir.
+Tek sonraki öneri: `NEAR_AUTH_V1_PRODUCT_FLOW_PREFLIGHT` — başlatılmadı;
+üç giriş yolunu ana uygulamaya taşımanın en küçük kapsamını belirlemek.
 
-**NEAR Auth ile kontrollü pilota devam et.** Mevcut Auth0 SPA + jose + NEAR v7
-yolunu koru; SDK değiştirmek veya uygulamayı v5'e indirmek mevcut hatayı çözmez.
-Mevcut planın güçlü tarafı imza, ödeme ve medya otoritelerini ayırmasıdır.
-Eksik tarafı, provider yaması sonrasındaki süre sınırlarıyla kullanıcı deneyimi
-kabulünü yeterince kapsamamasıdır. Sağlayıcı yayını tek başına hazır olma ölçütü değildir.
+Önceki gate: `NEAR_AUTH_V1_FLOW_ACCEPTANCE` — **COMPLETED_WITH_WARNINGS**.
+[Gerçek Google alıcı kabulü](./near-auth-v1-flow-acceptance.md): ayrı
+`38aa11…2902d` hesabında Distance hakkı **false → true**, USDC **2 → 0**
+(final **269742997**); gerçek **720p** oynatma ve reload sonrası hak/oynatma
+korundu; kullanıcı görüntü ve sesin düzgün olduğunu teyit etti. İlk sekmede hata görüldü; aynı profil/cihazdaki yeni sekme
+başarılı oldu. İlk hatanın kök nedeni ve tam işlem/sponsor makbuzları açık.
+Kullanıcının açık talimatıyla bağımsız 1-yocto self-transfer demo kaydı bilet
+kontrolünden ayrıldı; eski kayıt okunmadı/silinmedi. Bilet tekrar ödeme ve
+sunucu nonce/hak kontrolleri korunuyor. **882 test, 20 yerel UX, tip/lint PASS**.
+Bu değişiklik üç kaynak/test dosyasıyla sınırlı; yeni servis veya hesap bağlama yok.
+Bağımsız passkey akışı, Production ve ikinci cihaz için kabul verilmedi.
+Tek sonraki gate: `NEAR_AUTH_V1_PASSKEY_ACCEPTANCE` — başlatılmadı.
 
-**Güncel gate:** `NEAR_AUTH_COMPACT_SOURCE_INTEGRATION` — **COMPLETED_WITH_WARNINGS**.
-[Son kaynak adayı ve doğrulama](./near-auth-compact-source-integration.md).
-Main `72a96c7` üzerine ayrı Git adayında bütün onaylı geliştirmeler birleştirildi.
-Zaten main'deki dört dosya ayrıldı; kapanış raporuyla aday 99 dosyalık farktır.
-Asıl checkout ve index korundu. Temiz kurulumda UX betiğinin eksik tmp dizini
-ve processing-reload zamanlama yarışı dar biçimde düzeltildi.
+Önceki kaynak gate'i: `NEAR_AUTH_V1_FLOW_SOURCE` — **COMPLETED_WITH_WARNINGS**.
+[V1 akış raporundaki kaynak kapanışı](./near-auth-v1-flow-acceptance.md)
+aynı geçerli cihazla tekrar işlemi, bilet başına güvenli deneme kaydını ve hak
+sahibi buyer playback'i yerelde doğruladı. **868 Web testi, 16 playback ve
+18 UX senaryosu**, tip/lint ve izole Web build geçti. Build uyarıları ve eksik
+gerçek Google/passkey satın alma/izleme kabulü açık; canlı PASS iddiası yoktur.
+Yeni ödeme, upload, provider işlemi veya Git yayını yapılmadı.
 
-Adayda Web 775, Bridge 429 (3 atlanan), Bridge araçları 118, yayın/CI araçları
-190, Market 52 + yerel sandbox 1, boyut matrisi 360 ve Brave 18 UX + 15
-playback senaryosu geçti. Tip/lint, Rust fmt/clippy, Market/Access ABI,
-OpenNext Web build ve Bridge dry-run geçti. Bunlar yerel kanıttır;
-commit, GitHub CI veya deploy yapılmadı. Source blocker'ı yoktur.
+Önceki plan gate'i: `NEAR_AUTH_V1_SCOPE_SIMPLIFICATION` — **PASS / kapsam güncellendi**.
+Kullanıcı kararıyla hesap/kimlik bağlama V1'den çıkarıldı ve V2'ye ertelendi.
+V1'de cüzdan, Google ve passkey bağımsız giriş seçenekleridir; her biriyle
+imza, yükleme, satın alma ve yetkili izleme hedefi korunur. Bağlama eksikliği
+V1 engeli değildir. Bu belge değişikliği yeni canlı kabul kanıtı üretmez.
 
-**Tek sonraki gate:** `NEAR_AUTH_COMPACT_GIT_PUBLISH` — gözden geçirilmiş
-adaydan tek commit, yeni kaynak dalına push ve taslak PR; otomatik PR CI
-sonuçlarını izlemek. Henüz onaylanmadı veya başlatılmadı. Merge, deploy,
-bakım ve ödeme kapsam dışıdır. İncelenebilir dosya manifesti, staged fark
-ve PR metni entegrasyon raporundaki yerel aday paketindedir.
-İlk gerçek Google kabulü localhost lab + yayımlanmış Bridge/Market üzerinden
-olacak; gerçek `access_denied` sorununun giderildiği hâlâ kanıtlanmadı.
-Aşağıdaki araştırmalar tarihsel kayıttır; onların sonraki-adım ifadeleri
-bu güncel sıranın yerine geçmez.
+Önceki gate: `NEAR_AUTH_CARD_IDENTITY_COST_PREFLIGHT` — **COMPLETED_WITH_WARNINGS**.
+[Kart, kimlik ve maliyet ön kontrolü](./near-auth-card-identity-cost-preflight.md)
+tamamlandı. Nuvei/Reach/Zotlo'nun belgelenmiş kapsamı ve açık ücretler incelendi;
+YouTick'e özel kabul, üretici payout kapsamı ve NEAR Auth üretim teyidi yok.
+Mainnet/testnet ücret parametreleri okundu; yeni kart/cihaz kodu ölçülmedi.
+Önceki ürün planı kaydı korunur. Bu kapanış uygulama veya canlı ödeme kabulü değildir.
+
+Son canlı kabul: `NEAR_AUTH_CREATOR_PLAYBACK_RELOAD_ACCEPTANCE` — **PASS**.
+[Gerçek creator playback ve reload kabulü](./near-auth-creator-playback-reload-acceptance.md).
+Mevcut Distance yayını aynı Google hesabı/Brave İş profilinde gerçek HLS ile
+**720p** oynadı; **360p/720p** seçenekleri görüldü. Bir sayfa yenilemesi
+sonrası Google oturumu, yayın hakkı ve **3:13'ten devam** seçeneği geri geldi;
+sonrasında first-frame/oynatma ölçümleri başarılı. Kullanıcı videonun her
+şeyiyle iyi çalıştığını bildirdi. Final blok **269646064**: creator eşleşmesi,
+ACTIVE generation 1 ve entitlement doğrulandı. Yeni ödeme, cüzdan/MPC işlem
+imzası, upload veya cihaz kaydı yapılmadı.
+
+Bu kabul localhost Google lab + gerçek testnet servisleri içindir; Production,
+buyer, ikinci cihaz, mobil/Safari veya uzun süreli token yenileme kabulü değildir.
+Önceki [publication sorgusu kaynak düzeltmesi](./near-auth-publication-polling-race-source.md)
+856 yerel testle tamamlandı; eski 409 alt nedeni hâlâ kesinleşmedi.
+
+Önceki [hesap hazırlama](./near-auth-fresh-account-provisioning.md) kontrolünde
+0,1 test NEAR ve FullAccess doğrulanmıştı. Planlanan ayrı USDC ön kontrolü
+bu konuşmada yürütülmeden kullanıcı fonlama/upload yaptı; bu eski plan satırı
+otomatik PASS sayılmaz. Tek tek fonlama/MPC/relay makbuzları doğrulanmadı.
+
+Eski `NEAR_AUTH_UPLOAD_ATTEMPT_RECONCILIATION` BLOCKED olarak ayrı korunur.
+[Eski deneme raporundaki](./near-auth-upload-attempt-reconciliation.md)
+halka açık adayın MPC imzası doğrulanmış, job/yayın kaydı null bulunmuştu;
+son hata alınan denemeyle kullanıcı/yerel kayıt eşleşmesi tamamlanmadı.
+Yeni hesap denemesi eski kaydı silme, eski delegate'i gönderme veya eski
+ödemenin sonucunu varsayma yetkisi değildir.
+
+Önceki `NEAR_AUTH_REVIEW_FINDINGS_SOURCE` **COMPLETED_WITH_WARNINGS** ile
+kapandı. Beş öncelikli bulgu kaynak/plan düzeyinde giderildi; canlı kabul verilmedi.
+Önceki kaynak gate’inde kullanıcı, sonraki gate'ten önce mimari incelemenin öncelikli bulgularının
+kapatılmasını istedi. O gate yalnız kaynak, ilgili testler ve bu planı kapsadı.
+Ana ajan tek yazardır; üç salt-okunur alt ajan kayıt korumasını, protokol
+uyumunu ve plan tutarlılığını inceledi. Provider/config, canlı veri, tarayıcı/cüzdan kayıtları,
+bağımlılıklar, yayın ayarları ve Git index kapsam dışıdır.
+
+**Karar:** mevcut Auth0 SPA + jose + NEAR v7 ile kontrollü pilota devam et.
+İmza, ödeme ve medya otoriteleri ayrı kalır. Compact mesaj kaynakta uygulanmış,
+süre/blok kontrolleri tamamlanmıştır. Önceki araştırma bölümlerindeki
+"uygulanmadı", "son süre kontrolü eksik" ve 32.768 karakter token sınırı
+ifadeleri tarihsel durumu anlatır. Ortak imza doğrulayıcısı bugün tokena
+**7.168 bayt** sınırı uygular; API toplam gövde sınırı ayrı bir kontroldür.
+
+Eski Google upload denemesinin kaydı: Google ve Meteor onayları sonrasında imza
+tamamlandı; kurtarma kaydı kontrolünde hata oluştu. Taslağın neden okunamadığı
+hâlâ kanıtlanmadı. Bulunan adayın sponsor imzası doğrulandı; son denemeye
+bağı için kullanıcı teyidi ve yerel kayıt eşleşmesi henüz yok.
+[Önceki taslak kontrolleri](./near-auth-upload-draft-guards.md) yerel kaynak
+kabulüdür; bu hata için kök neden veya canlı ödeme sonucu kanıtı değildir.
+
+Önceki kaynak gate’inin kabul ölçütleri (yerelde tamamlandı):
+
+- Güncel karar ve sıra tablosu aynı gate'i göstermeli; kapanmış süre/blok ve
+  compact kaynak bulguları açık hata olarak sunulmamalı.
+- Bekleyen Google denemesi yeni anahtar yazımı ve quote öncesinde durmalı;
+  bozuk/süresi geçmiş kayıt korunmalı. Mevcut ücretli job uzlaştırması ve normal
+  cüzdanın açık anahtar yenileme yolu çalışmalı.
+- Web/Bridge ve Market aynı ham başlık kabul kuralını kullanmalı; imzalı
+  başlık/proof baytları değişmemeli. Yeni kullanıcı girdisinin mevcut trim
+  adımı korunur; U+FEFF bu adımda temizlenebilir, ham decoder'da içerik sayılır.
+- Son gönderim süre testleri hem tek başına hem ilgili dosyayla geçmeli.
+  Web/Bridge/Market testleri, tip/lint ve doküman kontrolü ayrı kaydedilmeli.
+
+**Tek sonraki gate:** `NEAR_AUTH_V1_FLOW_ACCEPTANCE`.
+Kaynak engelleri giderildi; üç bağımsız giriş yolunun eksik gerçek kabul
+adımları mevcut kanıtlar korunarak hazırlanacak. Hesap bağlama eklenmez;
+belirsiz ödeme kayıtları ve mevcut güvenlik kontrolleri korunur. Üretim ve
+kart işleri ayrı kalır; bu kapanış canlı işlem başlatmaz.
+Eski başarısız denemenin uzlaştırması ayrı açık kalır.
+
+## V1 kapsamı — bağımsız giriş seçenekleri
+
+Bu gate yalnız bu planı ve `near-auth-card-identity-cost-preflight.md` belgesini
+değiştirir. Kabul: hesap bağlama hiçbir V1 koşulu, maliyeti veya sonraki adımı
+olmamalı; üç giriş yolunun kullanım hedefi korunmalı; doküman derlemesi geçmeli.
+Uygulama kodu, provider ayarları, hesaplar ve tarayıcı/cüzdan kayıtları değişmez.
+
+| Seçilen giriş | V1 kullanım hedefi |
+| --- | --- |
+| Mevcut NEAR cüzdanını bağla | Kendi cüzdan hesabıyla imzala, video yükle, bilet satın al ve izle. |
+| Google ile giriş | Google kimliğinin NEAR hesabıyla imzala, video yükle, bilet satın al ve izle. |
+| Passkey ile giriş | Passkey kimliğinin NEAR hesabıyla imzala, video yükle, bilet satın al ve izle; Google ile önceden giriş şart değildir. |
+
+Kullanıcı her yöntemi bağımsız kullanabilir. Aynı yönteme tekrar giriş kendi
+hesabına dönmelidir; farklı giriş kimlikleri arasındaki hesap, bakiye ve haklar
+otomatik birleştirilmez veya taşınmaz. Arayüz seçilen hesabı açıkça gösterir.
+Cüzdan bağlama ile giriş korunur; Google/passkey/cüzdan kimliklerini birbirine
+bağlama, zorunlu ikinci giriş yöntemi ve yöntemler arası kurtarma V2 konusudur.
+V1'de sağlayıcının mevcut giriş/kurtarma imkanları kullanılır; yeni birleştirme
+veya kurtarma altyapısı kurulmaz. İşlem onayı, mevcut cihaz yetkisi ve ödeme
+uzlaştırması kontrolleri korunur.
+
+`NEAR_AUTH_PASSKEY_TEST_PLAN` ve bağlama amaçlı
+`NEAR_AUTH_PASSKEY_TEST_PREFLIGHT` aktif V1 sırasından çıkarıldı. Son ön kontrolde
+gerçek hosted ekranda Google/passkey giriş seçenekleri görüldü; kullanıcı ayrı
+Google test hesabıyla girdi ve başlangıç anahtarı kontrol edildi. Hesap bağlama,
+passkey kaydı, imza veya ödeme yapılmadı. Kullanıcı Google/passkey giriş ve
+imzaların çalıştığını bildirdi; bu belge değişikliği ayrı bir upload/purchase
+kabulü olarak sayılmaz. Mevcut kanıtlar korunur, eksik akış kabulü V1 hedefidir.
+
+## Ürün kimliği, doğrudan kart ve finansman kararları — 22 Eylül 2026
+
+Gate: `NEAR_AUTH_PRODUCT_IDENTITY_FUNDING_PLAN`.
+Amaç: konuşmada netleştirilen ürün yönünü maliyet tablosunu beklemeden plana
+kaydetmek. Değişiklik kapsamı yalnız bu belge; uygulama, kontratlar, testler,
+bağımlılıklar, canlı ayarlar, hesaplar, bakiyeler ve Git index kapsam dışıdır.
+Ana ajan tek yazardır. Kabul: aşağıdaki kararlar ve açık noktalar ayrı olmalı,
+güncel durum ile sıra tablosu aynı sonraki gate'i göstermeli; doküman derlemesi
+geçmelidir. Karar kaydı özelliklerin uygulanmış olduğu anlamına gelmez.
+
+### Ürün yönü
+
+| Konu | Plana alınan yön |
+| --- | --- |
+| Giriş | Google, passkey ve desteklenen mevcut NEAR cüzdanları birlikte sunulur; Google zorunlu değildir. |
+| Hesap kapsamı | Her giriş kimliği kendi hesabını kullanır. Aynı kimlikle tekrar girişte hesap korunur; farklı kimlikler ve hakları V1'de birleştirilmez. |
+| Doğrudan kart | Kullanıcı bilet siparişini kartla öder; öncesinde kripto veya USDC satın alması zorunlu değildir. |
+| Kripto ödeme | USDC hesaplaşma varlığı kalır. Desteklenen NEAR, USDT ve diğer varlıklardan doğrulanmış dönüşüm, ardından mevcut kullanıcı hesabından Market ödemesi hedeflenir. |
+| Kazanç | Kart satış geliri ve üretici ödemesi para birimiyle izlenir; kripto satış kazancı USDC olarak kalır. Kart tahsilatı USDC creator bakiyesine yazılmaz. |
+| Erişim | Seçilen NEAR hesabının kart ve kripto hakları aynı kütüphanede gösterilir; farklı giriş hesapları birleştirilmez. Medya Livepeer'da kalır. |
+| Ağ gideri | Sınırlı bütçeli arka plan göndericisi NEAR giderini öder; kullanıcı ayrı sponsor cüzdanı seçmez. |
+| Giderin karşılanması | Normal giderler alım öncesinde açıklanan toplam satış fiyatına dahil edilir; kesin komisyon, fiyat ve limitler maliyet doğrulamasından sonra belirlenir. |
+| Dış sponsorluk | Hibe/kredi ek destek olarak değerlendirilir; ürünün çalışması ücretsiz fon bulunmasına bağlı kurulmaz. |
+
+USDC'yi tüm satışların tek para hesabı yapma önerisi doğrudan kart kararıyla
+daraltılmıştır: USDC kripto satışların hesaplaşma varlığıdır. Kart parası için
+ayrı para muhasebesi gerekir. Sağlayıcı, MoR modeli veya yeni cüzdan hizmeti
+seçilmiş değildir; mevcut Auth0 SPA + jose + NEAR v7 pilotu korunur.
+
+### Kart siparişi ve doğru kullanıcıya zincirde hak
+
+1. Doğrulanmış oturumdan kullanıcı hesabı belirlenir. Sunucuda sipariş,
+   hesap, video, fiyat ve para birimi bağlanır; ödeme sürerken hesap değişimi
+   siparişin alıcısını değiştirmez. E-posta veya istemcinin gönderdiği adres
+   tek başına sahiplik otoritesi değildir.
+2. Kullanıcı kart sağlayıcısında öder. Sunucu doğrulanmış sağlayıcı bildirimi
+   ve tahsilat durumunu kalıcı sipariş kaydıyla uzlaştırır; başarı sayfası
+   veya yalnız kart provizyonu hak oluşturmaz.
+3. Sınırlı yetkili kart kayıt servisi, önerilecek kontrat yolundan siparişe
+   bağlı hakkı doğru NEAR hesabına bir kez kaydeder. Sipariş özeti ağ,
+   kontrat, kullanıcı ve video ile bağlıdır; aynı sipariş başka kullanıcıya
+   veya başka ağa yeniden uygulanamaz. Kart ve kişisel veri zincire yazılmaz.
+4. Kesinleşmiş zincir hakkı ve geçerli cihaz yetkisi doğrulanınca video açılır.
+   Zincir işlemi gecikirse aynı sipariş sürdürülür; yeni kart çekimi yapılmaz.
+5. İade/itiraz aynı sipariş kaynağını etkiler; bağımsız kripto veya başka kart
+   siparişinden doğan hak silinmez. Geç ve tekrarlanan sağlayıcı bildirimleri
+   iptal edilmiş siparişi kendiliğinden yeniden etkinleştirmez. Kesin iade,
+   itiraz ve üreticiye ödeme politikası sağlayıcı koşullarıyla netleştirilir.
+
+Bu yol kaynakta henüz yoktur. Mevcut `ft_on_transfer` hakkı USDC gönderenine
+yazar; platform hesabından mevcut satın alma çağrısına para göndermek
+müşteriye hak vermez. Kartı doğrulayan servis yeni bir güven sınırıdır:
+NEAR banka tahsilatını bağımsız doğrulayamaz; doğrulanmış kart bildiriminin
+doğruluğu bu servise bağlı, nihai erişim kaydı NEAR'dadır. Servisin yetkisi
+kart siparişi kaydı/durumuyla sınırlanmalı; kullanıcı parası veya anahtarları
+üzerinde genel yetki verilmemelidir. Katalog/read-model D1 rolü değişmez;
+kalıcı kart siparişi kaydı yeniden üretilebilir katalog kaydıyla karıştırılmaz.
+
+### Google, passkey, cihaz ve gönderici
+
+- Sadece giriş yapan her kullanıcıya hemen zincir hesabı fonlanmaz; yeni
+  hesabın ücretli hazırlığı ilk gerçek satın alma ihtiyacına ertelenir.
+  Mevcut cüzdan hesabı yeniden oluşturulmaz.
+- Google ve passkey bağımsız giriş/imzalama seçenekleridir. Seçilen kimliğin
+  oturumu, anahtarı ve NEAR hesabı doğrulanır; diğer giriş yöntemiyle aynı hesabı
+  paylaşması V1 şartı değildir. Mevcut cüzdan kullanıcıları kendi hesaplarını kullanır.
+- İlk cihaz için mevcut sahiplik onayı korunur; kart kayıt servisinin
+  imzası kullanıcı imzası sayılmaz. Geçerli cihazla sonraki kart alışverişinde
+  kullanıcı bakiyesinden kripto çıkmadığı için her siparişte yeni MPC ödeme
+  imzası gerektirmeyen yol hedeflenir; bu henüz uygulanmış optimizasyon değildir.
+- Yeni cihaz ve cihaz yetkisi yenileme mevcut sahiplik kontrolünü korur.
+  Kart hakkı vermek cihazı otomatik yetkilendirmez. V1 kullanımında ikinci bir
+  giriş yöntemi bağlamak şart değildir; yöntemler arası hesap kurtarma eklenmez.
+- Kullanıcı parası harcayan kripto işlemleri açık kullanıcı onayını korur.
+  Hesaba NEAR koymak veya USDC yerine NEAR seçmek mevcut ilk MPC çağrısının
+  gönderici ihtiyacını kaldırmaz.
+- Kartı doğrulama yetkisi ve ağ giderini ödeme yetkisi ayrılır. Önce mevcut
+  Bridge ve sağlayıcı imkanları değerlendirilir; yeni servis varsayılmaz.
+  Kullanıcı/sipariş/gün başına harcama, tekrar koruması, başarısız işlem gideri
+  ve düşük bakiye davranışı sayısal olarak sonraki gate'te belirlenecektir.
+
+### Maliyet notları — kesin tablo veya harcama onayı değildir
+
+Sonraki [maliyet ön kontrolü](./near-auth-card-identity-cost-preflight.md)
+harcama, gas ön alımı, kontrat depolama rezervi ve kullanıcıya aktarılan
+bakiyeyi ayırır. Aşağıdaki yaklaşık 0,10 USD örneği kullanıcı hesabında kalan
+NEAR'ı içermez. Doğrudan cihaz işlemi için U=0,12 NEAR fonlama varsayımı
+eklendiğinde yeni rapordaki ilk nakit ihtiyacı yaklaşık 0,57 USD olur;
+bu da kesin maliyet veya fonlama onayı değildir. Yeni kart/cihaz tüketimi,
+sağlayıcı fiyatı ve canlı harcama tavanları hâlâ doğrulanmamıştır.
+
+Aşağıdakiler 22 Eylül konuşmasındaki araştırma/model notlarıdır. Yeni kart
+yolu henüz ölçülmedi. Dolar örnekleri **1 NEAR = 4 USD varsayımı** kullanır;
+güncel kur veya fiyat taahhüdü değildir.
+
+| Kalem | Dayanak ve açık sınır |
+| --- | --- |
+| Yalnız giriş | Zincir işlemi yapılmazsa zincir gideri sıfırdır; kimlik sağlayıcısı ücreti ayrıdır. |
+| Yeni hesap | Resmî belgede temel oluşturma bedeli 0,007 NEAR; işlem gas'ı ve hesapta bırakılacak bakiye ayrıca hesaplanır. |
+| MPC | Önceki testnet imza ölçümü 0,003480349366895 test NEAR'dır; yeni kart akışının veya mainnet'in ölçülmüş ücreti değildir. |
+| Hak/cihaz çağrısı | 20 TGas tüketim ve TGas başına 0,0001 NEAR varsayımıyla çağrı başına 0,002 NEAR. Tüketim uygulamadan sonra ölçülmeli, fiyat yeniden okunmalıdır. |
+| Depolama | 1.000 ek bayt varsayımıyla 0,01 NEAR rezerv. Bu yakılan ücret değil, kontratta kilitli işletme bakiyesidir; gerçek boyut ölçülmelidir. |
+| Örnek toplam | Bir hesap temel bedeli + bir önceki MPC gözlemi + iki varsayımsal çağrı + 1.000 bayt rezerv yaklaşık 0,10 USD eder. Bu, kullanıcı başına toplam maliyet değildir. |
+| Hariç tutulanlar | Hesap oluşturma ek gas'ı, hesapta bırakılan bakiye, Auth0/NEAR Auth hizmeti, kart ücreti, iade/itiraz, altyapı ve video izleme/saklama. |
+
+Pilottaki 0,1 NEAR fonlama ve 0,35 NEAR imza bütçesi gerçekleşen ücret
+değildir. Mevcut kripto komisyonu kart satışına otomatik taşınmaz. Konuşmadaki
+%3 + 0,30 USD kart tarifesi yalnız hesap örneğidir; sağlayıcı teklifi değildir.
+
+Araştırma tarihinde Auth0 fiyat sayfası 25.000 aktif kullanıcıya kadar ücretsiz
+paketi ve passkey desteğini gösteriyordu. Hesap bağlama V1'den çıkarıldığı için
+bu özellik nedeniyle ücretli paket zorunluluğu V1 maliyetine eklenmez. NEAR Auth'ın
+yönettiği ortamın üretim erişimi, kapasitesi ve hizmet tarifesi ayrıca doğrulanır;
+Auth0'nun açık free tarifesi YouTick'in bütün kimlik hizmetinin ücretsiz olduğunu kanıtlamaz.
+Faucet yalnız testnet gideri içindir. NEAR hibe/teşvikleri ve Auth0 girişim
+kredileri aday destektir; YouTick için tahsis veya uygunluk doğrulanmadı.
+
+Dayanaklar: [önceki testnet ölçümü](./near-auth-google-signing-lab.md),
+[NEAR ücretleri](https://docs.near.org/protocol/transactions/gas),
+[depolama](https://docs.near.org/protocol/storage/storage-staking),
+[Auth0 fiyatları](https://auth0.com/pricing),
+[NEAR Auth üretim erişimi](https://docs.auth.near.org/resources/networks),
+[testnet faucet](https://docs.near.org/getting-started/faucet),
+[NEAR fonlama](https://www.near.org/funding) ve
+[Auth0 girişim programı](https://auth0.com/startups).
+
+### Açık işler ve kabul sınırı
+
+Bu bölümün tanımladığı maliyet ön kontrolü [ayrı raporla](./near-auth-card-identity-cost-preflight.md)
+**COMPLETED_WITH_WARNINGS** olarak tamamlandı. Kamuya açık yetenek/fiyat ve ağ
+parametreleri doğrulandı; aşağıdaki ticari kabul ve ölçüm boşlukları kapanmadı.
+Bu tarihsel kaynak düzeltmesinden sonraki gate `NEAR_AUTH_V1_FLOW_ACCEPTANCE` idi; güncel sıra üstteki durum bölümündedir;
+sağlayıcı ticari/üretim teyitleri ayrıca açık kalır.
+
+`NEAR_AUTH_CARD_IDENTITY_COST_PREFLIGHT`: Stripe hariç kart sağlayıcısında
+çok üreticili video pazaryeri, para birimleri, üretici ödemeleri, iade/itiraz
+ve toplam fiyat uygunluğunu; NEAR Auth üretim/giriş/imzalama kapsamını;
+harcama ile fonlama/depolama rezervini ayıran maliyet tablosunu doğrular.
+Sağlayıcı teklifleri yoksa tutarlar varsayım olarak kalır. Yeni kart/cihaz
+kodunun ölçümü yapılmadan tahmin ölçülmüş ücret sayılmaz; gerekli yerel
+ölçüm ayrı kaynak kapsamı olarak belirlenir. Bu gate başvuru, abonelik,
+provider ayarı, anahtar ekleme, gerçek kart/kripto işlemi veya deploy yetkisi
+vermez. Eski imza/ödeme uzlaştırması açık kalır.
+
+Plan sonucu **COMPLETED_WITH_WARNINGS**: ürün yönü kaydedildi; sağlayıcı,
+kesin ücret ve ayrı giriş yollarının uçtan uca kabulü açık. Kod, provider veya canlı
+ödeme kabulü **UNPROVEN**; uygulama testleri, CI ve canlı işlemler bu doküman
+gate'inde **EXTERNAL_NOT_RUN**. Planı kaydetmek için blocker yoktur.
+
+## 21 Eylül kaynak kapanışı ve kanıt
+
+1. **Plan tutarlılığı:** güncel karar ve sıra tablosu aynı sonraki gate'i
+   gösteriyor. Eski araştırma, hata ve test sayıları tarihsel olarak ayrıldı;
+   kapanmış süre/blok bulguları ilgili kaynak raporuna bağlandı.
+2. **Kayıt koruması:** ortak session okuyucusu geçersiz kaydı artık silmiyor.
+   Google yolunda bozuk/boş/süresi geçmiş kayıt yeni anahtarla değiştirilmiyor.
+   Zincirde mevcut iş önce uzlaştırılıyor; yeni işte eski Google attempt
+   varsa anahtar yazımı, teklif ve sponsor çağrısından önce duruluyor. Normal
+   cüzdanın açık anahtar yenilemesi ve mevcut ücretli işe dönüş korunuyor.
+3. **Başlık uyumu:** ortak TS kontrolü Market'in mevcut Unicode White_Space
+   kuralını kullanıyor. U+0085 boş başlığı reddediliyor; ham U+FEFF ve U+200B
+   kabulü Rust ile aynı. Geçerli imzalı başlık baytları aynen korunuyor.
+   Rust üretim kodu, kontrat arayüzü ve kalıcı state düzeni değişmedi.
+4. **Bağımsız süre testleri:** Bridge anahtar/mock hazırlığı dosya kapsamına
+   taşındı. Son gönderim süre testleri tek başına da çalışıyor.
+
+Yeni regresyonlar düzeltmeden önce **19 Web testi** ve bağımsız seçilen
+**2 Bridge süre testi** ile başarısız oldu. Düzeltme sonrası:
+
+| Kanıt sınıfı | Doğrulama | Sonuç |
+| --- | --- | --- |
+| LOCAL_TEST | Web tüm unit/integration suite | 48 dosya / **845 PASS** |
+| LOCAL_TEST | Bridge index + playback-v2 | **176 PASS**, mevcut 3 koşullu test SKIPPED |
+| LOCAL_TEST | Bridge son gönderim süre testleri tek başına | **2 PASS**; üstteki kümeyle örtüşür |
+| LOCAL_TEST | Market lib + paid-media entegrasyon | **12 + 41 PASS**, offline |
+| LOCAL_TEST | Compact boyut/imza matrisi | **360 PASS**, altı imzalı fixture değişmedi |
+| LOCAL_STATIC | Web auth tip kontrolü / lint / izole build | **PASS** |
+| LOCAL_STATIC | Bridge tip kontrolü | **PASS** |
+| LOCAL_STATIC | Rust fmt / clippy tüm hedefler | **PASS** |
+| LOCAL_STATIC | Protokol kaynak kontrolü | **PASS** |
+| LOCAL_STATIC | Doküman build / bağlantılar | **PASS** |
+
+Boş string regression'ı test deposunun `getItem` taklidindeki farkı da
+ortaya çıkardı: gerçek Storage gibi boş string korunacak, yalnız olmayan
+anahtar null dönecek şekilde düzeltildi. Tam Web suite bu değişiklikle geçti.
+Kayıt incelemesinde kalan boş-string durumu giderildi; protokol incelemesinde
+ek hata bulunmadı. Plan incelemesindeki tarihsel başlık netleştirmeleri de
+uygulandı. Mevcut Vite/Next ve doküman bundle boyutu uyarıları sürüyor.
+
+**Doğrulama sınırı:** ek ABI karşılaştırması, yerel
+`contracts/access-control/target/near/youtick_access_control_abi.json`
+çıktısı bulunmadığı için çalışamadı. Bu bir ABI uyumsuzluğu sonucu değildir;
+Rust değişikliği yalnız test modülünde, üretim kodu önceki kopyayla aynıdır.
+WASM/sandbox, gerçek Auth0/Meteor, tarayıcı/storage, ödeme, upload/HLS,
+provider/config, CI/deploy ve commit/push/PR/merge **EXTERNAL_NOT_RUN**.
+Üç Bridge skip, mevcut koşullu abuse/load testleridir.
+
+Değişen dosyalar (bu gate'in mevcut kirli çalışma kopyasına ek farkı):
+
+- Plan: `docs/architecture/near-auth-integration-status.md`.
+- Ortak protokol: `protocol/paid-media-livepeer-v1/title.ts`,
+  `upload-title-vectors.json`, `compact-upload.ts`.
+- Web: `apps/web/lib/livepeer-upload.ts`, `near-auth-upload-attempt.ts`,
+  `near-auth-upload-wallet.ts`, `near-auth-upload-server.ts` ve
+  `apps/web/components/LivepeerPaidUploadForm.tsx`.
+- Web testleri: `apps/web/__tests__/setup.ts`,
+  `unit/livepeer-upload.test.ts`, `unit/compact-upload.test.ts`.
+- Bridge: `workers/livepeer-bridge/src/index.ts`, `index.test.ts`.
+- Market: `contracts/nft-ticket/src/lib.rs` yalnız mevcut test modülü.
+
+Kanıt/başlangıç kopyası:
+`/var/folders/m7/jqxmhnys7d1778jj0g8kyg800000gn/T/near-auth-findings-source-87dieen7/`.
+Başlangıçtaki 417 dosyadan 12’si bu gate kapsamında değişti; 405 dosyanın
+hash’i ve Git index aynı kaldı. Üç yeni dosya yukarıdaki açık kapsamda eklendi.
+Web build ve boyut matrisi bu dizindeki ayrı kopyada çalıştı; mevcut `.next`
+ve önceki boyut ölçüm dosyası korunuyor. Kaynak bulgularının kapanması son
+canlı hatanın kök nedenini veya mevcut denemenin ödeme sonucunu kanıtlamaz.
+Kaynak gate'inin blocker'ı yok; canlı kabul için mevcut deneme uzlaştırması,
+önceki hassas çıktı durumunun kapanışı ve ayrı uçtan uca kabul hâlâ gereklidir.
+
+## Tarihsel mimari araştırmaları — 17 Eylül 2026
+
+İlk `NEAR_AUTH_ARCHITECTURE_PLAN_REVIEW` sonucu **COMPLETED_WITH_WARNINGS** idi.
+O gün bildirilen `access_denied` ve 24 KB teşhisi
+[16 Eylül kaydına](./near-auth-prompt-size.md) dayanıyordu. Aşağıdaki araştırma
+sonuçları o günkü adaylara aittir; bugün açık bulgu veya yeni çalışma talimatı değildir.
 
 ### 17 Eylül karşı doğrulama: kısa mesaj adayına koşullu sonuç
 
@@ -126,12 +464,12 @@ Mevcut provider handoff'un **10 testi PASS**; bunlar form yamasının testleridi
 compact uygulama kabulü değildir. Doküman derlemesi ve dosya koruma kontrolü
 bu gate'in kapanış doğrulamasıdır.
 
-**Tek sonraki gate değişmedi:** `NEAR_AUTH_PAYLOAD_COMPATIBILITY_PLAN`.
+**O tarihteki sonraki gate:** `NEAR_AUTH_PAYLOAD_COMPATIBILITY_PLAN` (sonradan tamamlandı).
 Kabulü sıkılaştırıldı: kısa mesaj için açık desteklenen veri/token bütçesi,
 ölçülebilir pay, gerçek boyut assertion'ları, üç katmanda aynı canonical
 veri/teklif imzası, bozuk girdi retleri ve okunabilir kullanıcı onayı gerekir.
 Doğrulanmış JWT **7.168 baytı**, API toplam gövdesi/outer args kendi sınırlarını
-aşıyorsa sponsor çağrısı sıfır olmalıdır. Bugünkü 32.768 karakterlik uygulama
+aşıyorsa sponsor çağrısı sıfır olmalıdır. O tarihteki 32.768 karakterlik uygulama
 token limiti guard'ın 7.168 bayt sınırının yerine geçmez.
 
 Değişecek gerçek tüketiciler: Web upload mesaj üretimi, Google upload parser'ı,
@@ -196,7 +534,7 @@ engeli çözmez. Mainnet guard davranışı bu kontrolde ölçülmedi.
 | Cihazı ayrı işlemle kaydetmek | Veri azalır ama tek başına iki sınırı çözmez; ek imza ve kurtarma adımı getirir. |
 | Yerel oturum anahtarı veya yalnız hash imzası | Küçük kestirme değildir. FunctionCall anahtarı ödeme için gereken 1 yoctoNEAR'ı ekleyemez; FullAccess anahtarı güven modelini değiştirir. Mevcut guard tam `fatxn == sign_payload` bekler; hash/sıkıştırma karşı taraf desteği olmadan kullanılamaz. |
 
-Tek sonraki gate yalnız yerel boyut/uyumluluk planıdır: mevcut sponsorlu
+O tarihte önerilen sonraki adım yalnız yerel boyut/uyumluluk planıydı: mevcut sponsorlu
 mesajı temel al, aynı güvenlik bağlarını koruyan kısa temsil adayını ölç;
 200 bayt başlıkların tamamını, en uzun desteklenen kimlik/claim alanlarını,
 form/JWT/API sınırlarını ve normal cihaz davranışını kapsa. Mevcut
@@ -206,7 +544,7 @@ kontrat değiştirilmez. Çıkışta somut mesaj biçimi, güvenlik eşdeğerli�
 Başarısızsa provider protokol düzeltmesi veya ayrı sponsorsuz tasarım kararı
 gerekir; otomatik alternatif ödeme/yükleme başlatılmaz.
 
-## İnceleme kapsamı ve sorumluluk
+## 17 Eylül incelemesinin tarihsel kapsamı ve sorumluluğu
 
 - Kaynak: `f71178263c5d264bef647feaae8a2b54618b1333` tabanı ve üzerindeki mevcut
   yerel değişiklikler. Bu inceleme yalnız commit edilmiş main'i temsil etmez.
@@ -250,14 +588,14 @@ Kaynak sınırları: `apps/web/app/api/auth-lab/session/route.ts:72`,
 `apps/web/lib/near-auth-upload-wallet.ts:61` ve
 `apps/web/components/NearAuthLab.tsx:98`. Satırlar bu inceleme anına aittir.
 
-## Öncelikli bulgular
+## 17 Eylül öncelikli bulguları — tarihsel
 
 ### 1. Bildirilen hata: provider onay formunun boyutu
 
 Auth0 [form alanlarını 24 KB ile sınırlar](https://auth0.com/docs/customize/forms/render).
 Repodaki hata kaydı `24576` bayt sınırını bildiriyor. Video dosyası Auth0'ya
 gönderilmiyor; onay ekranına konan işlem argümanları girintili JSON nedeniyle
-büyüyor. Bugünkü mevcut handoff testi temsilî delegate için **27.052 → 7.055**,
+büyüyor. 17 Eylül handoff testi temsilî delegate için **27.052 → 7.055**,
 en ağır başlık örneği için **36.289 → 9.222** bayt ölçtü. Yama yalnız gösterim
 girintisini kaldırıyor; işlem baytlarını, değerleri ve ret hakkını koruyor.
 
@@ -273,7 +611,10 @@ baytlarını kırpmak veya issuer değiştirmek değildir. Sağlayıcıdan tenan
 kimliği, kaynak revizyonu, yayın zamanı ve gerçek form kabulü gerekir.
 Bu yama yukarıdaki ayrı JWT sınırını çözmez; tam akış için yeterli sayılmaz.
 
-### 2. P2 — ortak Google imzasında son süre kontrolü eksik
+### 2. Tarihsel P2 — son süre kontrolü kaynakta giderildi
+
+Kapanış: [signing freshness kaynak gate’i](./near-auth-signing-freshness-source.md).
+Aşağıdaki açıklama düzeltme öncesindeki davranıştır.
 
 `near-auth-signing-server.ts:131` tokenı doğruluyor, ardından zincir kontrolleri
 yapıp geçerliliği yeniden denetlemeden sponsor çağrısı döndürüyor.
@@ -288,7 +629,10 @@ alındığında normal imza ve bilet için sponsor çağrısının hâlâ üreti
 Gerçek token/sponsor/ağ kullanılmadı. Bu hata `access_denied` nedeni değildir;
 geçersiz onay için gereksiz sponsor gideri riski yaratır.
 
-### 3. P2 — quote'in kendi blok penceresi ön kontrolde eksik
+### 3. Tarihsel P2 — quote blok penceresi kaynakta giderildi
+
+Kapanış: [signing freshness kaynak gate’i](./near-auth-signing-freshness-source.md).
+Aşağıdaki yeniden üretim düzeltme öncesine aittir.
 
 `near-auth-upload-server.ts:54` ve Bridge
 `workers/livepeer-bridge/src/index.ts:4252` mevcut bloğu delegate'in son bloğuyla
@@ -323,15 +667,14 @@ kontrol ile zincirde yürütme arasındaki ilerleme riski de tamamen yok olmaz.
   otomatik kilit silmek yerine aynı işlemin salt-okunur uzlaştırılması gerekir.
 - **Passkey hesabı:** anahtar issuer + subject'ten türetiliyor. Auth0 farklı
   kimlikleri [varsayılan olarak ayrı hesap sayar](https://auth0.com/docs/manage-users/user-accounts/user-account-linking).
-  Passkey seçeneğinin görünmesi aynı Google hesabı, anahtar ve hakları kanıtlamaz.
-  Aynı e-postadan otomatik birleştirme yapılmaz; sağlayıcının desteklediği
-  bağlama/kurtarma yolu ve mevcut asıl kimliğin korunması doğrulanır.
+  V1'de Google ile aynı hesabı üretme şartı yoktur. Passkey kendi kimliği ve
+  hesabıyla kullanılır; aynı e-postadan otomatik birleştirme yapılmaz.
 - **Üretim kapalı:** mevcut lab yalnız development/testnet, API'ler ayrıca
   localhost ile sınırlı. Production için yalnız bayrak açmak yeterli değildir.
   [Onaylı uygulama ve production kimlik bilgileri](https://docs.auth.near.org/resources/networks)
   gerekir; ortak testnet client taşınmaz.
 
-## Revize sıra — her satır ayrı gate, otomatik ilerleme yok
+## Gate kayıtları ve bundan sonraki sıra — otomatik ilerleme yok
 
 | Sıra | Gate / sorumlu | Çıkış ölçütü |
 | --- | --- | --- |
@@ -342,18 +685,39 @@ kontrol ile zincirde yürütme arasındaki ilerleme riski de tamamen yok olmaz.
 | 2 | `NEAR_AUTH_COMPACT_RELEASE_PREFLIGHT` / tamamlandı | Kaynak adayı, iki source engeli, bakım ve compact sonrası geri dönüş sınırı kaydedildi. Engeller aşağıdaki source gate ile giderildi. |
 | 2.1 | `NEAR_AUTH_COMPACT_RELEASE_GUARDS_SOURCE` / tamamlandı | CI tüketici seçimi ve policy güncellendi; 224 yerel test geçti, canlı bakım/gönderim yok. |
 | 2.2 | `NEAR_AUTH_COMPACT_SOURCE_INTEGRATION` / tamamlandı | Ayrı main adayı, temiz paket kurulumu, son diff ve yerel doğrulamalar tamamlandı; GitHub değişmedi. |
-| 2.3 | `NEAR_AUTH_COMPACT_GIT_PUBLISH` / tek sonraki gate, açık onay bekler | Tek commit, yeni dala push, taslak PR ve otomatik PR CI; merge/deploy/ödeme yok. |
-| 2.4 | Korumalı compact yayın / ayrıca yetkilendirilecek | Nihai main/CI artifact'i, onaylı bakım, Market state eşitliği ve Bridge/Web sürüm-yetenek doğrulaması gerekir. |
-| 3 | Mevcut Gate 4'ün kontrollü canlı kabulü / kullanıcı + ana ajan | Brave kararlılığı ve işlem uzlaştırmasından sonra aynı taslakla tek ödeme → yayın → creator playback → reload kanıtlanır. |
-| 4 | Ürün kimliği ve finansman kararı / ürün sahibi + çözüm mimarı | Passkey bağlama/kurtarma, mevcut cüzdan kullanıcıları, masrafı ödeyen aktör ve sınırlar belirlenir. Yeni servis varsayılmaz. |
-| 5 | Ürün akışlarının ayrı uygulama/kabul gate'leri | Önce mevcut cihazla ikinci işlem; sonra tek buyer purchase/playback; sonra onaylı passkey/yeni cihaz/kurtarma ve mobil tarayıcı kabulü. Her biri ayrı kapanır. |
+| 2.3 | `NEAR_AUTH_COMPACT_GIT_PUBLISH` / tamamlandı | PR #214 açıldı; PR CI başarılı, ayrı GitHub AI review model hatası nedeniyle yapılamadı. |
+| 2.4 | `NEAR_AUTH_COMPACT_MERGE` / tamamlandı | Main 6739ec7, 13/13 CI, exact Market artifact ve kaynak doğrulaması; Preview atlandı. |
+| 2.5 | `NEAR_AUTH_COMPACT_DEPLOY_PREFLIGHT` / tamamlandı | Canlı iş/kuyruk/rezerv ve bakım paketi; nihai state hash bakım sonrasında alınacak. |
+| 2.6 | `NEAR_AUTH_COMPACT_MAINTENANCE` / tamamlandı | Guardian pause/freeze, closed run 35313295412 ve yeni policy-checked state hash doğrulandı. |
+| 2.7 | `NEAR_AUTH_COMPACT_MARKET_DEPLOY` / tamamlandı | Tek DeployContract FINAL; compact version 1, state/bakiye/13 yayın korundu, bakım sürüyor. |
+| 2.8 | `NEAR_AUTH_COMPACT_REOPEN` / tamamlandı | Admin bayrakları false, acceptance 35360921254 PASS, compact runtime hazır; yeni ödeme/upload yok. |
+| 2.9 | `NEAR_AUTH_COMPACT_LIVE_ACCEPTANCE_PREFLIGHT` / tarihsel BLOCKED | Kullanıcı yeni denemeye geçti; önceki hassas çıktı ve eksik uzlaştırma kaydı korunur. |
+| 2.10 | `NEAR_AUTH_UPLOAD_AUTHORIZATION_DIAGNOSTICS_SOURCE` / tamamlandı | Yeni authorize-upload reddi için yalnız güvenli hata sınıflandırması; 784 yerel test PASS. |
+| 2.11 | `NEAR_AUTH_UPLOAD_AUTHORIZATION_RECHECK` / tarihsel | Son kullanıcı denemesi imza aşamasını geçti; güncel belirsizlik taslak ve ödeme sonucudur. |
+| 2.12 | `NEAR_AUTH_UPLOAD_DRAFT_GUARDS_SOURCE` / tamamlandı | İmza öncesi taslak kontrolleri yerelde geçti; canlı kök neden ve ödeme sonucu kanıtlanmadı. |
+| 2.13 | `NEAR_AUTH_REVIEW_FINDINGS_SOURCE` / tamamlandı | Beş bulgu kaynak/plan düzeyinde kapandı; yerel kabul aşağıda, canlı kabul yok. |
+| 2.14 | `NEAR_AUTH_UPLOAD_ATTEMPT_RECONCILIATION` / BLOCKED, ayrı eski kayıt | Adayın MPC imzası doğrulandı; son denemeyle eşleşme teyidi yok. Yeni hesap testi bu kaydı kapatmaz. |
+| 2.15 | `NEAR_AUTH_FRESH_ACCOUNT_UPLOAD_PREFLIGHT` / BLOCKED | Ortam/sponsor hazır; yeni Google NEAR hesabı henüz yok, USDC hazırlığı ve dosya/cihaz kontrolü eksik. |
+| 2.16 | `NEAR_AUTH_FRESH_ACCOUNT_PROVISIONING` / tamamlandı, uyarılı | Final blokta hesap, 0,1 test NEAR ve FullAccess doğrulandı; işlem makbuzu/gideri doğrulanmadı. |
+| 2.17 | `NEAR_AUTH_FRESH_ACCOUNT_USDC_PREFLIGHT` / çalıştırılmadı | Kullanıcı fonlama ve upload yaptı; bu planlanan ön kontrol PASS sayılmadı. |
+| 2.18 | `NEAR_AUTH_PUBLICATION_TRANSIENT_ERROR_REVIEW` / tamamlandı, uyarılı | Yeni ücretli iş/yayın doğrulandı; geçici HTTP 409 alt nedeni kanıtsız, kaynak yarış senaryosu yerelde gösterildi. |
+| 2.19 | `NEAR_AUTH_PUBLICATION_POLLING_RACE_SOURCE` / tamamlandı, uyarılı | Tek ek zincir kontrolüyle aynı ACTIVE yayın doğrulanıyor; 856 Web testi PASS, yeni canlı kabul yok. |
+| 3 | `NEAR_AUTH_CREATOR_PLAYBACK_RELOAD_ACCEPTANCE` / PASS | Aynı Google hesabı/cihaz, gerçek 720p HLS ve reload/3:13 devam kabulü; kullanıcı teyidi, yeni ödeme/upload yok. |
+| 4 | `NEAR_AUTH_PRODUCT_IDENTITY_FUNDING_PLAN` / COMPLETED_WITH_WARNINGS | Doğrudan kart, ayrı fiat/USDC muhasebesi, arka plan göndericisi ve maliyet varsayımları kaydedildi; giriş kapsamı son V1 kararıyla sadeleştirildi. Uygulama veya sağlayıcı kabulü değildir. |
+| 4.1 | `NEAR_AUTH_CARD_IDENTITY_COST_PREFLIGHT` / COMPLETED_WITH_WARNINGS | Resmî kart/kimlik belgeleri, final blok ücret parametreleri ve ayrı harcama/rezerv/fonlama modeli kaydedildi. Ticari kabul, yeni kart kodu ölçümü ve canlı harcama tavanları açık. |
+| 4.2 | `NEAR_AUTH_V1_SCOPE_SIMPLIFICATION` / PASS | Hesap bağlama ve bağlama amaçlı test sırası V1'den çıkarıldı; cüzdan/Google/passkey bağımsız kullanım hedefi korundu. |
+| 5 | `NEAR_AUTH_V1_FLOW_ACCEPTANCE` / COMPLETED_WITH_WARNINGS | Ayrı Google buyer: 2 test USDC satın alma, 720p ve reload doğrulandı; ilk sekme hatası ve makbuz kapsamı açık. |
+| 5.1 | `NEAR_AUTH_V1_FLOW_SOURCE` / COMPLETED_WITH_WARNINGS | Aynı geçerli cihaz, bilet başına kayıt ve buyer playback düzeltildi; 868 Web + 16 playback + 18 UX, tip/lint/izole build geçti. Gerçek provider/ödeme/izleme kabulü yok. |
+| 5.2 | `NEAR_AUTH_V1_PASSKEY_ACCEPTANCE` / COMPLETED_WITH_WARNINGS | Bağımsız kimlikte creator ve passkey onaylı buyer, 720p ve reload geçti; ayrıntılar güncel kabul raporunda. |
+| 6 | `NEAR_AUTH_V1_PRODUCT_FLOW_PREFLIGHT` / önerildi, başlatılmadı | Kanıtlanan giriş yollarının ana uygulama UI kapsamını sadeleştirmek; henüz kaynak/deploy yetkisi yok. |
+| Ayrı kart/üretim kapsamı | `NEAR_AUTH_PROVIDER_WRITTEN_CONFIRMATION` / açık dış teyit | Kart iş modeli, ülke/payout, üretim erişimi ve kalemli fiyat teyitleri; hesap bağlama soruları V1 kapsamından çıkarıldı. İleti veya başvuru kendiliğinden yapılmaz. |
 | 6 | Production hazırlığı ve korumalı yayın | Onaylı provider ayarları, gerçek dağıtım ortamı, operasyon bütçesi ve mahremiyet kararı doğrulanır; exact SHA → CI → deploy → runtime kabulü izlenir. |
 
-Yerel boyut araştırması provider değişikliği beklemeden ilerleyebilir; yerel
-başarı canlı kabulü geçirmez. Form/JWT uyumu sağlanmadan canlı pilot bekler.
-Kimliği değiştiren alternatif bir tenant/guard'a sessizce geçilmez.
+Compact boyut/uyumluluk çalışması kaynakta tamamlandı; yerel başarı canlı
+kabul değildir. Publication sorgu düzeltmesi ve önceki creator playback/reload kabulü korunur. V1'in üç kaynak engeli yerelde kapandı; Google ve passkey gerçek kabul sonuçları üstteki güncel durumda ve ilgili raporlardadır. Eski denemenin uzlaştırması ayrı açıktır.
+Kimliği değiştiren alternatif bir tenant/guard’a sessizce geçilmez.
 
-## Boyut kararı sonrasındaki süre düzeltmesi gate'inin kapsamı
+## Tarihsel süre düzeltmesi kapsamı — kaynak gate’i tamamlandı
 
 Amaç: geçerliliğini yitirmiş onay veya quote için yeni ücretli işleme
 başlamamak. Aynı var olan kontrolleri tamamla; yeni servis/dependency veya genel
@@ -387,7 +751,7 @@ etmez. Sonraki canlı kabulde 60 saniyelik signing tokenı, en çok 120 saniyeli
 quote, ayrı blok penceresi ve sponsor/MPC beklemeleri birlikte ölçülür. Geçmiş
 saatle JWT doğrulamak veya süreyi gelişigüzel uzatmak çözüm kabul edilmez.
 
-## Canlı ve ürün kabulüne eklenen koşullar
+## Tarihsel canlı ve ürün kabulü koşulları — eski pilot bağlamı
 
 Canlı Gate 4'te aynı hesap/sponsor/dosya/taslak ve mevcut Brave cihazı korunur.
 Önce kesinleşmiş job ve bilinen sponsor işlem hash'leri uzlaştırılır; güncel
@@ -406,15 +770,13 @@ ve sponsor panelleri son kullanıcıya aynen taşınmaz. Gas/hesap hazırlığı
 platform karşılayacaksa önce sağlayıcının mevcut relayer hizmeti ve mevcut
 Bridge sınırları değerlendirilir; aktör, izinli işlemler, kullanıcı/job başına
 bütçe, tekrar koruması ve kötüye kullanım limiti belirlenmeden yeni servis yazılmaz.
-USDC finansmanı ayrı ürün kararıdır; bu plan kart ödemesi eklemez.
+Bu tarihsel pilot kapsamı kart ödemesi eklemiyordu. 22 Eylül ürün kararları
+doğrudan kartı plana alır; kart uygulaması ve canlı kabul hâlâ ayrı gate'lerdir.
 
-Passkey kabulü: Google → sağlayıcının desteklediği güvenli passkey ekleme →
-çıkış → passkey → **aynı anahtar/NEAR hesabı ve haklar**; ayrıca farklı yöntemle
-yeni kayıt, Google erişimi kaybı ve kayıp cihaz. Hesap kurtarma ile V3 oynatma
-cihazı kaydı ayrı denetlenir; passkey girişi cihaz yetkisini otomatik taşımaz.
-Bağlamada her iki hesabın kontrolü doğrulanır; issuer/primary subject değişiminin
-fon/hak erişimine etkisi çözülmeden yöntem açılmaz. Mevcut cüzdan kullanıcıları
-için bağlantı/migrasyon ayrıca onaylanır; eski hesaplar yerinde kalır.
+Bu tarihsel bölümdeki yöntemler arası hesap bağlama kabulü V1'den çıkarılmıştır.
+Güncel passkey kabulü kendi kimliğiyle giriş → imza → yükleme/satın alma →
+yetkili izlemedir. Mevcut cüzdan kullanıcıları kendi hesaplarıyla devam eder;
+hesap birleştirme veya migration V1 şartı değildir. Cihaz yetkisi kontrolleri korunur.
 
 Doğrudan Auth0 + v7 yaklaşımında issuer/audience, `fatxn`, türetim yolu ve MPC
 cevabı uyumluluğunun sahibi YouTick'tir. Provider protokolü/paket değişiminde
@@ -424,7 +786,7 @@ başlık/ID/claim birleşimi form, API ve MPC cevap sınırlarında birlikte öl
 Mahremiyet kararı, işlem onay tokenındaki kimlik referansının zincirde kalıcı
 görünmesini de kapsar; yeni tenant bu konuda kendiliğinden çözüm değildir.
 
-## Bu incelemenin yeni kanıtı
+## 17 Eylül mimari incelemesinin tarihsel kanıtı
 
 - **LOCAL_TEST:** mevcut Web suite **46 dosya / 722 test PASS**;
   provider handoff **10 test PASS**. Yeni üç ağsız inceleme denemesi yukarıdaki
@@ -443,9 +805,9 @@ görünmesini de kapsar; yeni tenant bu konuda kendiliğinden çözüm değildir
   push, PR, merge veya deploy. Kod değişmediği için yeni Web/Bridge build'i,
   Bridge/kontrat testleri ve tarayıcı kabulü çalıştırılmadı.
 
-Bu gate'in plan tesliminde blocker yoktur. Canlı kabulün blocker'ları mevcut
-form/JWT boyut uyumsuzluğu ve seçilecek düzeltmenin yayın/kabul kanıtıdır;
-yukarıdaki yerel süre bulguları da canlı denemeden önce kapatılır.
+Bu, 17 Eylül incelemesinin engel kaydıydı. Compact kaynak ve süre düzeltmeleri
+sonradan tamamlandı. Bugünkü açık noktalar belgenin güncel durum bölümündedir;
+aşağıdaki eski form yaması güncel compact yol için zorunlu ön koşul değildir.
 
 ## 16 Eylül gate kayıtları
 
@@ -511,7 +873,7 @@ Fixture quote imzası yine sentetiktir; geçerli canlı teklif sayılmaz.
 | Hesap ve basit Google/MPC imzası | [İmza raporunda](./near-auth-google-signing-lab.md) önceki başarılı zincir işlemi var; upload kabulü değildir. |
 | Localhost CORS | [Runtime raporunda](./near-auth-google-upload-local-runtime.md) 16 Eylül OPTIONS 204 kayıtlı; ilk kaynak raporundaki engel tarihsel. Bugünkü CORS yeniden sorgulanmadı. |
 | Google hesabının USDC hazırlığı | [RPC raporunda](./near-auth-upload-rpc-fix.md) blok 268880300: 600000 mikro test USDC, aynı taslak için ücretli iş yok. Güncel bakiye veya tekrar fonlama talimatı değildir. |
-| Son somut Google upload hatası | `access_denied`, 24576 bayt prompt sınırı. Yerel yeniden üretim var; provider düzeltmesi doğrulanmadı. |
+| 16 Eylül Google upload hatası — tarihsel | `access_denied`, 24576 bayt prompt sınırı. Sonraki compact kaynak ve taslak gate’leri bu kaydın üstüne ilerledi. |
 | Brave | [Çökme raporu](./near-auth-brave-sponsor-crash.md) ayrı bir kararlılık sorunu; prompt yamasının bunu çözdüğü iddia edilmez. |
 | Upload / creator playback / reload | Bu Google pilotunda canlı kabul henüz yok. |
 

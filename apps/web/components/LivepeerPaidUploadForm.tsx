@@ -1,6 +1,7 @@
 'use client';
 
 import { startVideoMeasurement } from '@/lib/video-measurements';
+import { hasTitleContent } from '../../../protocol/paid-media-livepeer-v1/title';
 
 import React from 'react';
 import Link from 'next/link';
@@ -171,12 +172,25 @@ export function LivepeerPaidUploadFormContent({ accountId, connect, getWallet, i
             if (!file || !accountId) throw new Error('livepeer_upload_status_unavailable');
             const source = validateLivepeerSourceFile(file);
             if (!source.ok) throw new Error(source.error);
-            const provider = await requestLivepeerUploadIntent({
-                accountId, jobId, generation: 1, expectedSourceBytes: file.size,
-                sourceFingerprintSha256: await fingerprintLivepeerSource(file),
-                sourceType: source.sourceType, recovery: 'reconcile',
-            });
-            return { ...progress, providerState: provider.state };
+            try {
+                const provider = await requestLivepeerUploadIntent({
+                    accountId, jobId, generation: 1, expectedSourceBytes: file.size,
+                    sourceFingerprintSha256: await fingerprintLivepeerSource(file),
+                    sourceType: source.sourceType, recovery: 'reconcile',
+                });
+                return { ...progress, providerState: provider.state };
+            } catch (error) {
+                if (error instanceof Error && error.message === 'on_chain_job_mismatch') {
+                    // Finalization can win between the Web read and the Bridge read.
+                    const current = await readLivepeerUploadProgress(jobId, accountId).catch(() => null);
+                    if (current?.publication?.publication_id === jobId
+                        && current.publication.creator_id === accountId
+                        && current.publication.generation === 1 && current.publication.availability === 'ACTIVE') {
+                        return { ...current, providerState: null };
+                    }
+                }
+                throw error;
+            }
         },
         enabled: publicationPollingEnabled,
         retry: false,
@@ -279,7 +293,7 @@ export function LivepeerPaidUploadFormContent({ accountId, connect, getWallet, i
     };
 
     const preparePayment = async () => {
-        if (!accountId || !file || fileError || !title.trim() || !rightsAccepted) return;
+        if (!accountId || !file || fileError || !hasTitleContent(title.trim()) || !rightsAccepted) return;
         if (operation.current) return;
         const controller = new AbortController();
         operation.current = controller;
@@ -357,7 +371,7 @@ export function LivepeerPaidUploadFormContent({ accountId, connect, getWallet, i
     };
 
     const start = async () => {
-        if (!accountId || !file || fileError || !title.trim() || !rightsAccepted || !jobId || !payment || !paymentAsset) return;
+        if (!accountId || !file || fileError || !hasTitleContent(title.trim()) || !rightsAccepted || !jobId || !payment || !paymentAsset) return;
         if (operation.current) return;
         const controller = new AbortController();
         operation.current = controller;
@@ -453,6 +467,7 @@ export function LivepeerPaidUploadFormContent({ accountId, connect, getWallet, i
                 asset: paymentAsset,
                 nearQuote: payment.nearQuote,
                 allowSponsoredUsdc: payment.sponsoredUsdc && !matchingCheckout,
+                allowUploadKeyReplacement,
                 signal: controller.signal,
                 onSponsoredQuote: async (quote) => {
                     controller.signal.throwIfAborted();
@@ -599,7 +614,7 @@ export function LivepeerPaidUploadFormContent({ accountId, connect, getWallet, i
         }
     };
 
-    const formReady = Boolean(accountId && file && !fileError && title.trim() && price.trim() && rightsAccepted);
+    const formReady = Boolean(accountId && file && !fileError && hasTitleContent(title.trim()) && price.trim() && rightsAccepted);
 
     return (
         <div className="mx-auto max-w-3xl space-y-6">
@@ -851,7 +866,18 @@ export function uploadErrorMessage(reason: unknown, availabilityConfirmed: boole
     if (code === 'livepeer_key_replacement_pending') return 'The previous wallet action is not confirmed. Check it before trying this upload again.';
     if (code === 'livepeer_payment_pending' || code === 'livepeer_job_missing') return 'Payment is not confirmed yet. Check your wallet; no new payment was started.';
     if (code === 'livepeer_wallet_account_mismatch') return 'Reconnect the wallet account that paid for this upload.';
-    if (code === 'livepeer_draft_unavailable') return 'Recovery information could not be saved in this browser. Check browser storage before continuing.';
+    if (['livepeer_draft_missing', 'livepeer_draft_invalid', 'livepeer_draft_job_mismatch',
+        'livepeer_draft_read_failed', 'livepeer_draft_write_failed', 'livepeer_draft_readback_failed',
+        'livepeer_draft_unavailable'].includes(code)) {
+        const reason = code === 'livepeer_draft_missing' ? 'is missing'
+            : code === 'livepeer_draft_invalid' ? 'is invalid'
+            : code === 'livepeer_draft_job_mismatch' ? 'belongs to another upload'
+            : code === 'livepeer_draft_read_failed' ? 'could not be read'
+            : code === 'livepeer_draft_write_failed' ? 'could not be saved'
+            : code === 'livepeer_draft_readback_failed' ? 'could not be verified after saving'
+            : 'is unavailable';
+        return `Recovery information ${reason} (${code}). Keep this upload and check any existing signing or payment attempt before retrying.`;
+    }
     if (code === 'livepeer_wallet_rejected') return 'Wallet approval was cancelled. You can check this upload again.';
     if (code === 'livepeer_resume_in_progress') return 'This upload is being recovered in another tab. Wait for it to finish.';
     if (code === 'livepeer_resume_browser_unsupported') return 'Use a current Chrome or Edge browser to resume this upload.';

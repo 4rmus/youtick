@@ -73,7 +73,7 @@ vi.mock('@/lib/keystore-v7', () => ({ BrowserKeyStore: MockBrowserKeyStore }));
 function storageMock() {
     const values = new Map<string, string>();
     return {
-        getItem: vi.fn((key: string) => values.get(key) || null),
+        getItem: vi.fn((key: string) => values.get(key) ?? null),
         setItem: vi.fn((key: string, value: string) => values.set(key, value)),
         removeItem: vi.fn((key: string) => values.delete(key)),
         clear: vi.fn(() => values.clear()),

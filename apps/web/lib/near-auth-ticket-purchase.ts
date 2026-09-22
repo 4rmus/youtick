@@ -39,6 +39,19 @@ export function ticketRequest(publicationId: unknown, device: unknown, accountId
 
 export type TicketRequest = ReturnType<typeof ticketRequest>;
 
+export async function canUsePlaybackDevice(records: unknown, expected: PlaybackSessionAuthorization, read: () => Promise<unknown>) {
+    if (!Array.isArray(records)) return false;
+    if (records.length === 0) return true;
+    const device = await read();
+    if (!device || typeof device !== 'object' || !('session_public_key' in device) || !('certificate_sha256' in device)
+        || device.session_public_key !== expected.session_public_key || device.certificate_sha256 !== expected.certificate_sha256
+        || !('authorized_at_ms' in device) || typeof device.authorized_at_ms !== 'string' || !/^[0-9]{1,16}$/.test(device.authorized_at_ms)
+        || !('expires_at_ms' in device) || typeof device.expires_at_ms !== 'string' || !/^[0-9]{1,16}$/.test(device.expires_at_ms)) return false;
+    const start = Number(device.authorized_at_ms), end = Number(device.expires_at_ms), now = Date.now();
+    return Number.isSafeInteger(start) && Number.isSafeInteger(end) && start <= now && end > now
+        && end - start === Number(expected.authorization_duration_ms);
+}
+
 export function ticketAction(request: TicketRequest, price: string) {
     return actions.functionCall('ft_transfer_call', { receiver_id: ticketConfig().market, amount: price,
         memo: 'YouTick Livepeer ticket purchase', msg: JSON.stringify({ action: 'buy_ticket',
@@ -98,8 +111,9 @@ export async function readTicketState(accountId: string, request: TicketRequest,
     if (!buyerStorage || !marketStorage || typeof buyerStorage.total !== 'string' || typeof marketStorage.total !== 'string'
         || !/^[1-9][0-9]{0,38}$/.test(buyerStorage.total) || !/^[1-9][0-9]{0,38}$/.test(marketStorage.total)
         || typeof balance !== 'string' || !/^[0-9]{1,39}$/.test(balance) || BigInt(balance) < BigInt(publication.price_usdc)) throw new Error('ticket_balance_required');
-    // ponytail: first-device pilot only; any existing raw record stops instead of risking eviction.
-    if (!Array.isArray(devices.values) || devices.values.length !== 0) throw new Error('ticket_first_device_only');
+    if (!await canUsePlaybackDevice(devices.values, request.playbackSession, () => view(market, 'get_playback_device', {
+        account_id: accountId, session_public_key: request.playbackSession.session_public_key,
+    }))) throw new Error('ticket_first_device_only');
     return { priceUsdc: publication.price_usdc as string, title: publication.title as string, marketContractId: market,
         usdcContractId: usdc, publicationId: request.publicationId, playbackSession: request.playbackSession };
 }

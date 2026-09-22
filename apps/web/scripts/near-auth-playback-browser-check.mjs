@@ -28,7 +28,7 @@ const stubs = {
         if(method==='get_publication') {
             if(f.mode==='provider-error')throw Error('synthetic provider unavailable');
             if(f.mode==='late')await new Promise(resolve=>f.finishRead=resolve);
-            return {publication_id:args.publication_id,creator_id:f.mode==='wrong-owner'?'another.testnet':'${account}',
+            return {publication_id:args.publication_id,creator_id:['buyer','stranger'].includes(f.mode)?'another.testnet':'${account}',
                 title:'Synthetic creator video',price_usdc:'2000000',generation:1,playback_id:'playback_001',
                 availability:f.mode==='takedown'?'TAKEDOWN':'ACTIVE',published_at_ms:1};
         }
@@ -64,7 +64,7 @@ const bundle = await build({ stdin:{contents:entry,loader:'tsx',resolveDir:web},
     }}],
 });
 
-let authenticated=true, currentAccount=account;
+let authenticated=true, entitled=true, currentAccount=account;
 const tokens=[], errors=[], requests=[];
 const tokenReply=request=>{
     tokens.push(request);
@@ -82,7 +82,7 @@ const server=createServer(async(req,res)=>{
         const job=url.searchParams.get('publication');requests.push({job,authenticated});
         if(!authenticated)return json({error:'session_required'},401);
         return json(job?{accountId:currentAccount,marketContractId:'market.testnet',publicationId:job,blockHeight:1,
-            availability:'ACTIVE',entitled:true,reason:'entitled',playbackVerified:false}
+            availability:'ACTIVE',entitled,reason:entitled?'entitled':'entitlement_required',playbackVerified:false}
             :{implicitAccount:currentAccount,accounts:[currentAccount]});
     }
     if(url.pathname.startsWith('/api/')||req.method!=='GET'){errors.push('unexpected API: '+req.url);return json({},400);}
@@ -146,7 +146,21 @@ try {
     scenarios.push('cross-tab logout stops playback and renewal but keeps the device key');
     await other.close();
 
-    for(const mode of ['wrong-owner','takedown','missing-device','expired-device','wrong-device','v2-off','provider-error']) {
+    authenticated=true;await page.goto(`${origin}/auth-lab?job=job-001&case=buyer`);await opened(page).waitFor();
+    assert.equal(await opened(page).getAttribute('data-account'),account);
+    await page.reload();await opened(page).waitFor();
+    assert.deepEqual(await page.evaluate(()=>window.fixture.deviceKey()),key);
+    scenarios.push('entitled buyer opens playback and reloads with the same device');
+
+    entitled=false;
+    const beforeStranger=tokens.length;
+    await page.goto(`${origin}/auth-lab?job=job-001&case=stranger`);
+    await page.getByText('Son ön kontrolde bu Google hesabının bu video için izleme hakkı bulunmadı. Satın alma sonucu aşağıdaki bölümde ayrıca gösterilir.',{exact:true}).waitFor();
+    assert.equal(await opened(page).count(),0);assert.equal(tokens.length,beforeStranger);
+    entitled=true;
+    scenarios.push('stranger without entitlement receives no player or playback token');
+
+    for(const mode of ['takedown','missing-device','expired-device','wrong-device','v2-off','provider-error']) {
         authenticated=true;const count=tokens.length;
         await page.goto(`${origin}/auth-lab?job=job-001&case=${mode}`);
         await page.getByRole('alert').waitFor();

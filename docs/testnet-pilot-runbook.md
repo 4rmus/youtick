@@ -101,7 +101,7 @@ değildir.
 | Domain | Kontrol | Kaynak durumu |
 |---|---|---|
 | Playback issuance | `LIVEPEER_PLAYBACK_ISSUANCE_ENABLED=false` | v1 ve v2 token route'ları kapalı; entitlement read değişmez. |
-| New purchases | guardian `pause_new_purchases`; admin `unpause_new_purchases` | Global yeni ticket alımı iade edilerek durur; mevcut entitlement/playback ve creator upload açık kalır. İki geçiş governance event'i üretir. |
+| New purchases | guardian `pause_new_purchases`; admin `unpause_new_purchases` | Yeni ticket alımı ve yeni creator job ödemesi iade edilerek durur; mevcut entitlement/playback korunur. Önceden yetkilendirilmiş işlerin finalizasyonu ayrıca Bridge/freeze kontrollerine bağlıdır. İki geçiş governance event'i üretir. |
 | New uploads | `LIVEPEER_NEW_UPLOADS_ENABLED=false` | Yeni Job/intent kapalı; kayıtlı intent, heartbeat ve TUS recovery açık. |
 | Provider mutation | `LIVEPEER_PROVIDER_MUTATIONS_ENABLED=false` | Yeni provider create kapalı; kayıtlı TUS recovery ve provider read/reconcile açık. |
 | Multi-asset quote | `MULTI_ASSET_PAYMENTS_MODE=off` | Yeni quote kapalı; mevcut status recovery açık. |

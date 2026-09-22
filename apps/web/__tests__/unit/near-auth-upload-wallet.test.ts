@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import type { NearWalletBase } from '@hot-labs/near-connect';
 import type { createNearAuthLab } from '@/lib/near-auth-lab';
 import { createGoogleUploadWallet } from '@/lib/near-auth-upload-wallet';
+import { clearLivepeerUploadDraft, writeLivepeerUploadDraft } from '@/lib/livepeer-upload';
 import { PINNED_WALLET_MANIFEST } from '@/lib/pinned-wallet-manifest';
 
 vi.unmock('near-api-js');
@@ -30,6 +31,9 @@ it('suspends playback when the Google upload account check returns 401', async (
 });
 let failure: string;
 beforeEach(() => {
+    writeLivepeerUploadDraft(ACCOUNT, { schema: 'youtick.livepeer-ui-draft.v2', stage: 'payment_pending',
+        jobId: 'lp-synthetic', title: 'Synthetic upload', price: '2', sourceBytes: 9452298,
+        sourceName: 'synthetic.mp4', sourceLastModified: 123, sourceFingerprintSha256: 'a'.repeat(64) });
     failure = ''; state.device.mockReset().mockResolvedValue(device); state.cleared = undefined;
     send.mockReset().mockResolvedValue({ transaction: { hash: '3'.repeat(44) } }); google.mockReset().mockResolvedValue('synthetic-token');
     confirm.mockReset().mockReturnValue(true); window.confirm = confirm;
@@ -72,6 +76,23 @@ it('waits for the user, uses delegateAction approval, and returns proof to the e
     await expect(wallet.signDelegateActions!(input())).rejects.toThrow('signing_already_started');
     expect(send).toHaveBeenCalledOnce(); expect(google).toHaveBeenCalledOnce();
     expect(network.mock.calls.every(([url]) => url.startsWith('/api/auth-lab/'))).toBe(true);
+});
+
+it.each(['missing', 'payment_pending'])('stops before the sponsor if the draft becomes %s during Google approval', async (reason) => {
+    google.mockImplementation(async () => {
+        if (reason === 'missing') clearLivepeerUploadDraft(ACCOUNT);
+        else writeLivepeerUploadDraft(ACCOUNT, { schema: 'youtick.livepeer-ui-draft.v2', stage: 'payment_pending',
+            jobId: 'lp-synthetic', title: 'Synthetic upload', price: '2', sourceBytes: 9452298,
+            sourceName: 'synthetic.mp4', sourceLastModified: 123, sourceFingerprintSha256: 'a'.repeat(64), paymentAttempted: true });
+        return 'synthetic-token';
+    });
+    const wallet = createGoogleUploadWallet(ACCOUNT, sponsor, auth, new AbortController().signal);
+    await expect(wallet.signDelegateActions!(input())).rejects.toThrow(reason === 'missing'
+        ? 'livepeer_draft_missing' : 'livepeer_payment_pending');
+    expect(google).toHaveBeenCalledOnce();
+    expect(send).not.toHaveBeenCalled();
+    expect(network.mock.calls.some(([, init]) => JSON.parse(init.body || '{}').action === 'complete-upload')).toBe(false);
+    expect(localStorage.getItem(`youtick:auth-lab:upload:testnet:market.testnet:${ACCOUNT}:lp-synthetic`)).toBeNull();
 });
 
 it.each(['cancel', 'account', 'device', 'expired', 'signal'])('does not charge the sponsor after %s', async (reason) => {

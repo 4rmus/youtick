@@ -232,6 +232,45 @@ function settleTicket() {
         authorized_at_ms: String(authorizedAt), expires_at_ms: String(authorizedAt + 2592000000) };
 }
 
+it.each(['purchase', 'upload'])('V1 reuses the same valid playback device for another %s', async (kind) => {
+    settleTicket(); ticketViews.has_entitlement = false; deviceRecords = [{ key: 'existing', value: 'not-decoded' }];
+    if (kind === 'purchase') await expect(preparePurchase()).resolves.toHaveProperty('purchase');
+    else await expect(prepareGoogleUpload(SUBJECT, ORIGIN, 'sponsor.testnet', uploadFixture().encoded())).resolves.toHaveProperty('delegate');
+    const reads = fetchMock.mock.calls.filter(([, init]) => init.body).map(([, init]) => JSON.parse(init.body));
+    expect(reads).toContainEqual(expect.objectContaining({ method: 'query', params: expect.objectContaining({
+        block_id: BLOCK, account_id: 'market.testnet', method_name: 'get_playback_device',
+        args_base64: Buffer.from(JSON.stringify({ account_id: mocks.account,
+            session_public_key: purchaseInput.playbackSession.session_public_key })).toString('base64'),
+    }) }));
+});
+
+it.each(['purchase', 'upload'])('V1 rejects an invalid existing device without changing it: %s', async (kind) => {
+    for (const failure of ['missing', 'key', 'certificate', 'expired', 'future', 'duration', 'malformed-time']) {
+        settleTicket(); ticketViews.has_entitlement = false; deviceRecords = [{ key: 'existing', value: 'not-decoded' }];
+        const device = ticketViews.get_playback_device as Record<string, unknown>;
+        if (failure === 'missing') ticketViews.get_playback_device = null;
+        if (failure === 'key') device.session_public_key = mocks.publicKey;
+        if (failure === 'certificate') device.certificate_sha256 = 'f'.repeat(64);
+        if (failure === 'expired') Object.assign(device, { authorized_at_ms: String(Date.now()-2592001000), expires_at_ms: String(Date.now()-1000) });
+        if (failure === 'future') Object.assign(device, { authorized_at_ms: String(Date.now()+10000), expires_at_ms: String(Date.now()+2592010000) });
+        if (failure === 'duration') device.expires_at_ms = String(Date.now()+10000);
+        if (failure === 'malformed-time') device.authorized_at_ms = 'not-a-time';
+        const before = JSON.stringify(ticketViews.get_playback_device);
+        const action = kind === 'purchase' ? preparePurchase()
+            : prepareGoogleUpload(SUBJECT, ORIGIN, 'sponsor.testnet', uploadFixture().encoded());
+        await expect(action).rejects.toThrow();
+        expect(JSON.stringify(ticketViews.get_playback_device)).toBe(before);
+    }
+});
+
+it('V1 rechecks the reused device before requesting and completing a purchase signature', async () => {
+    settleTicket(); ticketViews.has_entitlement = false; deviceRecords = [{ key: 'existing', value: 'not-decoded' }];
+    const { review, approval } = await signedOuter(true);
+    ticketViews.get_playback_device = null;
+    await expect(authorizeGoogleSigning(SUBJECT, ORIGIN, review.ticket, approval)).rejects.toThrow('ticket_first_device_only');
+    await expect(completeGoogleSigning(SUBJECT, ORIGIN, review.ticket, OUTER)).rejects.toThrow('ticket_first_device_only');
+});
+
 it('signs one exact ticket payment with the canonical first-device certificate and verifies payment, entitlement and device', async () => {
     const { review } = await signedOuter(true);
     expect(review.purchase).toMatchObject({ priceUsdc: '2000000', marketContractId: 'market.testnet', playbackSession: purchaseInput.playbackSession });
@@ -374,7 +413,10 @@ it.each([
     [Object.assign(new Error('private expiry details'), { code: 'ERR_JWT_EXPIRED' }), 'authorization_expired'],
     [Object.assign(new Error('private timeout details'), { name: 'TimeoutError' }), 'check_timeout'],
     [new Error('private token and identity details'), 'signing_check_failed'],
-])('returns only a safe check reason and phase on rejection: %s', async (error, reason) => {
+    [new Error('ticket_balance_required'), 'ticket_balance_required', 'prepare-purchase'],
+    [new Error('ticket_first_device_only'), 'ticket_first_device_only', 'prepare-purchase'],
+    [new Error('ticket_balance_required PRIVATE_TOKEN'), 'signing_check_failed', 'prepare-purchase'],
+])('returns only a safe check reason and phase on rejection: %s', async (error, reason, action = 'prepare-upload') => {
     const now = Math.floor(Date.now() / 1000);
     const session = await new EncryptJWT({ identity_issuer: 'https://login.testnet.fast-auth.com/', client_id: 'synthetic-client' })
         .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' }).setSubject(SUBJECT).setIssuer('youtick-auth-lab').setAudience(ORIGIN)
@@ -384,13 +426,53 @@ it.each([
     try {
         const reply = await POST(new Request(`${ORIGIN}/api/auth-lab/signing`, { method: 'POST',
             headers: { Origin: ORIGIN, Cookie: `youtick_auth_lab=${session}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'prepare-upload', sponsor: 'sponsor.testnet', encodedArgs: 'private-body' }),
+            body: JSON.stringify({ action, sponsor: 'sponsor.testnet', ...(action === 'prepare-purchase'
+                ? { publicationId: 'video-1', playbackSession: {} } : { encodedArgs: 'private-body' }) }),
         }));
         expect(reply.status).toBe(422);
-        expect(await reply.json()).toEqual({ error: 'signing_check_failed', reason, action: 'prepare-upload' });
-        expect(JSON.parse(log.mock.calls[0][0])).toEqual({ event: 'near_auth_signing_check_failed', action: 'prepare-upload', reason, durationMs: expect.any(Number) });
+        expect(await reply.json()).toEqual({ error: 'signing_check_failed', reason, action });
+        expect(JSON.parse(log.mock.calls[0][0])).toEqual({ event: 'near_auth_signing_check_failed', action, reason, durationMs: expect.any(Number) });
         expect(fetchMock).not.toHaveBeenCalled();
     } finally { log.mockRestore(); }
+});
+
+it.each(['review', 'missing-claim', 'signature', 'preflight', 'unknown'])('reports only safe upload authorization diagnostics: %s', async failure => {
+    const now = Math.floor(Date.now() / 1000);
+    const session = await new EncryptJWT({ identity_issuer: 'https://login.testnet.fast-auth.com/', client_id: 'synthetic-client' })
+        .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' }).setSubject(SUBJECT).setIssuer('youtick-auth-lab').setAudience(ORIGIN)
+        .setIssuedAt(now).setExpirationTime(now + 300).encrypt(Buffer.from(SECRET, 'hex'));
+    const review = await prepareGoogleUpload(SUBJECT, ORIGIN, 'sponsor.testnet', uploadFixture().encoded());
+    let ticket = review.ticket;
+    const approval = await token(review.delegate, failure === 'missing-claim' ? { fatxn: undefined } : {});
+    const previousKey = mocks.key;
+    const log = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+        if (failure === 'review') ticket = await new EncryptJWT({})
+            .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' }).encrypt(Buffer.alloc(32, 2));
+        if (failure === 'signature') mocks.key = (await generateKeyPair('RS256')).publicKey;
+        fetchMock.mockClear();
+        if (failure === 'preflight') fetchMock.mockRejectedValueOnce(new TypeError('PRIVATE_DIAGNOSTIC_SENTINEL'));
+        if (failure === 'unknown') fetchMock.mockRejectedValueOnce(Object.assign(new Error('PRIVATE_DIAGNOSTIC_SENTINEL'), {
+            code: 'PRIVATE_CODE', claim: 'PRIVATE_CLAIM', reason: 'PRIVATE_REASON', payload: { token: approval },
+        }));
+        const reply = await POST(new Request(`${ORIGIN}/api/auth-lab/signing`, { method: 'POST',
+            headers: { Origin: ORIGIN, Cookie: `youtick_auth_lab=${session}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'authorize-upload', ticket, token: approval }),
+        }));
+        expect(reply.status).toBe(422);
+        const diagnostic = failure === 'review' ? { stage: 'upload_review', code: 'ERR_JWE_DECRYPTION_FAILED' }
+            : failure === 'missing-claim' ? { stage: 'google_approval', code: 'ERR_JWT_CLAIM_VALIDATION_FAILED', claim: 'fatxn', claimCheck: 'missing' }
+            : failure === 'signature' ? { stage: 'google_approval', code: 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED' }
+            : failure === 'preflight' ? { stage: 'upload_preflight', code: 'TypeError' } : { stage: 'upload_preflight' };
+        const body = await reply.json();
+        expect(body).toEqual({ error: 'signing_check_failed', reason: 'signing_check_failed', action: 'authorize-upload', diagnostic });
+        expect(JSON.parse(log.mock.calls[0][0])).toEqual({ event: 'near_auth_signing_check_failed',
+            action: 'authorize-upload', reason: 'signing_check_failed', diagnostic, durationMs: expect.any(Number) });
+        const emitted = JSON.stringify([body, log.mock.calls]);
+        for (const privateValue of [SUBJECT, SECRET, session, ticket, approval, 'PRIVATE_']) expect(emitted).not.toContain(privateValue);
+        expect(fetchMock).toHaveBeenCalledTimes(['preflight', 'unknown'].includes(failure) ? 1 : 0);
+        for (const [, init] of fetchMock.mock.calls) expect(JSON.parse(init.body).method).toBe('query');
+    } finally { mocks.key = previousKey; log.mockRestore(); }
 });
 
 it.each(compactVectors)('reads the same cross-language compact upload: $request.job_id', async vector => {

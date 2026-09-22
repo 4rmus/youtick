@@ -5,6 +5,7 @@ import { actions, baseEncode } from 'near-api-js';
 import type { NearWalletBase } from '@hot-labs/near-connect';
 import type { createNearAuthLab } from '@/lib/near-auth-lab';
 import { createGoogleUploadWallet } from '@/lib/near-auth-upload-wallet';
+import { writeLivepeerUploadDraft } from '@/lib/livepeer-upload';
 import { prepareGoogleUpload, authorizeGoogleUpload, completeGoogleUpload } from '@/lib/near-auth-upload-server';
 import { PINNED_WALLET_MANIFEST } from '@/lib/pinned-wallet-manifest';
 import vectors from '../../../../protocol/paid-media-livepeer-v1/compact-upload-vectors.json';
@@ -39,6 +40,10 @@ beforeEach(() => {
     vi.stubEnv('NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS', 'true'); vi.stubEnv('NEXT_PUBLIC_MARKET_CONTRACT_ID', 'market.testnet');
     vi.stubEnv('NEXT_PUBLIC_LIVEPEER_BRIDGE_URL', 'https://bridge.invalid');
     vi.stubEnv('NEAR_AUTH_LAB_CLIENT_ID', 'synthetic-client'); vi.stubEnv('NEAR_AUTH_LAB_SESSION_SECRET', '11'.repeat(32));
+    writeLivepeerUploadDraft(ACCOUNT, { schema: 'youtick.livepeer-ui-draft.v2', stage: 'payment_pending',
+        jobId: fixture.request.job_id, title: fixture.request.title, price: '2',
+        sourceBytes: Number(fixture.request.expected_source_bytes), sourceName: 'synthetic.mp4',
+        sourceLastModified: 123, sourceFingerprintSha256: 'a'.repeat(64) });
     state.account.mockResolvedValue({ implicitAccount: ACCOUNT, accounts: [ACCOUNT], publicKey: fixture.account_public_key });
     state.device.mockResolvedValue(fixture.normal_message.playback_session);
     healthy = true; outer = {}; review = undefined;

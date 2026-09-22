@@ -3,7 +3,7 @@ import type { NearWalletBase } from '@hot-labs/near-connect';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { PINNED_WALLET_MANIFEST } from '@/lib/pinned-wallet-manifest';
-import { prepareGooglePurchase, runGoogleSigning, signingApi, signingAttemptKey, reviewAttemptKey, type SigningReview } from '@/lib/near-auth-signing';
+import { prepareGooglePurchase, runGoogleSigning, signingApi, signingPreparationMessage, signingAttemptKey, reviewAttemptKey, type SigningReview } from '@/lib/near-auth-signing';
 import { NearAuthSigning } from '@/components/NearAuthSigning';
 import { createNearAuthLab } from '@/lib/near-auth-lab';
 
@@ -16,6 +16,49 @@ vi.mock('@/lib/constants', async (load) => ({ ...await load<typeof import('@/lib
     FEATURE_FLAGS: { publicTestnetVideoV1: true, enablePlaybackAuthorizerV2: true } }));
 const send = vi.fn();
 const network = vi.fn();
+
+it.each(['ticket_balance_required', 'ticket_first_device_only', 'ticket_not_available', 'budget_not_verified'])('preserves the safe purchase preparation reason: %s', async reason => {
+    network.mockResolvedValueOnce(Response.json({ error: 'signing_check_failed', action: 'prepare-purchase', reason }, { status: 422 }));
+    await expect(signingApi({ action: 'prepare-purchase' })).rejects.toThrow(`signing_check_failed: prepare-purchase / ${reason}`);
+    expect(signingPreparationMessage(`signing_check_failed: prepare-purchase / ${reason}`)).toContain(reason);
+    expect(send).not.toHaveBeenCalled();
+});
+
+it.each(['PRIVATE_TOKEN', 'ticket_balance_required PRIVATE_TOKEN', '__proto__', 'constructor'])('does not display an unrecognized preparation error: %s', async reason => {
+    network.mockResolvedValueOnce(Response.json({ error: 'signing_check_failed', action: 'prepare-purchase', reason }, { status: 422 }));
+    await expect(signingApi({ action: 'prepare-purchase' })).rejects.toThrow(/^signing_check_failed$/);
+    expect(signingPreparationMessage(reason)).toBe('Hazırlık tamamlanamadı. Yeni ödeme başlatılmadı.');
+});
+
+it('explains a blocking record before wallet connection without modifying it', () => {
+    ticketReview();
+    const key = reviewAttemptKey(review), value = '{"state":"outer_pending"}';
+    localStorage.setItem(key, value);
+    const html = renderToStaticMarkup(createElement(NearAuthSigning, { auth: createNearAuthLab('synthetic-client'),
+        publicationId: 'video-1', accountId: review.accountId }));
+    expect(html).toContain('Kontrol kodu: signing_already_started');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Sponsor cüzdanını seç/);
+    expect(localStorage.getItem(key)).toBe(value);
+    expect(network).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled(); expect(device.prepare).not.toHaveBeenCalled();
+});
+
+it.each([
+    [{ stage: 'google_approval', code: 'ERR_JWT_CLAIM_VALIDATION_FAILED', claim: 'fatxn', claimCheck: 'missing', token: 'PRIVATE_TOKEN' },
+        'signing_check_failed: authorize-upload / stage=google_approval, code=ERR_JWT_CLAIM_VALIDATION_FAILED, claim=fatxn, claimCheck=missing'],
+    [{ stage: 'upload_preflight', code: 'PRIVATE_CODE', claim: 'PRIVATE_CLAIM', claimCheck: 'PRIVATE_REASON', message: 'PRIVATE_MESSAGE' },
+        'signing_check_failed: authorize-upload / stage=upload_preflight'],
+    [{ stage: 'PRIVATE_STAGE', code: 'PRIVATE_CODE', claim: {}, claimCheck: [] }, 'signing_check_failed'],
+])('displays only whitelisted authorization diagnostics: %j', async (diagnostic, expected) => {
+    network.mockResolvedValueOnce(Response.json({ error: 'signing_check_failed', reason: 'signing_check_failed', action: 'authorize-upload', diagnostic }, { status: 422 }));
+    await expect(signingApi({ action: 'authorize-upload' })).rejects.toThrow(expected as string);
+    expect(send).not.toHaveBeenCalled();
+});
+
+it('keeps known expiry errors unchanged when diagnostic metadata is present', async () => {
+    network.mockResolvedValueOnce(Response.json({ error: 'signing_check_failed', reason: 'authorization_expired', action: 'complete-upload',
+        diagnostic: { code: 'ERR_JWT_EXPIRED', claim: 'exp' } }, { status: 422 }));
+    await expect(signingApi({ action: 'complete-upload' })).rejects.toThrow('signing_check_failed: complete-upload / authorization_expired');
+});
 
 it.each(['signing', 'purchase'])('suspends existing playback when the %s preflight returns 401', async action => {
     network.mockResolvedValueOnce(Response.json({ error: 'session_required' }, { status: 401 }));
@@ -91,17 +134,79 @@ it('rejects preparation if the server session account changed', async () => {
 it('preserves the completed transfer lock and allows only one separate ticket attempt', async () => {
     ticketReview();
     const oldKey = signingAttemptKey(review.accountId);
-    localStorage.setItem(oldKey, '{"state":"verified","innerHash":"old-hash"}');
+    const oldRecord = JSON.stringify({ state: 'verified', innerHash: '2'.repeat(44), outerHash: '3'.repeat(44) });
+    localStorage.setItem(oldKey, oldRecord);
     await expect(runGoogleSigning(wallet, review, 'synthetic-token')).resolves.toMatchObject({ verified: true });
-    expect(localStorage.getItem(oldKey)).toBe('{"state":"verified","innerHash":"old-hash"}');
+    expect(localStorage.getItem(oldKey)).toBe(oldRecord);
     expect(JSON.parse(localStorage.getItem(reviewAttemptKey(review))!).state).toBe('verified');
     await expect(runGoogleSigning(wallet, review, 'synthetic-token')).rejects.toThrow('signing_already_started');
     expect(send).toHaveBeenCalledOnce();
 });
 
+it('V1 buys a different publication while preserving the completed ticket record', async () => {
+    ticketReview();
+    await runGoogleSigning(wallet, review, 'synthetic-token');
+    const firstKey = reviewAttemptKey(review), firstRecord = localStorage.getItem(firstKey);
+    review.purchase!.publicationId = 'video-2'; review.transactionHash = '5'.repeat(44);
+    expect(reviewAttemptKey(review)).not.toBe(firstKey);
+    await expect(runGoogleSigning(wallet, review, 'synthetic-token')).resolves.toMatchObject({ verified: true });
+    expect(localStorage.getItem(firstKey)).toBe(firstRecord);
+    expect(send).toHaveBeenCalledTimes(2);
+    await expect(runGoogleSigning(wallet, review, 'synthetic-token')).rejects.toThrow('signing_already_started');
+});
+
+it.each(['legacy', 'other-publication'])('V1 preserves and blocks unresolved records: %s', async kind => {
+    ticketReview();
+    const prefix = `youtick:auth-lab:ticket:testnet:market.testnet:${review.accountId}`;
+    const key = kind === 'legacy' ? prefix : `${prefix}:other-video`;
+    for (const value of ['', '{broken', '{}', 'null', '{"state":"verified"}', '{"state":"outer_pending"}', '{"state":"inner_pending"}']) {
+        localStorage.setItem(key, value);
+        await expect(runGoogleSigning(wallet, review, 'synthetic-token')).rejects.toThrow('signing_already_started');
+        await expect(prepareGooglePurchase('video-1', 'sponsor.testnet')).rejects.toThrow('signing_already_started');
+        expect(localStorage.getItem(key)).toBe(value);
+    }
+    expect(send).not.toHaveBeenCalled(); expect(device.prepare).not.toHaveBeenCalled();
+});
+
+it('V1 allows a new ticket after a complete legacy record without deleting it', async () => {
+    ticketReview();
+    const key = `youtick:auth-lab:ticket:testnet:market.testnet:${review.accountId}`;
+    const value = JSON.stringify({ state: 'verified', outerHash: '3'.repeat(44), innerHash: '4'.repeat(44) });
+    localStorage.setItem(key, value);
+    await expect(runGoogleSigning(wallet, review, 'synthetic-token')).resolves.toMatchObject({ verified: true });
+    expect(localStorage.getItem(key)).toBe(value);
+});
+
+it('V1 blocks a pending ticket that appears during the last device check', async () => {
+    ticketReview();
+    const key = `youtick:auth-lab:ticket:testnet:market.testnet:${review.accountId}:other-video`;
+    let checks = 0;
+    device.prepare.mockImplementation(async () => {
+        if (++checks === 2) localStorage.setItem(key, '{"state":"outer_pending"}');
+        return review.purchase!.playbackSession;
+    });
+    await expect(runGoogleSigning(wallet, review, 'synthetic-token')).rejects.toThrow('signing_already_started');
+    expect(send).not.toHaveBeenCalled(); expect(localStorage.getItem(reviewAttemptKey(review))).toBeNull();
+    expect(localStorage.getItem(key)).toBe('{"state":"outer_pending"}');
+});
+
+it('V1 does not send when attempt storage is unreadable', async () => {
+    ticketReview();
+    const read = vi.spyOn(localStorage, 'getItem').mockImplementation(() => { throw new Error('storage denied'); });
+    try {
+        await expect(prepareGooglePurchase('video-1', 'sponsor.testnet')).rejects.toThrow('signing_storage_unavailable');
+        const html = renderToStaticMarkup(createElement(NearAuthSigning, { auth: createNearAuthLab('synthetic-client'),
+            publicationId: 'video-1', accountId: review.accountId }));
+        expect(html).toContain('Kontrol kodu: signing_storage_unavailable');
+        expect(html).not.toContain('Kontrol kodu: signing_already_started');
+        await expect(runGoogleSigning(wallet, review, 'synthetic-token')).rejects.toThrow('signing_already_started');
+        expect(send).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
+});
+
 it.each(['old-pending', 'device-changed', 'wrong-market', 'logout'])('stops ticket payment/broadcast for %s', async (reason) => {
     ticketReview(); failure = reason;
-    if (reason === 'old-pending') localStorage.setItem(signingAttemptKey(review.accountId), '{"state":"outer_pending"}');
+    if (reason === 'old-pending') localStorage.setItem(reviewAttemptKey(review), '{"state":"outer_pending"}');
     if (reason === 'device-changed') device.prepare.mockResolvedValue({ ...review.purchase!.playbackSession, session_public_key: 'ed25519:other' });
     if (reason === 'wrong-market') review.purchase!.marketContractId = 'other.testnet';
     await expect(runGoogleSigning(wallet, review, 'synthetic-token')).rejects.toThrow();
@@ -111,7 +216,7 @@ it.each(['old-pending', 'device-changed', 'wrong-market', 'logout'])('stops tick
 
 it('shows purchase budgets without opening Google or a wallet on render', () => {
     const html = renderToStaticMarkup(createElement(NearAuthSigning, { auth: createNearAuthLab('synthetic-client'), publicationId: 'video-1' }));
-    expect(html).toContain('0,12'); expect(html).toContain('test USDC'); expect(html).toContain('ilk cihazı');
+    expect(html).toContain('0,12'); expect(html).toContain('test USDC'); expect(html).toContain('mevcut geçerli cihaz');
     expect(send).not.toHaveBeenCalled(); expect(network).not.toHaveBeenCalled(); expect(device.prepare).not.toHaveBeenCalled();
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -180,4 +285,23 @@ it.each([undefined,0,'invalid'])('rejects missing or invalid server approval dea
         ? Response.json({approvalExpiresAtMs:deadline,receiverId:'fast-auth.testnet',actions:[]}) : read(url,init));
     await expect(runGoogleSigning(wallet,review,'synthetic-token')).rejects.toThrow('authorization_expired');
     expect(send).not.toHaveBeenCalled(); expect(localStorage.getItem(reviewAttemptKey(review))).toBeNull();
+});
+
+
+it.each(['{"state":"outer_pending"}', '{"state":"inner_pending"}', '{broken'])('keeps the independent demo record while buying exactly one ticket: %s', async value => {
+    ticketReview();
+    const key = signingAttemptKey(review.accountId);
+    localStorage.setItem(key, value);
+    const read = vi.spyOn(localStorage, 'getItem');
+    try {
+        await expect(prepareGooglePurchase('video-1', 'sponsor.testnet')).resolves.toEqual(review);
+        await expect(runGoogleSigning(wallet, review, 'synthetic-token')).resolves.toMatchObject({ verified: true });
+        expect(read.mock.calls.some(([name]) => name === key)).toBe(false);
+        expect(send).toHaveBeenCalledOnce();
+        await expect(runGoogleSigning(wallet, review, 'synthetic-token')).rejects.toThrow('signing_already_started');
+    } finally { read.mockRestore(); }
+    expect(localStorage.getItem(key)).toBe(value);
+    delete review.purchase;
+    await expect(runGoogleSigning(wallet, review, 'synthetic-token')).rejects.toThrow('signing_already_started');
+    expect(send).toHaveBeenCalledOnce();
 });

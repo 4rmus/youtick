@@ -6,7 +6,30 @@ export const NEAR_AUTH_SIGNING_CHECK_ERRORS = new Set([
     'rpc_unavailable', 'rpc_invalid', 'discovery_unavailable', 'invalid_discovery', 'invalid_sponsored_upload_quote',
     'invalid_upload', 'upload_not_ready', 'upload_expired', 'upload_first_device_only', 'invalid_approval',
     'unapproved_claims', 'invalid_signature', 'outer_not_verified', 'authorization_expired', 'check_timeout', 'compact_upload_unavailable',
+    'ticket_disabled', 'ticket_unavailable', 'ticket_not_available', 'ticket_balance_required', 'ticket_first_device_only',
+    'invalid_ticket_device', 'invalid_sponsor',
 ]);
+
+// Only fixed diagnostic labels may cross the server/client boundary, never error values.
+export function safeSigningDiagnostic(value: unknown): Record<string, string> {
+    if (!value || typeof value !== 'object') return {};
+    const allowed: Record<string, readonly string[]> = {
+        stage: ['upload_review', 'google_approval', 'upload_preflight'],
+        code: ['ERR_JWT_EXPIRED', 'ERR_JWT_CLAIM_VALIDATION_FAILED', 'ERR_JWT_INVALID',
+            'ERR_JWS_INVALID', 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED', 'ERR_JOSE_ALG_NOT_ALLOWED',
+            'ERR_JOSE_NOT_SUPPORTED', 'ERR_JOSE_GENERIC', 'ERR_JWE_INVALID', 'ERR_JWE_DECRYPTION_FAILED',
+            'ERR_JWKS_TIMEOUT', 'ERR_JWKS_NO_MATCHING_KEY', 'ERR_JWKS_MULTIPLE_MATCHING_KEYS',
+            'ERR_JWKS_INVALID', 'TypeError', 'SyntaxError'],
+        claim: ['iss', 'aud', 'sub', 'iat', 'exp', 'nbf', 'azp', 'scope', 'fatxn'],
+        claimCheck: ['missing', 'invalid', 'check_failed'],
+    };
+    const result: Record<string, string> = {};
+    for (const [field, values] of Object.entries(allowed)) {
+        const item = (value as Record<string, unknown>)[field];
+        if (typeof item === 'string' && values.includes(item)) result[field] = item;
+    }
+    return result;
+}
 const SESSION_API = '/api/auth-lab/session';
 
 export const nearAuthJobId = (value: unknown): string | null => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : null;

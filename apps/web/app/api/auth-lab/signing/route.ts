@@ -1,4 +1,4 @@
-import { nearAuthLabEnabled, NEAR_AUTH_SIGNING_CHECK_ERRORS } from '@/lib/near-auth-lab';
+import { nearAuthLabEnabled, NEAR_AUTH_SIGNING_CHECK_ERRORS, safeSigningDiagnostic } from '@/lib/near-auth-lab';
 import { readNearAuthLabSession } from '@/lib/near-auth-lab-session';
 import { authorizeGoogleSigning, completeGoogleSigning, prepareGoogleSigning, verifyGoogleTransaction } from '@/lib/near-auth-signing-server';
 import { authorizeGoogleUpload, completeGoogleUpload, prepareGoogleUpload } from '@/lib/near-auth-upload-server';
@@ -40,12 +40,14 @@ export async function POST(request: Request) {
         : body.action === 'complete' ? ['action', 'ticket', 'outerHash'] : body.action === 'verify' ? ['action', 'ticket'] : [];
     if (!fields.length || Object.keys(body).length !== fields.length || Object.keys(body).some((key) => !fields.includes(key))) return json({ error: 'invalid_request' }, 400);
     const startedAt = Date.now();
+    let checkStage: string | undefined;
     try {
         if (body.action === 'prepare-usdc') return json(await prepareGoogleUsdc(subject, url.origin, body.sender));
         if (body.action === 'authorize-usdc') return json(await authorizeGoogleUsdc(subject, url.origin, body.ticket));
         if (body.action === 'verify-usdc') return json(await verifyGoogleUsdc(subject, url.origin, body.ticket, body.txHash));
         if (body.action === 'prepare-upload') return json(await prepareGoogleUpload(subject, url.origin, body.sponsor, body.encodedArgs));
-        if (body.action === 'authorize-upload') return json(await authorizeGoogleUpload(subject, url.origin, body.ticket, body.token));
+        if (body.action === 'authorize-upload') return json(await authorizeGoogleUpload(subject, url.origin, body.ticket, body.token,
+            (stage) => { checkStage = stage; }));
         if (body.action === 'complete-upload') return json(await completeGoogleUpload(subject, url.origin, body.ticket, body.outerHash));
         if (body.action === 'prepare') return json(await prepareGoogleSigning(subject, url.origin, body.sponsor));
         if (body.action === 'prepare-purchase') return json(await prepareGoogleSigning(subject, url.origin, body.sponsor,
@@ -57,8 +59,14 @@ export async function POST(request: Request) {
         const reason = error instanceof Error && NEAR_AUTH_SIGNING_CHECK_ERRORS.has(error.message) ? error.message
             : error instanceof Error && 'code' in error && error.code === 'ERR_JWT_EXPIRED' ? 'authorization_expired'
             : error instanceof Error && error.name === 'TimeoutError' ? 'check_timeout' : 'signing_check_failed';
+        const detail = checkStage ? { diagnostic: safeSigningDiagnostic({
+            stage: checkStage,
+            code: error instanceof Error ? ('code' in error ? error.code : error.name) : undefined,
+            claim: error instanceof Error && 'claim' in error ? error.claim : undefined,
+            claimCheck: error instanceof Error && 'reason' in error ? error.reason : undefined,
+        }) } : {};
         // Local lab only. Never log tokens, tickets, subjects, transaction bodies or raw provider errors.
-        console.warn(JSON.stringify({ event: 'near_auth_signing_check_failed', action: body.action, reason, durationMs: Date.now() - startedAt }));
-        return json({ error: reason === 'unapproved_claims' ? reason : 'signing_check_failed', reason, action: body.action }, 422);
+        console.warn(JSON.stringify({ event: 'near_auth_signing_check_failed', action: body.action, reason, ...detail, durationMs: Date.now() - startedAt }));
+        return json({ error: reason === 'unapproved_claims' ? reason : 'signing_check_failed', reason, action: body.action, ...detail }, 422);
     }
 }

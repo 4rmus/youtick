@@ -9,6 +9,8 @@ import { isPinnedMeteorManifest } from './pinned-wallet-manifest';
 import { selectedWalletAccount } from './wallet-account';
 import { onDeviceSessionCleared, preparePlaybackDevice, suspendDeviceSession } from './device-session';
 import { base64Encode, hexEncode } from './crypto/codec';
+import { assertLivepeerUploadDraftReady } from './livepeer-upload';
+import { googleUploadAttemptKey } from './near-auth-upload-attempt';
 
 export function createGoogleUploadWallet(accountId: string, sponsor: { accountId: string; wallet: NearWalletBase },
     auth: ReturnType<typeof createNearAuthLab>, signal: AbortSignal): WalletInstance {
@@ -44,8 +46,8 @@ export function createGoogleUploadWallet(accountId: string, sponsor: { accountId
                     const review = await signingApi<Awaited<ReturnType<typeof prepareGoogleUpload>>>({ action: 'prepare-upload',
                         sponsor: sponsor.accountId, encodedArgs: base64Encode(call.args) });
                     if (review.accountId !== accountId || review.sponsor !== sponsor.accountId) throw new Error('account_changed');
-                    const key = `youtick:auth-lab:upload:testnet:${NEAR_CONFIG.marketContractId}:${accountId}:${review.jobId}`;
-                    if (localStorage.getItem(key)) throw new Error('signing_already_started');
+                    const key = googleUploadAttemptKey(NEAR_CONFIG.marketContractId, accountId, review.jobId);
+                    if (localStorage.getItem(key) !== null) throw new Error('signing_already_started');
                     const attempt = { accountId, sponsor: sponsor.accountId, jobId: review.jobId,
                         delegateSha256: hexEncode(new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(review.delegate)))) };
                     const checkDevice = async () => {
@@ -59,13 +61,14 @@ export function createGoogleUploadWallet(accountId: string, sponsor: { accountId
                     await checkDevice();
                     const amount = BigInt(review.totalFeeUsdc);
                     const price = BigInt(review.priceUsdc);
-                    if (!window.confirm(`${review.title}\nDosya: ${review.sourceBytes} bayt\nYükleme bedeli: ${amount / 1_000_000n}.${(amount % 1_000_000n).toString().padStart(6, '0')} test USDC\nBilet fiyatı: ${price / 1_000_000n}.${(price % 1_000_000n).toString().padStart(6, '0')} test USDC\nGoogle hesabı: ${accountId}\nİmza sponsoru: ${sponsor.accountId}\nSponsor imza bütçesi: en fazla 0,35 test NEAR.\nİlk cihaz 30 gün yetkilendirilecek. Kimlik referansınızı içeren onay tokenı testnet zincirinde herkese açık ve kalıcı olacak.\nGoogle ekranında ayrıntılar kodlanmış görünebilir; başlık ve ücretler için bu özeti kontrol edin.\nGoogle onayı ve sponsor imzasıyla devam edilsin mi?`)) throw new Error('upload_cancelled');
+                    if (!window.confirm(`${review.title}\nDosya: ${review.sourceBytes} bayt\nYükleme bedeli: ${amount / 1_000_000n}.${(amount % 1_000_000n).toString().padStart(6, '0')} test USDC\nBilet fiyatı: ${price / 1_000_000n}.${(price % 1_000_000n).toString().padStart(6, '0')} test USDC\nGoogle hesabı: ${accountId}\nİmza sponsoru: ${sponsor.accountId}\nSponsor imza bütçesi: en fazla 0,35 test NEAR.\nBu cihaz 30 gün yetkilendirilecek. Kimlik referansınızı içeren onay tokenı testnet zincirinde herkese açık ve kalıcı olacak.\nGoogle ekranında ayrıntılar kodlanmış görünebilir; başlık ve ücretler için bu özeti kontrol edin.\nGoogle onayı ve sponsor imzasıyla devam edilsin mi?`)) throw new Error('upload_cancelled');
                     const token = await auth.requestSigningAuthorization(review.delegate, 'delegateAction');
                     const { approvalExpiresAtMs, ...approved } = await signingApi<Awaited<ReturnType<typeof authorizeGoogleUpload>>>({ action: 'authorize-upload', ticket: review.ticket, token });
                     const selected = selectedWalletAccount(sponsor.wallet, await sponsor.wallet.getAccounts({ network: 'testnet' }));
                     if (selected?.accountId !== sponsor.accountId) throw new Error('wallet_changed');
                     await checkDevice();
                     if (!Number.isSafeInteger(approvalExpiresAtMs) || approvalExpiresAtMs <= Date.now()) throw new Error('authorization_expired');
+                    assertLivepeerUploadDraftReady(accountId, review.jobId);
                     // ponytail: one MPC attempt per upload job; uncertain results require reconciliation, not another fee.
                     localStorage.setItem(key, JSON.stringify({ ...attempt, state: 'outer_pending' }));
                     const result = await sponsor.wallet.signAndSendTransaction({ network: 'testnet', signerId: sponsor.accountId, ...approved })

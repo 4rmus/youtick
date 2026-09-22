@@ -102,9 +102,9 @@ export function NearAuthLab({ clientId }: { clientId: string | null }) {
                         if (!FEATURE_FLAGS.publicTestnetVideoV1 || !FEATURE_FLAGS.enablePlaybackAuthorizerV2) throw new Error('playback_disabled');
                         const publication = await readLivepeerPublication(publicationId!);
                         controller.signal.throwIfAborted();
-                        if (!publication || publication.publication_id !== publicationId || publication.creator_id !== accountId
+                        if (!publication || publication.publication_id !== publicationId
                             || publication.generation !== 1 || !['ACTIVE', 'SALES_SUSPENDED'].includes(publication.availability)
-                            || result.availability !== publication.availability) throw new Error('creator_playback_unavailable');
+                            || result.availability !== publication.availability) throw new Error('playback_unavailable');
                         const device = await getDeviceSession(accountId);
                         controller.signal.throwIfAborted();
                         if (device?.certificate.version !== '3') throw new Error('device_session_required');
@@ -134,7 +134,7 @@ export function NearAuthLab({ clientId }: { clientId: string | null }) {
                     : action === 'media'
                         ? reason instanceof Error && reason.message === 'device_session_required'
                             ? 'Bu cihazın mevcut yetkisi doğrulanamadı. Yeni cihaz kaydı yapılmadı; aynı cihazla yeniden kontrol edin.'
-                            : 'Google hesabının video sahipliği, yayın veya cihaz yetkisi doğrulanamadı. Oynatma başlatılmadı.'
+                            : 'Hesabın video hakkı, yayın veya cihaz yetkisi doğrulanamadı. Oynatma başlatılmadı.'
                         : 'Hesap kontrolü tamamlanamadı. Bu, hesabınızın olmadığı anlamına gelmez. Yeniden deneyebilirsiniz.'
                 : action === 'logout'
                 ? 'Çıkış tamamlanamadı. Lütfen yeniden deneyin.'
@@ -201,7 +201,7 @@ export function NearAuthLab({ clientId }: { clientId: string | null }) {
                                 <NearAuthUpload auth={auth} disabled={busy} onBusyChange={(value) => { working.current = value; setBusy(value); }} />
                                 <section className="space-y-3 rounded-xl border border-white/15 p-4">
                                     <h2 className="font-semibold">Video hakkını kontrol et</h2>
-                                    <p className="text-sm">Google hesabınızın video hakkı kontrol edilir. Kendi videonuzu mevcut cihaz yetkisiyle oynatabilirsiniz; Google veya sponsor cüzdan onayı istenmez.</p>
+                                    <p className="text-sm">Hesabınızın video hakkı kontrol edilir. Hak sahibi olduğunuz videoyu mevcut cihaz yetkisiyle oynatabilirsiniz; Google veya sponsor cüzdan onayı istenmez.</p>
                                     <label htmlFor="auth-lab-publication" className="block text-sm">Video yayın kimliği</label>
                                     <input id="auth-lab-publication" value={publicationId} maxLength={128} disabled={busy}
                                         className="w-full rounded border border-white/20 bg-transparent p-2"
@@ -229,7 +229,7 @@ export function NearAuthLab({ clientId }: { clientId: string | null }) {
                                         onRetry={() => void run('media', playback.publication.publication_id)} />}
                                 </section>
                                 {mediaCheck?.reason === 'entitlement_required' && <NearAuthSigning
-                                    key={`${mediaCheck.accountId}:${mediaCheck.publicationId}`} auth={auth} publicationId={mediaCheck.publicationId}
+                                    key={`${mediaCheck.accountId}:${mediaCheck.publicationId}`} auth={auth} publicationId={mediaCheck.publicationId} accountId={mediaCheck.accountId}
                                     disabled={busy} onBusyChange={(value) => { working.current = value; setBusy(value); }} />}
                                 <Button variant="outline" className="min-h-11 w-full" disabled={busy} onClick={() => void run('logout')}>Deneme oturumundan çık</Button>
                             </>

@@ -98,6 +98,7 @@ async function fixture(path, body, method = 'POST', search = '') {
     if (path === '/api/auth-lab/signing') {
         const fail = reason => ({ status: 422, value: { error: 'signing_check_failed', action: body.action, reason } });
         if (body.action.startsWith('prepare')) {
+            if (state.mode === 'purchase-balance-required' && body.action === 'prepare-purchase') return fail('ticket_balance_required');
             if (state.mode === 'deployment-missing') return fail('compact_upload_unavailable');
             if (body.action === 'prepare-upload') {
                 const args = JSON.parse(Buffer.from(body.encodedArgs, 'base64')); const m = JSON.parse(args.msg);
@@ -251,7 +252,7 @@ try {
         await prepareSigning(page); await approveSigning(page); await button(page, 'Sponsor onayını aç ve imzalı testi gönder').click();
         await page.getByText('İşlem tamamlanamadı veya sonucu belirsiz.', { exact: false }).waitFor();
         await page.reload(); await button(page, 'Sponsor cüzdanını seç ve işlemi hazırla').click();
-        await page.getByText('Tekrar gönderim kapalı', { exact: false }).waitFor();
+        await page.getByText('Kontrol kodu: signing_already_started', { exact: false }).waitFor();
         assert.equal(await button(page, 'Sponsor cüzdanını seç ve işlemi hazırla').isDisabled(), true);
         assert.equal(state.sponsor, 1); assert.equal(state.broadcast, 0); assert.equal(state.google, 1);
     }, 'pending');
@@ -301,7 +302,28 @@ try {
         assert.equal(state.google, 1); assert.equal(state.sponsor, 1); assert.equal(state.relay, 1); assert.equal(state.patches, 1);
         await page.screenshot({ path: resolve(output, 'upload-processing-reload.png'), fullPage: true });
     }, 'processing');
+    await run('purchase-existing-record', async page => {
+        const key = `youtick:auth-lab:ticket:testnet:market.testnet:${account}:lp-local-ux-ticket`;
+        await page.evaluate(key => localStorage.setItem(key, '{"state":"outer_pending"}'), key);
+        await page.getByLabel('Video yayın kimliği').fill('lp-local-ux-ticket');
+        await button(page, 'Bu video için hakkımı kontrol et').click();
+        const purchase = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Google ile test bileti satın al', exact: true }) }).last();
+        await purchase.getByText('Kontrol kodu: signing_already_started', { exact: false }).waitFor();
+        assert.equal(await purchase.getByRole('button', { name: 'Sponsor cüzdanını seç ve işlemi hazırla', exact: true }).isDisabled(), true);
+        assert.equal(await page.evaluate(key => localStorage.getItem(key), key), '{"state":"outer_pending"}');
+        assert.equal(state.google, 0); assert.equal(state.sponsor, 0); assert.equal(state.broadcast, 0);
+    });
+    await run('purchase-balance-required', async page => {
+        await page.getByLabel('Video yayın kimliği').fill('lp-local-ux-ticket');
+        await button(page, 'Bu video için hakkımı kontrol et').click();
+        const purchase = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Google ile test bileti satın al', exact: true }) }).last();
+        await purchase.getByRole('button', { name: 'Sponsor cüzdanını seç ve işlemi hazırla', exact: true }).click();
+        await purchase.getByText('Kontrol kodu: ticket_balance_required', { exact: false }).waitFor();
+        assert.equal(state.google, 0); assert.equal(state.sponsor, 0); assert.equal(state.broadcast, 0);
+    }, 'purchase-balance-required');
     await run('purchase-review', async page => {
+        const demoKey = `youtick:auth-lab:signing:testnet:${account}`;
+        await page.evaluate(key => localStorage.setItem(key, '{"state":"outer_pending"}'), demoKey);
         await page.getByLabel('Video yayın kimliği').fill('lp-local-ux-ticket');
         await button(page, 'Bu video için hakkımı kontrol et').click();
         const purchase = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Google ile test bileti satın al', exact: true }) }).last();
@@ -314,8 +336,9 @@ try {
         await purchase.getByRole('button', { name: 'Google ile bu işleme onay ver', exact: true }).click();
         await purchase.getByText('Google onayı doğrulandı. Zincire henüz işlem gönderilmedi.', { exact: true }).waitFor();
         await purchase.getByRole('button', { name: 'Sponsor onayını aç ve imzalı testi gönder', exact: true }).click();
-        await purchase.getByText('Satın alma ve ilk cihaz yetkisi doğrulandı.', { exact: false }).waitFor();
+        await purchase.getByText('Satın alma ve bu cihazın yetkisi doğrulandı.', { exact: false }).waitFor();
         assert.equal(state.sponsor, 1); assert.equal(state.broadcast, 1);
+        assert.equal(await page.evaluate(key => localStorage.getItem(key), demoKey), '{"state":"outer_pending"}');
     });
     await run('upload-pending-reload', async page => {
         await prepareUpload(page); page.on('dialog', dialog => dialog.accept());

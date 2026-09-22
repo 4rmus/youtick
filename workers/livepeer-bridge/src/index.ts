@@ -1,4 +1,5 @@
 import { COMPACT_UPLOAD_PREFIX, unpackCompactUpload } from '../../../protocol/paid-media-livepeer-v1/compact-upload';
+import { hasTitleContent } from '../../../protocol/paid-media-livepeer-v1/title';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { base58Decode } from './base58';
 import {
@@ -3804,7 +3805,7 @@ function parseSponsoredPaidJobRequest(
         || typeof value.job_id !== 'string'
         || !JOB_ID_PATTERN.test(value.job_id)
         || typeof value.title !== 'string'
-        || value.title.trim().length < 1
+        || !hasTitleContent(value.title)
         || new TextEncoder().encode(value.title).length > 200
         || typeof value.price_usdc !== 'string'
         || !/^[1-9][0-9]{0,19}$/.test(value.price_usdc)

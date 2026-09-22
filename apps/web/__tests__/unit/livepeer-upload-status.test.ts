@@ -1,11 +1,14 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
     query: { data: undefined as unknown, isError: false },
     read: vi.fn(),
     remember: vi.fn(),
+    reconcile: vi.fn(),
+    authorize: vi.fn(),
+    upload: vi.fn(),
     queryFn: undefined as (() => Promise<unknown>) | undefined,
 }));
 
@@ -16,9 +19,91 @@ vi.mock('@tanstack/react-query', () => ({
     },
 }));
 vi.mock('@/lib/livepeer-publication', () => ({ readLivepeerUploadProgress: state.read }));
-vi.mock('@/lib/livepeer-upload', () => ({ rememberLivepeerUploadJob: state.remember }));
+vi.mock('@/lib/livepeer-upload', async importOriginal => ({
+    ...await importOriginal<typeof import('@/lib/livepeer-upload')>(),
+    rememberLivepeerUploadJob: state.remember,
+    requestLivepeerUploadIntent: state.reconcile,
+    fingerprintLivepeerSource: vi.fn().mockResolvedValue('a'.repeat(64)),
+    authorizeLivepeerPaidJob: state.authorize,
+    uploadLivepeerSource: state.upload,
+}));
+vi.mock('@/lib/constants', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/lib/constants')>();
+    return { ...actual, FEATURE_FLAGS: { ...actual.FEATURE_FLAGS, publicTestnetVideoV1: true } };
+});
 
-import { getLivepeerPublicationView, LivepeerUploadStatus, uploadErrorMessage } from '@/components/LivepeerPaidUploadForm';
+import { getLivepeerPublicationView, LivepeerPaidUploadFormContent, LivepeerUploadStatus, uploadErrorMessage } from '@/components/LivepeerPaidUploadForm';
+
+describe('publication polling during the Published transition', () => {
+    const pending = { job: { job_id: 'job-001', creator_id: 'creator.testnet', generation: 1, status: 'Authorized' }, publication: null, expired: false };
+    const published = { ...pending, publication: { publication_id: 'job-001', creator_id: 'creator.testnet', generation: 1, availability: 'ACTIVE' } };
+
+    beforeEach(() => {
+        state.query = { data: undefined, isError: false };
+        state.read.mockReset().mockResolvedValueOnce(pending);
+        state.reconcile.mockReset().mockRejectedValue(new Error('on_chain_job_mismatch'));
+        state.authorize.mockReset(); state.upload.mockReset();
+        const useState = React.useState;
+        let index = 0;
+        vi.spyOn(React, 'useState').mockImplementation(((initial: unknown) => {
+            const position = index++;
+            return useState(position === 0 ? new File(['video'], 'video.mp4', { type: 'video/mp4' })
+                : position === 4 ? 'job-001' : initial === 'draft' ? 'provider_processing' : initial);
+        }) as typeof React.useState);
+        renderToStaticMarkup(React.createElement(LivepeerPaidUploadFormContent, {
+            accountId: 'creator.testnet', connect: vi.fn(), getWallet: vi.fn(), isReady: true,
+        }));
+    });
+    afterEach(() => {
+        expect(state.authorize).not.toHaveBeenCalled();
+        expect(state.upload).not.toHaveBeenCalled();
+        vi.restoreAllMocks();
+    });
+
+    it('confirms the same ACTIVE publication after one conflict without another Bridge request', async () => {
+        state.read.mockResolvedValueOnce(published);
+        const result = await state.queryFn!();
+        expect(result).toEqual({ ...published, providerState: null });
+        expect(getLivepeerPublicationView({ isError: false, data: result as typeof published }).kind).toBe('published');
+        expect(state.read.mock.calls).toEqual([['job-001', 'creator.testnet'], ['job-001', 'creator.testnet']]);
+        expect(state.reconcile).toHaveBeenCalledOnce();
+        expect(state.reconcile).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-001', accountId: 'creator.testnet', recovery: 'reconcile' }));
+    });
+
+    it.each(['missing', 'other-job', 'other-creator', 'other-generation', 'takedown', 'read-failed'])('keeps the conflict when a fresh publication is not verified: %s', async condition => {
+        const current = structuredClone(published);
+        if (condition === 'other-job') current.publication.publication_id = 'job-other';
+        if (condition === 'other-creator') current.publication.creator_id = 'other.testnet';
+        if (condition === 'other-generation') current.publication.generation = 2;
+        if (condition === 'takedown') current.publication.availability = 'TAKEDOWN';
+        if (condition === 'read-failed') state.read.mockRejectedValueOnce(new Error('livepeer_job_creator_mismatch'));
+        else state.read.mockResolvedValueOnce(condition === 'missing' ? pending : current);
+        await expect(state.queryFn!()).rejects.toThrow('on_chain_job_mismatch');
+        expect(state.read).toHaveBeenCalledTimes(2); expect(state.reconcile).toHaveBeenCalledOnce();
+    });
+
+    it.each(['provider_playback_mismatch', 'device_nonce_replayed', 'livepeer_control_http_409'])('does not hide a different rejection: %s', async code => {
+        state.reconcile.mockRejectedValueOnce(new Error(code));
+        await expect(state.queryFn!()).rejects.toThrow(code);
+        expect(state.read).toHaveBeenCalledOnce(); expect(state.reconcile).toHaveBeenCalledOnce();
+    });
+
+    it('returns an already observed publication without a Bridge request', async () => {
+        state.read.mockReset().mockResolvedValue(published);
+        await expect(state.queryFn!()).resolves.toEqual({ ...published, providerState: null });
+        expect(state.read).toHaveBeenCalledOnce(); expect(state.reconcile).not.toHaveBeenCalled();
+    });
+});
+
+it.each([
+    ['missing', 'is missing'], ['invalid', 'is invalid'], ['job_mismatch', 'belongs to another upload'],
+    ['read_failed', 'could not be read'], ['write_failed', 'could not be saved'],
+    ['readback_failed', 'could not be verified after saving'], ['unavailable', 'is unavailable'],
+])('explains %s recovery information without claiming payment status', (code, reason) => {
+    const message = uploadErrorMessage(new Error(`livepeer_draft_${code}`), true);
+    expect(message).toBe(`Recovery information ${reason} (livepeer_draft_${code}). Keep this upload and check any existing signing or payment attempt before retrying.`);
+    expect(uploadErrorMessage(new Error(`livepeer_draft_${code}: private-marker`), true)).not.toContain('private-marker');
+});
 
 it('separates pre-payment expiry from uncertain post-sponsor completion and key loss', () => {
     expect(uploadErrorMessage(new Error('authorization_expired'), true)).toContain('No sponsor payment was requested');
