@@ -1,3 +1,5 @@
+import { hasTitleContent } from './title';
+
 // Wire version 1. Never reorder these immutable profile identifiers.
 const PROFILE_HASHES = [
     '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77',
@@ -94,7 +96,7 @@ export async function unpackCompactUpload(message: string, context: CompactUploa
     const deviceKey = context.keyString(take(32)), certificate = hex(take(32)), deviceDuration = uint(4);
     const issued = uint(8), lifetime = uint(4), block = uint(8), blockWindow = uint(1), keyVersion = Number(uint(4));
     const signature = base64(take(64));
-    if (offset !== data.length || !/^[A-Za-z0-9._:-]{1,128}$/.test(job) || !title.trim()
+    if (offset !== data.length || !/^[A-Za-z0-9._:-]{1,128}$/.test(job) || !hasTitleContent(title)
         || price < 2_000_000n || price >= 100_000_000_000_000_000_000n || source < 1n || source > 5_000_000_000n
         || profile >= PROFILE_HASHES.length || deviceDuration !== 2_592_000_000n || uploadDuration === 0n
         || lifetime < 1n || lifetime > 120_000n || blockWindow !== 200n || keyVersion < 1

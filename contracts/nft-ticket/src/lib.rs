@@ -2637,6 +2637,53 @@ mod tests {
         })
     }
 
+    #[test]
+    fn upload_title_vectors_match_readable_and_compact_validation() {
+        let contract = contract();
+        let titles: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../protocol/paid-media-livepeer-v1/upload-title-vectors.json"
+        ))
+        .unwrap();
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../protocol/paid-media-livepeer-v1/compact-upload-vectors.json"
+        ))
+        .unwrap();
+        let fixture = &vectors[0];
+        let sender: AccountId =
+            serde_json::from_value(fixture["request"]["creator_id"].clone()).unwrap();
+        let encoded = fixture["compact_message"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("yt:u1:")
+            .unwrap();
+        let original: Base64VecU8 = serde_json::from_value(encoded.into()).unwrap();
+        for vector in titles.as_array().unwrap() {
+            let title = vector["title"].as_str().unwrap();
+            let accepted = vector["accepted"].as_bool().unwrap();
+            assert_eq!(
+                std::panic::catch_unwind(|| assert_title(title)).is_ok(),
+                accepted
+            );
+            let mut bytes = original.0.clone();
+            let offset = 4 + u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+            let end = offset
+                + 4
+                + u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            let mut replacement = (title.len() as u32).to_le_bytes().to_vec();
+            replacement.extend_from_slice(title.as_bytes());
+            bytes.splice(offset..end, replacement);
+            let encoded = serde_json::to_value(Base64VecU8(bytes)).unwrap();
+            let message = format!("yt:u1:{}", encoded.as_str().unwrap());
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compact_upload::decode(&message, &contract, &sender)
+            }));
+            assert_eq!(result.is_ok(), accepted, "{}", vector["name"]);
+            if let Ok(decoded) = result {
+                assert_eq!(decoded.title.as_deref(), Some(title));
+            }
+        }
+    }
+
     fn public_beta_request(index: u32, creator: &str, source_bytes: u128) -> PaidJobRequest {
         PaidJobRequest {
             creator_id: account(creator),

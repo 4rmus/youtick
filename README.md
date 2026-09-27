@@ -1,5 +1,7 @@
 # YouTick
 
+V1 is a controlled NEAR testnet wallet pilot, not a real-money launch. Test USDC / test NEAR have no real value. Social sign-in, card payments and bank payouts are future plans. See [V1 scope and open responsibilities](docs/architecture/youtick-v1-product-scope.md).
+
 YouTick is a paid video application built around NEAR, USDC and Livepeer
 Studio. Creators upload video bytes directly to Livepeer with TUS. NEAR
 contracts remain authoritative for paid jobs, publications, purchases,

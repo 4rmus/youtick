@@ -1,4 +1,5 @@
 import { COMPACT_UPLOAD_PREFIX, unpackCompactUpload } from '../../../protocol/paid-media-livepeer-v1/compact-upload';
+import { hasTitleContent } from '../../../protocol/paid-media-livepeer-v1/title';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { base58Decode } from './base58';
 import {
@@ -3804,7 +3805,7 @@ function parseSponsoredPaidJobRequest(
         || typeof value.job_id !== 'string'
         || !JOB_ID_PATTERN.test(value.job_id)
         || typeof value.title !== 'string'
-        || value.title.trim().length < 1
+        || !hasTitleContent(value.title)
         || new TextEncoder().encode(value.title).length > 200
         || typeof value.price_usdc !== 'string'
         || !/^[1-9][0-9]{0,19}$/.test(value.price_usdc)
@@ -6268,7 +6269,7 @@ async function verifyPlaybackDelegate(env: Env, input: PlaybackV2Request): Promi
         if (!call || call.methodName !== 'ft_transfer_call' || call.deposit !== 1n) throw new Error('playback_denied');
         const args = JSON.parse(new TextDecoder().decode(Uint8Array.from(call.args))) as JsonObject;
         if (args.receiver_id !== env.MARKET_CONTRACT_ID || typeof args.msg !== 'string') throw new Error('playback_denied');
-        const message = typeof args.msg === 'string' && args.msg.startsWith(COMPACT_UPLOAD_PREFIX)
+        const message = args.msg.startsWith(COMPACT_UPLOAD_PREFIX)
             ? await unpackCompactUpload(args.msg, { network: env.NEAR_NETWORK!, market: env.MARKET_CONTRACT_ID!, creator: input.request.account_id,
                 usdc: usdcContractId(env), keyString: bytes => `ed25519:${baseEncode(bytes)}` }) : JSON.parse(args.msg) as JsonObject;
         const authorization = parsePlaybackSessionAuthorization(message.playback_session);

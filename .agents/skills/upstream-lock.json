@@ -1,0 +1,39 @@
+{
+  "repository": "https://github.com/near/agent-skills",
+  "revision": "378a55c6bff84d15750eff2cd9950a5736ee9589",
+  "files": {
+    "near-api-js": {
+      "SKILL.md": "65e9aa33f529de88089a741b112069eafede988bc2dd8ff4385240293800f7f7",
+      "references/api_patterns.md": "53fdf1b1a9fb83467b4a41435d7bbfc563fc0e95e552f1d876188a0bd74d3518",
+      "references/contracts.md": "983153ae28903c48895828beb9f0d73ebdec5d067e76653f2015101d1f3d9f82",
+      "references/key_management.md": "0525a60e2fff5c1307e4f40dc04249dbc3572089c309d2e811dafa093b159906",
+      "references/meta_transactions.md": "820b4d836c24dbca971974ac06d47392c6017ea3232fcb5918644cac421497cc",
+      "references/nep413.md": "fc6d43332ba34ff58dcbeeb173eeef497b4f288899ed59f6b8d6d4ffae85f4c2",
+      "references/tokens_guide.md": "225367ff8c568f0246e308989593caac1772d9293ca70493a3ec331521aa9858"
+    },
+    "near-dapp": {
+      "SKILL.md": "480a521624fe113c0411071235bf682e1b9f878d93c1b50d8b697c431e5e9334",
+      "references/create-near-app.md": "4fea6019b68e2203ac5f49625c39243e8eaf6ca59bf9b10325936fe762a18373",
+      "references/near-connect-hooks.md": "1f8532aa1ef0e4f3c5e2f21b6779f7b8acf75856ac26f8c9d138662ecceb3d8d",
+      "references/near-connect.md": "0e71be0bfe7b58b74c19e183cb1c0d3f4f0e29a6f10e0386dcb708e2d86e0299"
+    },
+    "near-smart-contracts": {
+      "SKILL.md": "0adb99ffb47b629ce5a859d7c2460d679411383a7c7ca1c99d85f62a857e0eab",
+      "rules/best-contract-tools.md": "efbf431e389643a48247aed87e390aed061e41fa9110ddd15f86d82655d2777d",
+      "rules/chain-signatures.md": "f02bbf24203ec98dcadf83442e4b4ad7a210e37e2e64cf89855f0cc4834980f7",
+      "rules/security-storage-checks.md": "6ecf632b4996968f8e0cad8cf9b1e1f6c929d07da2a6c98ab41c297d3622d881",
+      "rules/state-collections.md": "392a11e42a3cbbcb473cc86095f279a53dc68a5eecdd14c994e89facb3440c99",
+      "rules/structure-near-bindgen.md": "f5c00c3d0ae320d53e4a4e43d0616e321e32a882467f717eb94fe7bf77fe676f",
+      "rules/testing-integration-tests.md": "fedb87996c60f5af7d04d1d141fa4451a5d921d0452b84b2fd66f7c641b2cd33",
+      "rules/upgrade-migration.md": "2fb7f8ffc44eb5d816a863a094687b954eace055e27beffeba4d25acdbe10c5d",
+      "rules/xcc-promise-chaining.md": "6c9b4367add354029ac0107fed4eb0cfbba76ac40374ab13d85f15ffda5fe1da",
+      "rules/yield-resume.md": "58ce224421e20ef47de5cc51d1657e806b14017c27166b553522668d7d6d4a93"
+    },
+    "near-contract-audit": {
+      "SKILL.md": "1755fa10e5125b43af7c9772644530564e15d6ac1a36fd3065d806eb41ef44aa",
+      "references/high-severity.md": "c3c37c9430a12e96342c5d484dd6e57d87a4624e5453d30a033ec6504670f739",
+      "references/low-severity.md": "8b775c8206c2c14134514f37d21645ada1d16bde150c0761d0218bdbae44ffe6",
+      "references/medium-severity.md": "5d1b2aa9acd3beb1c2a2fea04ecbc493597b79059d427c4ed972d610ae317890"
+    }
+  }
+}

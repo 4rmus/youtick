@@ -1,4 +1,5 @@
 import compactVectors from '../../../protocol/paid-media-livepeer-v1/compact-upload-vectors.json';
+import titleVectors from '../../../protocol/paid-media-livepeer-v1/upload-title-vectors.json';
 import { packCompactUpload } from '../../../protocol/paid-media-livepeer-v1/compact-upload';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -776,25 +777,41 @@ function hexEncode(value: Uint8Array): string {
     return Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-describe('Livepeer bridge PR-3 upload intent', () => {
-    beforeAll(async () => {
-        requestKey = await crypto.subtle.generateKey(
-            'Ed25519', true, ['sign', 'verify'],
-        ) as CryptoKeyPair;
-        const rawPublicKey = new Uint8Array(
-            await crypto.subtle.exportKey('raw', requestKey.publicKey) as ArrayBuffer,
-        );
-        requestPublicKey = `ed25519:${base58Encode(rawPublicKey)}`;
-        quoteKey = await crypto.subtle.generateKey(
-            'Ed25519', true, ['sign', 'verify'],
-        ) as CryptoKeyPair;
-        quotePrivateKey = base64Encode(new Uint8Array(
-            await crypto.subtle.exportKey('pkcs8', quoteKey.privateKey) as ArrayBuffer,
-        ));
-    });
+beforeAll(async () => {
+    requestKey = await crypto.subtle.generateKey(
+        'Ed25519', true, ['sign', 'verify'],
+    ) as CryptoKeyPair;
+    const rawPublicKey = new Uint8Array(
+        await crypto.subtle.exportKey('raw', requestKey.publicKey) as ArrayBuffer,
+    );
+    requestPublicKey = `ed25519:${base58Encode(rawPublicKey)}`;
+    quoteKey = await crypto.subtle.generateKey(
+        'Ed25519', true, ['sign', 'verify'],
+    ) as CryptoKeyPair;
+    quotePrivateKey = base64Encode(new Uint8Array(
+        await crypto.subtle.exportKey('pkcs8', quoteKey.privateKey) as ArrayBuffer,
+    ));
+});
 
-    beforeEach(() => {
-        vi.restoreAllMocks();
+beforeEach(() => {
+    vi.restoreAllMocks();
+});
+
+describe('Livepeer bridge PR-3 upload intent', () => {
+    it.each(titleVectors)('matches Market title acceptance when issuing a quote: $name', async ({ title, accepted }) => {
+        vi.spyOn(Date, 'now').mockReturnValue(1785589300000);
+        const runtime = sponsoredRuntime();
+        const fetchMock = vi.fn(async () => Response.json({ result: { header: {
+            hash: BLOCK_HASH, height: 1000, timestamp_nanosec: '1785589300000000000',
+        } } }));
+        vi.stubGlobal('fetch', fetchMock);
+        const response = await handler.fetch(sponsoredQuoteRequest({ title }), runtime.env);
+        expect(response.status).toBe(accepted ? 200 : 400);
+        if (accepted) expect((await response.json() as { request: { title: string } }).request.title).toBe(title);
+        else {
+            expect(fetchMock).not.toHaveBeenCalled();
+            expect(runtime.relayerState.values.size).toBe(0);
+        }
     });
 
     it('binds public upload policy independently of operation switches and rejects drift', async () => {

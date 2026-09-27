@@ -1,5 +1,7 @@
 # YouTick web
 
+V1 is a controlled NEAR testnet wallet pilot, not a real-money launch. Test USDC / test NEAR have no real value. Social sign-in, card payments and bank payouts are future plans. See [V1 scope and open responsibilities](../../docs/architecture/youtick-v1-product-scope.md).
+
 The web app supports one paid-media path:
 
 - browser to Livepeer Studio over TUS for source upload;
@@ -14,8 +16,10 @@ Source video and playback bytes never pass through Next.js or the Bridge Worker.
 The Bridge serves only the public, size-limited first-frame JPEG derived for
 publication covers after checking the current on-chain publication state.
 
-The wallet-redirect upload draft is versioned and kept only in
-`sessionStorage`. Recovery requires the same file name, byte length,
+The wallet-redirect upload draft is versioned. Public-testnet drafts persist
+in `localStorage`; legacy drafts use `sessionStorage`. Upload job keys stay
+in `sessionStorage`; device keys/certificates and watch progress use IndexedDB.
+Recovery requires the same file name, byte length,
 `lastModified` value and a SHA-256 fingerprint of bounded first/last source
 blocks. Upload-intent control v3 signs that fingerprint; the job object binds
 its first value and rejects a different fingerprint during recovery. The draft

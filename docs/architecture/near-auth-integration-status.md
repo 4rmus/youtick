@@ -1,3 +1,10 @@
+> **Tarihsel sosyal giriş R&D kaydı — aktif V1 planı değildir.**
+> Güncel kapsam: [cüzdan V1 ürün planı](./youtick-v1-product-scope.md).
+> Sosyal çalışma yerel `codex/near-auth-preserve-20260927` dalında,
+> `2e28e570ea933ca471113e46306b286066befbd3` commit'inde korunur; uzak yedek iddia edilmez.
+> Handoff fixture'ları tarihsel/dev-only araçlardır; V1 sosyal giriş veya sağlayıcı onayı değildir.
+> Aşağıdaki tarihli gate/komutlar yeni işlem, ödeme veya devam yetkisi oluşturmaz.
+
 # NEAR Auth — mimari değerlendirme ve güncel entegrasyon planı
 
 17 Eylül 2026. Bu belge social login pilotunun tek güncel durum ve plan kaydıdır.
