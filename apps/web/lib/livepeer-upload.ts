@@ -1,4 +1,5 @@
-import { getDeviceSession, preparePlaybackDevice, rememberPlaybackDelegate, type PlaybackSessionAuthorization } from './device-session';
+import { preparePlaybackDevice, rememberPlaybackDelegate, type PlaybackSessionAuthorization } from './device-session';
+import { hasTitleContent } from '../../../protocol/paid-media-livepeer-v1/title';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { Upload, type DetailedError } from 'tus-js-client';
 import {
@@ -256,19 +257,51 @@ function draftStorage(accountId: string) {
 
 function readStoredUploadDraft(accountId: string): LivepeerUploadDraft | null {
     try {
-        const { storage, key } = draftStorage(accountId);
-        const value: unknown = JSON.parse(storage.getItem(key) || 'null');
-        if (!isLivepeerUploadDraft(value)) return null;
-        return value;
+        return requireStoredUploadDraft(accountId);
     } catch {
         return null;
     }
 }
 
+function requireStoredUploadDraft(accountId: string, jobId?: string): LivepeerUploadDraft {
+    let encoded: string | null;
+    try {
+        const { storage, key } = draftStorage(accountId);
+        encoded = storage.getItem(key);
+    } catch {
+        throw new Error('livepeer_draft_read_failed');
+    }
+    if (encoded === null) throw new Error('livepeer_draft_missing');
+    let value: unknown;
+    try { value = JSON.parse(encoded); } catch { throw new Error('livepeer_draft_invalid'); }
+    if (!isLivepeerUploadDraft(value)) throw new Error('livepeer_draft_invalid');
+    if (jobId !== undefined && value.jobId !== jobId) throw new Error('livepeer_draft_job_mismatch');
+    return value;
+}
+
+export function assertLivepeerUploadDraftReady(accountId: string, jobId: string): void {
+    validateJobSessionIdentity(accountId, jobId);
+    const draft = requireStoredUploadDraft(accountId, jobId);
+    if (draft.paymentAttempted) throw new Error('livepeer_payment_pending');
+    let target: ReturnType<typeof draftStorage>;
+    try { target = draftStorage(accountId); } catch { throw new Error('livepeer_draft_read_failed'); }
+    // Never overwrite the real draft with a snapshot taken before this check.
+    const key = `${target.key}:write-check`;
+    let checked = false;
+    try {
+        writeCheckedUploadStorage(target.storage, key, '1');
+        checked = true;
+    } finally {
+        try { target.storage.removeItem(key); } catch {
+            if (checked) throw new Error('livepeer_draft_write_failed');
+        }
+    }
+    if (requireStoredUploadDraft(accountId, jobId).paymentAttempted) throw new Error('livepeer_payment_pending');
+}
+
 export function writeLivepeerUploadDraft(accountId: string, draft: LivepeerUploadDraft): void {
     validateJobSessionIdentity(accountId, draft.jobId);
     if (!isLivepeerUploadDraft(draft)) throw new Error('invalid_livepeer_draft');
-    const { storage, key } = draftStorage(accountId);
     const previous = readStoredUploadDraft(accountId);
     const existing = previous?.jobId === draft.jobId
         && previous.sourceFingerprintSha256 === draft.sourceFingerprintSha256 ? previous : null;
@@ -285,12 +318,16 @@ export function writeLivepeerUploadDraft(accountId: string, draft: LivepeerUploa
             keyReplacementFingerprint: draft.keyReplacementFingerprint ?? existing?.keyReplacementFingerprint,
         } : {}),
     });
-    try {
-        storage.setItem(key, encoded);
-        if (storage.getItem(key) !== encoded) throw new Error('storage_write_failed');
-    } catch {
-        throw new Error('livepeer_draft_unavailable');
-    }
+    let target: ReturnType<typeof draftStorage>;
+    try { target = draftStorage(accountId); } catch { throw new Error('livepeer_draft_write_failed'); }
+    writeCheckedUploadStorage(target.storage, target.key, encoded);
+}
+
+function writeCheckedUploadStorage(storage: Storage, key: string, encoded: string): void {
+    try { storage.setItem(key, encoded); } catch { throw new Error('livepeer_draft_write_failed'); }
+    let stored: string | null;
+    try { stored = storage.getItem(key); } catch { throw new Error('livepeer_draft_read_failed'); }
+    if (stored !== encoded) throw new Error('livepeer_draft_readback_failed');
 }
 
 export async function readLivepeerUploadDraft(accountId: string, file: File): Promise<LivepeerUploadDraft | null> {
@@ -307,8 +344,7 @@ export function clearLivepeerUploadDraft(accountId: string): void {
 }
 
 function setUploadDraftFlag(accountId: string, jobId: string, flag: 'paymentAttempted' | 'keyReplacementPending', value: boolean): void {
-    const draft = readStoredUploadDraft(accountId);
-    if (!draft || draft.jobId !== jobId) throw new Error('livepeer_draft_unavailable');
+    const draft = requireStoredUploadDraft(accountId, jobId);
     writeLivepeerUploadDraft(accountId, { ...draft, [flag]: value });
     if (flag === 'paymentAttempted' && value) rememberLivepeerUploadJob(accountId, jobId);
 }
@@ -405,7 +441,7 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
     if (asset === 'NEAR') requireNearCreatorFee();
     validateJobSessionIdentity(input.accountId, input.jobId);
     const title = input.title.trim();
-    if (!title || new TextEncoder().encode(title).length > 200) throw new Error('invalid_title');
+    if (!hasTitleContent(title) || new TextEncoder().encode(title).length > 200) throw new Error('invalid_title');
     if (!/^[1-9][0-9]{0,19}$/.test(input.priceUsdc)
         || BigInt(input.priceUsdc) < 2_000_000n) {
         throw new Error('invalid_ticket_price');
@@ -473,9 +509,7 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
             throw error;
         }
     }
-    if (FEATURE_FLAGS.publicTestnetVideoV1 && readStoredUploadDraft(input.accountId)?.paymentAttempted) {
-        throw new Error('livepeer_payment_pending');
-    }
+    if (FEATURE_FLAGS.publicTestnetVideoV1) assertLivepeerUploadDraftReady(input.accountId, input.jobId);
     const playbackSession = FEATURE_FLAGS.publicTestnetVideoV1 && FEATURE_FLAGS.enablePlaybackAuthorizerV2
         ? await preparePlaybackDevice(input.accountId) : undefined;
     const transaction = asset === 'USDC' ? {
@@ -627,6 +661,7 @@ async function signAndRelaySponsoredUpload(
     if (!wallet.signDelegateActions) throw new Error('sponsored_upload_wallet_unsupported');
     const quote = signedQuote.quote;
     signal?.throwIfAborted();
+    if (FEATURE_FLAGS.publicTestnetVideoV1) assertLivepeerUploadDraftReady(request.creator_id, request.job_id);
     const signed = await measureVideoOperation('wallet_signature', () => wallet.signDelegateActions!({
         blockHeightTtl: 200,
         delegateActions: [{
@@ -711,7 +746,7 @@ async function submitSponsoredUploadRelay(
     });
 }
 
-export async function parseSponsoredUploadQuote(
+async function parseSponsoredUploadQuote(
     value: Record<string, unknown>,
     request: Record<string, string>,
 ): Promise<SignedSponsoredUploadQuote> {
@@ -1044,7 +1079,7 @@ export async function requestLivepeerUploadIntent(input: UploadIntentInput): Pro
 }
 
 export async function prepareLivepeerUploadResume(wallet: WalletInstance, input: {
-    accountId: string; jobId: string; file: File; signal?: AbortSignal; allowUploadKeyReplacement?: boolean;
+    accountId: string; jobId: string; file: File; signal?: AbortSignal;
 }): Promise<LivepeerUploadIntent | LivepeerUploadStatus> {
     requireFeature();
     if (!FEATURE_FLAGS.publicTestnetVideoV1) throw new Error('livepeer_resume_unavailable');
@@ -1066,10 +1101,9 @@ export async function prepareLivepeerUploadResume(wallet: WalletInstance, input:
             profile_id: PROFILE_ID, profile_config_sha256: storedProfileHash(progress.job),
         };
         if (!samePaidJob(progress.job, request, 'USDC')) throw new Error('livepeer_paid_job_conflict');
-        let session = loadLivepeerJobSessionKey(input.accountId, input.jobId, input.allowUploadKeyReplacement === false);
+        let session = loadLivepeerJobSessionKey(input.accountId, input.jobId);
         if (session?.keyPair.getPublicKey().toString() !== progress.job.upload_public_key
             || Number(progress.job.upload_key_expires_at_ms) <= Date.now()) {
-            if (input.allowUploadKeyReplacement === false) throw new Error('livepeer_upload_key_recovery_unavailable');
             if (draft.keyReplacementPending
                 && await sha256Hex(progress.job.upload_public_key) !== draft.keyReplacementFingerprint) {
                 throw new Error('livepeer_key_replacement_pending');
@@ -1112,9 +1146,6 @@ export async function prepareLivepeerUploadResume(wallet: WalletInstance, input:
             session = loadLivepeerJobSessionKey(input.accountId, input.jobId);
         }
         if (!session) throw new Error('livepeer_session_key_missing');
-        if (input.allowUploadKeyReplacement === false && (await getDeviceSession(input.accountId))?.certificate.version !== '3') {
-            throw new Error('device_session_required');
-        }
         setUploadDraftFlag(input.accountId, input.jobId, 'keyReplacementPending', false);
         input.signal?.throwIfAborted();
         return requestLivepeerUploadIntent({
@@ -1471,11 +1502,11 @@ function clearSponsoredDelegate(accountId: string, jobId: string): void {
     }
 }
 
-function loadLivepeerJobSessionKey(accountId: string, jobId: string, preserveInvalid = false): LivepeerJobSession | null {
+function loadLivepeerJobSessionKey(accountId: string, jobId: string): LivepeerJobSession | null {
     if (typeof window === 'undefined') return null;
     const storageKey = livepeerJobSessionStorageKey(accountId, jobId);
     const raw = sessionStorage.getItem(storageKey);
-    if (!raw) return null;
+    if (raw === null) return null;
     try {
         const value = JSON.parse(raw) as {
             secretKey?: string;
@@ -1504,12 +1535,7 @@ function loadLivepeerJobSessionKey(accountId: string, jobId: string, preserveInv
             sponsoredDelegateBase64: value.sponsoredDelegateBase64,
         };
     } catch {
-        if (preserveInvalid) return null;
-        try {
-            sessionStorage.removeItem(storageKey);
-        } catch {
-            // Treat inaccessible storage as a missing session.
-        }
+        // Reads preserve recovery evidence; only explicit replacement or cleanup writes it.
         return null;
     }
 }

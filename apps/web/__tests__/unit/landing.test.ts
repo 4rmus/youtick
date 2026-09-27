@@ -1,5 +1,9 @@
 import { access, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import TermsPage from '@/app/terms/page';
+import PrivacyPage from '@/app/privacy/page';
 import { describe, expect, it } from 'vitest';
 import { getLandingCtas, landingCopy } from '@/components/landing/landing-copy';
 import { calculateTicketSplit, formatMicroUsdc } from '@/components/landing/roi';
@@ -15,16 +19,24 @@ function shape(value: unknown): unknown {
 describe('bilingual landing', () => {
     it('keeps English and Turkish copy in the same typed shape', () => {
         expect(shape(landingCopy.tr)).toEqual(shape(landingCopy.en));
-        expect(landingCopy.en.hero.description).toBe('YouTick brings the screening page, digital ticket, and ticket-gated viewing into one simple flow.');
-        expect(landingCopy.tr.hero.description).toBe('YouTick; gösterim sayfasını, dijital bileti ve biletle açılan izlemeyi tek sade akışta toplar.');
-        expect(landingCopy.tr.audience.creator.benefits).toContain('Video içeriği yükle, işleme tamamlanınca yayınla.');
-        expect(landingCopy.tr.audience.creator.benefits).toContain('Bilet fiyatını belirle.');
-        expect(landingCopy.tr.roi.uploadFeeTitle).toBe('YouTick yükleme ücreti');
-        expect(landingCopy.en.audience.creator.benefits).toContain('Keep 95% of each paid ticket sale.');
-        expect(landingCopy.tr.audience.creator.benefits).toContain('Her ücretli bilet satışının %95’ini al.');
-        expect(landingCopy.en.roi.platformFee).toBe('5% platform fee');
-        expect(landingCopy.tr.roi.platformFee).toBe('%5 platform ücreti');
         expect(JSON.stringify(landingCopy)).not.toMatch(/98%|%98|2%|%2/);
+    });
+
+    it('separates the wallet test pilot from future sign-in, payments and earnings claims', () => {
+        for (const [locale, copy] of Object.entries(landingCopy)) {
+            const text = JSON.stringify(copy);
+            expect(copy.hero.badge).toMatch(/testnet/);
+            expect(copy.hero.description).toMatch(/NEAR/);
+            expect(copy.hero.description).toMatch(/Google.*passkey/);
+            expect(copy.hero.description).toMatch(locale === 'en' ? /not available in V1/ : /V1’de sunulmuyor/);
+            expect(copy.roi.description).toMatch(locale === 'en' ? /simulation.*illustrative pilot/ : /simülasyon.*örnek pilot paylaşımı/);
+            expect(copy.roi.estimateNote).toMatch(locale === 'en' ? /no real value/ : /gerçek değeri yok/);
+            expect(text).toContain('5 GB');
+            expect(text).not.toMatch(/120 minutes per video|120 dakika/);
+            expect(text).not.toContain('20 GB');
+            expect(copy.howItWorks.steps[0].description).toContain('2 test USDC');
+            expect(copy.audience.creator.benefits[2]).toMatch(/NEAR/);
+        }
     });
 
     it('contains only current media architecture in landing copy', () => {
@@ -48,7 +60,7 @@ describe('bilingual landing', () => {
         expect(getLandingCtas('en', false)).toEqual({
             primary: { label: 'See how it works', href: '#how-it-works' },
             secondary: { label: 'Why YouTick', href: '#trust' },
-            status: 'Publishing opens soon',
+            status: 'Pilot publishing is currently closed',
         });
         expect(getLandingCtas('tr', true)).toEqual({
             primary: { label: 'Gösterim aç', href: '/upload' },
@@ -80,6 +92,21 @@ describe('bilingual landing', () => {
         expect(() => calculateTicketSplit('1.999999', 1n)).toThrow('invalid_ticket_price');
         expect(formatMicroUsdc(9_120_000_000n, 'en')).toBe('9,120 USDC');
         expect(formatMicroUsdc(9_120_000_000n, 'tr')).toBe('9.120 USDC');
+    });
+
+    it('shows pilot, responsibility and local-data notices without blanket refund or storage claims', () => {
+        const terms = renderToStaticMarkup(React.createElement(TermsPage));
+        const privacy = renderToStaticMarkup(React.createElement(PrivacyPage));
+        expect(terms).toContain('controlled testnet pilot');
+        expect(terms).toContain('statutory consumer rights');
+        expect(terms).toContain('remain to be confirmed');
+        expect(terms).not.toMatch(/non-refundable|14-day beta/);
+        expect(privacy).toContain('IndexedDB');
+        expect(privacy).toContain('localStorage');
+        expect(privacy).toContain('sessionStorage');
+        expect(privacy).toContain('before collecting personal data');
+        expect(privacy).toContain('does not delete public blockchain');
+        for (const html of [terms, privacy]) expect(html).toContain('mailto:contact@youtick.net');
     });
 
     it('ships the Turkish static route, locale alternates, and both optimized images', async () => {

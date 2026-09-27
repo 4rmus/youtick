@@ -21,17 +21,8 @@ type LivepeerPlayerProps = LivepeerPlaybackInput & {
     title: string;
     poster?: string;
 };
-type LivepeerPlayerContentProps = LivepeerPlayerProps & {
-    getWallet?: ReturnType<typeof useWallet>['getWallet'];
-    onRetry?: () => void;
-};
 
 export function LivepeerPlayer(props: LivepeerPlayerProps) {
-    const { getWallet } = useWallet();
-    return <LivepeerPlayerContent {...props} getWallet={getWallet} />;
-}
-
-export function LivepeerPlayerContent(props: LivepeerPlayerContentProps) {
     return <LivepeerPlayerSession key={`${props.accountId}:${props.jobId}:${props.generation}:${props.playbackId}`} {...props} />;
 }
 
@@ -42,9 +33,8 @@ function LivepeerPlayerSession({
     jobId,
     generation,
     playbackId,
-    getWallet,
-    onRetry,
-}: LivepeerPlayerContentProps) {
+}: LivepeerPlayerProps) {
+    const { getWallet } = useWallet();
     const tokenRef = useRef<string | null>(null);
     const [src, setSrc] = useState<ReturnType<typeof getSrc>>(null);
     const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -73,7 +63,6 @@ function LivepeerPlayerSession({
         setNeedsSession(false);
 
         const ensurePlayGrant = async () => {
-            if (!getWallet) throw new Error('device_session_required');
             const wallet = await getWallet();
             controller.signal.throwIfAborted();
             const grant = await ensureSessionGrant({
@@ -87,7 +76,6 @@ function LivepeerPlayerSession({
 
         const preparePlayback = async () => {
             if (FEATURE_FLAGS.enablePlaybackAuthorizerV2) return undefined;
-            if (!getWallet) throw new Error('device_session_required');
             const wallet = await getWallet();
             controller.signal.throwIfAborted();
             if (!FEATURE_FLAGS.enablePlaybackAuthorizerV2) await ensurePlayGrant();
@@ -156,13 +144,11 @@ function LivepeerPlayerSession({
     }, [accountId, attempt, generation, getWallet, jobId, playbackId]);
 
     const retry = () => {
-        if (onRetry) { onRetry(); return; }
         setError(null);
         setAttempt((current) => current + 1);
     };
 
     const verifySession = async () => {
-        if (!getWallet) return;
         if (FEATURE_FLAGS.publicTestnetVideoV1 && !FEATURE_FLAGS.enablePlaybackAuthorizerV2) return;
         if (verificationRef.current && !verificationRef.current.signal.aborted) return;
         const controller = new AbortController();
@@ -193,9 +179,9 @@ function LivepeerPlayerSession({
     };
 
     if (!src || !accessToken) {
-        const publicActivation = Boolean(getWallet) && FEATURE_FLAGS.publicTestnetVideoV1 && FEATURE_FLAGS.enablePlaybackAuthorizerV2;
+        const publicActivation = FEATURE_FLAGS.publicTestnetVideoV1 && FEATURE_FLAGS.enablePlaybackAuthorizerV2;
         const canActivate = publicActivation && (error?.message === 'device_session_required' || error?.message === 'playback_denied' || activationPending);
-        const primaryVerification = Boolean(getWallet) && needsSession && !activationPending && (canActivate || !FEATURE_FLAGS.publicTestnetVideoV1);
+        const primaryVerification = needsSession && !activationPending && (canActivate || !FEATURE_FLAGS.publicTestnetVideoV1);
         return <div lang={language} className={`relative flex items-center justify-center overflow-hidden rounded-lg bg-black p-6 text-center text-white ${canActivate ? 'min-h-64 sm:aspect-video' : 'aspect-video'}`}>
             {poster && <Image fill priority unoptimized src={poster} alt="" sizes="(min-width: 1024px) 1024px, 100vw" className="object-cover" onError={event => { event.currentTarget.hidden = true; }} />}
             <div aria-hidden="true" className="absolute inset-0 bg-black/75" />

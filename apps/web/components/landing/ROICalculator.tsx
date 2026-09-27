@@ -106,7 +106,7 @@ export function ROICalculator({ locale, copy }: Props) {
 
                             <dl className="mt-5 grid gap-3 sm:grid-cols-2">
                                 <div className="rounded-md border border-white/10 bg-black/50 p-4">
-                                    <dt className="text-xs uppercase tracking-wide text-zinc-500">{locale === 'tr' ? 'Üretici payı' : 'Creator share'}</dt>
+                                    <dt className="text-xs uppercase tracking-wide text-zinc-500">{locale === 'tr' ? 'Örnek üretici payı' : 'Illustrative creator share'}</dt>
                                     <dd className="mt-1 text-2xl font-black text-white">95%</dd>
                                 </div>
                                 <div className="rounded-md border border-white/10 bg-black/50 p-4">
@@ -122,7 +122,7 @@ export function ROICalculator({ locale, copy }: Props) {
                                 <p className="text-xs leading-relaxed text-zinc-500">{copy.uploadFeeDescription}</p>
                             </div>
                             <div className="rounded-lg border border-white/10 bg-black/60 p-5">
-                                <p className="mb-2 text-sm font-semibold text-zinc-300">{locale === 'tr' ? 'Yalnızca tahmin' : 'Estimate only'}</p>
+                                <p className="mb-2 text-sm font-semibold text-zinc-300">{locale === 'tr' ? 'Test tokenı simülasyonu' : 'Test-token simulation'}</p>
                                 <p className="text-xs leading-relaxed text-zinc-500">{copy.estimateNote}</p>
                             </div>
                         </div>

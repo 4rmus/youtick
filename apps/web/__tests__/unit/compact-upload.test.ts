@@ -2,11 +2,24 @@ import { it, expect, vi } from 'vitest';
 import { PublicKey, baseEncode } from 'near-api-js';
 import { packCompactUpload, unpackCompactUpload } from '../../../../protocol/paid-media-livepeer-v1/compact-upload';
 import vectors from '../../../../protocol/paid-media-livepeer-v1/compact-upload-vectors.json';
+import titleVectors from '../../../../protocol/paid-media-livepeer-v1/upload-title-vectors.json';
 vi.unmock('near-api-js');
 const fixture = vectors[0];
 const context = { network: 'testnet', market: 'market.testnet', creator: fixture.request.creator_id,
     usdc: fixture.quote.delegate_receiver_id, keyString: (bytes: Uint8Array) => `ed25519:${baseEncode(bytes)}` };
 const keyBytes = (key: string) => PublicKey.fromString(key).data;
+
+it.each(titleVectors)('matches Market title acceptance without rewriting bytes: $name', async ({ title, accepted }) => {
+    const data = Buffer.from(fixture.compact_message.slice(6), 'base64');
+    const offset = 4 + data.readUInt32LE(0);
+    const end = offset + 4 + data.readUInt32LE(offset);
+    const encoded = Buffer.from(title);
+    const length = Buffer.alloc(4); length.writeUInt32LE(encoded.length);
+    const message = 'yt:u1:' + Buffer.concat([data.subarray(0, offset), length, encoded, data.subarray(end)]).toString('base64');
+    const result = unpackCompactUpload(message, context);
+    if (accepted) expect((await result).title).toBe(title);
+    else await expect(result).rejects.toThrow('invalid_compact_upload');
+});
 
 it.each(vectors)('preserves exact fields and actual short quote lifetime: $request.title', async vector => {
     expect(await unpackCompactUpload(vector.compact_message, context)).toEqual(vector.normal_message);

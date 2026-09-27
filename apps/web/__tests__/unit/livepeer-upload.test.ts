@@ -1,4 +1,5 @@
 import profiles from '../../../../protocol/paid-media-livepeer-v1/profiles.json';
+import titleVectors from '../../../../protocol/paid-media-livepeer-v1/upload-title-vectors.json';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const tus = vi.hoisted(() => ({
@@ -22,8 +23,8 @@ const featureFlags = vi.hoisted(() => ({
     publicTestnetVideoV1: false,
 }));
 
-const device = vi.hoisted(() => ({ prepare: vi.fn(), remember: vi.fn(), get: vi.fn() }));
-vi.mock('@/lib/device-session', () => ({ preparePlaybackDevice: device.prepare, rememberPlaybackDelegate: device.remember, getDeviceSession: device.get }));
+const device = vi.hoisted(() => ({ prepare: vi.fn(), remember: vi.fn() }));
+vi.mock('@/lib/device-session', () => ({ preparePlaybackDevice: device.prepare, rememberPlaybackDelegate: device.remember }));
 
 vi.mock('@/lib/signless-access-key', () => ({ signAndSendWithSignlessProvision: vi.fn() }));
 
@@ -70,6 +71,7 @@ vi.mock('@/lib/constants', () => ({
 }));
 
 import {
+    assertLivepeerUploadDraftReady,
     advanceLivepeerUploadDraftStage,
     authorizeLivepeerPaidJob,
     cancelLivepeerUpload,
@@ -239,7 +241,6 @@ describe('Livepeer browser upload', () => {
         featureFlags.enablePlaybackAuthorizerV2 = false;
         device.prepare.mockReset().mockResolvedValue({ session_public_key: 'ed25519:device', certificate_sha256: 'a'.repeat(64), authorization_duration_ms: '2592000000' });
         device.remember.mockReset().mockResolvedValue(undefined);
-        device.get.mockReset().mockResolvedValue({ certificate: { version: '3' } });
         featureFlags.publicTestnetBeta = false;
         featureFlags.publicTestnetVideoV1 = false;
         near.viewContract.mockReset().mockImplementation(policyView);
@@ -250,6 +251,17 @@ describe('Livepeer browser upload', () => {
     });
 
     afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+    it.each(titleVectors.filter(({ title, accepted }) => !accepted || !title.trim()))('rejects blank upload title before payment: $name', async ({ title }) => {
+        const wallet = createSponsoredWallet();
+        const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+        await expect(authorizeLivepeerPaidJob(wallet as never, {
+            accountId: 'creator.testnet', jobId: 'job-001', title, priceUsdc: '2000001', expectedSourceBytes: SOURCE_BYTES,
+        })).rejects.toThrow('invalid_title');
+        expect(near.viewContract).not.toHaveBeenCalled(); expect(fetchMock).not.toHaveBeenCalled();
+        expect(wallet.signDelegateActions).not.toHaveBeenCalled();
+    });
+
 
     it('recovers the same file after tab closure with one key approval and no second payment', async () => {
         const { file, job, wallet, fetchMock, input } = await publicResumeFixture();
@@ -268,43 +280,18 @@ describe('Livepeer browser upload', () => {
         expect(await readLivepeerUploadDraft('other.testnet', file)).toBeNull();
     });
 
-    it('blocks key replacement for the Google pilot before changing either storage', async () => {
-        const { wallet, fetchMock, input } = await publicResumeFixture();
-        sessionStorage.clear();
-        const draft = await readLivepeerUploadDraft(input.accountId, input.file);
-        vi.mocked(sessionStorage.setItem).mockClear(); vi.mocked(localStorage.setItem).mockClear();
-        await expect(prepareLivepeerUploadResume(wallet as never, { ...input, allowUploadKeyReplacement: false }))
-            .rejects.toThrow('livepeer_upload_key_recovery_unavailable');
-        expect(sessionStorage.setItem).not.toHaveBeenCalled(); expect(localStorage.setItem).not.toHaveBeenCalled();
-        expect(wallet.getAccounts).not.toHaveBeenCalled(); expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
-        expect(fetchMock).not.toHaveBeenCalled();
-        expect(await readLivepeerUploadDraft(input.accountId, input.file)).toEqual(draft);
-    });
-
-    it.each(['valid', 'expired-key', 'different-key', 'missing-device', 'expired-local-key', 'invalid-local-key'])('Google paid-job resume preserves keys: %s', async (condition) => {
-        const { wallet, fetchMock, input, job } = await publicResumeFixture();
-        await prepareLivepeerUploadResume(wallet as never, input);
-        wallet.signAndSendTransaction.mockClear(); fetchMock.mockClear(); device.prepare.mockClear();
-        if (condition === 'expired-key') job.upload_key_expires_at_ms = String(Date.now() - 1);
-        if (condition === 'different-key') job.upload_public_key = 'ed25519:different';
-        if (condition === 'missing-device') device.get.mockResolvedValue(null);
-        if (condition === 'expired-local-key' || condition === 'invalid-local-key') {
-            const storageKey = Array.from({ length: sessionStorage.length }, (_, i) => sessionStorage.key(i)!)
-                .find(key => key.startsWith('youtick:livepeer-job-session:'))!;
-            const value = JSON.parse(sessionStorage.getItem(storageKey)!);
-            sessionStorage.setItem(storageKey, condition === 'invalid-local-key' ? 'invalid-json'
-                : JSON.stringify({ ...value, uploadKeyExpiresAtMs: String(Date.now() - 1) }));
-        }
-        const saved = () => Array.from({ length: sessionStorage.length }, (_, i) => sessionStorage.getItem(sessionStorage.key(i)!));
-        const previous = saved();
-        const result = prepareLivepeerUploadResume(wallet as never, { ...input, allowUploadKeyReplacement: false });
-        if (condition === 'valid') await expect(result).resolves.toMatchObject({ created: false });
-        else {
-            await expect(result).rejects.toThrow(condition === 'missing-device' ? 'device_session_required' : 'livepeer_upload_key_recovery_unavailable');
-            expect(fetchMock).not.toHaveBeenCalled();
-        }
-        expect(saved()).toEqual(previous);
-        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled(); expect(device.prepare).not.toHaveBeenCalled();
+    it('keeps an expired session while an upload-intent read fails', async () => {
+        const wallet = createWallet();
+        await provisionJobSession(wallet);
+        const key = sessionStorage.key(0)!;
+        const saved = JSON.parse(sessionStorage.getItem(key)!);
+        const original = JSON.stringify({ ...saved, uploadKeyExpiresAtMs: '1' });
+        sessionStorage.setItem(key, original);
+        const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+        await expect(requestLivepeerUploadIntent({ accountId: 'creator.testnet', jobId: 'job-001', generation: 1,
+            expectedSourceBytes: SOURCE_BYTES, sourceType: 'mp4', sourceFingerprintSha256: SOURCE_FINGERPRINT,
+        })).rejects.toThrow('livepeer_session_key_missing');
+        expect(sessionStorage.getItem(key)).toBe(original); expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('resumes a paid full HD job after the policy returns to 720p without a new quote or asset', async () => {
@@ -368,6 +355,111 @@ describe('Livepeer browser upload', () => {
         expect(sponsored.signDelegateActions).not.toHaveBeenCalled();
         expect(device.prepare).not.toHaveBeenCalled();
         expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+    });
+
+    it('still reconciles an existing paid job when the UI draft is missing', async () => {
+        const { job, wallet, input, fetchMock } = await publicResumeFixture();
+        await prepareLivepeerUploadResume(wallet as never, input);
+        clearLivepeerUploadDraft(input.accountId);
+        wallet.signAndSendTransaction.mockClear(); fetchMock.mockClear();
+        const sponsored = { ...wallet, signDelegateActions: vi.fn() };
+        await expect(authorizeLivepeerPaidJob(sponsored as never, { accountId: input.accountId,
+            jobId: input.jobId, title: job.title, priceUsdc: job.price_usdc, expectedSourceBytes: input.file.size,
+        })).resolves.toBe(job.upload_public_key);
+        expect(sponsored.signDelegateActions).not.toHaveBeenCalled();
+        expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    describe.each(['before preparation', 'after quote', 'after signature'])('draft guard %s', (timing) => {
+        const workingStorage = localStorage;
+        afterEach(() => { globalThis.localStorage = workingStorage; });
+        it.each(['missing', 'invalid', 'job_mismatch', 'read_failed', 'write_failed', 'readback_failed',
+            ...(timing === 'after signature' ? [] : ['payment_pending'])])(
+            'stops safely with %s', async (reason) => {
+                featureFlags.publicTestnetVideoV1 = true;
+                featureFlags.enableSponsoredLivepeerUploads = true;
+                featureFlags.enablePlaybackAuthorizerV2 = true;
+                vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
+                const draft = { schema: 'youtick.livepeer-ui-draft.v2' as const, stage: 'payment_pending' as const,
+                    jobId: 'job-draft-guard', title: 'Synthetic', price: '2', sourceBytes: 5,
+                    sourceName: 'synthetic.mp4', sourceLastModified: 123, sourceFingerprintSha256: 'a'.repeat(64) };
+                writeLivepeerUploadDraft('creator.testnet', draft);
+                const key = 'youtick:livepeer-ui-draft:testnet:paid-media-livepeer-v1.testnet:creator.testnet';
+                const failStorage = () => {
+                    const storage = localStorage;
+                    if (reason === 'missing') clearLivepeerUploadDraft('creator.testnet');
+                    if (reason === 'invalid') storage.setItem(key, '{private-marker');
+                    if (reason === 'job_mismatch') writeLivepeerUploadDraft('creator.testnet', { ...draft, jobId: 'job-other' });
+                    if (reason === 'payment_pending') writeLivepeerUploadDraft('creator.testnet', { ...draft, paymentAttempted: true });
+                    if (reason === 'read_failed') globalThis.localStorage = { ...storage,
+                        getItem: () => { throw new Error('private-marker'); } };
+                    if (reason === 'write_failed') globalThis.localStorage = { ...storage,
+                        setItem: () => { throw new Error('private-marker'); } };
+                    if (reason === 'readback_failed') {
+                        let written = false;
+                        globalThis.localStorage = { ...storage,
+                            setItem: () => { written = true; },
+                            getItem: (name: string) => written ? null : storage.getItem(name) };
+                    }
+                };
+                if (timing === 'before preparation') failStorage();
+                const wallet = createSponsoredWallet();
+                wallet.signDelegateActions.mockImplementation(async () => {
+                    if (timing === 'after signature') failStorage();
+                    return { signedDelegateActions: ['A'.repeat(64)] };
+                });
+                const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+                    expect(url).toMatch(/\/v1\/sponsored-upload-quotes$/);
+                    const response = await sponsoredQuoteResponse(JSON.parse(String(init.body)).request);
+                    if (timing === 'after quote') failStorage();
+                    return response;
+                });
+                vi.stubGlobal('fetch', fetchMock);
+                const error = await authorizeLivepeerPaidJob(wallet as never, {
+                    accountId: 'creator.testnet', jobId: draft.jobId, title: draft.title,
+                    priceUsdc: '2000000', expectedSourceBytes: draft.sourceBytes,
+                }).catch((error: unknown) => error);
+                expect(error).toBeInstanceOf(Error);
+                expect((error as Error).message).toBe(reason === 'payment_pending' ? 'livepeer_payment_pending' : `livepeer_draft_${reason}`);
+                expect((error as Error).cause).toBeUndefined();
+                expect(wallet.signDelegateActions).toHaveBeenCalledTimes(timing === 'after signature' ? 1 : 0);
+                expect(fetchMock).toHaveBeenCalledTimes(timing === 'before preparation' ? 0 : 1);
+                expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+                if (reason === 'job_mismatch') expect(JSON.parse(workingStorage.getItem(key)!).jobId).toBe('job-other');
+                if (timing === 'before preparation') expect(device.prepare).not.toHaveBeenCalled();
+            });
+    });
+
+    it.each(['job_mismatch', 'payment_pending', 'cleanup_failed'])('keeps the real draft intact when the storage check sees %s', (reason) => {
+        featureFlags.publicTestnetVideoV1 = true;
+        const draft = { schema: 'youtick.livepeer-ui-draft.v2' as const, stage: 'payment_pending' as const,
+            jobId: 'job-draft-guard', title: 'Synthetic', price: '2', sourceBytes: 5,
+            sourceName: 'synthetic.mp4', sourceLastModified: 123, sourceFingerprintSha256: 'a'.repeat(64) };
+        writeLivepeerUploadDraft('creator.testnet', draft);
+        const storage = localStorage;
+        const key = 'youtick:livepeer-ui-draft:testnet:paid-media-livepeer-v1.testnet:creator.testnet';
+        const changed = reason === 'job_mismatch' ? { ...draft, jobId: 'job-other' }
+            : reason === 'payment_pending' ? { ...draft, paymentAttempted: true } : draft;
+        globalThis.localStorage = { ...storage,
+            setItem: (name, value) => {
+                expect(name).toBe(`${key}:write-check`);
+                expect(value).toBe('1');
+                storage.setItem(name, value);
+                storage.setItem(key, JSON.stringify(changed));
+            },
+            removeItem: (name) => {
+                if (reason === 'cleanup_failed') throw new Error('private-marker');
+                storage.removeItem(name);
+            },
+        };
+        try {
+            expect(() => assertLivepeerUploadDraftReady('creator.testnet', draft.jobId)).toThrow(
+                reason === 'job_mismatch' ? 'livepeer_draft_job_mismatch'
+                    : reason === 'payment_pending' ? 'livepeer_payment_pending' : 'livepeer_draft_write_failed');
+            expect(JSON.parse(storage.getItem(key)!)).toEqual(changed);
+            if (reason !== 'cleanup_failed') expect(storage.getItem(`${key}:write-check`)).toBeNull();
+        } finally { globalThis.localStorage = storage; }
     });
 
     it.each([[false, false], [true, false], [false, true], [true, true]])('records a public payment only at relay submission; rejected=%s fullHd=%s', async (rejected, fullHd) => {

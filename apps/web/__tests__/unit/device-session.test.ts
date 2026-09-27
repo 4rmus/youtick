@@ -102,6 +102,28 @@ describe('device session', () => {
         writer.destroy(); resumed.destroy(); unsubscribe();
     });
 
+    it('removes only the requested corrupt account and preserves another account key and watch progress', async () => {
+        const api = await import('@/lib/device-session');
+        await api.preparePlaybackDevice('creator.testnet');
+        const buyer = await api.preparePlaybackDevice('buyer.testnet');
+        const { openWatchProgress } = await import('@/lib/watch-progress');
+        const input = { accountId: 'buyer.testnet', jobId: 'job-1', generation: 1, playbackId: 'playback-1' };
+        const writer = (await openWatchProgress(input, new AbortController().signal))!;
+        await writer.save(20, 120, true);
+        const stored = [...databases.values()][0].get('account:creator.testnet') as { certificate_proof: { account_id: string } };
+        stored.certificate_proof.account_id = 'buyer.testnet';
+
+        expect(await api.getDeviceSession('creator.testnet')).toBeNull();
+        const remaining = [...databases.values()][0];
+        expect(remaining.has('account:creator.testnet')).toBe(false);
+        expect(remaining.has('account:buyer.testnet')).toBe(true);
+        await writer.save(40, 120, true);
+        expect(await api.preparePlaybackDevice('buyer.testnet')).toEqual(buyer);
+        const resumed = (await openWatchProgress(input, new AbortController().signal))!;
+        expect(resumed.position?.position).toBe(20);
+        writer.destroy(); resumed.destroy();
+    });
+
     it('rejects a delayed authorization read on account switch while preserving the key', async () => {
         const api = await import('@/lib/device-session');
         const authorization = await api.preparePlaybackDevice('buyer.testnet');
@@ -438,4 +460,25 @@ describe('device session', () => {
         expect(await api.getDeviceSession('buyer.testnet')).toBeNull();
     });
 
+});
+
+
+it('clears only the selected account device while preserving another account and saved progress', async () => {
+    vi.resetModules();
+    config.NEAR_NETWORK = 'testnet'; config.NEAR_CONFIG.marketContractId = 'market.testnet';
+    config.APP_CONFIG.publicAppUrl = 'https://app.youtick.net';
+    chain.view.mockReset().mockResolvedValue(null);
+    const stores = installStore();
+    const api = await import('@/lib/device-session');
+    const first = await api.preparePlaybackDevice('first.testnet');
+    const second = await api.preparePlaybackDevice('second.testnet');
+    const data = [...stores.values()][0];
+    data.set('saved-progress', { time: 12 });
+    await api.clearDeviceSession('first.testnet');
+    const after = [...stores.values()][0];
+    expect(after.has('account:first.testnet')).toBe(false);
+    expect(after.get('saved-progress')).toEqual({ time: 12 });
+    const restored = await api.preparePlaybackDevice('second.testnet');
+    expect(restored.session_public_key).toBe(second.session_public_key);
+    expect(restored.session_public_key).not.toBe(first.session_public_key);
 });

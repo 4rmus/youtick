@@ -49,7 +49,8 @@ describe('active UI copy', () => {
         for (const value of ['Testnet Beta', 'no real value', '1 GB/file', '1 upload/UTC day',
             '10 uploads total', '0.10 test USDC', '24-hour']) expect(banner).toContain(value);
         expect(terms).toContain('abuse@youtick.net');
-        expect(terms).toContain('non-refundable');
+        expect(terms).toContain('does not automatically refund a processed upload or a cancelled job');
+        expect(terms).toContain('Nothing in this notice excludes applicable statutory consumer rights');
         expect(layout).toContain('index: false');
         expect(robots).toContain("disallow: '/'");
     });
