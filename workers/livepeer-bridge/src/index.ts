@@ -1,3 +1,8 @@
+export { NearAuthMpcSponsor } from './mpc-entrypoint';
+import { executeDevice, executeTicket, submitMpc, mpcStatus, validateMpcCommand, type MpcSponsorEnv } from './mpc-sponsor';
+import type { MpcCommand } from '../../../protocol/paid-media-livepeer-v1/mpc-sponsor';
+import { COMPACT_UPLOAD_PREFIX, unpackCompactUpload } from '../../../protocol/paid-media-livepeer-v1/compact-upload';
+import { hasTitleContent } from '../../../protocol/paid-media-livepeer-v1/title';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { base58Decode } from './base58';
 import {
@@ -47,7 +52,7 @@ import {
     paymentRateLimit,
     paymentStatus,
 } from './payments';
-export interface Env {
+export interface Env extends MpcSponsorEnv {
     CF_VERSION_METADATA: WorkerVersionMetadata;
     VIDEO_ENVIRONMENT?: string;
     LIVEPEER_BRIDGE_ENABLED?: string;
@@ -95,6 +100,8 @@ export interface Env {
     NEAR_SPONSOR_RELAYER_PRIVATE_KEY?: string;
     NEAR_SPONSOR_RELAYER_KEY_EPOCH?: string;
     CREATOR_FEE_QUOTE_PRIVATE_KEY?: string;
+    // Canonical base64 Ed25519 key for verification-only runtimes; does not enable quote issuance.
+    CREATOR_FEE_QUOTE_PUBLIC_KEY?: string;
     CREATOR_FEE_QUOTE_KEY_VERSION?: string;
     MULTI_ASSET_PAYMENTS_MODE?: string;
     MULTI_ASSET_PAYMENT_ASSET_IDS?: string;
@@ -749,6 +756,7 @@ const bridgeWorker = {
             return json({
                 status: 'ok',
                 service: 'livepeer-bridge',
+                compactUpload: { version: 1, network: env.NEAR_NETWORK, market: env.MARKET_CONTRACT_ID },
                 versionId: env.CF_VERSION_METADATA.id,
                 stage: env.LIVEPEER_BRIDGE_ENABLED === 'true' ? 'ENABLED' : 'DISABLED',
                 publicControlImplemented: PUBLIC_CONTROL_REQUESTS_IMPLEMENTED,
@@ -1186,6 +1194,27 @@ export class LivepeerControl {
     async fetch(request: Request): Promise<Response> {
         const url = new URL(request.url);
         try {
+            if (request.method === 'POST' && ['/internal/mpc/submit', '/internal/mpc/status', '/internal/mpc/ticket', '/internal/mpc/device'].includes(url.pathname)) {
+                const input = await readJsonObject(request);
+                try {
+                    if (url.pathname === '/internal/mpc/submit') {
+                        if (input.purpose === 'upload') {
+                            // Verify the existing relay's signed quote before spending any MPC sponsor budget.
+                            const { uploadMessage: msg } = await validateMpcCommand(input as MpcCommand, this.env);
+                            const request: JsonObject = {};
+                            for (const field of ['creator_id', 'job_id', 'title', 'price_usdc', 'expected_source_bytes', 'profile_id',
+                                'profile_config_sha256', 'upload_public_key', 'upload_key_expires_at_ms']) request[field] = msg![field];
+                            await verifySponsoredUploadQuote(this.env, parseSponsoredPaidJobRequest(request, false),
+                                parseSponsoredUploadQuote(requireObject(msg!.sponsor_quote, 'mpc_invalid_request')), msg!.sponsor_quote_signature as string);
+                        }
+                        return json(await submitMpc(this.state, this.env, input as MpcCommand));
+                    }
+                    requireExactKeys(input, ['accountId', 'operationId'], 'mpc_invalid_request');
+                    if (url.pathname === '/internal/mpc/device') return Response.json(await executeDevice(this.state, this.env, input.accountId as string, input.operationId as string));
+                    if (url.pathname === '/internal/mpc/ticket') return Response.json(await executeTicket(this.state, this.env, input.accountId as string, input.operationId as string));
+                    return Response.json(await mpcStatus(this.state, this.env, input.accountId as string, input.operationId as string));
+                } catch { return json({ error: 'mpc_request_rejected' }, 409); }
+            }
             if (isPublicTestnetEnvironment(this.env)) await requirePublicUploadPolicy(this.env);
             if (request.method === 'POST' && url.pathname === '/v1/upload-intents') {
                 if (!isPublicBetaPacket(this.env) && !isPublicTestnetEnvironment(this.env)) return await this.reserveUploadIntent(request);
@@ -3802,7 +3831,7 @@ function parseSponsoredPaidJobRequest(
         || typeof value.job_id !== 'string'
         || !JOB_ID_PATTERN.test(value.job_id)
         || typeof value.title !== 'string'
-        || value.title.trim().length < 1
+        || !hasTitleContent(value.title)
         || new TextEncoder().encode(value.title).length > 200
         || typeof value.price_usdc !== 'string'
         || !/^[1-9][0-9]{0,19}$/.test(value.price_usdc)
@@ -3889,7 +3918,7 @@ async function sponsorRelayerControlObject(env: Env): Promise<DurableObjectStub>
     ].join(':')));
 }
 
-async function parseSponsoredUploadRelayRequest(
+export async function parseSponsoredUploadRelayRequest(
     request: Request,
     env: Env,
 ): Promise<ParsedSponsoredDelegate> {
@@ -3964,18 +3993,18 @@ async function parseSponsoredUploadRelayRequest(
     } catch {
         throw new Error(shapeCode);
     }
-    requireExactKeys(ftArgs, [
-        'receiver_id', 'amount', 'memo', 'msg',
-    ], shapeCode);
+    const compact = typeof ftArgs.msg === 'string' && ftArgs.msg.startsWith(COMPACT_UPLOAD_PREFIX);
+    requireExactKeys(ftArgs, compact ? ['receiver_id', 'amount', 'msg'] : ['receiver_id', 'amount', 'memo', 'msg'], shapeCode);
     if (ftArgs.receiver_id !== env.MARKET_CONTRACT_ID
         || typeof ftArgs.amount !== 'string'
-        || ftArgs.memo !== 'YouTick creator upload fee'
+        || (!compact && ftArgs.memo !== 'YouTick creator upload fee')
         || typeof ftArgs.msg !== 'string') {
         throw new Error(shapeCode);
     }
     let message: JsonObject;
     try {
-        message = requireObject(JSON.parse(ftArgs.msg), shapeCode);
+        message = requireObject(compact ? await unpackCompactUpload(ftArgs.msg, { network: env.NEAR_NETWORK!, market: env.MARKET_CONTRACT_ID!,
+            creator: delegate.senderId, usdc: usdcContractId(env), keyString: bytes => `ed25519:${baseEncode(bytes)}` }) : JSON.parse(ftArgs.msg), shapeCode);
     } catch {
         throw new Error(shapeCode);
     }
@@ -4154,6 +4183,19 @@ async function verifySponsoredUploadQuote(
     } catch {
         throw new Error(SPONSORED_RELAY_REJECTION_CODES.quote_validation);
     }
+    if (env.CREATOR_FEE_QUOTE_PUBLIC_KEY !== undefined) {
+        // Explicit public configuration is authoritative; never fall back to signing on a bad key/signature.
+        let verified = false;
+        try {
+            const raw = base64Decode(env.CREATOR_FEE_QUOTE_PUBLIC_KEY);
+            if (raw.length !== 32 || bytesToBase64(raw) !== env.CREATOR_FEE_QUOTE_PUBLIC_KEY
+                || providedSignature.length !== 64 || bytesToBase64(providedSignature) !== signatureBase64) throw new Error('invalid_quote_key');
+            const key = await crypto.subtle.importKey('raw', raw, 'Ed25519', false, ['verify']);
+            verified = await crypto.subtle.verify('Ed25519', key, providedSignature, new TextEncoder().encode(canonicalMessage));
+        } catch { /* Malformed public configuration fails closed, including when a private key is present. */ }
+        if (!verified) throw new Error(SPONSORED_RELAY_REJECTION_CODES.quote_validation);
+        return;
+    }
     const privateKey = await importCreatorFeeQuotePrivateKey(env);
     const expectedSignature = new Uint8Array(await crypto.subtle.sign(
         'Ed25519',
@@ -4175,6 +4217,15 @@ function sponsoredQuoteIsFresh(input: ParsedSponsoredDelegate): boolean {
         && expiresAt > now
         && expiresAt > issuedAt
         && expiresAt - issuedAt <= BigInt(CREATOR_FEE_QUOTE_LIFETIME_MS);
+}
+
+function requireSponsoredQuoteFresh(input: ParsedSponsoredDelegate, height: number): void {
+    if (!sponsoredQuoteIsFresh(input)
+        || BigInt(height) < BigInt(input.quote.quote_block_height)
+        || BigInt(height) > BigInt(input.quote.max_delegate_block_height)
+        || BigInt(height) >= input.maxBlockHeight) {
+        throw new Error(SPONSORED_RELAY_REJECTION_CODES.freshness);
+    }
 }
 
 async function relaySponsoredUpload(
@@ -4255,6 +4306,7 @@ async function relaySponsoredUpload(
         readSponsorRelayerAccessKey(env),
         readUsdcBalance(env, input.request.creator_id),
     ]);
+    requireSponsoredQuoteFresh(input, block.height);
     if (input.nonce !== creatorAccessKey.nonce + 1n
         || input.maxBlockHeight <= BigInt(block.height)
         || input.maxBlockHeight > BigInt(input.quote.max_delegate_block_height)
@@ -4340,6 +4392,9 @@ async function relaySponsoredUpload(
         await state.storage.put(key, record);
     }
 
+    // Reconcile existing broadcasts above; only a new send requires a fresh quote.
+    const latestBlock = await readFinalBlock(env);
+    requireSponsoredQuoteFresh(input, latestBlock.height);
     let broadcast: 'sent' | 'invalid_nonce' | 'failed' | 'unknown';
     try {
         broadcast = await sendTransaction(env, record.signedTxBase64!);
@@ -6253,7 +6308,9 @@ async function verifyPlaybackDelegate(env: Env, input: PlaybackV2Request): Promi
         if (!call || call.methodName !== 'ft_transfer_call' || call.deposit !== 1n) throw new Error('playback_denied');
         const args = JSON.parse(new TextDecoder().decode(Uint8Array.from(call.args))) as JsonObject;
         if (args.receiver_id !== env.MARKET_CONTRACT_ID || typeof args.msg !== 'string') throw new Error('playback_denied');
-        const message = JSON.parse(args.msg) as JsonObject;
+        const message = typeof args.msg === 'string' && args.msg.startsWith(COMPACT_UPLOAD_PREFIX)
+            ? await unpackCompactUpload(args.msg, { network: env.NEAR_NETWORK!, market: env.MARKET_CONTRACT_ID!, creator: input.request.account_id,
+                usdc: usdcContractId(env), keyString: bytes => `ed25519:${baseEncode(bytes)}` }) : JSON.parse(args.msg) as JsonObject;
         const authorization = parsePlaybackSessionAuthorization(message.playback_session);
         if (message.action !== 'create_paid_job' || message.creator_id !== input.request.account_id
             || authorization.session_public_key !== input.certificate.session_public_key

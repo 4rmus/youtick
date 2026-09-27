@@ -8,6 +8,8 @@ import { QueryProvider } from '@/components/providers/QueryProvider';
 import { WalletProvider } from '@/components/providers/WalletProvider';
 import { PublicTestnetBetaBanner } from '@/components/PublicTestnetBetaBanner';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import { AuthLabBoundary } from '@/components/AuthLabBoundary';
+import { productSessionSettings } from '@/lib/near-auth-session-settings';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
 
@@ -20,17 +22,20 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
     await connection();
+    const productAuth = productSessionSettings();
     const cspNonce = (await headers()).get('x-nonce') ?? undefined;
     return (
         <html lang="en" data-scroll-behavior="smooth">
             <body className={`${geist.variable} min-h-screen bg-black text-white antialiased`}>
-                <QueryProvider>
-                    {(FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1) && <PublicTestnetBetaBanner />}
-                    <WalletProvider cspNonce={cspNonce}>
-                        <Navbar />
-                        <main>{children}</main>
-                    </WalletProvider>
-                </QueryProvider>
+                <AuthLabBoundary lab={children}>
+                    <QueryProvider>
+                        {(FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1) && <PublicTestnetBetaBanner />}
+                        <WalletProvider cspNonce={cspNonce} nearAuthClientId={productAuth?.clientId}>
+                            <Navbar />
+                            <main>{children}</main>
+                        </WalletProvider>
+                    </QueryProvider>
+                </AuthLabBoundary>
             </body>
         </html>
     );

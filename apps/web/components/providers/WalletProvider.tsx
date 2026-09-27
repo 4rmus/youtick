@@ -12,6 +12,8 @@ import {
     revokeBrowserAuthority,
 } from '@/lib/signless-access-key';
 import type { WalletInstance } from '@/lib/types';
+import { createNearAuthLab } from '@/lib/near-auth-lab';
+import { AUTH_METHOD_KEY, PRODUCT_AUTH_CALLBACK, readProductAccount } from '@/lib/near-auth-product';
 import { METEOR_ACCOUNT_STORAGE_KEY, selectedWalletAccount } from '@/lib/wallet-account';
 import {
     PINNED_WALLET_MANIFEST,
@@ -24,6 +26,12 @@ interface WalletContextValue {
     signOut: () => Promise<void>;
     connect: () => Promise<void>;
     isReady: boolean;
+    authMethod: 'wallet' | 'near-auth' | null;
+    accountReady: boolean;
+    authorizeNearTicket?: (bytes: number[]) => Promise<string>;
+    authorizeNearDevice?: (bytes: number[]) => Promise<string>;
+    authorizeNearUpload?: (bytes: number[]) => Promise<string>;
+    connectNearAuth?: (redirect?: boolean) => Promise<void>;
 }
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -105,7 +113,7 @@ export function createWalletAdapter(
     };
 }
 
-export function WalletProvider({ children, cspNonce }: { children: React.ReactNode; cspNonce?: string }) {
+export function WalletProvider({ children, cspNonce, nearAuthClientId }: { children: React.ReactNode; cspNonce?: string; nearAuthClientId?: string }) {
     const connectorRef = useRef<NearConnector | null>(null);
     const walletRef = useRef<NearWalletBase | null>(null);
     const pinnedWalletRef = useRef<NearWalletBase | null>(null);
@@ -118,15 +126,60 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
     const [isReady, setIsReady] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const modeRef = useRef<'wallet' | 'near-auth' | 'none'>(nearAuthClientId ? 'none' : 'wallet');
+    const productAuthRef = useRef<ReturnType<typeof createNearAuthLab> | null>(null);
+    if (nearAuthClientId && !productAuthRef.current) productAuthRef.current = createNearAuthLab(nearAuthClientId, 'product');
+    const accountReadRef = useRef(0);
+    const expiryRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const [authMethod, setAuthMethod] = useState<'wallet' | 'near-auth' | null>(null);
+    const [accountReady, setAccountReady] = useState(false);
+
+    const loadNearAccount = useCallback(async (expectedGeneration: number, signal?: AbortSignal) => {
+        const readId = ++accountReadRef.current;
+        let account;
+        try { account = await readProductAccount(signal); }
+        catch (error) {
+            if (readId !== accountReadRef.current || signal?.aborted || expectedGeneration !== authGenerationRef.current) return;
+            throw error;
+        }
+        if (readId !== accountReadRef.current) return;
+        if (signal?.aborted || expectedGeneration !== authGenerationRef.current || modeRef.current !== 'near-auth') return;
+        const previous = accountIdRef.current;
+        if (previous && previous !== account.accountId) {
+            clearSessionGrantCache(previous);
+            await suspendDeviceSession();
+            if (signal?.aborted || expectedGeneration !== authGenerationRef.current || modeRef.current !== 'near-auth') return;
+            authGenerationRef.current += 1;
+        }
+        accountIdRef.current = account.accountId;
+        setAccountId(account.accountId); setAuthMethod('near-auth'); setAccountReady(account.accountReady); setError(null);
+        clearTimeout(expiryRef.current);
+        const expiryGeneration = authGenerationRef.current;
+        expiryRef.current = setTimeout(() => {
+            if (expiryGeneration !== authGenerationRef.current || modeRef.current !== 'near-auth') return;
+            authGenerationRef.current += 1;
+            clearSessionGrantCache(account.accountId);
+            accountIdRef.current = null; setAccountId(null); setAuthMethod(null); setAccountReady(false);
+            void suspendDeviceSession().catch(() => {});
+            setError('Oturumunuz sona erdi. Yeniden giriş yapın.');
+        }, account.expiresAt - Date.now());
+    }, []);
+
+    const clearActiveDevice = useCallback(async (id: string | null) => {
+        if (!nearAuthClientId) return clearDeviceSession();
+        return id ? clearDeviceSession(id) : suspendDeviceSession();
+    }, [nearAuthClientId]);
+
     const clearAuth = useCallback(async (id: string | null, preserveDevice = false) => {
         if (!id) return;
         clearSessionGrantCache(id);
         if (preserveDevice) await suspendDeviceSession();
-        else await clearDeviceSession();
+        else await clearActiveDevice(id);
         await clearSignlessAccessKey(id);
-    }, []);
+    }, [clearActiveDevice]);
 
     const applyWallet = useCallback(async (wallet: NearWalletBase, accounts: Account[], sessionPrepared = false) => {
+        if (modeRef.current !== 'wallet') return;
         const expectedGeneration = authGenerationRef.current;
         const nextAccountId = selectedWalletAccount(wallet, accounts)?.accountId ?? null;
         const previousAccountId = accountIdRef.current;
@@ -136,11 +189,56 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         if (expectedGeneration !== authGenerationRef.current) return;
         walletRef.current = wallet;
         accountIdRef.current = nextAccountId;
-        setAccountId(nextAccountId);
+        setAccountId(nextAccountId); setAccountReady(Boolean(nextAccountId)); setAuthMethod(nextAccountId ? 'wallet' : null);
     }, [clearAuth]);
 
     useEffect(() => {
         let mounted = true;
+        const identityGeneration = authGenerationRef.current;
+        const productAuth = productAuthRef.current;
+        let choice: string | null = null;
+        if (nearAuthClientId) {
+            try { choice = localStorage.getItem(AUTH_METHOD_KEY); }
+            catch { choice = 'none'; setError('Giriş tercihi okunamadı. Yeniden giriş yapın.'); }
+            if (choice !== null && !['wallet', 'near-auth', 'none'].includes(choice)) choice = 'none';
+            modeRef.current = choice === 'wallet' ? 'wallet' : choice === 'none' ? 'none' : 'near-auth';
+        } else modeRef.current = 'wallet';
+        const isCallback = Boolean(nearAuthClientId && window.location.pathname === PRODUCT_AUTH_CALLBACK);
+        if (isCallback) modeRef.current = 'near-auth';
+        const identityRestore = (async () => {
+            if (!nearAuthClientId || !productAuth || modeRef.current !== 'near-auth') return;
+            try {
+                const authenticated = await productAuth.restore();
+                if (!mounted || identityGeneration !== authGenerationRef.current || modeRef.current !== 'near-auth') return;
+                if (!authenticated) {
+                    if (!choice && !isCallback) modeRef.current = 'wallet';
+                    return;
+                }
+                if (isCallback) {
+                    localStorage.setItem(AUTH_METHOD_KEY, 'near-auth');
+                    window.location.replace(productAuth.returnPath());
+                    return;
+                }
+                await loadNearAccount(identityGeneration);
+            } catch {
+                if (mounted && identityGeneration === authGenerationRef.current) setError('Hesap oturumu doğrulanamadı. Yeniden giriş yapın.');
+            }
+        })();
+        const onFocus = () => {
+            if (!nearAuthClientId || modeRef.current !== 'near-auth' || connectingRef.current) return;
+            const expectedGeneration = authGenerationRef.current;
+            connectAbortRef.current?.abort();
+            const controller = new AbortController(); connectAbortRef.current = controller;
+            void loadNearAccount(expectedGeneration, controller.signal).catch(() => {
+                if (!mounted || controller.signal.aborted || expectedGeneration !== authGenerationRef.current) return;
+                const previous = accountIdRef.current;
+                if (previous) clearSessionGrantCache(previous);
+                accountIdRef.current = null; setAccountId(null); setAuthMethod(null); setAccountReady(false);
+                void suspendDeviceSession().catch(() => {});
+                setError('Hesap oturumu doğrulanamadı. Yeniden giriş yapın.');
+            });
+        };
+        if (nearAuthClientId) window.addEventListener('focus', onFocus);
         const providers = NEAR_NETWORK === 'testnet'
             ? { mainnet: [], testnet: getRpcEndpoints() }
             : { mainnet: getRpcEndpoints(), testnet: [] };
@@ -160,6 +258,17 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         connectorRef.current = connector;
 
         const onSelectionChanged = (event: StorageEvent) => {
+            if (nearAuthClientId && event.storageArea === localStorage && (event.key === AUTH_METHOD_KEY || event.key === null)) {
+                authGenerationRef.current += 1; productAuth?.cancelLogin(); connectAbortRef.current?.abort();
+                const previous = accountIdRef.current;
+                if (previous) clearSessionGrantCache(previous);
+                modeRef.current = 'none'; accountIdRef.current = null;
+                setAccountId(null); setAuthMethod(null); setAccountReady(false); setIsReady(true);
+                void suspendDeviceSession().catch(() => {});
+                setError('Giriş seçiminiz başka sekmede değişti. Sayfayı yenileyin.');
+                return;
+            }
+            if (modeRef.current !== 'wallet') return;
             if (event.storageArea !== localStorage || (event.key !== null && event.key !== METEOR_ACCOUNT_STORAGE_KEY)
                 || !walletRef.current || !isPinnedMeteorManifest(walletRef.current.manifest)) return;
             const previousAccountId = accountIdRef.current;
@@ -181,7 +290,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             }
         });
         connector.on('wallet:signIn', ({ wallet, accounts, source }) => {
-            if (!mounted || connectingRef.current || source === 'signInAndSignMessage') return;
+            if (!mounted || modeRef.current !== 'wallet' || connectingRef.current || source === 'signInAndSignMessage') return;
             const expectedGeneration = ++authGenerationRef.current;
             void applyWallet(wallet, accounts).then(() => {
                 if (expectedGeneration === authGenerationRef.current) setError(null);
@@ -190,9 +299,9 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             });
         });
         connector.on('wallet:signOut', () => {
-            if (!mounted) return;
+            if (!mounted || modeRef.current !== 'wallet') return;
             authGenerationRef.current += 1;
-            void clearDeviceSession().catch(() => setError('Secure session cleanup failed. Please retry disconnect.'));
+            void clearActiveDevice(accountIdRef.current).catch(() => setError('Secure session cleanup failed. Please retry disconnect.'));
             void clearAuth(accountIdRef.current).catch(() => {});
             walletRef.current = null;
             accountIdRef.current = null;
@@ -200,7 +309,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         });
 
         const restoreGeneration = authGenerationRef.current;
-        const canRestore = () => mounted && !connectingRef.current && restoreGeneration === authGenerationRef.current;
+        const canRestore = () => mounted && modeRef.current === 'wallet' && !connectingRef.current && restoreGeneration === authGenerationRef.current;
         const finishRestore = startVideoMeasurement('wallet_restore');
         // Bound UI readiness without discarding the SDK's eventual restore result.
         const timeoutId = setTimeout(() => {
@@ -226,6 +335,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
                 pinnedWalletRef.current = connector.wallets.find((candidate) => (
                     isPinnedMeteorManifest(candidate.manifest)
                 )) ?? null;
+                await identityRestore;
                 if (!canRestore()) return;
                 const connected = await connector.getConnectedWallet();
                 if (!canRestore()) return;
@@ -259,6 +369,9 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         return () => {
             mounted = false;
             clearTimeout(timeoutId);
+            clearTimeout(expiryRef.current);
+            if (nearAuthClientId) window.removeEventListener('focus', onFocus);
+            // StrictMode reuses the validated callback promise; only explicit account changes cancel login.
             finishRestore('cancelled');
             connectAbortRef.current?.abort();
             authGenerationRef.current += 1;
@@ -267,9 +380,10 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             if (connectorRef.current === connector) connectorRef.current = null;
             pinnedWalletRef.current = null;
         };
-    }, [applyWallet, clearAuth, cspNonce]);
+    }, [applyWallet, clearAuth, clearActiveDevice, cspNonce, nearAuthClientId, loadNearAccount]);
 
     const getWallet = useCallback(async (): Promise<WalletInstance> => {
+        if (modeRef.current !== 'wallet') throw new Error('near_auth_payments_not_enabled');
         const connector = connectorRef.current;
         if (!connector) throw new Error('Wallet connector is not ready');
         const accountId = accountIdRef.current;
@@ -282,16 +396,28 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         walletRef.current = wallet;
         return createWalletAdapter(wallet, wallet === pinnedWalletRef.current, {
             accountId,
-            isCurrent: () => expectedGeneration === authGenerationRef.current
+            isCurrent: () => modeRef.current === 'wallet' && expectedGeneration === authGenerationRef.current
                 && accountId === accountIdRef.current && wallet === walletRef.current,
         });
     }, []);
 
-    const connect = useCallback((): Promise<void> => {
+    const connect = useCallback(async (): Promise<void> => {
         if (connectingRef.current) return connectingRef.current;
         const connector = connectorRef.current;
         if (!connector) return Promise.resolve();
+        productAuthRef.current?.cancelLogin();
+        connectAbortRef.current?.abort(); clearTimeout(expiryRef.current);
         const expectedGeneration = ++authGenerationRef.current;
+        modeRef.current = 'wallet';
+        if (nearAuthClientId) {
+            try { localStorage.setItem(AUTH_METHOD_KEY, 'wallet'); }
+            catch { modeRef.current = 'none'; setError('Giriş tercihi kaydedilemedi.'); return; }
+            const previous = accountIdRef.current;
+            if (previous) clearSessionGrantCache(previous);
+            accountIdRef.current = null; setAccountId(null); setAuthMethod(null); setAccountReady(false);
+            await suspendDeviceSession();
+            if (expectedGeneration !== authGenerationRef.current) return;
+        }
         const controller = new AbortController();
         connectAbortRef.current = controller;
         const work = (async () => {
@@ -304,7 +430,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
                     if (expectedGeneration === authGenerationRef.current) await applyWallet(wallet, accounts);
                 } else {
                     if (accountIdRef.current) await clearAuth(accountIdRef.current);
-                    else await clearDeviceSession();
+                    else await clearActiveDevice(null);
                     controller.signal.throwIfAborted();
                     let connectedWallet: NearWalletBase | undefined;
                     const session = await connectDeviceSession(async (signMessageParams) => {
@@ -330,14 +456,61 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         connectingRef.current = work;
         void work.finally(() => { if (connectingRef.current === work) connectingRef.current = null; });
         return work;
-    }, [applyWallet, clearAuth]);
+    }, [applyWallet, clearAuth, clearActiveDevice, nearAuthClientId]);
+
+    const connectNearAuth = useCallback(async (redirect = false) => {
+        const auth = productAuthRef.current;
+        if (!nearAuthClientId || !auth || connectingRef.current) return;
+        const expectedGeneration = ++authGenerationRef.current;
+        connectAbortRef.current?.abort(); clearTimeout(expiryRef.current);
+        const controller = new AbortController(); connectAbortRef.current = controller;
+        const work = (async () => {
+            modeRef.current = 'near-auth';
+            walletRef.current = null;
+            const previous = accountIdRef.current;
+            if (previous) clearSessionGrantCache(previous);
+            accountIdRef.current = null; setAccountId(null); setAuthMethod(null); setAccountReady(false); setIsReady(false); setError(null);
+            try {
+                localStorage.setItem(AUTH_METHOD_KEY, 'near-auth');
+                await suspendDeviceSession();
+                controller.signal.throwIfAborted();
+                if (await auth.login(redirect)) await loadNearAccount(expectedGeneration, controller.signal);
+            } catch {
+                if (!controller.signal.aborted && expectedGeneration === authGenerationRef.current) setError('Giriş tamamlanamadı. Yeniden deneyin.');
+            } finally {
+                if (expectedGeneration === authGenerationRef.current) setIsReady(true);
+            }
+        })();
+        connectingRef.current = work;
+        try { await work; } finally { if (connectingRef.current === work) connectingRef.current = null; }
+    }, [nearAuthClientId, loadNearAccount]);
+
+    const authorizeNear = useCallback(async (bytes: number[], kind: 'transaction' | 'delegateAction') => {
+        const auth = productAuthRef.current, id = accountIdRef.current, generation = authGenerationRef.current;
+        if (!auth || !id || modeRef.current !== 'near-auth') throw new Error('session_required');
+        const token = await auth.requestSigningAuthorization(bytes, kind);
+        if (modeRef.current !== 'near-auth' || accountIdRef.current !== id || authGenerationRef.current !== generation) throw new Error('account_changed');
+        return token;
+    }, []);
+
+    const authorizeNearTicket = useCallback((bytes: number[]) => authorizeNear(bytes, 'transaction'), [authorizeNear]);
+    const authorizeNearUpload = useCallback((bytes: number[]) => authorizeNear(bytes, 'delegateAction'), [authorizeNear]);
 
     const signOut = useCallback(async () => {
         const id = accountIdRef.current;
         authGenerationRef.current += 1;
-        connectAbortRef.current?.abort();
+        connectAbortRef.current?.abort(); clearTimeout(expiryRef.current);
+        if (nearAuthClientId && modeRef.current !== 'wallet') {
+            modeRef.current = 'none'; productAuthRef.current?.cancelLogin();
+            if (id) clearSessionGrantCache(id);
+            accountIdRef.current = null; setAccountId(null); setAuthMethod(null); setAccountReady(false);
+            try { localStorage.setItem(AUTH_METHOD_KEY, 'none'); } catch { setError('Giriş tercihi kaydedilemedi.'); }
+            try { await productAuthRef.current?.logout(); }
+            catch { setError('Oturum kapatma tamamlanamadı. Yeniden deneyin.'); }
+            return;
+        }
         try {
-            await clearDeviceSession();
+            await clearActiveDevice(id);
         } catch {
             setError('Secure session cleanup failed. Enable site storage and retry disconnect.');
             return;
@@ -360,12 +533,16 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         walletRef.current = null;
         accountIdRef.current = null;
         setAccountId(null);
-        setError(null);
-    }, [clearAuth, getWallet]);
+        setError(null); setAuthMethod(null); setAccountReady(false);
+        if (nearAuthClientId) { modeRef.current = 'none'; localStorage.setItem(AUTH_METHOD_KEY, 'none'); }
+    }, [clearAuth, clearActiveDevice, getWallet, nearAuthClientId]);
 
     return (
-        <WalletContext.Provider value={{ accountId, getWallet, signOut, connect, isReady }}>
-            {error && <p role="alert" className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md rounded-lg border border-red-500/40 bg-black p-3 text-sm text-red-300">{error}</p>}
+        <WalletContext.Provider value={{ accountId, getWallet, signOut, connect, isReady, authMethod, accountReady, authorizeNearTicket: nearAuthClientId ? authorizeNearTicket : undefined, authorizeNearDevice: nearAuthClientId ? authorizeNearTicket : undefined, authorizeNearUpload: nearAuthClientId ? authorizeNearUpload : undefined, connectNearAuth: nearAuthClientId ? connectNearAuth : undefined }}>
+            {error && <p role="alert" className="fixed inset-x-4 top-4 z-[60] mx-auto max-w-md rounded-lg border border-red-500/40 bg-black p-3 text-sm text-red-300">{error}
+                {nearAuthClientId && !accountId && <button type="button" className="ml-2 min-h-11 underline" disabled={!isReady}
+                    onClick={() => void connectNearAuth(true)}>Continue in this tab</button>}
+            </p>}
             {children}
         </WalletContext.Provider>
     );

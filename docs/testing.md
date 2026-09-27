@@ -1,11 +1,85 @@
 # Testing
 
+## NEAR Auth provider handoff (isolated, synthetic)
+
+From the repository root, with Node.js 24 and Git installed:
+
+```bash
+npm ci --prefix scripts/near-auth-provider-handoff --ignore-scripts --no-audit --no-fund
+npm test --prefix scripts/near-auth-provider-handoff
+```
+
+This separately locked reproduction applies the delivered provider patch to a
+pinned source fixture. It checks prompt size, exact signing bytes, large numbers
+and approval denial, including maximum-byte ASCII/Turkish titles. The test makes
+no provider/wallet requests and does not change application dependencies or the
+running Web build. Handoff instructions: `scripts/near-auth-provider-handoff/README.md`.
+Results are `LOCAL_TEST`, not deployed-provider or browser acceptance.
+
+## NEAR Auth compact upload
+
+With the existing Web, Bridge and provider-handoff dependencies installed:
+
+```bash
+node scripts/near-auth-payload-compatibility.cjs
+```
+
+This runs 360 synthetic size/signature cases against the unchanged provider
+Action and compares the six shared fixtures without rewriting them. Results
+are written only to `tmp/near-auth-payload-compatibility/`. Web, Bridge and
+Market suites below cover the compact consumers, readable review, deployment
+capability rejection, token size boundary, replay and existing playback proofs.
+No real identity, wallet, provider, NEAR transaction or upload is used.
+
+## NEAR Auth payment native Worker runtime
+
+With Node.js 24 and the existing Web/Bridge dependencies installed, from the repository root:
+
+```bash
+node workers/livepeer-bridge/scripts/near-auth-ticket-runtime.mjs
+# Product upload MPC, signed-quote guard, recovery and final-job settlement
+node workers/livepeer-bridge/scripts/near-auth-ticket-runtime.mjs --upload
+```
+
+Uses the installed Wrangler/Miniflare runtime, the real product ticket or upload API,
+OpenNext request-context initialization, a named Service binding, and the existing
+Bridge SQLite Durable Object. All provider/discovery/RPC calls terminate in local
+fixtures; generated identities and keys are synthetic. No live credentials,
+funding, browser profile, port 3000, deployment, or persistent env configuration
+is used. Worker restarts preserve only the new isolated test storage directory.
+Results and credential-free bundles are under `tmp/near-auth-ticket-runtime-*/` or `tmp/near-auth-upload-runtime-*/`.
+
+Checks closed/missing configuration, real session/JWT validation, concurrent
+outer/inner submission, lost-response recovery across restarts, read-only status
+with sending disabled, final entitlement/device proof, and absence of raw
+credentials in persisted records. This is native-worker **LOCAL_TEST**, not a
+full Next server/browser or hosted/provider/testnet acceptance.
+
+Upload mode gives the Worker only a synthetic public quote key; the fixture signer
+stays outside the Worker. Missing/malformed/wrong public keys, version mismatch and
+invalid quote signatures are rejected before MPC spending. It checks one outer
+send, flag-off/restart signature recovery, and exact final
+Market job/device settlement. It does not run the upload relay or Livepeer; those
+remain separate from this Worker RPC/SQLite test. The browser harness below covers
+product upload and lost-response/reload continuation with mocked relay/TUS responses.
+
+## Documentation
+
+```bash
+npm run build --prefix docs
+```
+
+This checks documentation rendering and links without changing the Web build.
+
 ## Web
 
 ```bash
 cd apps/web
 npm ci
 npm test -- --run
+npm run test:near-auth-types
+# Entire Web source using the existing project compiler options
+npx tsc --noEmit --incremental false
 npm run test:livepeer-canary
 # Local Brave device storage / mock wallet and chain only
 node scripts/device-session-browser-check.mjs
@@ -17,6 +91,10 @@ node scripts/player-browser-check.mjs --full-hd
 node scripts/player-browser-check.mjs --full-hd --extended
 # Local device-activation UI: real React/transaction encoding, mock wallet/chain/token
 node scripts/player-device-browser-check.mjs
+# Isolated Brave: Google lab + real V3 key/reload/logout, mocked identity/chain/token/media
+node scripts/near-auth-playback-browser-check.mjs
+# Isolated Brave + ffmpeg: real lab + product session/Navbar/profile UI; mocked identity/wallet/chain/Bridge/TUS
+node scripts/near-auth-ux-browser-check.mjs
 npm run lint
 npm run build
 ```

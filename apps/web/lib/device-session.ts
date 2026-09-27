@@ -297,6 +297,18 @@ export async function preparePlaybackDevice(accountId: string): Promise<Playback
     };
 }
 
+// Read an already prepared V3 key without generating a replacement during approval/recovery.
+export async function readPreparedPlaybackDevice(accountId: string): Promise<PlaybackSessionAuthorization | null> {
+    const expectedGeneration = generation;
+    const session = await readValidDeviceSession(accountId);
+    if (session?.certificate.version !== '3') return null;
+    const certificate_sha256 = await sha256Hex(canonicalDeviceCertificate(session.certificate));
+    const current = await readStored(accountId);
+    if (expectedGeneration !== generation || current.session?.certificate.session_public_key !== session.certificate.session_public_key) return null;
+    return { session_public_key: session.certificate.session_public_key, certificate_sha256,
+        authorization_duration_ms: PLAYBACK_DEVICE_DURATION_MS };
+}
+
 export async function rememberPlaybackDelegate(accountId: string, authorization: PlaybackSessionAuthorization, signedDelegate: string): Promise<void> {
     const expectedGeneration = generation;
     const { revision, session } = await readStored(accountId);
@@ -340,15 +352,15 @@ async function readValidDeviceSession(accountId: string, invalidated?: () => voi
         return session;
     } catch {
         if (expectedGeneration !== generation) return null;
-        const clearing = clearDeviceSession();
+        const clearing = clearDeviceSession(accountId);
         invalidated?.();
         await clearing;
         return null;
     }
 }
 
-export async function clearDeviceSession(): Promise<void> {
-    return updateDeviceSession(true);
+export async function clearDeviceSession(accountId?: string): Promise<void> {
+    return updateDeviceSession(true, accountId);
 }
 
 // Account switches stop in-flight work across tabs without deleting device keys or progress.
@@ -356,7 +368,7 @@ export async function suspendDeviceSession(): Promise<void> {
     return updateDeviceSession(false);
 }
 
-async function updateDeviceSession(clear: boolean): Promise<void> {
+async function updateDeviceSession(clear: boolean, accountId?: string): Promise<void> {
     invalidate();
     if (typeof window === 'undefined' || typeof indexedDB === 'undefined') return;
     const db = await openStore();
@@ -366,7 +378,10 @@ async function updateDeviceSession(clear: boolean): Promise<void> {
         const store = transaction.objectStore('sessions');
         const revision = store.get('revision');
         revision.onsuccess = () => {
-            if (clear) store.clear();
+            if (clear) {
+                if (accountId !== undefined) store.delete(`account:${accountId}`);
+                else store.clear();
+            }
             clearedRevision = (revision.result ?? 0) + 1;
             store.put(clearedRevision, 'revision');
         };

@@ -8,6 +8,7 @@ import { PageShell } from '@/components/PageShell';
 import { RuntimeClosed } from '@/components/RuntimeClosed';
 import { ScreenState } from '@/components/ScreenState';
 import { useWallet } from '@/components/providers/WalletProvider';
+import { AccountEntryButtons } from '@/components/AccountEntryButtons';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FEATURE_FLAGS } from '@/lib/constants';
@@ -15,20 +16,20 @@ import { formatUsdc, readCreatorBalance, withdrawCreatorBalance } from '@/lib/li
 import { readMarketCreatorPublicationPage } from '@/lib/market-read-model';
 
 export default function ProfilePage() {
-    const { accountId, connect, getWallet, isReady } = useWallet();
+    const { accountId, connect, getWallet, isReady, authMethod, accountReady, connectNearAuth } = useWallet();
     const queryClient = useQueryClient();
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const balanceQuery = useQuery({
         queryKey: ['creatorBalance', accountId],
         queryFn: () => readCreatorBalance(accountId!),
-        enabled: Boolean(accountId && FEATURE_FLAGS.enablePaidMediaLivepeerV1),
+        enabled: Boolean(accountId && accountReady !== false && FEATURE_FLAGS.enablePaidMediaLivepeerV1),
         staleTime: 15_000,
     });
     const activityQuery = useQuery({
         queryKey: ['creatorReadModel', accountId],
         queryFn: async () => (await readMarketCreatorPublicationPage(accountId!, null, 50)).items,
-        enabled: Boolean(accountId && FEATURE_FLAGS.enableDerivedReadModel),
+        enabled: Boolean(accountId && accountReady !== false && FEATURE_FLAGS.enableDerivedReadModel),
         staleTime: 15_000,
         refetchInterval: 15_000,
         refetchIntervalInBackground: false,
@@ -46,14 +47,14 @@ export default function ProfilePage() {
                     icon={<User className="h-7 w-7" />}
                     title="Wallet not connected"
                     description="Connect the NEAR wallet that owns your publications."
-                    actions={<Button onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>}
+                    actions={connectNearAuth ? <AccountEntryButtons /> : <Button onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>}
                 />
             </PageShell>
         );
     }
 
     const withdraw = async () => {
-        if (!balanceQuery.data || BigInt(balanceQuery.data) === 0n) return;
+        if (authMethod === 'near-auth' || !balanceQuery.data || BigInt(balanceQuery.data) === 0n) return;
         setBusy(true);
         setError(null);
         try {
@@ -91,6 +92,7 @@ export default function ProfilePage() {
                         </div>
                         <p className="text-xs uppercase tracking-wider text-zinc-500">Account ID</p>
                         <p className="mt-2 break-all font-mono text-sm text-white">{accountId}</p>
+                        {authMethod === 'near-auth' && <p className="mt-3 text-sm text-zinc-400">{accountReady ? 'Signed in with NEAR Auth.' : 'You are signed in. This NEAR account has not been funded yet. No funds have been sent.'}</p>}
                     </Card>
 
                     {FEATURE_FLAGS.enablePaidMediaLivepeerV1 && (
@@ -107,9 +109,10 @@ export default function ProfilePage() {
                             ) : (
                                 <p className="mt-4 text-3xl font-bold text-white">{formatUsdc(balanceQuery.data || '0')} <span className="text-sm font-normal text-zinc-400">USDC</span></p>
                             )}
-                            <Button variant="near" className="mt-6 w-full" disabled={busy || !balanceQuery.data || BigInt(balanceQuery.data) === 0n} onClick={() => void withdraw()}>
+                            <Button variant="near" className="mt-6 w-full" disabled={authMethod === 'near-auth' || busy || !balanceQuery.data || BigInt(balanceQuery.data) === 0n} onClick={() => void withdraw()}>
                                 {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Withdraw
                             </Button>
+                            {authMethod === 'near-auth' && <p className="mt-3 text-sm text-zinc-400">Withdrawals with this sign-in method are not available yet.</p>}
                             {error && <p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}
                         </Card>
                     )}

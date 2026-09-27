@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
     buyTicket: vi.fn(),
+    authMethod: 'wallet' as 'wallet' | 'near-auth',
+    nearTicketPanel: vi.fn(),
     featureFlags: { enablePlaybackAuthorizerV2: false },
     getWallet: vi.fn(),
     hasEntitlement: vi.fn(),
@@ -41,6 +43,7 @@ vi.mock('@tanstack/react-query', () => ({
 vi.mock('@/components/providers/WalletProvider', () => ({
     useWallet: () => ({
         accountId: 'buyer.testnet',
+        authMethod: state.authMethod,
         connect: vi.fn(),
         getWallet: state.getWallet,
         isReady: true,
@@ -56,6 +59,7 @@ vi.mock('@/components/ui/button', () => ({
 
 vi.mock('@/components/PageShell', () => ({ PageShell: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('@/components/ScreenState', () => ({ ScreenState: () => null }));
+vi.mock('@/components/NearAuthTicketPayment', () => ({ NearAuthTicketPayment: (props: { disabled: boolean }) => { state.nearTicketPanel(props); return null; } }));
 vi.mock('@/components/LivepeerPlayer', () => ({ LivepeerPlayer: () => null }));
 vi.mock('@/components/MultiAssetPaymentPanel', () => ({ MultiAssetPaymentPanel: () => { state.paymentPanel(); return null; } }));
 vi.mock('next/link', () => ({ default: ({ children }: { children: React.ReactNode }) => children }));
@@ -105,7 +109,7 @@ describe('Livepeer ticket payment recovery', () => {
         vi.useFakeTimers();
         vi.clearAllMocks();
         state.featureFlags.enablePlaybackAuthorizerV2 = false;
-        state.onPurchase = null;
+        state.onPurchase = null; state.authMethod = 'wallet';
         state.publicationReady = true;
         state.entitlement = false;
         state.entitlementError = null;
@@ -198,4 +202,18 @@ describe('Livepeer ticket payment recovery', () => {
 
         expect(markup.includes('one-time playback-key setup')).toBe(expected);
     });
+});
+
+it('routes NEAR Auth purchases through the bounded product component, never the wallet or multi-asset panel', () => {
+    state.authMethod = 'near-auth'; state.entitlement = false; state.entitlementError = null; state.entitlementFetching = false;
+    state.publicationReady = true; state.nearTicketPanel.mockClear(); state.paymentPanel.mockClear(); state.buyTicket.mockClear();
+    renderToStaticMarkup(React.createElement(LivepeerWatch, { jobId: PUBLICATION.publication_id }));
+    expect(state.nearTicketPanel).toHaveBeenCalledOnce(); expect(state.paymentPanel).not.toHaveBeenCalled(); expect(state.buyTicket).not.toHaveBeenCalled();
+});
+
+it('keeps the NEAR Auth approval mounted during a background entitlement read, with new purchases disabled', () => {
+    state.authMethod = 'near-auth'; state.entitlement = false; state.entitlementError = null; state.entitlementFetching = true;
+    state.publicationReady = true; state.nearTicketPanel.mockClear();
+    renderToStaticMarkup(React.createElement(LivepeerWatch, { jobId: PUBLICATION.publication_id }));
+    expect(state.nearTicketPanel).toHaveBeenCalledWith(expect.objectContaining({ disabled: true }));
 });

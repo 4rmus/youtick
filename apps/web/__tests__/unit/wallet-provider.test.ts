@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 const walletTestState = vi.hoisted(() => ({
+    productSigning: vi.fn(), productRestore: vi.fn(), productLogin: vi.fn(), productLogout: vi.fn(), productCancel: vi.fn(), productAccount: vi.fn(),
+    focusListener: undefined as undefined | (() => void),
     cleanup: undefined as void | (() => void),
     connectorOptions: undefined as undefined | Record<string, unknown>,
     connectorWallets: [] as Array<{ manifest: Record<string, unknown> }>,
@@ -18,6 +20,11 @@ const walletTestState = vi.hoisted(() => ({
     registeredWallets: [] as Array<Record<string, unknown>>,
     stateSetters: [] as ReturnType<typeof vi.fn>[],
 }));
+
+vi.mock('@/lib/near-auth-lab', () => ({ createNearAuthLab: () => ({ restore: walletTestState.productRestore,
+    requestSigningAuthorization: walletTestState.productSigning, login: walletTestState.productLogin, logout: walletTestState.productLogout, cancelLogin: walletTestState.productCancel,
+    returnPath: () => '/profile' }) }));
+vi.mock('@/lib/near-auth-product', async load => ({ ...await load<object>(), readProductAccount: walletTestState.productAccount }));
 
 vi.mock('react', async (importOriginal) => {
     const actual = await importOriginal<typeof import('react')>();
@@ -88,8 +95,16 @@ function selectMeteor(accountId: string) {
 
 describe('WalletProvider CSP initialization', () => {
     beforeEach(() => {
+        walletTestState.suspendDeviceSession.mockReset().mockResolvedValue(undefined);
+        walletTestState.clearDeviceSession.mockReset().mockResolvedValue(undefined);
+        walletTestState.productRestore.mockReset().mockResolvedValue(false);
+        walletTestState.productLogin.mockReset().mockResolvedValue(true);
+        walletTestState.productLogout.mockReset().mockResolvedValue(undefined);
+        walletTestState.productCancel.mockReset();
+        walletTestState.productAccount.mockReset().mockResolvedValue({ accountId: 'ab'.repeat(32), accountReady: true, expiresAt: Date.now() + 300000 });
         Object.assign(window, {
-            addEventListener: vi.fn((name, fn) => { if (name === 'storage') walletTestState.storageListener = fn; }),
+            location: { pathname: '/profile', search: '', origin: 'http://localhost:3000', replace: vi.fn() },
+            addEventListener: vi.fn((name, fn) => { if (name === 'storage') walletTestState.storageListener = fn; if (name === 'focus') walletTestState.focusListener = fn; }),
             removeEventListener: vi.fn(),
         });
     });
@@ -114,7 +129,122 @@ describe('WalletProvider CSP initialization', () => {
         vi.restoreAllMocks();
         delete (window as Partial<Window>).addEventListener;
         delete (window as Partial<Window>).removeEventListener;
-        walletTestState.storageListener = undefined;
+        walletTestState.storageListener = undefined; walletTestState.focusListener = undefined;
+    });
+
+    it('restores only the chosen NEAR Auth identity and ignores sponsor wallet events', async () => {
+        vi.useFakeTimers(); localStorage.setItem('youtick:auth-method:v1', 'near-auth');
+        walletTestState.productRestore.mockResolvedValue(true);
+        const provider = WalletProvider({ children: null, nearAuthClientId: 'product-client' });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith('ab'.repeat(32));
+        expect(walletTestState.getConnectedWallet).not.toHaveBeenCalled();
+        walletTestState.handlers['wallet:signIn']({ wallet: {}, accounts: [{ accountId: 'sponsor.testnet' }], source: 'external' });
+        walletTestState.handlers['wallet:signOut']({});
+        walletTestState.storageListener?.({ storageArea: localStorage, key: selectionKey } as StorageEvent);
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalledWith('sponsor.testnet');
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+        await expect(provider.props.value.getWallet()).rejects.toThrow('near_auth_payments_not_enabled');
+    });
+
+    it.each(['authorizeNearTicket', 'authorizeNearUpload', 'authorizeNearDevice'] as const)('discards %s when the user logs out during the provider prompt', async method => {
+        vi.useFakeTimers(); localStorage.setItem('youtick:auth-method:v1', 'near-auth');
+        walletTestState.productRestore.mockResolvedValue(true);
+        const provider = WalletProvider({ children: null, nearAuthClientId: 'product-client' });
+        await vi.advanceTimersByTimeAsync(0);
+        let finish!: (value: string) => void;
+        walletTestState.productSigning.mockReturnValue(new Promise<string>(resolve => { finish = resolve; }));
+        const signing = provider.props.value[method]!([1, 2]);
+        expect(walletTestState.productSigning).toHaveBeenCalledWith([1, 2], method === 'authorizeNearUpload' ? 'delegateAction' : 'transaction');
+        await provider.props.value.signOut(); finish('synthetic-token');
+        await expect(signing).rejects.toThrow('account_changed');
+    });
+
+    it('keeps an unfunded identity signed in without creating a wallet account', async () => {
+        vi.useFakeTimers(); walletTestState.productRestore.mockResolvedValue(true);
+        walletTestState.productAccount.mockResolvedValue({ accountId: 'ab'.repeat(32), accountReady: false, expiresAt: Date.now() + 300000 });
+        WalletProvider({ children: null, nearAuthClientId: 'product-client' });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith('ab'.repeat(32));
+        expect(walletTestState.stateSetters[4]).toHaveBeenLastCalledWith(false);
+        expect(walletTestState.connect).not.toHaveBeenCalled();
+        expect(walletTestState.productLogin).not.toHaveBeenCalled();
+    });
+
+    it('does not let late wallet restore overwrite a new NEAR Auth login', async () => {
+        vi.useFakeTimers(); localStorage.setItem('youtick:auth-method:v1', 'wallet');
+        let restore!: (value: unknown) => void;
+        walletTestState.getConnectedWallet.mockReturnValue(new Promise(resolve => { restore = resolve; }));
+        const provider = WalletProvider({ children: null, nearAuthClientId: 'product-client' });
+        await vi.advanceTimersByTimeAsync(0);
+        await provider.props.value.connectNearAuth!();
+        restore({ wallet: {}, accounts: [{ accountId: 'old.testnet' }] });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith('ab'.repeat(32));
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalledWith('old.testnet');
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+    });
+
+    it('expires the active identity without deleting saved device keys', async () => {
+        vi.useFakeTimers(); walletTestState.productRestore.mockResolvedValue(true);
+        walletTestState.productAccount.mockResolvedValue({ accountId: 'ab'.repeat(32), accountReady: true, expiresAt: Date.now() + 1000 });
+        WalletProvider({ children: null, nearAuthClientId: 'product-client' });
+        await vi.advanceTimersByTimeAsync(1001);
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith(null);
+        expect(walletTestState.suspendDeviceSession).toHaveBeenCalled();
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+    });
+
+    it('discards an account reply after logout and preserves the explicit signed-out choice', async () => {
+        vi.useFakeTimers(); localStorage.setItem('youtick:auth-method:v1', 'near-auth');
+        walletTestState.productRestore.mockResolvedValue(true);
+        let reply!: (value: unknown) => void;
+        walletTestState.productAccount.mockReturnValue(new Promise(resolve => { reply = resolve; }));
+        const provider = WalletProvider({ children: null, nearAuthClientId: 'product-client' });
+        await vi.advanceTimersByTimeAsync(0);
+        await provider.props.value.signOut();
+        reply({ accountId: 'ab'.repeat(32), accountReady: true, expiresAt: Date.now() + 10000 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalledWith('ab'.repeat(32));
+        expect(localStorage.getItem('youtick:auth-method:v1')).toBe('none');
+        expect(walletTestState.productLogout).toHaveBeenCalledOnce();
+        expect(walletTestState.revokeBrowserAuthority).not.toHaveBeenCalled();
+        expect(walletTestState.clearDeviceSession).not.toHaveBeenCalled();
+    });
+
+    it('does not restore any identity from an invalid saved method', async () => {
+        vi.useFakeTimers(); localStorage.setItem('youtick:auth-method:v1', 'untrusted-mode');
+        WalletProvider({ children: null, nearAuthClientId: 'product-client' });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.productRestore).not.toHaveBeenCalled();
+        expect(walletTestState.getConnectedWallet).not.toHaveBeenCalled();
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalled();
+    });
+
+    it('keeps the newer focused account when an older restore response arrives later', async () => {
+        vi.useFakeTimers(); walletTestState.productRestore.mockResolvedValue(true);
+        let reply!: (value: unknown) => void;
+        walletTestState.productAccount.mockReturnValueOnce(new Promise(resolve => { reply = resolve; }));
+        WalletProvider({ children: null, nearAuthClientId: 'product-client' });
+        await vi.advanceTimersByTimeAsync(0);
+        walletTestState.productAccount.mockResolvedValue({ accountId: 'cd'.repeat(32), accountReady: true, expiresAt: Date.now() + 300000 });
+        walletTestState.focusListener?.(); await vi.advanceTimersByTimeAsync(0);
+        reply({ accountId: 'ab'.repeat(32), accountReady: true, expiresAt: Date.now() + 300000 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(walletTestState.stateSetters[0]).toHaveBeenLastCalledWith('cd'.repeat(32));
+        expect(walletTestState.stateSetters[0]).not.toHaveBeenCalledWith('ab'.repeat(32));
+    });
+
+    it('limits wallet logout device cleanup to that wallet in product mode', async () => {
+        vi.useFakeTimers(); localStorage.setItem('youtick:auth-method:v1', 'wallet');
+        walletTestState.getConnectedWallet.mockResolvedValue({ wallet: { manifest: { id: 'other-wallet' } }, accounts: [{ accountId: 'creator.testnet' }] });
+        const provider = WalletProvider({ children: null, nearAuthClientId: 'product-client' });
+        await vi.advanceTimersByTimeAsync(0);
+        await provider.props.value.signOut();
+        expect(walletTestState.revokeBrowserAuthority).toHaveBeenCalledOnce();
+        expect(walletTestState.clearDeviceSession).toHaveBeenCalledWith('creator.testnet');
+        expect(walletTestState.clearDeviceSession.mock.calls.every(([id]) => id === 'creator.testnet')).toBe(true);
+        expect(localStorage.getItem('youtick:auth-method:v1')).toBe('none');
     });
 
     it('passes the request nonce and stops waiting for a stale wallet restore', async () => {
@@ -250,7 +380,8 @@ describe('WalletProvider CSP initialization', () => {
         const layout = await readFile('app/layout.tsx', 'utf8');
 
         expect(layout).toContain("(await headers()).get('x-nonce')");
-        expect(layout).toContain('<WalletProvider cspNonce={cspNonce}>');
+        expect(layout).toContain('<WalletProvider cspNonce={cspNonce} nearAuthClientId={productAuth?.clientId}>');
+        expect(layout).not.toContain('nearAuthClientId={productAuth?.secret}');
     });
 
     it('connects without requesting a sign-in access key', async () => {

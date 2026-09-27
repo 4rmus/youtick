@@ -151,6 +151,8 @@ jobs:
                   bridge=true
                   ;;
                 protocol/paid-media-livepeer-v1/*|scripts/check-paid-media-livepeer-v1.mjs)
+                  web=true
+                  contracts=true
                   protocol=true
                   bridge=true
                   ;;

@@ -1,0 +1,13 @@
+{
+  "name": "youtick-near-auth-provider-handoff",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24 <25" },
+  "scripts": { "test": "node --test prompt-size.test.mjs" },
+  "devDependencies": {
+    "@near-js/transactions": "2.5.1",
+    "borsh": "1.0.0",
+    "near-api-js": "7.3.0"
+  }
+}

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { PageShell } from '@/components/PageShell';
 import { ScreenState } from '@/components/ScreenState';
 import { LivepeerPlayer } from '@/components/LivepeerPlayer';
+import { NearAuthTicketPayment } from '@/components/NearAuthTicketPayment';
 import { MultiAssetPaymentPanel } from '@/components/MultiAssetPaymentPanel';
 import { FEATURE_FLAGS } from '@/lib/constants';
 import { playerCopy, playerLanguage, subscribePlayerLanguage, type PlayerLanguage } from '@/lib/player-copy';
@@ -28,8 +29,9 @@ import {
 } from '@/lib/multi-asset-payments';
 
 export function LivepeerWatch({ jobId }: { jobId: string }) {
-    const { accountId, connect, getWallet, isReady } = useWallet();
+    const { accountId, connect, getWallet, isReady, authMethod, authorizeNearTicket } = useWallet();
     const queryClient = useQueryClient();
+    const settledTicketRef = React.useRef('');
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const language = React.useSyncExternalStore(subscribePlayerLanguage, playerLanguage, () => 'en' as PlayerLanguage);
@@ -52,7 +54,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
 
     const purchase = async () => {
         const publication = publicationQuery.data;
-        if (!accountId || !publication || entitlementQuery.error || entitlementQuery.isFetching || entitlementQuery.data !== false) return;
+        if (authMethod === 'near-auth' || !accountId || !publication || entitlementQuery.error || entitlementQuery.isFetching || entitlementQuery.data !== false) return;
         setBusy(true);
         setError(null);
         let convertedCheckout = false;
@@ -196,7 +198,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                         poster={coverUrl ?? undefined}
                     />
                 </div>
-            ) : !isReady || (accountId && (entitlementQuery.error || entitlementQuery.isFetching || entitlementQuery.data !== false)) ? (
+            ) : !isReady || (accountId && (entitlementQuery.error || (entitlementQuery.isFetching && authMethod !== 'near-auth') || entitlementQuery.data !== false)) ? (
                 <div lang={language} className="flex min-h-48 flex-col items-center justify-center gap-4 rounded-2xl border border-zinc-800 bg-black p-6 text-center">
                     {entitlementQuery.error ? <>
                         <p role="alert" className="text-sm text-zinc-300">{copy.accessError}</p>
@@ -227,10 +229,19 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                                     ? 'This video is unavailable.'
                                     : publication.availability === 'SALES_SUSPENDED'
                                         ? 'Ticket sales are paused. Existing ticket holders can still watch.'
-                                        : 'Connect your wallet to buy a ticket with USDC.'}
+                                        : authMethod === 'near-auth' ? 'Buy access with your Google / Passkey account.' : 'Connect your wallet to buy a ticket with USDC.'}
                             </p>
                             {!accountId ? (
                                 <Button className="mt-4 sm:mt-6" onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>
+                            ) : authMethod === 'near-auth' ? (
+                                <NearAuthTicketPayment key={`${accountId}:${jobId}`} accountId={accountId} publicationId={jobId}
+                                    price={publication.price_usdc} title={publication.title} disabled={!salesOpen || entitlementQuery.isFetching}
+                                    authorize={authorizeNearTicket} onSettled={(operationId, refresh) => {
+                                        const key = `${accountId}:${jobId}:${operationId}`;
+                                        if (!refresh && settledTicketRef.current === key) return;
+                                        settledTicketRef.current = key;
+                                        void queryClient.invalidateQueries({ queryKey: ['livepeerEntitlement', accountId, jobId] });
+                                    }} />
                             ) : (
                                 <>
                                     <Button className="mt-4 sm:mt-6" disabled={!salesOpen || busy || entitlementQuery.isLoading} onClick={() => void purchase()}>
@@ -245,7 +256,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                             {error && <p role="alert" className="mt-4 text-sm text-red-400">{error}</p>}
                         </div>
                     </div>
-                    {accountId && (
+                    {accountId && authMethod !== 'near-auth' && (
                         <MultiAssetPaymentPanel
                             accountId={accountId}
                             getWallet={getWallet}
