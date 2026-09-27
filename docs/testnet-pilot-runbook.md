@@ -1,5 +1,7 @@
 # Testnet Beta ve Mainnet V1 Runbook
 
+> **27 Eylül 2026 — güncel V1 public pilot kararı ve owner closeout:** Herkese açık testnet, 30 gün, toplam gerçek hizmet gideri tavanı 100 USD; başlangıç/bitiş UTC henüz belirlenmedi. Kullanıcı paket/hesap kontrolünü şimdilik erteledi; mevcut hesap varsayımıyla yerel hazırlık sürer, paket bilinmemesi bu hazırlığı durdurmaz. Plan/credit/cap doğrulanmış sayılmaz: public kaynakta dolar rezervi 0 ve aylık bütçe kontrolü null'dır (`workers/livepeer-bridge/src/index.ts:3257-3267`), env'e 100 yazmak cap oluşturmaz. 30 gün/100 USD kararı ve test NEAR/USDC ile gerçek Livepeer/Cloudflare USD gideri ayrımı korunur; aşım harcaması, deploy veya terms kabul yetkisi yoktur. Eski 14 günlük beta takvimi uygulanmaz. Gizlilik ve canlı kabul/yayın kararı ayrı açık gate'te kapanmadan pilot GO ilan edilmez.
+
 Durum — 5 Eylül 2026:
 `BETA_STARTED / CANARY_INCOMPLETE / PUBLIC_ACCESS_NOT_OPEN / MAINNET_NOT_STARTED`
 
@@ -101,7 +103,7 @@ değildir.
 | Domain | Kontrol | Kaynak durumu |
 |---|---|---|
 | Playback issuance | `LIVEPEER_PLAYBACK_ISSUANCE_ENABLED=false` | v1 ve v2 token route'ları kapalı; entitlement read değişmez. |
-| New purchases | guardian `pause_new_purchases`; admin `unpause_new_purchases` | Global yeni ticket alımı iade edilerek durur; mevcut entitlement/playback ve creator upload açık kalır. İki geçiş governance event'i üretir. |
+| New purchases | guardian `pause_new_purchases`; admin `unpause_new_purchases` | Yeni ticket ve yeni ücretli creator upload job transferi iade edilerek durur. Mevcut entitlement/playback ve aynı mevcut job'un uzlaştırılması ayrı kontrollerle sürer; yeni ödeme yetkisi oluşmaz. İki geçiş governance event'i üretir. |
 | New uploads | `LIVEPEER_NEW_UPLOADS_ENABLED=false` | Yeni Job/intent kapalı; kayıtlı intent, heartbeat ve TUS recovery açık. |
 | Provider mutation | `LIVEPEER_PROVIDER_MUTATIONS_ENABLED=false` | Yeni provider create kapalı; kayıtlı TUS recovery ve provider read/reconcile açık. |
 | Multi-asset quote | `MULTI_ASSET_PAYMENTS_MODE=off` | Yeni quote kapalı; mevcut status recovery açık. |
