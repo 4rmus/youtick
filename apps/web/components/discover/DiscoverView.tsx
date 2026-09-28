@@ -15,28 +15,31 @@ export function DiscoverView() {
                 <p className="mt-3 text-sm text-zinc-400">Films and concert recordings, available directly from their creators.</p>
             </div>
 
-            {query.loading ? (
-                <div role="status" className="flex items-center gap-3 text-zinc-300"><Loader2 className="h-5 w-5 animate-spin" /> Loading releases…</div>
-            ) : query.error ? (
-                <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-6">
-                    <p>Releases could not be loaded.</p>
+            {query.error && (
+                <div role="alert" className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-6">
+                    <p>{query.publications.length > 0
+                        ? 'Releases could not be updated. Showing previously loaded releases.'
+                        : 'Releases could not be loaded.'}</p>
                     <Button className="mt-4" variant="outline" onClick={() => void query.refetch()}>Try again</Button>
                 </div>
+            )}
+            {query.loading ? (
+                <div role="status" className="flex items-center gap-3 text-zinc-300"><Loader2 className="h-5 w-5 animate-spin" /> Loading releases…</div>
             ) : query.publications.length === 0 ? (
-                <p className="rounded-lg border border-zinc-800 p-10 text-center text-zinc-400">No releases are available yet.</p>
+                !query.error && <p className="rounded-lg border border-zinc-800 p-10 text-center text-zinc-400">
+                    {query.hasNextPage ? 'No releases on this page. Check earlier releases below.' : 'No releases are available yet.'}
+                </p>
             ) : (
-                <>
-                    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                        {query.publications.map((publication) => <VideoCard key={publication.publication_id} publication={publication} />)}
-                    </div>
-                    {query.hasNextPage && (
-                        <div className="mt-8 text-center">
-                            <Button variant="outline" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
-                                {query.isFetchingNextPage ? 'Loading…' : 'Show more'}
-                            </Button>
-                        </div>
-                    )}
-                </>
+                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                    {query.publications.map((publication) => <VideoCard key={publication.publication_id} publication={publication} />)}
+                </div>
+            )}
+            {!query.loading && query.hasNextPage && (
+                <div className="mt-8 text-center">
+                    <Button variant="outline" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+                        {query.isFetchingNextPage ? 'Loading…' : 'Show more'}
+                    </Button>
+                </div>
             )}
         </div>
     );

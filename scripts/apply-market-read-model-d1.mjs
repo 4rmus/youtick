@@ -5,6 +5,8 @@ import {
 
 export const MAX_FINAL_EVENTS_PER_BATCH = 16;
 export const MAX_FINAL_BLOCKS_PER_BATCH = 8;
+// Reserve five of 1,000 queries: Queue validation, cursor read/reset/reread and final advance or failure reset.
+export const MAX_FINAL_BATCH_QUERIES = 995;
 
 export async function applyFinalMarketEventBatch(db, rawRecords) {
     const records = normalizeFinalMarketEvents(rawRecords);
@@ -33,7 +35,7 @@ export async function applyFinalMarketBlock(db, rawBlock) {
     return db.batch(finalBlockStatements(db, normalizeFinalMarketBlock(rawBlock)));
 }
 
-export async function applyFinalMarketBlockBatch(db, rawBlocks) {
+export async function applyFinalMarketBlockBatch(db, rawBlocks, queryBudget = MAX_FINAL_BATCH_QUERIES) {
     if (!Array.isArray(rawBlocks) || rawBlocks.length < 1 || rawBlocks.length > MAX_FINAL_BLOCKS_PER_BATCH) {
         throw new Error('invalid_d1_block_batch_size');
     }
@@ -46,7 +48,11 @@ export async function applyFinalMarketBlockBatch(db, rawBlocks) {
                 || block.prev_block_hash !== blocks[index - 1].block_hash)))) {
         throw new Error('non_contiguous_d1_block_batch');
     }
-    return db.batch(blocks.flatMap((block) => finalBlockStatements(db, block)));
+    const statements = blocks.flatMap((block) => finalBlockStatements(db, block));
+    if (statements.length > Math.min(queryBudget, MAX_FINAL_BATCH_QUERIES)) {
+        throw new Error('d1_block_batch_query_limit_exceeded');
+    }
+    return db.batch(statements);
 }
 
 function finalBlockStatements(db, block) {

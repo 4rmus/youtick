@@ -27,7 +27,7 @@ export default function ProfilePage() {
     });
     const activityQuery = useQuery({
         queryKey: ['creatorReadModel', accountId],
-        queryFn: async () => (await readMarketCreatorPublicationPage(accountId!, null, 50)).items,
+        queryFn: async () => (await readMarketCreatorPublicationPage(accountId!, null, 5)).items,
         enabled: Boolean(accountId && FEATURE_FLAGS.enableDerivedReadModel),
         staleTime: 15_000,
         refetchInterval: 15_000,

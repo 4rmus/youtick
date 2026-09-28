@@ -17,6 +17,8 @@ import {
     resetMarketReadModelScanCursor,
     runMarketReadModelOnce,
 } from './run-market-read-model-once.mjs';
+import { parseNeardataMarketBlock } from './fetch-neardata-market-block.mjs';
+import { rebuildMarketReadModel } from './rebuild-market-read-model.mjs';
 import {
     fetchNearFinalBlockHeight,
     ingestMarketReadModelBatch,
@@ -114,6 +116,15 @@ function publicIngestionEnv(db) {
         READ_MODEL_CONTRACT_ID: 'market.testnet', READ_MODEL_START_BLOCK_HEIGHT: '99',
         READ_MODEL_MAX_BLOCKS_PER_RUN: '180', READ_MODEL_NEAR_RPC_URL: 'https://test.rpc.fastnear.com',
         MARKET_READ_MODEL: db };
+}
+
+function purchaseBlock(height, count) {
+    return { ...linkedBlock(height), events: Array.from({ length: count }, (_, i) =>
+        event(height, 'entitlement_purchased', `purchase:${height}:${i}`, {
+            account_id: `buyer-${height}-${i}.testnet`, creator_id: 'creator.testnet',
+            publication_id: 'film', asset: 'USDC', amount: '2000000',
+            creator_amount: '1900000', platform_amount: '100000',
+        }, i)) };
 }
 
 test('bounded block batches preserve event projections and atomic contiguous watermarks', async () => {
@@ -222,6 +233,124 @@ test('public ingestion keeps a request cap even when its clock does not advance'
     assert.equal(result.block_height, 249);
     assert.equal(result.status, 'catching_up');
     db.sqlite.close();
+});
+
+for (const mode of ['public', 'legacy', 'queue']) test(`${mode} ingestion budgets dense blocks and resumes without duplicates`, async (t) => {
+    const db = await database(true);
+    t.after(() => db.sqlite.close());
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    let queries = 0, now = 0;
+    const prepare = db.prepare.bind(db), batch = db.batch.bind(db);
+    db.prepare = (sql) => {
+        if (sql.includes('SELECT block_height, block_hash')) queries++;
+        return prepare(sql);
+    };
+    db.batch = (statements) => {
+        queries += statements.length;
+        assert(queries <= 1000, `invocation exceeded its D1 budget: ${queries}`);
+        return batch(statements);
+    };
+    const messages = [], requested = [];
+    const env = { ...publicIngestionEnv(db),
+        ...(mode === 'legacy' ? { VIDEO_ENVIRONMENT: undefined } : {}),
+        READ_MODEL_BACKFILL_ENABLED: 'true', READ_MODEL_BACKFILL_CONTINUE_ENABLED: 'true',
+        READ_MODEL_BACKFILL_QUEUE: { send: async body => messages.push(body) },
+    };
+    const finalHeight = 123;
+    const dependencies = { now: () => now, sleepFn: async ms => { now += ms; },
+        fetchFinalHeight: async () => finalHeight,
+        fetchBlock: async ({ blockHeight }) => { requested.push(blockHeight); return purchaseBlock(blockHeight, 16); },
+    };
+    let lastHeight = 99;
+    for (const count of [20, 4]) {
+        queries = 0; requested.length = 0; messages.length = 0;
+        const result = mode === 'queue'
+            ? await ingestMarketReadModelBackfill(env, {
+                schema: 'youtick.read-model-backfill-message.v1', next_block_height: lastHeight + 1,
+            }, dependencies)
+            : await ingestMarketReadModelBatch(env, dependencies);
+        assert.equal(requested[0], lastHeight + 1);
+        lastHeight += count;
+        assert.equal(result.block_count, count);
+        assert.equal(result.block_height, lastHeight);
+        assert.equal(result.remaining_blocks, finalHeight - lastHeight);
+        assert.equal(result.status, lastHeight === finalHeight ? 'applied' : 'catching_up');
+        assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, lastHeight);
+        for (const table of ['chain_events', 'viewer_entitlements', 'sale_ledger']) {
+            assert.equal(db.sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, (lastHeight - 99) * 16);
+        }
+        if (mode === 'queue') assert.deepEqual(messages.map(message => message.next_block_height),
+            lastHeight === finalHeight ? [] : [lastHeight + 1]);
+    }
+});
+
+test('block batches keep the 16-event cap, enforce remaining queries and roll back a late conflict', async (t) => {
+    const db = await database(true);
+    t.after(() => db.sqlite.close());
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    await assert.rejects(() => applyFinalMarketBlockBatch(db, [purchaseBlock(100, 17)]), /d1_final_block_event_limit_exceeded/);
+    await assert.rejects(() => ingestMarketReadModelBatch(publicIngestionEnv(db), {
+        now: () => 0, sleepFn: async () => {}, fetchFinalHeight: async () => 100,
+        fetchBlock: async () => purchaseBlock(100, 17),
+    }), /d1_final_block_event_limit_exceeded/);
+    await assert.rejects(() => applyFinalMarketBlockBatch(db, [purchaseBlock(100, 16)], 48), /d1_block_batch_query_limit_exceeded/);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM chain_events').get().n, 0);
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 99);
+    const block = purchaseBlock(100, 16);
+    await applyFinalMarketBlockBatch(db, [block], 49);
+    await applyFinalMarketBlockBatch(db, [block]);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM chain_events').get().n, 16);
+    const conflict = purchaseBlock(101, 16);
+    conflict.events.at(-1).event.data[0].idempotency_key = 'purchase:100:0';
+    await assert.rejects(() => applyFinalMarketBlockBatch(db, [conflict]));
+    for (const table of ['chain_events', 'viewer_entitlements', 'sale_ledger']) {
+        assert.equal(db.sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 16);
+    }
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 100);
+});
+
+test('budget-limited Queue ingestion preserves a null gap and resumes the deferred real block', async (t) => {
+    const db = await database(true);
+    t.after(() => db.sqlite.close());
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const config = { network: 'testnet', contractId: 'market.testnet', startBlockHeight: 99 };
+    await advanceMarketReadModelScanCursor(db, config, await readMarketReadModelScanCursor(db, config), 1000);
+    let queries = 0;
+    const prepare = db.prepare.bind(db), batch = db.batch.bind(db);
+    db.prepare = (sql) => {
+        if (sql.includes('SELECT block_height, block_hash')) queries++;
+        return prepare(sql);
+    };
+    db.batch = statements => {
+        queries += statements.length;
+        assert(queries <= 1000);
+        return batch(statements);
+    };
+    const requests = [];
+    const env = { ...publicIngestionEnv(db), READ_MODEL_BACKFILL_ENABLED: 'true' };
+    const deps = { now: () => 0, sleepFn: async () => {}, fetchFinalHeight: async () => 123,
+        fetchBlock: async ({ blockHeight }) => {
+            requests.push(blockHeight);
+            if (blockHeight >= 120 && blockHeight < 123) return null;
+            return { ...purchaseBlock(blockHeight, 16),
+                ...(blockHeight === 123 ? { prev_block_height: 119, prev_block_hash: emptyBlock(119).block_hash } : {}) };
+        } };
+    const first = await ingestMarketReadModelBackfill(env,
+        { schema: 'youtick.read-model-backfill-message.v1', next_block_height: 100 }, deps);
+    assert.equal(first.block_count, 20);
+    assert.equal(first.block_height, 119);
+    assert.equal(queries, 985); // 980 writes plus all five cursor/Queue operations.
+    assert.equal(db.sqlite.prepare('SELECT scan_height FROM finality_watermarks').get().scan_height, 123);
+    requests.length = 0; queries = 0;
+    const second = await ingestMarketReadModelBackfill(env,
+        { schema: 'youtick.read-model-backfill-message.v1', next_block_height: 120 }, deps);
+    assert.deepEqual(requests, [123]);
+    assert.equal(second.status, 'applied');
+    assert.equal(second.block_height, 123);
+    assert.equal(db.sqlite.prepare('SELECT scan_height FROM finality_watermarks').get().scan_height, null);
+    for (const table of ['chain_events', 'viewer_entitlements', 'sale_ledger']) {
+        assert.equal(db.sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 336);
+    }
 });
 
 test('builds a publication bootstrap from one exact final NEAR block', async () => {
@@ -429,6 +558,60 @@ test('D1 final block batch atomically applies events, projections and watermark'
         { block_height: 101, block_hash: 'block_hash_000000000000000000000101' },
     );
     db.sqlite.close();
+});
+
+test('raw Neardata receipt and log order survives projection and exact block replay', async (t) => {
+    const db = await database(true);
+    t.after(() => db.sqlite.close());
+    const previousHash = 'c'.repeat(44);
+    await applyFinalMarketBlock(db, { ...emptyBlock(100), block_hash: previousHash });
+    const events = [finalized.event, ...[
+        ['publication_sales_suspended', 'SALES_SUSPENDED'],
+        ['publication_takedown', 'TAKEDOWN'],
+    ].map(([name, availability]) => event(101, name, `${name}:job-1`, {
+        account_id: 'creator.testnet', publication_id: 'job-1', generation: 1, availability,
+    }).event)];
+    const outcome = (receiptId, logs, contractId = 'market.testnet') => ({
+        receipt: { receipt_id: receiptId, receiver_id: contractId, predecessor_id: 'bridge.testnet' },
+        execution_outcome: { id: receiptId, block_hash: bootstrapBlockHash,
+            outcome: { executor_id: contractId, status: { SuccessValue: '' }, logs } },
+    });
+    const raw = {
+        block: { header: { height: 101, hash: bootstrapBlockHash,
+            timestamp_nanosec: '1785600000101000000', prev_height: 100, prev_hash: previousHash } },
+        shards: [{ receipt_execution_outcomes: [
+            outcome('d'.repeat(44), [], 'other.testnet'),
+        ] }, { receipt_execution_outcomes: [
+            outcome('z'.repeat(44), ['plain log', `EVENT_JSON:${JSON.stringify(events[0])}`]),
+            outcome('a'.repeat(44), ['plain log', ...events.slice(1).map(value => `EVENT_JSON:${JSON.stringify(value)}`)]),
+        ] }],
+    };
+    const parsed = parseNeardataMarketBlock(raw, {
+        network: 'testnet', contractId: 'market.testnet', blockHeight: 101, requirePredecessor: true,
+    });
+    await applyFinalMarketBlock(db, parsed);
+    const publication = db.sqlite.prepare('SELECT * FROM publications').get();
+    assert.equal(publication.availability, 'TAKEDOWN');
+    assert.deepEqual(parsed.events.map(value => value.execution_index), [1, 2, 2]);
+    assert.deepEqual(parsed.events.map(value => value.event_index), [1, 1, 2]);
+    assert.deepEqual(parsed.events.map(value => value.event), events);
+    assert.equal(rebuildMarketReadModel([...parsed.events].reverse()).publications[0].availability,
+        publication.availability);
+    const storedEvents = db.sqlite.prepare('SELECT * FROM chain_events ORDER BY receipt_id, event_index').all();
+    assert.equal(storedEvents.length, 3);
+    for (const value of parsed.events) {
+        const stored = storedEvents.find(row => row.receipt_id === value.receipt_id
+            && row.event_index === value.event_index);
+        assert.deepEqual(JSON.parse(stored.payload_json), value.event);
+    }
+    const watermark = db.sqlite.prepare(`SELECT block_height, block_hash, prev_block_height, prev_block_hash
+        FROM finality_watermarks`).get();
+    assert.equal(watermark.block_height, 101);
+    await applyFinalMarketBlock(db, parsed);
+    assert.deepEqual(db.sqlite.prepare('SELECT * FROM publications').get(), publication);
+    assert.deepEqual(db.sqlite.prepare('SELECT * FROM chain_events ORDER BY receipt_id, event_index').all(), storedEvents);
+    assert.deepEqual(db.sqlite.prepare(`SELECT block_height, block_hash, prev_block_height, prev_block_hash
+        FROM finality_watermarks`).get(), watermark);
 });
 
 test('D1 withdrawal projection keeps the exact terminal event status', async () => {

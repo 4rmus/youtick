@@ -71,6 +71,7 @@ test('extracts successful market EVENT_JSON logs into stable final event envelop
         block_height: HEIGHT,
         block_hash: BLOCK_HASH,
         receipt_id: RECEIPT_ID,
+        execution_index: 0,
         event_index: 1,
         event: marketEvent(),
     });

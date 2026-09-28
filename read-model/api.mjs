@@ -74,15 +74,12 @@ async function publicationList(request, env, url, creator) {
     const limit = parseLimit(url.searchParams.get('limit'));
     const cursor = parseCursor(url.searchParams.get('cursor'));
     const creatorFilter = creator ? 'AND creator_id = ?' : "AND availability = 'ACTIVE'";
-    const cursorHeight = cursor?.block_height ?? null;
+    const cursorFilter = cursor ? 'AND (source_block_height, publication_id) < (?, ?)' : '';
     const values = [
         env.READ_MODEL_NETWORK,
         env.READ_MODEL_CONTRACT_ID,
         ...(creator ? [creator] : []),
-        cursorHeight,
-        cursorHeight,
-        cursorHeight,
-        cursor?.publication_id ?? null,
+        ...(cursor ? [cursor.block_height, cursor.publication_id] : []),
         limit + 1,
     ];
     const [watermarkResult, publicationsResult] = await env.MARKET_READ_MODEL.batch([
@@ -91,9 +88,7 @@ async function publicationList(request, env, url, creator) {
             SELECT publication_id, creator_id, title, generation, price_usdc,
                    playback_id, availability, published_at_ms, source_block_height
             FROM publications
-            WHERE network = ? AND contract_id = ? ${creatorFilter}
-              AND (? IS NULL OR source_block_height < ?
-                   OR (source_block_height = ? AND publication_id < ?))
+            WHERE network = ? AND contract_id = ? ${creatorFilter} ${cursorFilter}
             ORDER BY source_block_height DESC, publication_id DESC
             LIMIT ?
         `).bind(...values),

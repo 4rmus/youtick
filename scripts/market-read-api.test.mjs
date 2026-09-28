@@ -108,6 +108,76 @@ test('creator projections include suspended work while sales summary stays priva
     sqlite.close();
 });
 
+test('Discover index preserves scoped pagination and same-block ties without changing data', async (t) => {
+    const { sqlite, env } = await environment();
+    t.after(() => sqlite.close());
+    const insert = sqlite.prepare(`INSERT INTO publications
+        SELECT ?, ?, ?, creator_id, title, generation, price_usdc, playback_id, ?, published_at_ms, source_block_height
+        FROM publications WHERE network='testnet' AND contract_id='market.testnet' AND publication_id='pub-c'`);
+    for (const [network, contract, id, availability] of [
+        ['testnet', 'market.testnet', 'pub-z', 'ACTIVE'],
+        ['testnet', 'market.testnet', 'pub-y', 'ACTIVE'],
+        ['testnet', 'market.testnet', 'pub-x', 'TAKEDOWN'],
+        ['mainnet', 'market.testnet', 'other-network', 'ACTIVE'],
+        ['testnet', 'other.testnet', 'other-contract', 'ACTIVE'],
+    ]) insert.run(network, contract, id, availability);
+    const rowsBefore = sqlite.prepare('SELECT * FROM publications ORDER BY network, contract_id, publication_id').all();
+    const routes = [
+        ['/v1/publications', ['pub-z', 'pub-y', 'pub-c', 'pub-b']],
+        ['/v1/creators/creator.testnet/publications', ['pub-z', 'pub-y', 'pub-x', 'pub-c', 'pub-a']],
+    ];
+    const before = [];
+    for (const indexed of [false, true]) {
+        if (indexed) sqlite.exec(await readFile(new URL('../read-model/d1/0007_publications_discover_index.sql', import.meta.url), 'utf8'));
+        for (const [route, expected] of routes) {
+            const pages = [], ids = [];
+            let cursor = null;
+            do {
+                assert.ok(pages.length < 4, 'pagination must finish');
+                const response = await marketReadApi(new Request(`https://read.test${route}?limit=2${cursor ? `&cursor=${cursor}` : ''}`), env);
+                assert.equal(response.status, 200);
+                const page = await response.json();
+                pages.push(page);
+                ids.push(...page.items.map(item => item.publication_id));
+                cursor = page.next_cursor;
+            } while (cursor);
+            assert.deepEqual(ids, expected);
+            if (indexed) assert.deepEqual(pages, before.shift());
+            else before.push(pages);
+        }
+    }
+    assert.deepEqual(sqlite.prepare('SELECT * FROM publications ORDER BY network, contract_id, publication_id').all(), rowsBefore);
+});
+
+test('Discover first and deep pages use an ordered index seek without a temporary sort', async (t) => {
+    const { sqlite, env } = await environment();
+    t.after(() => sqlite.close());
+    sqlite.exec(await readFile(new URL('../read-model/d1/0007_publications_discover_index.sql', import.meta.url), 'utf8'));
+    const insert = sqlite.prepare(`INSERT INTO publications VALUES
+        ('testnet', 'market.testnet', ?, 'creator.testnet', 'Load test', 1, '2000000', 'playback_load', ?, ?, ?)`);
+    for (let i = 1; i <= 1000; i++) insert.run(`load-${String(i).padStart(4, '0')}`,
+        i % 5 === 0 ? 'SALES_SUSPENDED' : 'ACTIVE', 1_785_600_000_000 + i, i);
+    sqlite.prepare('UPDATE finality_watermarks SET block_height=1000').run();
+    let plan;
+    const batch = env.MARKET_READ_MODEL.batch;
+    env.MARKET_READ_MODEL.batch = async statements => {
+        const { sql, values } = statements.find(statement => statement.sql.includes('FROM publications'));
+        plan = sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values).map(row => row.detail).join('\n');
+        return batch(statements);
+    };
+    const cursor = Buffer.from(JSON.stringify({ block_height: 500, publication_id: 'load-0500' })).toString('base64url');
+    for (const [suffix, firstId] of [['', 'load-0999'], [`&cursor=${cursor}`, 'load-0499']]) {
+        const response = await marketReadApi(new Request(`https://read.test/v1/publications?limit=24${suffix}`), env);
+        assert.equal(response.status, 200);
+        const page = await response.json();
+        assert.equal(page.items.length, 24);
+        assert.equal(page.items[0].publication_id, firstId);
+        assert.match(plan, /USING INDEX publications_discover/);
+        assert.doesNotMatch(plan, /SCAN publications|TEMP B-TREE/);
+        if (suffix) assert.match(plan, /source_block_height.*</, 'deep pages must seek to the cursor');
+    }
+});
+
 test('invalid cursor and account input fail before a database query', async () => {
     const { sqlite, env } = await environment();
     assert.equal((await marketReadApi(new Request(

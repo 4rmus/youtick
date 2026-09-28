@@ -92,12 +92,15 @@ export function parseNeardataMarketBlock(value, expected) {
     }
     const blockTimestampMs = String(BigInt(header.timestamp_nanosec) / 1_000_000n);
     const events = [];
+    let executionIndex = 0;
     for (const shard of value.shards) {
         if (!shard || typeof shard !== 'object'
             || !Array.isArray(shard.receipt_execution_outcomes)) {
             throw new Error('invalid_neardata_block');
         }
         for (const item of shard.receipt_execution_outcomes) {
+            // Preserve upstream receipt positions before filtering; see docs/testing.md.
+            const receiptIndex = executionIndex++;
             const outcome = item?.execution_outcome;
             const receipt = item?.receipt;
             if (outcome?.outcome?.executor_id !== expected.contractId) continue;
@@ -168,6 +171,7 @@ export function parseNeardataMarketBlock(value, expected) {
                     block_height: header.height,
                     block_hash: header.hash,
                     receipt_id: receipt.receipt_id,
+                    execution_index: receiptIndex,
                     event_index: eventIndex,
                     event,
                 });
