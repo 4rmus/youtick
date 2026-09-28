@@ -12,6 +12,8 @@ import {
     fetchMarketReadModelBootstrap,
 } from './bootstrap-market-read-model-d1.mjs';
 import { runMarketReadModelOnce } from './run-market-read-model-once.mjs';
+import { parseNeardataMarketBlock } from './fetch-neardata-market-block.mjs';
+import { rebuildMarketReadModel } from './rebuild-market-read-model.mjs';
 import {
     fetchNearFinalBlockHeight,
     ingestMarketReadModelBatch,
@@ -421,6 +423,60 @@ test('D1 final block batch atomically applies events, projections and watermark'
         { block_height: 101, block_hash: 'block_hash_000000000000000000000101' },
     );
     db.sqlite.close();
+});
+
+test('raw Neardata receipt and log order survives projection and exact block replay', async (t) => {
+    const db = await database(true);
+    t.after(() => db.sqlite.close());
+    const previousHash = 'c'.repeat(44);
+    await applyFinalMarketBlock(db, { ...emptyBlock(100), block_hash: previousHash });
+    const events = [finalized.event, ...[
+        ['publication_sales_suspended', 'SALES_SUSPENDED'],
+        ['publication_takedown', 'TAKEDOWN'],
+    ].map(([name, availability]) => event(101, name, `${name}:job-1`, {
+        account_id: 'creator.testnet', publication_id: 'job-1', generation: 1, availability,
+    }).event)];
+    const outcome = (receiptId, logs, contractId = 'market.testnet') => ({
+        receipt: { receipt_id: receiptId, receiver_id: contractId, predecessor_id: 'bridge.testnet' },
+        execution_outcome: { id: receiptId, block_hash: bootstrapBlockHash,
+            outcome: { executor_id: contractId, status: { SuccessValue: '' }, logs } },
+    });
+    const raw = {
+        block: { header: { height: 101, hash: bootstrapBlockHash,
+            timestamp_nanosec: '1785600000101000000', prev_height: 100, prev_hash: previousHash } },
+        shards: [{ receipt_execution_outcomes: [
+            outcome('d'.repeat(44), [], 'other.testnet'),
+        ] }, { receipt_execution_outcomes: [
+            outcome('z'.repeat(44), ['plain log', `EVENT_JSON:${JSON.stringify(events[0])}`]),
+            outcome('a'.repeat(44), ['plain log', ...events.slice(1).map(value => `EVENT_JSON:${JSON.stringify(value)}`)]),
+        ] }],
+    };
+    const parsed = parseNeardataMarketBlock(raw, {
+        network: 'testnet', contractId: 'market.testnet', blockHeight: 101, requirePredecessor: true,
+    });
+    await applyFinalMarketBlock(db, parsed);
+    const publication = db.sqlite.prepare('SELECT * FROM publications').get();
+    assert.equal(publication.availability, 'TAKEDOWN');
+    assert.deepEqual(parsed.events.map(value => value.execution_index), [1, 2, 2]);
+    assert.deepEqual(parsed.events.map(value => value.event_index), [1, 1, 2]);
+    assert.deepEqual(parsed.events.map(value => value.event), events);
+    assert.equal(rebuildMarketReadModel([...parsed.events].reverse()).publications[0].availability,
+        publication.availability);
+    const storedEvents = db.sqlite.prepare('SELECT * FROM chain_events ORDER BY receipt_id, event_index').all();
+    assert.equal(storedEvents.length, 3);
+    for (const value of parsed.events) {
+        const stored = storedEvents.find(row => row.receipt_id === value.receipt_id
+            && row.event_index === value.event_index);
+        assert.deepEqual(JSON.parse(stored.payload_json), value.event);
+    }
+    const watermark = db.sqlite.prepare(`SELECT block_height, block_hash, prev_block_height, prev_block_hash
+        FROM finality_watermarks`).get();
+    assert.equal(watermark.block_height, 101);
+    await applyFinalMarketBlock(db, parsed);
+    assert.deepEqual(db.sqlite.prepare('SELECT * FROM publications').get(), publication);
+    assert.deepEqual(db.sqlite.prepare('SELECT * FROM chain_events ORDER BY receipt_id, event_index').all(), storedEvents);
+    assert.deepEqual(db.sqlite.prepare(`SELECT block_height, block_hash, prev_block_height, prev_block_hash
+        FROM finality_watermarks`).get(), watermark);
 });
 
 test('D1 withdrawal projection keeps the exact terminal event status', async () => {

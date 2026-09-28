@@ -58,7 +58,10 @@ export function useAllVideos() {
         queryFn: ({ pageParam }) => fetchDiscoverPage(pageParam),
         getNextPageParam: (page) => page.nextPageParam,
         staleTime: 15_000,
-        refetchInterval: FEATURE_FLAGS.enableDerivedReadModel ? 15_000 : false,
+        // ponytail: deep lists refresh less often; use a change signal if fixed freshness becomes necessary.
+        refetchInterval: FEATURE_FLAGS.enableDerivedReadModel
+            ? (query) => 15_000 * Math.max(1, query.state.data?.pages.length ?? 0)
+            : false,
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: FEATURE_FLAGS.enableDerivedReadModel,
         retry: false,
