@@ -56,6 +56,14 @@ with zero market events, binds every SQL value as a prepared parameter and
 submits event rows, projections and the watermark in one D1 `batch()`. The batch
 is capped at 16 events so the worst case stays within
 the [documented 50-query free-plan Worker invocation limit](https://developers.cloudflare.com/d1/platform/limits/).
+The 16-event block limit remains unchanged in every path. Paid Worker ingestion
+also uses a 995-query invocation budget, reserving five of the
+paid plan's 1,000 queries for Queue validation, cursor read/reset/reread and
+final scan advancement or failure reset. It
+conservatively counts three queries per event plus one per complete block and
+stops before the next block would exceed the remaining budget. The next run
+resumes from the committed watermark. The writer also checks actual batch
+statements before writing. Raising the block event limit is a separate decision.
 Cloudflare documents `batch()` as a transaction that rolls back the sequence on
 failure. A conflicting event aborts the batch; an exact replay is idempotent.
 If one complete block contains more than 16 Market events, ingestion fails with

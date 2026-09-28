@@ -23,8 +23,13 @@ npm run build
 
 Catalogue freshness/read-budget regressions are in `catalog-refresh.test.ts`
 and `near-read-budget.test.ts`. Discover (when the derived model is enabled)
-and connected Profile activity refresh every 15 seconds while visible, refresh
-on focus when stale, and do not add React Query retries. Contract view calls
+refreshes every 15 seconds per loaded page while visible: 15 seconds for one
+page, 45 for three. Every refresh still follows the complete cursor chain;
+deeper browsing trades freshness for fewer scheduled requests. Returning to one
+page restores the 15-second interval. Connected Profile activity remains at
+15 seconds. Both refresh on focus when stale and do not add React Query retries;
+focus, manual refresh and initial loading are outside the scheduled polling budget.
+Contract view calls
 use one abortable same-origin query with a 6,500ms deadline, covering response
 body delivery as well as headers. The proxy retains its existing 6,000ms budget.
 Transaction submission providers are unchanged. This is a per-contract-read
@@ -93,6 +98,50 @@ contract. They create no D1 database, binding or network connection. The
 explicit
 `fetch-neardata-market-block.mjs` CLI performs a read-only testnet/mainnet GET
 and must be reported separately from local tests.
+
+The Discover index regression applies `0007_publications_discover_index.sql`
+only to in-memory SQLite. It verifies unchanged public/creator pagination across
+same-block ties and an indexed cursor seek without temporary sorting. The API
+also works without the index; its performance benefit requires a separately
+approved D1 migration. Worker deployment does not apply this migration.
+
+Paid ingestion reserves at most 995 write queries per invocation, leaving five
+of D1's 1,000 queries for Queue validation, cursor read/reset/reread and final
+scan advancement or failure reset. It budgets
+three queries per event plus one per complete block; the writer also checks
+the actual statement count against the remaining budget before executing.
+Dense-block tests cover scheduled/public, legacy and Queue paths, exact resume
+without duplicate projections, and rollback on a late conflict. Every path
+retains the existing 16-event block limit; a 17-event block fails before writing.
+Raising that separate capacity limit is not part of the query-budget fix.
+These are local SQLite tests with a modelled invocation limit,
+not evidence of hosted D1 throughput or a configured alert.
+
+### Neardata receipt order
+
+The same-block regression passes raw Neardata data through the real parser and
+D1 writer. It uses reverse-sorted receipt IDs, multiple logs in one receipt and
+an unrelated shard. It checks the final takedown state, unchanged event identity
+and payloads, agreement with the reducer, and idempotent replay. The parser keeps
+the unfiltered receipt position as `execution_index`; `event_index` remains the
+original log position.
+
+Source basis: the [NEAR ordering fix](https://github.com/near/nearcore/commit/545d0417df530475584e2e357ac6a4478c0667bc)
+is present in the [indexer pinned by FASTNEAR](https://github.com/fastnear/redis-node/blob/f7a524f147e1a9ea842cf95ab6d74fe9e6511a8a/Cargo.toml#L44).
+Its [streamer preserves outcome order](https://github.com/fastnear/nearcore/blob/f0677c47a4352db8f7aca4cbdcd19b63e133214c/chain/indexer/src/streamer/mod.rs#L77-L178),
+and the [Neardata conversion preserves the receipt vector](https://github.com/fastnear/libs/blob/cf64abf540ef8f552bf237e19a5ecf8a91c5c32f/primitives/src/block_with_tx_hash.rs#L31-L65).
+The [node serializes that block](https://github.com/fastnear/redis-node/blob/f7a524f147e1a9ea842cf95ab6d74fe9e6511a8a/src/bin/node.rs#L1013-L1053),
+the [saver retains the JSON](https://github.com/fastnear/redis-node/blob/f7a524f147e1a9ea842cf95ab6d74fe9e6511a8a/src/bin/caching_saver.rs#L306-L321),
+and [Neardata returns its body](https://github.com/fastnear/neardata-server/blob/7324d9131e7e8285306606ba05822b007e44c53a/src/api.rs#L360-L385).
+This supports same-shard order for one Market contract, not a global order
+between shards. It is source evidence, not verification of the live provider's
+version or archives produced before the upstream fix.
+
+This change preserves supplied order for newly parsed blocks; it does not repair
+past projections or add order metadata to `chain_events`. Legacy envelopes remain
+supported separately; mixing envelopes with and without `execution_index` is
+still rejected. No historical rebuild, remote migration or provider call is part
+of this local regression.
 
 ### FASTNEAR local D1 experiment
 

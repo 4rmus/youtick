@@ -1,12 +1,14 @@
 import { fetchNeardataMarketBlock } from '../scripts/fetch-neardata-market-block.mjs';
-import { applyFinalMarketBlockBatch, MAX_FINAL_BLOCKS_PER_BATCH } from '../scripts/apply-market-read-model-d1.mjs';
+import {
+    applyFinalMarketBlockBatch, MAX_FINAL_BLOCKS_PER_BATCH,
+    MAX_FINAL_BATCH_QUERIES, MAX_FINAL_EVENTS_PER_BATCH,
+} from '../scripts/apply-market-read-model-d1.mjs';
 import { runNearFinalityProbe } from '../workers/livepeer-bridge/scripts/near-finality-canary.mjs';
 import {
     advanceMarketReadModelScanCursor,
     nextMarketReadModelBlockHeight,
     readMarketReadModelScanCursor,
     resetMarketReadModelScanCursor,
-    runMarketReadModelOnce,
 } from '../scripts/run-market-read-model-once.mjs';
 import { marketReadApi } from './api.mjs';
 
@@ -22,6 +24,7 @@ const INGESTION_ERROR_CODES = new Set([
     'invalid_d1_block_batch_size',
     'non_contiguous_d1_block_batch',
     'd1_final_block_event_limit_exceeded',
+    'd1_block_batch_query_limit_exceeded',
     'invalid_d1_event_batch_size',
     'invalid_d1_final_block',
     'invalid_neardata_block',
@@ -98,45 +101,55 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
     const limit = isPublic ? 150 : MAX_BLOCKS_PER_RUN;
     let scanHeight = position?.scanHeight ?? nextBlockHeight;
     let requestCount = 0;
-    while ((isPublic ? requestCount : blockCount) < limit && nextBlockHeight <= finalBlockHeight) {
-        if (!isPublic) {
-            last = await runMarketReadModelOnce(env.MARKET_READ_MODEL, config, fetchBlock);
-            blockCount += 1;
-            nextBlockHeight = last.block_height + 1;
-            continue;
-        }
+    let remainingQueries = MAX_FINAL_BATCH_QUERIES;
+    while (requestCount < limit && nextBlockHeight <= finalBlockHeight) {
         const blocks = [];
-        while (blocks.length < MAX_FINAL_BLOCKS_PER_BATCH && requestCount < limit
-            && scanHeight <= finalBlockHeight && now() - started < 50_000) {
-            await sleep(Math.max(0, 350 - (now() - lastFetchAt)));
-            if (now() - started >= 50_000) break;
-            lastFetchAt = now();
+        let batchQueries = 0;
+        let budgetReached = false;
+        while (blocks.length < (isPublic ? MAX_FINAL_BLOCKS_PER_BATCH : 1) && requestCount < limit
+            && scanHeight <= finalBlockHeight && (!isPublic || now() - started < 50_000)) {
+            if (isPublic) {
+                await sleep(Math.max(0, 350 - (now() - lastFetchAt)));
+                if (now() - started >= 50_000) break;
+                lastFetchAt = now();
+            }
             const block = await fetchBlock({ network: config.network, contractId: config.contractId,
-                blockHeight: scanHeight, requirePredecessor: true });
+                blockHeight: scanHeight, ...(isPublic ? { requirePredecessor: true } : {}) });
             requestCount += 1;
             if (block === null) {
-                if (scanHeight === config.startBlockHeight) throw new Error('invalid_neardata_block');
+                if (!isPublic || scanHeight === config.startBlockHeight) throw new Error('invalid_neardata_block');
             } else {
-                if (block.block_height !== scanHeight || block.prev_block_height === undefined
-                    || block.prev_block_hash === undefined) throw new Error('invalid_neardata_block');
+                if (block.block_height !== scanHeight || (isPublic && (block.prev_block_height === undefined
+                    || block.prev_block_hash === undefined))) throw new Error('invalid_neardata_block');
+                if (!Array.isArray(block.events)) throw new Error('invalid_d1_final_block');
+                if (block.events.length > MAX_FINAL_EVENTS_PER_BATCH) throw new Error('d1_final_block_event_limit_exceeded');
+                // ponytail: reserve the worst-case three queries per event; count exact costs if this wastes material capacity.
+                const blockQueries = 3 * block.events.length + 1;
+                if (batchQueries + blockQueries > remainingQueries) {
+                    budgetReached = true;
+                    break;
+                }
                 blocks.push(block);
+                batchQueries += blockQueries;
             }
             scanHeight += 1;
         }
         // Only a successor linked to the watermark can turn null heights into final progress.
         if (!blocks.length) break;
         try {
-            await applyFinalMarketBlockBatch(env.MARKET_READ_MODEL, blocks);
+            await applyFinalMarketBlockBatch(env.MARKET_READ_MODEL, blocks, remainingQueries);
         } catch (error) {
-            await resetMarketReadModelScanCursor(env.MARKET_READ_MODEL, config, position);
+            if (isPublic) await resetMarketReadModelScanCursor(env.MARKET_READ_MODEL, config, position);
             throw error;
         }
+        remainingQueries -= batchQueries;
         const block = blocks.at(-1);
         last = { block_height: block.block_height, block_hash: block.block_hash, event_count: block.events.length };
         blockCount += blocks.length;
         nextBlockHeight = block.block_height + 1;
         position = { ...position, anchorHeight: block.block_height, anchorHash: block.block_hash,
             storedScanHeight: null };
+        if (budgetReached) break;
     }
     if (isPublic && scanHeight > nextBlockHeight && scanHeight > position.scanHeight
         && position.anchorHeight !== null) {
