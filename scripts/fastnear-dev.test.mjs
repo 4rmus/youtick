@@ -173,7 +173,7 @@ test('source rejects changed bounds, duplicate positions and cyclic cursors; a c
 
 test('10,000 empty blocks: existing scanner fetches each block, account discovery uses two reads', async t => {
     const db = await database(); t.after(() => db.sqlite.close());
-    for (const name of ['0002_contiguous_watermark.sql', '0003_upload_job_archives.sql', '0004_operator_outbox_archives.sql', '0005_predecessor_watermark.sql']) {
+    for (const name of ['0002_contiguous_watermark.sql', '0003_upload_job_archives.sql', '0004_operator_outbox_archives.sql', '0005_predecessor_watermark.sql', '0006_scan_cursor.sql']) {
         db.sqlite.exec(await readFile(new URL('../read-model/d1/' + name, import.meta.url), 'utf8'));
     }
     db.sqlite.prepare('INSERT INTO finality_watermarks(network,contract_id,block_height,block_hash,updated_at_ms) VALUES (?,?,?,?,?)')

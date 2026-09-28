@@ -2,7 +2,10 @@ import { fetchNeardataMarketBlock } from '../scripts/fetch-neardata-market-block
 import { applyFinalMarketBlockBatch, MAX_FINAL_BLOCKS_PER_BATCH } from '../scripts/apply-market-read-model-d1.mjs';
 import { runNearFinalityProbe } from '../workers/livepeer-bridge/scripts/near-finality-canary.mjs';
 import {
+    advanceMarketReadModelScanCursor,
     nextMarketReadModelBlockHeight,
+    readMarketReadModelScanCursor,
+    resetMarketReadModelScanCursor,
     runMarketReadModelOnce,
 } from '../scripts/run-market-read-model-once.mjs';
 import { marketReadApi } from './api.mjs';
@@ -64,9 +67,18 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
         throw new Error('invalid_read_model_final_height');
     }
 
-    let nextBlockHeight = await nextMarketReadModelBlockHeight(
-        env.MARKET_READ_MODEL, config,
-    );
+    const isPublic = env.VIDEO_ENVIRONMENT === 'public-testnet';
+    let position = isPublic ? await readMarketReadModelScanCursor(env.MARKET_READ_MODEL, config) : null;
+    if (isPublic && position.storedScanHeight !== null
+        && position.scanHeight > finalBlockHeight && position.nextBlockHeight <= finalBlockHeight) {
+        await resetMarketReadModelScanCursor(env.MARKET_READ_MODEL, config, position);
+        position = await readMarketReadModelScanCursor(env.MARKET_READ_MODEL, config);
+        if (position.scanHeight > finalBlockHeight && position.nextBlockHeight <= finalBlockHeight) {
+            throw new Error('invalid_read_model_watermark');
+        }
+    }
+    let nextBlockHeight = position?.nextBlockHeight
+        ?? await nextMarketReadModelBlockHeight(env.MARKET_READ_MODEL, config);
     if (nextBlockHeight > finalBlockHeight) {
         return {
             schema: TELEMETRY_SCHEMA,
@@ -79,13 +91,12 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
 
     let last;
     let blockCount = 0;
-    const isPublic = env.VIDEO_ENVIRONMENT === 'public-testnet';
     const now = dependencies.now ?? Date.now;
     const sleep = dependencies.sleepFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     const started = now();
     let lastFetchAt = started - 350;
     const limit = isPublic ? 150 : MAX_BLOCKS_PER_RUN;
-    let scanHeight = nextBlockHeight;
+    let scanHeight = position?.scanHeight ?? nextBlockHeight;
     let requestCount = 0;
     while ((isPublic ? requestCount : blockCount) < limit && nextBlockHeight <= finalBlockHeight) {
         if (!isPublic) {
@@ -112,13 +123,24 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
             }
             scanHeight += 1;
         }
-        // ponytail: no durable scan cursor; a gap exceeding one run's budget waits for operator review.
+        // Only a successor linked to the watermark can turn null heights into final progress.
         if (!blocks.length) break;
-        await applyFinalMarketBlockBatch(env.MARKET_READ_MODEL, blocks);
+        try {
+            await applyFinalMarketBlockBatch(env.MARKET_READ_MODEL, blocks);
+        } catch (error) {
+            await resetMarketReadModelScanCursor(env.MARKET_READ_MODEL, config, position);
+            throw error;
+        }
         const block = blocks.at(-1);
         last = { block_height: block.block_height, block_hash: block.block_hash, event_count: block.events.length };
         blockCount += blocks.length;
         nextBlockHeight = block.block_height + 1;
+        position = { ...position, anchorHeight: block.block_height, anchorHash: block.block_hash,
+            storedScanHeight: null };
+    }
+    if (isPublic && scanHeight > nextBlockHeight && scanHeight > position.scanHeight
+        && position.anchorHeight !== null) {
+        await advanceMarketReadModelScanCursor(env.MARKET_READ_MODEL, config, position, scanHeight);
     }
     return {
         schema: TELEMETRY_SCHEMA,

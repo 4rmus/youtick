@@ -11,7 +11,12 @@ import {
     applyMarketReadModelBootstrap,
     fetchMarketReadModelBootstrap,
 } from './bootstrap-market-read-model-d1.mjs';
-import { runMarketReadModelOnce } from './run-market-read-model-once.mjs';
+import {
+    advanceMarketReadModelScanCursor,
+    readMarketReadModelScanCursor,
+    resetMarketReadModelScanCursor,
+    runMarketReadModelOnce,
+} from './run-market-read-model-once.mjs';
 import {
     fetchNearFinalBlockHeight,
     ingestMarketReadModelBatch,
@@ -40,7 +45,10 @@ async function database(linked = false) {
     sqlite.exec(await readFile(new URL('../read-model/d1/0002_contiguous_watermark.sql', import.meta.url), 'utf8'));
     sqlite.exec(await readFile(new URL('../read-model/d1/0003_upload_job_archives.sql', import.meta.url), 'utf8'));
     sqlite.exec(await readFile(new URL('../read-model/d1/0004_operator_outbox_archives.sql', import.meta.url), 'utf8'));
-    if (linked) sqlite.exec(await readFile(new URL('../read-model/d1/0005_predecessor_watermark.sql', import.meta.url), 'utf8'));
+    if (linked) {
+        sqlite.exec(await readFile(new URL('../read-model/d1/0005_predecessor_watermark.sql', import.meta.url), 'utf8'));
+        sqlite.exec(await readFile(new URL('../read-model/d1/0006_scan_cursor.sql', import.meta.url), 'utf8'));
+    }
     return {
         sqlite,
         prepare(sql) {
@@ -1056,8 +1064,9 @@ test('linked migration preserves the anchor and rejects gaps without its exact p
     await applyFinalMarketBlock(db, emptyBlock(99));
     const before = { ...db.sqlite.prepare('SELECT * FROM finality_watermarks').get() };
     db.sqlite.exec(await readFile(new URL('../read-model/d1/0005_predecessor_watermark.sql', import.meta.url), 'utf8'));
+    db.sqlite.exec(await readFile(new URL('../read-model/d1/0006_scan_cursor.sql', import.meta.url), 'utf8'));
     assert.deepEqual({ ...db.sqlite.prepare('SELECT * FROM finality_watermarks').get() },
-        { ...before, prev_block_height: null, prev_block_hash: null });
+        { ...before, prev_block_height: null, prev_block_hash: null, scan_height: null, scan_revision: 0 });
     await applyFinalMarketBlock(db, emptyBlock(100)); // Existing writer still works before adopting links.
     const block = { ...linkedBlock(102, 100), events: [event(102, 'publication_finalized', 'linked-final', {
         account_id: 'creator.testnet', publication_id: 'linked-job', generation: 1, amount: '2000000',
@@ -1129,6 +1138,10 @@ test('unconfirmed null tails never advance the watermark or escape the public re
     }, { schema: 'youtick.read-model-backfill-message.v1', next_block_height: 100 }, deps);
     assert.equal(backfill.next_block_height, 100);
     assert.deepEqual(continuations, [{ schema: 'youtick.read-model-backfill-message.v1', next_block_height: 100 }]);
+    // An operator/provider correction can restart a tentative null-only scan.
+    const config = { network: 'testnet', contractId: 'market.testnet', startBlockHeight: 99 };
+    await resetMarketReadModelScanCursor(db, config,
+        await readMarketReadModelScanCursor(db, config));
     const heights = [];
     await ingestMarketReadModelBatch(publicIngestionEnv(db), { ...deps, fetchFinalHeight: async () => 101,
         fetchBlock: async ({ blockHeight }) => { heights.push(blockHeight); return blockHeight === 100 ? null : linkedBlock(101, 99); } });
@@ -1139,4 +1152,130 @@ test('unconfirmed null tails never advance the watermark or escape the public re
     await assert.rejects(() => ingestMarketReadModelBatch(publicIngestionEnv(fresh), deps), /invalid_neardata_block/);
     assert.equal(fresh.sqlite.prepare('SELECT count(*) AS n FROM finality_watermarks').get().n, 0);
     fresh.sqlite.close();
+});
+
+test('public ingestion remembers a null-only scan across runs without moving finality', async () => {
+    const db = await database(true);
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const requests = [];
+    const deps = { now: () => 0, sleepFn: async () => {}, fetchFinalHeight: async () => 260,
+        fetchBlock: async ({ blockHeight }) => {
+            requests.push(blockHeight);
+            return blockHeight === 260 ? linkedBlock(260, 99) : null;
+        } };
+    const first = await ingestMarketReadModelBatch(publicIngestionEnv(db), deps);
+    assert.equal(first.block_count, 0);
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 99);
+    assert.equal(db.sqlite.prepare('SELECT scan_height FROM finality_watermarks').get().scan_height, 250);
+    const second = await ingestMarketReadModelBatch(publicIngestionEnv(db), deps);
+    assert.equal(second.block_height, 260);
+    assert.equal(db.sqlite.prepare('SELECT block_height, scan_height FROM finality_watermarks').get().block_height, 260);
+    assert.equal(db.sqlite.prepare('SELECT scan_height FROM finality_watermarks').get().scan_height, null);
+    assert.deepEqual(requests, Array.from({ length: 161 }, (_, i) => i + 100));
+    db.sqlite.close();
+});
+
+test('a falsely null real block fails predecessor proof, resets scan and recovers from watermark', async () => {
+    const db = await database(true);
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const env = publicIngestionEnv(db);
+    const base = { now: () => 0, sleepFn: async () => {} };
+    await ingestMarketReadModelBatch(env, { ...base, fetchFinalHeight: async () => 250,
+        fetchBlock: async () => null });
+    assert.equal(db.sqlite.prepare('SELECT scan_height FROM finality_watermarks').get().scan_height, 250);
+    await assert.rejects(() => ingestMarketReadModelBatch(env, { ...base,
+        fetchFinalHeight: async () => 250,
+        fetchBlock: async () => linkedBlock(250, 100),
+    }), /non_contiguous_finality_watermark/);
+    assert.deepEqual({ ...db.sqlite.prepare('SELECT block_height, scan_height FROM finality_watermarks').get() },
+        { block_height: 99, scan_height: null });
+    const heights = [];
+    await ingestMarketReadModelBatch(env, { ...base, fetchFinalHeight: async () => 100,
+        fetchBlock: async ({ blockHeight }) => { heights.push(blockHeight); return linkedBlock(100, 99); } });
+    assert.deepEqual(heights, [100]);
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 100);
+    db.sqlite.close();
+});
+
+test('scan cursor CAS cannot regress or overwrite an advanced watermark', async () => {
+    const db = await database(true);
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const config = { network: 'testnet', contractId: 'market.testnet', startBlockHeight: 99 };
+    const old = await readMarketReadModelScanCursor(db, config);
+    await advanceMarketReadModelScanCursor(db, config, old, 250);
+    await advanceMarketReadModelScanCursor(db, config, old, 200);
+    assert.equal(db.sqlite.prepare('SELECT scan_height FROM finality_watermarks').get().scan_height, 250);
+    await resetMarketReadModelScanCursor(db, config, await readMarketReadModelScanCursor(db, config));
+    await advanceMarketReadModelScanCursor(db, config, old, 300);
+    assert.equal(db.sqlite.prepare('SELECT scan_height FROM finality_watermarks').get().scan_height, null);
+    await applyFinalMarketBlock(db, linkedBlock(100, 99));
+    await advanceMarketReadModelScanCursor(db, config, old, 300);
+    assert.deepEqual({ ...db.sqlite.prepare('SELECT block_height, scan_height FROM finality_watermarks').get() },
+        { block_height: 100, scan_height: null });
+    db.sqlite.close();
+});
+
+test('a late final block is rechecked when the tentative scan reached final height', async () => {
+    const db = await database(true);
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const env = publicIngestionEnv(db);
+    const base = { now: () => 0, sleepFn: async () => {}, fetchFinalHeight: async () => 102 };
+    await ingestMarketReadModelBatch(env, { ...base, fetchBlock: async () => null });
+    assert.equal(db.sqlite.prepare('SELECT scan_height FROM finality_watermarks').get().scan_height, 103);
+    const heights = [];
+    const result = await ingestMarketReadModelBatch(env, { ...base,
+        fetchBlock: async ({ blockHeight }) => {
+            heights.push(blockHeight);
+            return blockHeight === 102 ? linkedBlock(102, 99) : null;
+        } });
+    assert.deepEqual(heights, [100, 101, 102]);
+    assert.equal(result.block_height, 102);
+    assert.deepEqual({ ...db.sqlite.prepare('SELECT block_height, scan_height FROM finality_watermarks').get() },
+        { block_height: 102, scan_height: null });
+    db.sqlite.close();
+});
+
+test('a late final block with a hidden predecessor resets cursor before any projection', async () => {
+    const db = await database(true);
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const env = publicIngestionEnv(db);
+    const base = { now: () => 0, sleepFn: async () => {}, fetchFinalHeight: async () => 102 };
+    await ingestMarketReadModelBatch(env, { ...base, fetchBlock: async () => null });
+    await assert.rejects(() => ingestMarketReadModelBatch(env, { ...base,
+        fetchBlock: async ({ blockHeight }) => blockHeight === 102 ? linkedBlock(102, 100) : null,
+    }), /non_contiguous_finality_watermark/);
+    assert.deepEqual({ ...db.sqlite.prepare('SELECT block_height, scan_height FROM finality_watermarks').get() },
+        { block_height: 99, scan_height: null });
+    const heights = [];
+    await ingestMarketReadModelBatch(env, { ...base, fetchFinalHeight: async () => 100,
+        fetchBlock: async ({ blockHeight }) => { heights.push(blockHeight); return linkedBlock(100, 99); } });
+    assert.deepEqual(heights, [100]);
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 100);
+    db.sqlite.close();
+});
+
+test('a recovered earlier block is found after a scan reached a still-null final height', async () => {
+    const db = await database(true);
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const env = publicIngestionEnv(db);
+    const base = { now: () => 0, sleepFn: async () => {} };
+    await ingestMarketReadModelBatch(env, { ...base, fetchFinalHeight: async () => 249,
+        fetchBlock: async () => null });
+    assert.equal(db.sqlite.prepare('SELECT scan_height FROM finality_watermarks').get().scan_height, 250);
+    const heights = [];
+    await ingestMarketReadModelBatch(env, { ...base, fetchFinalHeight: async () => 249,
+        fetchBlock: async ({ blockHeight }) => {
+            heights.push(blockHeight);
+            return blockHeight === 150 ? linkedBlock(150, 99) : null;
+        } });
+    assert.deepEqual(heights, Array.from({ length: 150 }, (_, i) => i + 100));
+    assert.deepEqual({ ...db.sqlite.prepare('SELECT block_height, scan_height FROM finality_watermarks').get() },
+        { block_height: 150, scan_height: 250 });
+    await ingestMarketReadModelBatch(env, { ...base, fetchFinalHeight: async () => 400,
+        fetchBlock: async () => null });
+    assert.equal(db.sqlite.prepare('SELECT scan_height FROM finality_watermarks').get().scan_height, 400);
+    await ingestMarketReadModelBatch(env, { ...base, fetchFinalHeight: async () => 400,
+        fetchBlock: async ({ blockHeight }) => linkedBlock(blockHeight, 150) });
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 400);
+    db.sqlite.close();
 });
