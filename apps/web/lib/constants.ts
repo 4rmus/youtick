@@ -51,6 +51,8 @@ export const FEATURE_FLAGS = {
         && enablePlaybackAuthorizerV2
         && enableSponsoredLivepeerUploads,
     enableDerivedReadModel,
+    enableCurrentCatalog: enableDerivedReadModel && publicTestnetVideoV1 && enablePaidMediaLivepeerV1
+        && process.env.NEXT_PUBLIC_ENABLE_CURRENT_CATALOG === 'true',
 } as const;
 
 export const MEDIA_UPLOAD_POLICY = {

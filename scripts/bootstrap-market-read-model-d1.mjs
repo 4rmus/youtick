@@ -11,6 +11,10 @@ const DECIMAL_PATTERN = /^[1-9][0-9]{0,38}$/;
 export const MAX_BOOTSTRAP_PUBLICATIONS = 48;
 
 export async function fetchMarketReadModelBootstrap(input, fetchImpl = fetch) {
+    return (await fetchFinalMarketPublications(input, fetchImpl)).snapshot;
+}
+
+export async function fetchFinalMarketPublications(input, fetchImpl = fetch) {
     const request = normalizeRequest(input);
     const block = await nearRpc(request.rpcUrl, 'block', { finality: 'final' }, fetchImpl);
     const height = block?.header?.height;
@@ -37,7 +41,7 @@ export async function fetchMarketReadModelBootstrap(input, fetchImpl = fetch) {
     if (!Array.isArray(publications) || publications.length !== count) {
         throw new Error('invalid_near_publication_page');
     }
-    return normalizeBootstrap({
+    return { block: block.header, snapshot: normalizeBootstrap({
         schema: 'youtick.market-read-model-bootstrap.v1',
         network: request.network,
         contract_id: request.contractId,
@@ -45,7 +49,7 @@ export async function fetchMarketReadModelBootstrap(input, fetchImpl = fetch) {
         block_height: height,
         block_hash: hash,
         publications,
-    });
+    }) };
 }
 
 export async function applyMarketReadModelBootstrap(db, rawSnapshot) {

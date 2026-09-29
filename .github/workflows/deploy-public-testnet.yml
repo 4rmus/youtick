@@ -16,6 +16,11 @@ on:
         type: choice
         default: closed
         options: [closed, acceptance, drain]
+      catalog_mode:
+        description: off preserves v1; shadow refreshes v2; current also switches Web reads
+        type: choice
+        default: 'off'
+        options: ['off', 'shadow', 'current']
       confirmation:
         description: Type DEPLOY_PUBLIC_TESTNET_closed, DEPLOY_PUBLIC_TESTNET_acceptance or DEPLOY_PUBLIC_TESTNET_drain
         required: true
@@ -84,11 +89,12 @@ jobs:
         env:
           CLOSED_CONFIG_JSON: ${{ vars.PUBLIC_TESTNET_RELEASE_CONFIG }}
           RELEASE_MODE: ${{ inputs.mode }}
+          CATALOG_MODE: ${{ inputs.catalog_mode }}
         run: |
           mkdir -p "$RUNNER_TEMP/release"
           node --input-type=module -e 'import {writeFileSync} from "node:fs"; writeFileSync(`${process.env.RUNNER_TEMP}/closed-config.json`, process.env.CLOSED_CONFIG_JSON || "");'
           node scripts/release-metadata.mjs config --environment public-testnet \
-            --input "$RUNNER_TEMP/closed-config.json" --mode "$RELEASE_MODE" \
+            --input "$RUNNER_TEMP/closed-config.json" --mode "$RELEASE_MODE" --catalog-mode "${CATALOG_MODE:-off}" \
             --output "$RUNNER_TEMP/release/public-testnet-config.json"
           jq -r '.web | to_entries[] | "\(.key)=\(.value)"' "$RUNNER_TEMP/release/public-testnet-config.json" >> "$GITHUB_ENV"
       - run: npm ci --no-audit --no-fund --prefer-offline

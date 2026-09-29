@@ -4,9 +4,17 @@ import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VideoCard } from '@/components/VideoCard';
 import { useAllVideos } from '@/hooks/useAllVideos';
+import { useCurrentCatalog } from '@/hooks/useCurrentCatalog';
+import { FEATURE_FLAGS } from '@/lib/constants';
 
 export function DiscoverView() {
-    const query = useAllVideos();
+    return FEATURE_FLAGS.enableCurrentCatalog ? <CurrentDiscover /> : <LegacyDiscover />;
+}
+
+function LegacyDiscover() { return <DiscoverResults query={useAllVideos()} />; }
+function CurrentDiscover() { return <DiscoverResults query={useCurrentCatalog()} />; }
+
+function DiscoverResults({ query }: { query: (ReturnType<typeof useAllVideos> | ReturnType<typeof useCurrentCatalog>) & { warning?: string } }) {
     return (
         <div className="container mx-auto min-h-[calc(100vh-4rem)] px-4 py-10">
             <div className="mb-8">
@@ -15,6 +23,7 @@ export function DiscoverView() {
                 <p className="mt-3 text-sm text-zinc-400">Films and concert recordings, available directly from their creators.</p>
             </div>
 
+            {query.warning && !query.error && <p role="status" className="mb-6 text-amber-300">{query.warning}</p>}
             {query.error && (
                 <div role="alert" className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-6">
                     <p>{query.publications.length > 0

@@ -529,6 +529,10 @@ function buildConfig(environment) {
     for (const key of PUBLIC_TESTNET_BRIDGE_KEYS.filter((key) => key !== "VIDEO_ENVIRONMENT")) {
       bridge[key] = envValue(environment, key);
     }
+    for (const [section, key] of [[web, 'NEXT_PUBLIC_ENABLE_CURRENT_CATALOG'], [bridge, 'READ_MODEL_CURRENT_CATALOG_ENABLED']]) {
+      const raw = process.env[`PUBLIC_TESTNET_${key}`];
+      if (raw !== undefined) section[key] = raw;
+    }
     validatePublicTestnetConfig(config);
   }
   return config;
@@ -551,7 +555,12 @@ export function validatePublicTestnetConfig(config) {
       || web.NEXT_PUBLIC_LIVEPEER_BRIDGE_URL !== `https://${PUBLIC_TESTNET_TARGET.bridge.domain}`
       || bridge.LIVEPEER_JWT_ISSUER !== web.NEXT_PUBLIC_APP_URL) fail("public_testnet_origins_invalid");
   const mode = publicTestnetMode(config);
-  const packet = publicTestnetFlags(mode);
+  const currentWeb = web.NEXT_PUBLIC_ENABLE_CURRENT_CATALOG ?? 'false';
+  const currentWorker = bridge.READ_MODEL_CURRENT_CATALOG_ENABLED ?? 'false';
+  if (![currentWeb, currentWorker].every(value => ['false', 'true'].includes(value))
+      || (mode === 'closed' && (currentWeb !== 'false' || currentWorker !== 'false'))
+      || (currentWeb === 'true' && currentWorker !== 'true')) fail('public_testnet_current_catalog_incoherent');
+  const packet = { ...publicTestnetFlags(mode), NEXT_PUBLIC_ENABLE_CURRENT_CATALOG: currentWeb, READ_MODEL_CURRENT_CATALOG_ENABLED: currentWorker };
   for (const [key, value] of [...Object.entries(web), ...Object.entries(bridge)]) {
     if ((key.startsWith("NEXT_PUBLIC_ENABLE_") || key.endsWith("_ENABLED")) && value !== (packet[key] ?? "false")) {
       fail("public_testnet_initial_flags_not_closed");
@@ -580,8 +589,8 @@ function validateConfig(config, environment) {
   assertKeys(config.targets.web, ["worker", "domain"], "config.targets.web");
   assertKeys(config.targets.bridge, ["worker", "domain"], "config.targets.bridge");
   if (JSON.stringify(config.targets) !== JSON.stringify(environment === "public-testnet" ? PUBLIC_TESTNET_TARGET : TARGETS[environment])) fail("config targets are not allowed");
-  assertKeys(config.web, environment === "public-testnet" ? [...WEB_KEYS, "NEXT_PUBLIC_VIDEO_ENVIRONMENT"] : WEB_KEYS, "config.web");
-  assertKeys(config.bridge, environment === "public-testnet" ? [...BRIDGE_KEYS, ...PUBLIC_TESTNET_BRIDGE_KEYS] : BRIDGE_KEYS, "config.bridge");
+  assertKeys(config.web, environment === "public-testnet" ? [...WEB_KEYS, "NEXT_PUBLIC_VIDEO_ENVIRONMENT", ...(Object.hasOwn(config.web, "NEXT_PUBLIC_ENABLE_CURRENT_CATALOG") ? ["NEXT_PUBLIC_ENABLE_CURRENT_CATALOG"] : [])] : WEB_KEYS, "config.web");
+  assertKeys(config.bridge, environment === "public-testnet" ? [...BRIDGE_KEYS, ...PUBLIC_TESTNET_BRIDGE_KEYS, ...(Object.hasOwn(config.bridge, "READ_MODEL_CURRENT_CATALOG_ENABLED") ? ["READ_MODEL_CURRENT_CATALOG_ENABLED"] : [])] : BRIDGE_KEYS, "config.bridge");
 
   const prefix = environment.toUpperCase().replaceAll("-", "_");
   const previous = {};
@@ -642,7 +651,7 @@ async function readCanonicalConfig(path, environment) {
 }
 
 async function commandConfig(options) {
-  assertOnlyOptions(options, ["environment", "output", "input", "mode"]);
+  assertOnlyOptions(options, ["environment", "output", "input", "mode", "catalog-mode"]);
   const environment = option(options, "environment");
   const output = resolve(option(options, "output"));
   let config;
@@ -656,8 +665,13 @@ async function commandConfig(options) {
       for (const key of Object.keys(section)) if (Object.hasOwn(flags, key)) section[key] = flags[key];
     }
     if ((options.mode ?? "closed") !== "closed") config.web.NEXT_PUBLIC_MARKET_READ_MODEL_URL = `https://${PUBLIC_TESTNET_READ_MODEL.domain}`;
+    const catalogMode = options['catalog-mode'] ?? 'off';
+    if (!['off', 'shadow', 'current'].includes(catalogMode)) fail('current_catalog_mode_invalid');
+    config.web.NEXT_PUBLIC_ENABLE_CURRENT_CATALOG = String(catalogMode === 'current');
+    config.bridge.READ_MODEL_CURRENT_CATALOG_ENABLED = String(catalogMode !== 'off');
     validateConfig(config, environment);
   } else {
+    if (options['catalog-mode']) fail('catalog_mode_requires_public_input_config');
     if (options.mode) fail("mode_requires_public_input_config");
     config = buildConfig(environment);
   }

@@ -7,6 +7,7 @@ import { ArrowLeft, Loader2, User, Wallet } from 'lucide-react';
 import { PageShell } from '@/components/PageShell';
 import { RuntimeClosed } from '@/components/RuntimeClosed';
 import { ScreenState } from '@/components/ScreenState';
+import { useCurrentCatalog } from '@/hooks/useCurrentCatalog';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -28,7 +29,7 @@ export default function ProfilePage() {
     const activityQuery = useQuery({
         queryKey: ['creatorReadModel', accountId],
         queryFn: async () => (await readMarketCreatorPublicationPage(accountId!, null, 5)).items,
-        enabled: Boolean(accountId && FEATURE_FLAGS.enableDerivedReadModel),
+        enabled: Boolean(accountId && FEATURE_FLAGS.enableDerivedReadModel && !FEATURE_FLAGS.enableCurrentCatalog),
         staleTime: 15_000,
         refetchInterval: 15_000,
         refetchIntervalInBackground: false,
@@ -119,9 +120,11 @@ export default function ProfilePage() {
                     <Card className="max-w-4xl bg-zinc-900 p-6">
                         <h2 className="font-semibold text-zinc-200">Publication activity</h2>
                         <p className="mt-1 text-sm text-zinc-500">
-                            Rebuildable history; available balance above remains canonical NEAR state.
+                            {FEATURE_FLAGS.enableCurrentCatalog
+                                ? 'Latest verified publication status. Your available balance is shown above.'
+                                : 'Rebuildable history; available balance above remains canonical NEAR state.'}
                         </p>
-                        {activityQuery.isLoading ? (
+                        {FEATURE_FLAGS.enableCurrentCatalog ? <CurrentCreatorPublications accountId={accountId} /> : activityQuery.isLoading ? (
                             <Loader2 role="status" aria-label="Loading publication activity" className="mt-6 h-6 w-6 animate-spin text-zinc-500" />
                         ) : activityQuery.error ? (
                             <p role="alert" className="mt-6 text-sm text-red-400">Publication activity could not be loaded.</p>
@@ -154,4 +157,20 @@ export default function ProfilePage() {
             </div>
         </PageShell>
     );
+}
+
+function CurrentCreatorPublications({ accountId }: { accountId: string }) {
+    const query = useCurrentCatalog(accountId);
+    return <div className="mt-6">
+        <p className="text-xs uppercase tracking-wider text-zinc-500">Publications</p>
+        {query.loading && <p role="status">Loading publications…</p>}
+        {query.error && <p role="alert" className="text-red-400">Publication activity could not be updated.</p>}
+        {query.warning && <p role="status" className="text-amber-300">{query.warning}</p>}
+        {!query.loading && !query.error && query.publications.length === 0 && <p>No publications yet.</p>}
+        <ul className="mt-2 space-y-2">{query.publications.map(publication => <li key={publication.publication_id}>
+            <Link className="text-sm text-zinc-200 hover:text-emerald-300" href={`/watch?job=${encodeURIComponent(publication.publication_id)}`}>
+                {publication.title} · {publication.availability.replaceAll('_', ' ').toLowerCase()}
+            </Link>
+        </li>)}</ul>
+    </div>;
 }

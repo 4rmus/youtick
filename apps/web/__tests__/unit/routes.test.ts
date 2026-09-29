@@ -35,7 +35,7 @@ describe('Livepeer-only routes', () => {
 
         expect(discover).toContain('!FEATURE_FLAGS.enablePaidMediaLivepeerV1 && !FEATURE_FLAGS.enableDerivedReadModel');
         expect(profile).toContain('!FEATURE_FLAGS.enablePaidMediaLivepeerV1 && !FEATURE_FLAGS.enableDerivedReadModel');
-        expect(profile).toContain('enabled: Boolean(accountId && FEATURE_FLAGS.enableDerivedReadModel)');
+        expect(profile).toContain('enabled: Boolean(accountId && FEATURE_FLAGS.enableDerivedReadModel && !FEATURE_FLAGS.enableCurrentCatalog)');
         expect(profile).toContain('FEATURE_FLAGS.enablePaidMediaLivepeerV1 && (');
         expect(card).toContain('return FEATURE_FLAGS.enablePaidMediaLivepeerV1 ? (');
     });

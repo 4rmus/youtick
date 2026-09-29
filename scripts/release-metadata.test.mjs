@@ -1063,3 +1063,24 @@ test("public packets build and verify without any Preview or Production artifact
     assert.notEqual(run([...args, "--environment", "public-testnet", "--public-testnet-config", config, "--web-public-testnet", bundle]).status, 0);
   }
 });
+
+test('current catalogue release modes require explicit choice and cannot enable a closed environment', () => {
+  const root = mkdtempSync(join(tmpdir(), "youtick-current-catalog-config-"));
+  const base = join(root, 'catalog-base.json');
+  const output = join(root, 'catalog-config.json');
+  assertSuccess(run(['config', '--environment', 'public-testnet', '--output', base], {
+    ...publicEnv('public-testnet'), PUBLIC_TESTNET_NEAR_SPONSOR_RELAYER_ACCOUNT_ID: 'public-relayer.testnet',
+    PUBLIC_TESTNET_NEAR_SPONSOR_RELAYER_KEY_EPOCH: '1',
+    PUBLIC_TESTNET_LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '',
+    PUBLIC_TESTNET_LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '',
+  }));
+  for (const [mode, worker, web] of [['off', 'false', 'false'], ['shadow', 'true', 'false'], ['current', 'true', 'true']]) {
+    const args = ['config', '--environment', 'public-testnet', '--input', base, '--mode', 'acceptance', '--catalog-mode', mode, '--output', output];
+    assertSuccess(run(args));
+    const config = JSON.parse(readFileSync(output));
+    assert.equal(config.bridge.READ_MODEL_CURRENT_CATALOG_ENABLED, worker);
+    assert.equal(config.web.NEXT_PUBLIC_ENABLE_CURRENT_CATALOG, web);
+    const closed = [...args]; closed[closed.indexOf('acceptance')] = 'closed';
+    assert.equal(run(closed).status === 0, mode === 'off');
+  }
+});

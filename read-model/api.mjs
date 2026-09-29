@@ -1,3 +1,5 @@
+import { currentCatalogEnabled, readCurrentCatalog } from './current-catalog.mjs';
+
 const ACCOUNT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
 const BLOCK_HASH_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
@@ -22,6 +24,7 @@ export async function marketReadApi(request, env) {
 
 function readModelRoute(pathname) {
     if (pathname === '/__health') return 'health';
+    if (pathname.startsWith('/v2/')) return 'current_catalog';
     if (pathname === '/v1/publications') return 'publications';
     if (/^\/v1\/publications\/[^/]+$/.test(pathname)) return 'publication_detail';
     if (/^\/v1\/creators\/[^/]+\/publications$/.test(pathname)) return 'creator_publications';
@@ -47,6 +50,7 @@ async function routeMarketReadApi(request, env) {
     if (!validEnv(env)) return json({ error: 'read_model_disabled' }, 503);
 
     try {
+        if (url.pathname.startsWith('/v2/')) return await currentCatalogResponse(env, url);
         if (url.pathname === '/v1/publications') {
             return await publicationList(request, env, url, null);
         }
@@ -63,6 +67,8 @@ async function routeMarketReadApi(request, env) {
         return json({ error: 'not_found' }, 404);
     } catch (error) {
         const code = error instanceof Error ? error.message : 'read_model_unavailable';
+        if (code === 'catalog_changed') return json({ error: code }, 409);
+        if (code === 'catalog_unavailable') return json({ error: code }, 503);
         if (code === 'invalid_read_model_request' || code === 'invalid_cursor') {
             return json({ error: code }, 400);
         }
@@ -241,4 +247,47 @@ function json(value, status = 200, headers = {}) {
         status,
         headers: { 'Cache-Control': 'no-store', ...headers },
     });
+}
+
+async function currentCatalogResponse(env, url) {
+    if (!currentCatalogEnabled(env)) throw new Error('catalog_unavailable');
+    const creatorRoute = url.pathname.match(/^\/v2\/creators\/([^/]+)\/publications$/);
+    const detailRoute = url.pathname.match(/^\/v2\/publications\/([^/]+)$/);
+    if (url.pathname !== '/v2/publications' && !creatorRoute && !detailRoute) return json({ error: 'not_found' }, 404);
+    const creator = creatorRoute ? pathPart(creatorRoute[1], ACCOUNT_PATTERN) : null;
+    const id = detailRoute ? pathPart(detailRoute[1], ID_PATTERN) : null;
+    const limit = parseLimit(url.searchParams.get('limit'));
+    const { state, publications } = await readCurrentCatalog(env.MARKET_READ_MODEL,
+        { network: env.READ_MODEL_NETWORK, contractId: env.READ_MODEL_CONTRACT_ID });
+    const servedAt = Date.now();
+    const age = state ? servedAt - state.source_block_timestamp_ms : Infinity;
+    if (!state || age > 180_000 || age < -5000 || !Number.isSafeInteger(state.source_block_timestamp_ms)
+        || publications.length !== state.publication_count) throw new Error('catalog_unavailable');
+    const metadata = { schema: 'youtick.current-catalog.v1', source: 'current-state',
+        network: env.READ_MODEL_NETWORK, contract_id: env.READ_MODEL_CONTRACT_ID,
+        catalog: state, served_at_ms: servedAt, freshness: age > 90_000 ? 'stale' : 'fresh' };
+    if (id) {
+        const publication = publications.find(row => row.publication_id === id);
+        return publication ? json({ ...metadata, publication }) : json({ error: 'not_found' }, 404);
+    }
+    const scope = [2, env.READ_MODEL_NETWORK, env.READ_MODEL_CONTRACT_ID, creator];
+    let cursor = null;
+    const encoded = url.searchParams.get('cursor');
+    if (encoded !== null) {
+        try {
+            if (encoded.length > 1024 || !/^[A-Za-z0-9_-]+$/.test(encoded)) throw new Error();
+            cursor = JSON.parse(new TextDecoder().decode(base64UrlDecode(encoded)));
+            if (JSON.stringify(cursor.scope) !== JSON.stringify(scope) || !/^[a-f0-9]{64}$/.test(cursor.revision)
+                || !Number.isSafeInteger(cursor.time) || cursor.time < 1 || typeof cursor.id !== 'string'
+                || !ID_PATTERN.test(cursor.id)) throw new Error();
+        } catch { throw new Error('invalid_cursor'); }
+        if (cursor.revision !== state.content_revision) throw new Error('catalog_changed');
+    }
+    const rows = publications.filter(row => creator ? row.creator_id === creator : row.availability === 'ACTIVE')
+        .sort((a, b) => b.published_at_ms - a.published_at_ms || (a.publication_id < b.publication_id ? 1 : a.publication_id > b.publication_id ? -1 : 0))
+        .filter(row => !cursor || row.published_at_ms < cursor.time || (row.published_at_ms === cursor.time && row.publication_id < cursor.id));
+    const items = rows.slice(0, limit), last = items.at(-1);
+    const next = rows.length > limit ? { scope, revision: state.content_revision, time: last.published_at_ms, id: last.publication_id } : null;
+    return json({ ...metadata, ...(creator ? { creator_id: creator } : {}), items,
+        next_cursor: next ? btoa(JSON.stringify(next)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') : null });
 }
