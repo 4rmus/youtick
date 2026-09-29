@@ -268,6 +268,7 @@ function makeRelease(t, target = 'preview') {
         '',
         '[vars]',
         'READ_MODEL_ENABLED = "false"',
+    'READ_MODEL_CURRENT_CATALOG_ENABLED = "false"',
         'READ_MODEL_INGESTION_ENABLED = "false"',
         'READ_MODEL_BACKFILL_ENABLED = "false"',
         'READ_MODEL_BACKFILL_CONTINUE_ENABLED = "false"',
@@ -442,6 +443,7 @@ if (args[0] === 'versions' && args[1] === 'upload') {
   const text = configText();
   if (worker === 'youtick-market-read-model-public-testnet') {
     const config = JSON.parse(text);
+    if (config.vars.READ_MODEL_CURRENT_CATALOG_ENABLED !== (state.expectedCurrentCatalog ?? 'false')) throw new Error('current catalogue flag mismatch');
     if (config.vars.READ_MODEL_CONTRACT_ID !== 'public-video-market.testnet'
         || config.vars.MARKET_CONTRACT_ID !== config.vars.READ_MODEL_CONTRACT_ID
         || config.vars.READ_MODEL_START_BLOCK_HEIGHT !== '310000000'
@@ -2419,4 +2421,22 @@ for (const [name, fields, accepted] of [
         await assert.rejects(deploy, /public_queue_consumer_unproven/);
         assert.deepEqual(calls(fake), []);
     }
+});
+
+
+for (const catalogMode of ['shadow', 'current']) test(`public ${catalogMode} catalogue reaches only the reviewed read-model configuration`, async t => {
+    const release = publicModeRelease(t, 'acceptance');
+    const config = JSON.parse(readFileSync(release.configPath));
+    config.bridge.READ_MODEL_CURRENT_CATALOG_ENABLED = 'true';
+    config.web.NEXT_PUBLIC_ENABLE_CURRENT_CATALOG = String(catalogMode === 'current');
+    writeFileSync(release.configPath, canonicalJson(config));
+    release.manifest.configs['public-testnet'] = record(release.configPath);
+    writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
+    const fake = makeFakeWrangler(release, { publicMode: 'acceptance', expectedCurrentCatalog: 'true', workers: {
+        [TARGETS['public-testnet'].web.worker]: { traffic: [{ version_id: 'web-old', percentage: 100 }] },
+        [TARGETS['public-testnet'].bridge.worker]: { traffic: [{ version_id: 'bridge-old', percentage: 100 }] },
+        [PUBLIC_TESTNET_READ_MODEL.worker]: { traffic: [{ version_id: 'read-model-old', percentage: 100 }] },
+    } });
+    await deployFixture(release, fake, async () => ({ ok: true }), { target: 'public-testnet' });
+    assert.ok(calls(fake).some(args => args.includes(PUBLIC_TESTNET_READ_MODEL.worker)));
 });

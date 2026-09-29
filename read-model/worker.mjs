@@ -1,3 +1,4 @@
+import { currentCatalogEnabled, refreshCurrentCatalog, CURRENT_CATALOG_QUERY_BUDGET } from './current-catalog.mjs';
 import { fetchNeardataMarketBlock } from '../scripts/fetch-neardata-market-block.mjs';
 import {
     applyFinalMarketBlockBatch, MAX_FINAL_BLOCKS_PER_BATCH,
@@ -62,8 +63,11 @@ export async function ingestMarketReadModelBatch(env, dependencies = {}) {
 }
 
 async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ingestionConfig(env)) {
-    const fetchFinalHeight = dependencies.fetchFinalHeight ?? fetchNearFinalBlockHeight;
-    const fetchBlock = dependencies.fetchBlock ?? fetchNeardataMarketBlock;
+    const boundedFetch = dependencies.signal
+        ? (url, init) => fetch(url, { ...init, signal: AbortSignal.any([init.signal, dependencies.signal]) })
+        : fetch;
+    const fetchFinalHeight = dependencies.fetchFinalHeight ?? ((env) => fetchNearFinalBlockHeight(env, boundedFetch));
+    const fetchBlock = dependencies.fetchBlock ?? ((input) => fetchNeardataMarketBlock(input, boundedFetch));
     const finalBlockHeight = await fetchFinalHeight(env);
     if (!Number.isSafeInteger(finalBlockHeight)
         || finalBlockHeight < config.startBlockHeight) {
@@ -96,12 +100,12 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
     let blockCount = 0;
     const now = dependencies.now ?? Date.now;
     const sleep = dependencies.sleepFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-    const started = now();
+    const started = dependencies.startedAt ?? now();
     let lastFetchAt = started - 350;
     const limit = isPublic ? 150 : MAX_BLOCKS_PER_RUN;
     let scanHeight = position?.scanHeight ?? nextBlockHeight;
     let requestCount = 0;
-    let remainingQueries = MAX_FINAL_BATCH_QUERIES;
+    let remainingQueries = dependencies.queryBudget ?? MAX_FINAL_BATCH_QUERIES;
     while (requestCount < limit && nextBlockHeight <= finalBlockHeight) {
         const blocks = [];
         let batchQueries = 0;
@@ -109,7 +113,7 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
         while (blocks.length < (isPublic ? MAX_FINAL_BLOCKS_PER_BATCH : 1) && requestCount < limit
             && scanHeight <= finalBlockHeight && (!isPublic || now() - started < 50_000)) {
             if (isPublic) {
-                await sleep(Math.max(0, 350 - (now() - lastFetchAt)));
+                await sleep(Math.min(Math.max(0, 350 - (now() - lastFetchAt)), Math.max(0, 50_000 - (now() - started))));
                 if (now() - started >= 50_000) break;
                 lastFetchAt = now();
             }
@@ -307,7 +311,7 @@ export const marketReadModelWorker = {
                     fetchImpl: dependencies.fetchImpl,
                     now: dependencies.now,
                 })
-                : ingestMarketReadModelBatch(env, dependencies);
+                : runScheduledIngestion(env, dependencies);
             const work = task.then(
                 (result) => {
                     logger.log(isFinalityProbe ? result : JSON.stringify(result));
@@ -370,3 +374,26 @@ export const marketReadModelWorker = {
 };
 
 export default marketReadModelWorker;
+
+export async function runScheduledIngestion(env, dependencies = {}) {
+    if (!currentCatalogEnabled(env)) return ingestMarketReadModelBatch(env, dependencies);
+    const now = dependencies.now ?? Date.now;
+    const startedAt = now();
+    const signal = AbortSignal.timeout(50_000);
+    const logger = dependencies.logger ?? console;
+    const schema = 'youtick.current-catalog-refresh.v1';
+    try {
+        const result = await refreshCurrentCatalog(env, { ...dependencies, signal });
+        logger.log(JSON.stringify({ schema, ...result, duration_ms: now() - startedAt }));
+    } catch (error) {
+        const code = error instanceof Error ? error.message : '';
+        const allowed = new Set(['d1_bootstrap_publication_limit_exceeded', 'catalog_snapshot_conflict',
+            'catalog_publication_conflict', 'catalog_capacity_exceeded', 'catalog_timestamp_invalid',
+            'invalid_near_publication_page', 'invalid_d1_bootstrap_publication', 'duplicate_d1_bootstrap_publication',
+            'near_rpc_unavailable', 'catalog_query_limit']);
+        logger.error(JSON.stringify({ schema, status: 'failed', error_code: allowed.has(code) ? code : 'catalog_refresh_failed', duration_ms: now() - startedAt }));
+    }
+    if (now() - startedAt >= 50_000) return { schema: TELEMETRY_SCHEMA, status: 'budget_exhausted' };
+    return ingestMarketReadModelBatch(env, { ...dependencies, startedAt, signal,
+        queryBudget: MAX_FINAL_BATCH_QUERIES - CURRENT_CATALOG_QUERY_BUDGET });
+}

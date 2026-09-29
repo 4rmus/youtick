@@ -199,6 +199,7 @@ const READ_MODEL_ARTIFACT_WRANGLER = [
     '',
     '[vars]',
     'READ_MODEL_ENABLED = "false"',
+    'READ_MODEL_CURRENT_CATALOG_ENABLED = "false"',
     'READ_MODEL_INGESTION_ENABLED = "false"',
     'READ_MODEL_BACKFILL_ENABLED = "false"',
     'READ_MODEL_BACKFILL_CONTINUE_ENABLED = "false"',
@@ -542,7 +543,9 @@ async function readRelease(artifactDir, target, sha) {
         fail('preview_public_beta_multi_asset_payments_enabled');
     }
     assertExactKeys(config.bridge, target === 'public-testnet'
-        ? [...BRIDGE_PUBLIC_KEYS, ...PUBLIC_TESTNET_BRIDGE_KEYS] : BRIDGE_PUBLIC_KEYS, 'bridge_public_config');
+        ? [...BRIDGE_PUBLIC_KEYS, ...PUBLIC_TESTNET_BRIDGE_KEYS,
+            ...(Object.hasOwn(config.bridge, 'READ_MODEL_CURRENT_CATALOG_ENABLED') ? ['READ_MODEL_CURRENT_CATALOG_ENABLED'] : [])]
+        : BRIDGE_PUBLIC_KEYS, 'bridge_public_config');
     for (const [key, value] of Object.entries(config.bridge)) {
         if (typeof value !== 'string' || /[\0\r\n]/.test(value)) fail(`bridge_var_${key.toLowerCase()}_invalid`);
     }
@@ -723,6 +726,7 @@ async function writeSanitizedConfigs(extracted, target, config) {
             vars: {
                 VIDEO_ENVIRONMENT: 'public-testnet', MARKET_CONTRACT_ID: config.bridge.MARKET_CONTRACT_ID,
                 READ_MODEL_ENABLED: String(publicTestnetMode(config) !== 'closed'), READ_MODEL_INGESTION_ENABLED: String(publicTestnetMode(config) !== 'closed'),
+                READ_MODEL_CURRENT_CATALOG_ENABLED: config.bridge.READ_MODEL_CURRENT_CATALOG_ENABLED ?? 'false',
                 READ_MODEL_BACKFILL_ENABLED: 'false', READ_MODEL_BACKFILL_CONTINUE_ENABLED: 'false',
                 READ_MODEL_NETWORK: 'testnet', READ_MODEL_CONTRACT_ID: config.bridge.MARKET_CONTRACT_ID,
                 READ_MODEL_START_BLOCK_HEIGHT: config.bridge.READ_MODEL_START_BLOCK_HEIGHT,

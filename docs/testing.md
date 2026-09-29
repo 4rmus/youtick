@@ -87,6 +87,7 @@ node --test scripts/apply-market-read-model-d1.test.mjs \
   scripts/fetch-neardata-market-block.test.mjs \
   scripts/market-event-catalog.test.mjs \
   scripts/market-read-api.test.mjs \
+  scripts/current-catalog.test.mjs \
   scripts/rebuild-market-read-model.test.mjs
 ```
 
@@ -283,3 +284,27 @@ node --test scripts/release-metadata.test.mjs scripts/cloudflare-release.test.mj
 A refreshed policy keeps both Market maintenance guards true. A live snapshot
 while maintenance is off must reject; local test success does not authorize
 workflow dispatch, maintenance calls or profile activation.
+
+
+## Current-state catalogue (local, closed by default)
+
+`current-catalog.test.mjs` uses synthetic RPC and transactional in-memory SQLite
+for exact-final snapshots, 48-publication bounds, stale/conflicting/partial data,
+atomic concurrency, lost-response reconciliation, historical-table preservation,
+v2 cursor scope and expiry, and the shared scheduled-invocation budget.
+`apps/web/__tests__/unit/current-catalog.test.ts` verifies source validation,
+409 restart, stale/expired card rendering and the closed client flag.
+
+```bash
+node --test scripts/current-catalog.test.mjs
+cd apps/web
+npm test -- --run __tests__/unit/current-catalog.test.ts __tests__/unit/catalog-refresh.test.ts __tests__/unit/useAllVideos.test.ts __tests__/unit/market-read-model.test.ts
+npx tsc --noEmit
+```
+
+Migration `0008_current_catalog.sql` is additive. Neither local tests nor a
+successful packet build applies it remotely. The optional public-testnet
+`catalog_mode` is `off` by default; `shadow` selects only snapshot generation,
+`current` also selects the v2 Web reader. Both are rejected in `closed` mode.
+The migration must be verified before an enabled release; these tests do not
+claim hosted freshness or permit stopping the historical scanner.

@@ -215,3 +215,29 @@ Still required before pilot traffic: an exact-main release of this continuation
 guard, a supervised Queue consumer policy, a named human Platform/SRE owner and
 a measured four-hour rebuild drill. Alert delivery remains an explicitly
 accepted risk; the bounded ingestion failure codes still need active supervision.
+
+
+## Current-state catalogue (source only)
+
+The optional `READ_MODEL_CURRENT_CATALOG_ENABLED` flag is false by default.
+On public-testnet, with the existing read gate open, it reads at most 48
+publications from one finalized NEAR block into `current_publications` and
+`current_catalog_state` (migration `0008_current_catalog.sql`). It never
+bootstraps or advances historical tables. A publication cannot disappear or
+reopen after suspension/takedown. The database compare guard aborts stale
+concurrent batches; ambiguous commit responses are read back, never resent.
+
+`/v2/publications`, `/v2/publications/:id` and
+`/v2/creators/:account/publications` use an explicitly current-state schema,
+publication-time ordering and content-bound cursors. At source ages over 90s
+responses are stale; over 180s they return 503. These routes use no-store.
+The existing v1 routes remain unchanged. Web selection is separately gated by
+`NEXT_PUBLIC_ENABLE_CURRENT_CATALOG`, false by default.
+
+During shadow operation, catalogue RPC has a 15-second abort budget, with
+100 D1 queries reserved; history has the remaining 895 write queries plus
+five control queries and the remainder of the shared 50-second work window.
+Already-submitted D1 transactions are not cancellable; they are awaited or
+reconciled after an error, without speculative retransmission. Queue backfill
+is unchanged. No remote migration, flag activation or scanner shutdown follows
+from this source change.
