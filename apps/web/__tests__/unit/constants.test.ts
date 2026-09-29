@@ -7,6 +7,8 @@ const KEYS = [
     'NEXT_PUBLIC_USDC_CONTRACT_ID',
     'NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1',
     'NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL',
+    'NEXT_PUBLIC_ENABLE_CURRENT_CATALOG',
+    'NEXT_PUBLIC_VIDEO_ENVIRONMENT',
     'NEXT_PUBLIC_MARKET_READ_MODEL_URL',
     'NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2',
     'NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2',
@@ -39,7 +41,7 @@ describe('Livepeer-only configuration', () => {
         expect(NEAR_CONFIG.accessContractId).toBe('access.testnet');
     });
 
-    it('keeps both runtime gates disabled unless explicitly enabled', async () => {
+    it('keeps runtime gates disabled unless explicitly enabled', async () => {
         clearEnv();
         process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID = 'market.near';
         process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.near';
@@ -53,8 +55,29 @@ describe('Livepeer-only configuration', () => {
             enableSponsoredLivepeerUploads: false,
             publicTestnetBeta: false,
             enableDerivedReadModel: false,
+            enableCurrentCatalog: false,
         });
         expect(MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes).toBe(32 * 1024 * 1024);
+    });
+
+    it.each([
+        { current: false, derived: true, publicTestnet: true, paid: true, expected: false },
+        { current: true, derived: false, publicTestnet: true, paid: true, expected: false },
+        { current: true, derived: true, publicTestnet: false, paid: true, expected: false },
+        { current: true, derived: true, publicTestnet: true, paid: false, expected: false },
+        { current: true, derived: true, publicTestnet: true, paid: true, expected: true },
+    ])('gates current catalogue reads on the complete public-testnet selection: %j', async flags => {
+        clearEnv();
+        process.env.NEXT_PUBLIC_NEAR_NETWORK = 'testnet';
+        process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID = 'market.testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.testnet';
+        process.env.NEXT_PUBLIC_MARKET_READ_MODEL_URL = 'https://read.test';
+        process.env.NEXT_PUBLIC_ENABLE_CURRENT_CATALOG = String(flags.current);
+        process.env.NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL = String(flags.derived);
+        process.env.NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1 = String(flags.paid);
+        if (flags.publicTestnet) process.env.NEXT_PUBLIC_VIDEO_ENVIRONMENT = 'public-testnet';
+        const { FEATURE_FLAGS } = await import('@/lib/constants');
+        expect(FEATURE_FLAGS.enableCurrentCatalog).toBe(flags.expected);
     });
 
     it('derives public beta only from the existing combined testnet packet', async () => {
