@@ -117,3 +117,154 @@ function requireReadModelOrigin(): string {
     }
     return APP_CONFIG.marketReadModelUrl;
 }
+
+// Account views (Sahne G12). Derived from past events and possibly behind the current catalogue;
+// callers show `indexedAtMs` and keep NEAR as the authority for playback access.
+export const accountReadModelEnabled = process.env.NEXT_PUBLIC_ENABLE_ACCOUNT_READ_MODEL === 'true';
+
+const AMOUNT_PATTERN = /^(0|[1-9][0-9]{0,38})$/;
+const ASSETS = ['USDC', 'NEAR'] as const;
+const WITHDRAWAL_STATUSES = ['started', 'succeeded', 'failed'] as const;
+const ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
+
+type AccountPage<T> = { items: T[]; nextCursor: string | null; watermark: Watermark; indexedAtMs: number };
+
+export type AccountTicket = { publicationId: string; sourceBlockHeight: number; publication: LivepeerPublication | null };
+export type CreatorSale = {
+    publicationId: string;
+    asset: (typeof ASSETS)[number];
+    saleCount: number;
+    grossAmount: string;
+    creatorAmount: string;
+    platformAmount: string;
+    lastSaleBlockHeight: number;
+};
+export type CreatorWithdrawal = {
+    withdrawalId: string;
+    asset: (typeof ASSETS)[number];
+    amount: string;
+    status: (typeof WITHDRAWAL_STATUSES)[number];
+    reasonCode: string | null;
+    sourceBlockHeight: number;
+};
+
+export function readAccountTickets(accountId: string, cursor: string | null, limit: number): Promise<AccountPage<AccountTicket>> {
+    return readAccountPage(`/v1/accounts/${encodeURIComponent(accountId)}/tickets`, 'youtick.account-tickets.v1',
+        'account_id', accountId, cursor, limit, (item, watermark) => {
+            const publicationId = requireId(item.publication_id);
+            const sourceBlockHeight = requireHeight(item.source_block_height, watermark);
+            let publication: LivepeerPublication | null = null;
+            if (item.publication !== null) {
+                const value = requireObject(item.publication);
+                requireHeight(value.source_block_height, watermark);
+                publication = parseLivepeerPublication(value, publicationId);
+            }
+            return { publicationId, sourceBlockHeight, publication };
+        });
+}
+
+export function readCreatorSales(creatorId: string, cursor: string | null, limit: number): Promise<AccountPage<CreatorSale>> {
+    return readAccountPage(`/v1/creators/${encodeURIComponent(creatorId)}/sales`, 'youtick.creator-sales.v1',
+        'creator_id', creatorId, cursor, limit, (item, watermark) => {
+            const grossAmount = requireAmount(item.gross_amount);
+            const creatorAmount = requireAmount(item.creator_amount);
+            const platformAmount = requireAmount(item.platform_amount);
+            if (BigInt(creatorAmount) + BigInt(platformAmount) !== BigInt(grossAmount)
+                || !Number.isSafeInteger(item.sale_count) || Number(item.sale_count) < 1) {
+                throw new Error('invalid_market_read_model_page');
+            }
+            return {
+                publicationId: requireId(item.publication_id),
+                asset: requireOneOf(item.asset, ASSETS),
+                saleCount: Number(item.sale_count),
+                grossAmount,
+                creatorAmount,
+                platformAmount,
+                lastSaleBlockHeight: requireHeight(item.last_sale_block_height, watermark),
+            };
+        });
+}
+
+export function readCreatorWithdrawals(creatorId: string, cursor: string | null, limit: number): Promise<AccountPage<CreatorWithdrawal>> {
+    return readAccountPage(`/v1/creators/${encodeURIComponent(creatorId)}/withdrawals`, 'youtick.creator-withdrawals.v1',
+        'creator_id', creatorId, cursor, limit, (item, watermark) => {
+            if (item.reason_code !== null && (typeof item.reason_code !== 'string' || !/^[a-z0-9_]{1,64}$/.test(item.reason_code))) {
+                throw new Error('invalid_market_read_model_page');
+            }
+            return {
+                withdrawalId: requireId(item.withdrawal_id),
+                asset: requireOneOf(item.asset, ASSETS),
+                amount: requireAmount(item.amount),
+                status: requireOneOf(item.status, WITHDRAWAL_STATUSES),
+                reasonCode: item.reason_code as string | null,
+                sourceBlockHeight: requireHeight(item.source_block_height, watermark),
+            };
+        });
+}
+
+async function readAccountPage<T>(
+    path: string,
+    schema: string,
+    ownerField: 'account_id' | 'creator_id',
+    owner: string,
+    cursor: string | null,
+    limit: number,
+    parse: (item: Record<string, unknown>, watermark: Watermark) => T,
+): Promise<AccountPage<T>> {
+    if (!accountReadModelEnabled) throw new Error('account_read_model_disabled');
+    requireAccount(owner);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50 || (cursor !== null && !CURSOR_PATTERN.test(cursor))) {
+        throw new Error('invalid_market_read_model_request');
+    }
+    const query = new URL(path, requireReadModelOrigin());
+    query.searchParams.set('limit', String(limit));
+    if (cursor) query.searchParams.set('cursor', cursor);
+    const page = await requestJson(query);
+    const watermark = parseWatermark(page.watermark);
+    if ((FEATURE_FLAGS.publicTestnetVideoV1 && (page.network !== NEAR_NETWORK || page.contract_id !== NEAR_CONFIG.marketContractId))
+        || page.schema !== schema || page[ownerField] !== owner
+        || !Number.isSafeInteger(page.indexed_at_ms) || Number(page.indexed_at_ms) < 1
+        || !Array.isArray(page.items) || page.items.length > limit
+        || !(page.next_cursor === null || (typeof page.next_cursor === 'string' && CURSOR_PATTERN.test(page.next_cursor)))) {
+        throw new Error('invalid_market_read_model_page');
+    }
+    let items: T[];
+    try {
+        items = page.items.map((item) => parse(requireObject(item), watermark));
+    } catch {
+        throw new Error('invalid_market_read_model_page');
+    }
+    return {
+        items,
+        nextCursor: page.next_cursor as string | null,
+        watermark,
+        indexedAtMs: Number(page.indexed_at_ms),
+    };
+}
+
+function requireObject(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_market_read_model_page');
+    return value as Record<string, unknown>;
+}
+
+function requireId(value: unknown): string {
+    if (typeof value !== 'string' || !ID_PATTERN.test(value)) throw new Error('invalid_market_read_model_page');
+    return value;
+}
+
+function requireAmount(value: unknown): string {
+    if (typeof value !== 'string' || !AMOUNT_PATTERN.test(value)) throw new Error('invalid_market_read_model_page');
+    return value;
+}
+
+function requireHeight(value: unknown, watermark: Watermark): number {
+    if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > watermark.block_height) {
+        throw new Error('invalid_market_read_model_page');
+    }
+    return Number(value);
+}
+
+function requireOneOf<T extends string>(value: unknown, allowed: readonly T[]): T {
+    if (typeof value !== 'string' || !allowed.includes(value as T)) throw new Error('invalid_market_read_model_page');
+    return value as T;
+}

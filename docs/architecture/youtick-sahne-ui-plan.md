@@ -407,6 +407,7 @@ G12 yalnız read-model tarafındadır; G8'den sonra herhangi bir noktada açıla
 | K3 | Diğer cihazların süresini listelemek | İlk sürümde yalnız "bu cihaz". Gerekirse salt-okunur `get_playback_devices` görünümü ayrı kontrat gate'inde | Owner |
 | K4 | Açıklama, süre, kategori, özel kapak | Bu programın dışında; protokol/kontrat ve Bridge değişikliği gerektirir | Owner |
 | K5 | Sunucu tarafı arama ve fiyat sıralaması | İlk sürüm yüklü sayfalarda istemci tarafında; 48 yayın pilot tavanında yeterli. Büyümede read-model parametresi | Ana ajan önerir, owner onaylar |
+| K7 | Hesap görünümleri API'si (G12) | Kod hazır ama `READ_MODEL_ACCOUNT_VIEWS_ENABLED` ile kapalı. README'deki "satışlar herkese açık API'de sunulmaz" kararını değiştirir; herhangi bir hesabın bilet listesi ve herhangi bir yapımcının satış toplamları sorgulanabilir hâle gelir (veri zincirde zaten herkese açık). Açmadan önce owner kararı | Owner |
 | K6 | Gizlilik bildirimi | Yeni arayüz kişisel veri toplamayı artırmaz. Dil çerezi ve yerel tercihler gizlilik metnindeki envantere eklenir | Owner |
 
 ## 7. Bu gate'in sonucu
@@ -1015,3 +1016,58 @@ G11 commit'i ayrı onay bekler.
   tarayıcılarda, CI, Preview.
 - **Tek sonraki gate:** G12 `SAHNE_READ_MODEL_ACCOUNT_API`. Read-model tarafıdır (D1 yalnız
   okuma/indeks); G11 commit'i ve G12 başlangıcı ayrı açık onay bekler.
+
+## 19. G12 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G11 commit'ini (`b20924b`) ve G12'yi onayladı.
+G12 commit'i ayrı onay bekler. D1 migration uygulaması ve Worker deploy'u yapılmadı.
+
+### Yapılan
+
+- `read-model/api.mjs` üç GET ucu (yalnız okuma; mevcut CORS, `cachedJson`/ETag, hata kodu
+  ve rota günlüğü kalıpları):
+  - `GET /v1/accounts/{id}/tickets` — `viewer_entitlements` + `publications` sol birleşimi,
+    en yeniden eskiye, anahtar imleci (`block_height`, `id`). Yayın satırı yoksa `publication: null`.
+  - `GET /v1/creators/{id}/sales` — `sale_ledger` yayın ve varlık başına satış sayısı, brüt,
+    yapımcı ve platform toplamları, son satış bloğu; `(publication_id, asset)` imleci.
+    Toplamlar tam sayı; güvenli tam sayı aralığını aşarsa 503 (hassasiyet kaybı yerine).
+  - `GET /v1/creators/{id}/withdrawals` — yalnız `creator_balance_withdrawal_*` durumları
+    (`platform_withdrawal_started` hariç), `started/succeeded/failed` olarak.
+  - Hepsi `limit` ≤ 50, sayfalı, `watermark` ve `indexed_at_ms` (izleme son ilerleme zamanı) taşır.
+- **Varsayılan kapalı:** uçlar ayrıca `READ_MODEL_ACCOUNT_VIEWS_ENABLED=true` ister; yoksa 404.
+  Sebep: `read-model/README.md` "yapımcı satışları herkese açık API'de sunulmaz" diyordu. Karar
+  K7 olarak owner'a bırakıldı.
+- `read-model/d1/0009_account_read_indexes.sql`: yalnız `withdrawal_history_account` indeksi.
+  Bilet sorgusu birincil anahtar indeksini, satış sorgusu mevcut `sale_ledger_creator`
+  indeksini kullanır (sorgu planıyla doğrulandı).
+- `apps/web/lib/market-read-model.ts`: `readAccountTickets`, `readCreatorSales`,
+  `readCreatorWithdrawals`; `NEXT_PUBLIC_ENABLE_ACCOUNT_READ_MODEL=true` olmadan istek atmaz.
+  Sıkı doğrulama: şema, sahip hesap, `indexed_at_ms`, öğe sayısı, blok yüksekliği ≤ watermark,
+  yayın kimliği eşleşmesi, ondalık dize tutarlar (baştaki sıfır yok), yalnız `USDC`/`NEAR`,
+  bilinen çekim durumları, `reason_code` biçimi ve `creator + platform = brüt` (sözleşmedeki
+  `platform = amount / 20`, `creator = amount − platform` hesabıyla kesin).
+- `read-model/README.md` güncellendi.
+
+### Plandan sapmalar
+
+- Web bayrağı `lib/constants.ts` yerine `lib/market-read-model.ts` içinde tanımlandı (G12
+  listesinde yalnız bu dosya vardı); G13 bayrağı `FEATURE_FLAGS`'e taşıyabilir.
+- Yeni test dosyası `apps/web/__tests__/unit/account-read-model.test.ts` eklendi.
+- Worker değişkeni `READ_MODEL_ACCOUNT_VIEWS_ENABLED` plan dışıdır (yukarıdaki gizlilik gerekçesi).
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| `scripts/market-read-api.test.mjs` | PASS (16): bilet sayfalaması, eksik yayın, tazelik; satış toplamları ve anahtar imleci; platform çekimlerinin dışlanması; girdi doğrulama (hesap, limit, imleç, varlık), POST 405, kapalı read-model 503; `EXPLAIN QUERY PLAN` ile üç indeks; taşma 503; bayrak yokken/`false`/`TRUE` iken üç uç 404 | LOCAL_TEST |
+| `docs/testing.md` read-model komutu (7 dosya, `current-catalog` dahil) | PASS: 93 test | LOCAL_TEST |
+| Yeni `account-read-model.test.ts` | PASS (18): bayrak kapalıyken istek yok, üç uç ayrıştırma, 7 bilet, 5 satış, 2 çekim reddi, istek öncesi doğrulama | LOCAL_TEST |
+| Web: `npm test -- --run` | PASS: 48 dosya, 864 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** uzak D1'e `0009` migration'ı, Worker deploy'u, gerçek D1 verisiyle
+  sorgu süresi ve plan, CI, Preview. Bunlar ayrı onaylı release gate'idir (EXTERNAL_NOT_RUN).
+- **Açık karar:** K7 (hesap görünümlerinin açılması) ve K2 (gecikme gösterimi).
+- **Tek sonraki gate:** G13 `SAHNE_TICKETS`. G12 commit'i ve G13 başlangıcı ayrı açık onay bekler.

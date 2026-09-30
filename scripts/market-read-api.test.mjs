@@ -270,3 +270,141 @@ test('public read-model health carries the serving version and ingestion identit
     assert.equal(health.ingestionEnabled, false);
     sqlite.close();
 });
+
+async function accountEnvironment() {
+    const { sqlite, env } = await environment();
+    env.READ_MODEL_ACCOUNT_VIEWS_ENABLED = 'true';
+    sqlite.exec(await readFile(new URL('../read-model/d1/0009_account_read_indexes.sql', import.meta.url), 'utf8'));
+    const entitlement = sqlite.prepare('INSERT INTO viewer_entitlements VALUES (?, ?, ?, ?, ?)');
+    for (const [account, publication, height] of [
+        ['buyer.testnet', 'pub-a', 101], ['buyer.testnet', 'pub-c', 103], ['buyer.testnet', 'gone', 102],
+        ['other.testnet', 'pub-b', 102], ['buyer.testnet', 'wrong-network', 99],
+    ]) entitlement.run(publication === 'wrong-network' ? 'mainnet' : 'testnet', 'market.testnet', account, publication, height);
+    const sale = sqlite.prepare('INSERT INTO sale_ledger VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const [key, creator, publication, asset, amount, creatorAmount, platformAmount, height] of [
+        ['s1', 'creator.testnet', 'pub-c', 'USDC', '2000000', '1900000', '100000', 103],
+        ['s2', 'creator.testnet', 'pub-c', 'USDC', '2000000', '1900000', '100000', 104],
+        ['s3', 'creator.testnet', 'pub-a', 'USDC', '3000000', '2850000', '150000', 101],
+        ['s4', 'creator.testnet', 'pub-a', 'NEAR', '10', '9', '1', 102],
+        ['s5', 'other.testnet', 'pub-b', 'USDC', '2000000', '1900000', '100000', 102],
+    ]) sale.run('testnet', 'market.testnet', key, 'buyer.testnet', creator, publication, asset, amount, creatorAmount, platformAmount, height);
+    const withdrawal = sqlite.prepare('INSERT INTO withdrawal_history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const [id, account, status, reason, height] of [
+        ['w1', 'creator.testnet', 'creator_balance_withdrawal_succeeded', null, 101],
+        ['w2', 'creator.testnet', 'creator_balance_withdrawal_failed', 'ft_transfer_failed', 102],
+        ['w3', 'creator.testnet', 'creator_balance_withdrawal_started', null, 103],
+        ['p1', 'creator.testnet', 'platform_withdrawal_started', null, 104],
+        ['w4', 'other.testnet', 'creator_balance_withdrawal_succeeded', null, 103],
+    ]) withdrawal.run('testnet', 'market.testnet', id, account, 'USDC', '1900000', status, reason, height);
+    return { sqlite, env };
+}
+
+async function allPages(env, route, limit) {
+    const pages = [];
+    let cursor = null;
+    do {
+        assert.ok(pages.length < 10, 'pagination must finish');
+        const response = await marketReadApi(new Request(`https://read.test${route}?limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`), env);
+        assert.equal(response.status, 200, route);
+        assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'https://app.test');
+        assert.match(response.headers.get('ETag'), /^"103:block_hash_000000000000000000000103:[a-f0-9]{16}"$/);
+        const page = await response.json();
+        pages.push(page);
+        cursor = page.next_cursor;
+    } while (cursor);
+    return pages;
+}
+
+test('account tickets page newest first with publication details and freshness', async (t) => {
+    const { sqlite, env } = await accountEnvironment();
+    t.after(() => sqlite.close());
+    const pages = await allPages(env, '/v1/accounts/buyer.testnet/tickets', 2);
+    assert.equal(pages[0].schema, 'youtick.account-tickets.v1');
+    assert.equal(pages[0].account_id, 'buyer.testnet');
+    assert.deepEqual(pages[0].watermark, { block_height: 103, block_hash: 'block_hash_000000000000000000000103' });
+    assert.equal(pages[0].indexed_at_ms, 1_785_600_000_000);
+    const items = pages.flatMap(page => page.items);
+    assert.deepEqual(items.map(item => item.publication_id), ['pub-c', 'gone', 'pub-a']);
+    assert.equal(items[0].publication.title, 'Release C');
+    assert.equal(items[0].publication.source_block_height, 103);
+    assert.equal(items[1].publication, null);
+    assert.equal(items[2].publication.availability, 'SALES_SUSPENDED');
+});
+
+test('creator sales are totals per publication and asset, paged by key', async (t) => {
+    const { sqlite, env } = await accountEnvironment();
+    t.after(() => sqlite.close());
+    const pages = await allPages(env, '/v1/creators/creator.testnet/sales', 2);
+    assert.equal(pages[0].schema, 'youtick.creator-sales.v1');
+    assert.equal(pages.length, 2);
+    assert.deepEqual(pages.flatMap(page => page.items), [
+        { publication_id: 'pub-a', asset: 'NEAR', sale_count: 1, gross_amount: '10', creator_amount: '9', platform_amount: '1', last_sale_block_height: 102 },
+        { publication_id: 'pub-a', asset: 'USDC', sale_count: 1, gross_amount: '3000000', creator_amount: '2850000', platform_amount: '150000', last_sale_block_height: 101 },
+        { publication_id: 'pub-c', asset: 'USDC', sale_count: 2, gross_amount: '4000000', creator_amount: '3800000', platform_amount: '200000', last_sale_block_height: 104 },
+    ]);
+});
+
+test('creator withdrawals exclude platform withdrawals and page newest first', async (t) => {
+    const { sqlite, env } = await accountEnvironment();
+    t.after(() => sqlite.close());
+    const pages = await allPages(env, '/v1/creators/creator.testnet/withdrawals', 2);
+    assert.equal(pages[0].schema, 'youtick.creator-withdrawals.v1');
+    assert.deepEqual(pages.flatMap(page => page.items).map(item => [item.withdrawal_id, item.status, item.reason_code]), [
+        ['w3', 'started', null], ['w2', 'failed', 'ft_transfer_failed'], ['w1', 'succeeded', null],
+    ]);
+});
+
+test('account routes validate input, stay read-only and use indexed lookups', async (t) => {
+    const { sqlite, env } = await accountEnvironment();
+    t.after(() => sqlite.close());
+    for (const [route, status] of [
+        ['/v1/accounts/Bad%20Account/tickets', 400],
+        ['/v1/accounts/buyer.testnet/tickets?limit=51', 400],
+        ['/v1/accounts/buyer.testnet/tickets?cursor=%21', 400],
+        [`/v1/accounts/buyer.testnet/tickets?cursor=${Buffer.from('{"block_height":0,"id":"x"}').toString('base64url')}`, 400],
+        [`/v1/creators/creator.testnet/sales?cursor=${Buffer.from('{"publication_id":"x","asset":"DAI"}').toString('base64url')}`, 400],
+        ['/v1/creators/creator.testnet/withdrawals/extra', 404],
+    ]) assert.equal((await marketReadApi(new Request(`https://read.test${route}`), env)).status, status, route);
+    assert.equal((await marketReadApi(new Request('https://read.test/v1/accounts/buyer.testnet/tickets', { method: 'POST' }), env)).status, 405);
+    env.READ_MODEL_ENABLED = 'false';
+    assert.equal((await marketReadApi(new Request('https://read.test/v1/accounts/buyer.testnet/tickets'), env)).status, 503);
+    env.READ_MODEL_ENABLED = 'true';
+
+    const plans = [];
+    const batch = env.MARKET_READ_MODEL.batch;
+    env.MARKET_READ_MODEL.batch = async statements => {
+        const { sql, values } = statements[1];
+        plans.push(sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values).map(row => row.detail).join('\n'));
+        return batch(statements);
+    };
+    for (const route of ['/v1/accounts/buyer.testnet/tickets', '/v1/creators/creator.testnet/sales', '/v1/creators/creator.testnet/withdrawals']) {
+        assert.equal((await marketReadApi(new Request(`https://read.test${route}`), env)).status, 200);
+    }
+    assert.match(plans[0], /SEARCH e USING (COVERING )?INDEX sqlite_autoindex_viewer_entitlements/);
+    assert.match(plans[1], /USING INDEX sale_ledger_creator/);
+    assert.match(plans[2], /USING INDEX withdrawal_history_account/);
+    for (const table of ['viewer_entitlements', 'sale_ledger', 'withdrawal_history']) {
+        assert.ok(sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n > 0);
+    }
+});
+
+test('a sum beyond the safe integer range fails closed instead of losing precision', async (t) => {
+    const { sqlite, env } = await accountEnvironment();
+    t.after(() => sqlite.close());
+    sqlite.prepare('INSERT INTO sale_ledger VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run('testnet', 'market.testnet', 'big', 'buyer.testnet', 'creator.testnet', 'pub-z', 'USDC', '9007199254740993', '1', '1', 103);
+    assert.equal((await marketReadApi(new Request('https://read.test/v1/creators/creator.testnet/sales'), env)).status, 503);
+});
+
+test('account views stay off unless explicitly enabled, keeping sales out of the public API', async (t) => {
+    const { sqlite, env } = await accountEnvironment();
+    t.after(() => sqlite.close());
+    for (const value of [undefined, 'false', 'TRUE']) {
+        if (value === undefined) delete env.READ_MODEL_ACCOUNT_VIEWS_ENABLED;
+        else env.READ_MODEL_ACCOUNT_VIEWS_ENABLED = value;
+        for (const route of ['/v1/accounts/buyer.testnet/tickets', '/v1/creators/creator.testnet/sales', '/v1/creators/creator.testnet/withdrawals']) {
+            assert.equal((await marketReadApi(new Request(`https://read.test${route}`), env)).status, 404, `${route} ${value}`);
+        }
+    }
+    assert.equal((await marketReadApi(new Request('https://read.test/v1/publications'), env)).status, 200);
+});
