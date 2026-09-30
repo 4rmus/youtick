@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Geist } from 'next/font/google';
+import { Archivo } from 'next/font/google';
 import { headers } from 'next/headers';
 import { connection } from 'next/server';
 import './globals.css';
@@ -11,7 +11,7 @@ import { FEATURE_FLAGS } from '@/lib/constants';
 import { I18nProvider } from '@/lib/i18n/I18nProvider';
 import { resolveLocale } from '@/lib/i18n/locale';
 
-const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
+const archivo = Archivo({ subsets: ['latin', 'latin-ext'], axes: ['wdth'], variable: '--font-archivo' });
 
 export const metadata: Metadata = {
     title: { default: 'YouTick', template: '%s | YouTick' },
@@ -25,8 +25,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     const cspNonce = (await headers()).get('x-nonce') ?? undefined;
     const locale = resolveLocale((await headers()).get('accept-language'));
     return (
-        <html lang={locale} data-scroll-behavior="smooth">
-            <body className={`${geist.variable} min-h-screen bg-black text-white antialiased`}>
+        <html lang={locale} className={archivo.variable} data-scroll-behavior="smooth">
+            <body className="min-h-screen bg-black text-white antialiased">
                 <I18nProvider initialLocale={locale}>
                 <QueryProvider>
                     {(FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1) && <PublicTestnetBetaBanner />}

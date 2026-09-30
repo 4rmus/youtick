@@ -605,3 +605,66 @@ Hepsi LOCAL_TEST; ortam G1 ile aynı.
   (dil seçici G6'da gelecek); cüzdan; CI; Preview.
 - **Tek sonraki gate:** G5 `SAHNE_TOKENS_PRIMITIVES`. G4 commit'i ve G5 başlangıcı ayrı açık
   onay bekler.
+
+## 12. G5 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G4 commit'ini (`1200709`) ve G5'i onayladı.
+G5 commit'i ayrı onay bekler.
+
+### Yapılan
+
+- `app/globals.css` tek renk kaynağıdır: Sahne token'ları (`ink`, `panel`, `raised`, `line`,
+  `line-strong`, `edge`, `light`, `light-2`, `light-3`, `ice`, `ice-deep`, `alert`,
+  `alert-deep`, `poster-dark`). shadcn anlamsal adları bu token'lara bağlandı. `chart-*`,
+  `sidebar-*`, `oklch` değerleri, `:root` altındaki ikinci `--near-*` kopyası ve genel yeşil
+  kaydırıcı kuralı kaldırıldı. Yazı yardımcıları: `font-display` (dar 800, büyük harf),
+  `font-logo` (geniş 800), `label-caps`, `tabular`.
+- `tailwind.config.js` silindi (Tailwind v4'te etkisizdi).
+- `app/layout.tsx`: Archivo `next/font/google` ile `axes: ['wdth']`, `latin` + `latin-ext`
+  alt kümeleriyle yüklenir; değişken `<html>` üzerindedir. Geist kaldırıldı. CSP'ye
+  dokunulmadı; font `font-src 'self'` altında kendi sunucumuzdan gelir.
+- `components/ui`: Button, Input, Card ve Alert Sahne'ye geçti (2 px köşe, ≥ 44 px hedef,
+  buz rengi odak halkası, beyaz zemin/siyah metin birincil düğme). Yeni: Chip, Field,
+  Panel, Steps, StatusLine, Dialog (yerel `<dialog>`).
+- `components/media`: `posterTone` (FNV-1a, deterministik), Poster, CoverImage (kapak yoksa
+  veya yüklenemezse afiş).
+
+### Plandan sapmalar
+
+- **Form kenarı için yeni `edge` token'ı (#6B6B6E).** Tasarımdaki #3A3A3D, ink/panel üzerinde
+  1,6–1,75:1 veriyor ve WCAG 1.4.11'in (3:1) altında. `edge` ink, panel ve raised üzerinde
+  ≥ 3,2:1. #3A3A3D dekoratif ayraçlarda kalır.
+- **Köşe için Tailwind'in yerleşik `rounded-xs` (2 px) değeri kullanıldı.** Özel bir radius
+  adını `tailwind-merge` tanımıyor, çağıranın `rounded-*` sınıfıyla çakışma riski doğuyordu.
+- **`--color-near-*` kaldırılmadı, tek kopyaya indirildi.** Landing, Navbar, ScreenState,
+  profil, global hata ve oynatıcı kontrolleri bu adları kullanıyor ve G5 kapsamı dışında.
+  Kaldırılırsa odak halkaları sessizce kaybolur. Son kullanan ekran taşınınca silinir.
+  `Button` içindeki `near` varyantı birincil düğme olarak çizilir.
+- **"İlk kare karanlıksa afiş" uygulanmadı.** Kapaklar Bridge'den (başka köken) geliyor;
+  piksel okumak CORS başlığı gerektirir. Bridge değişikliği bu programın sınırı dışındadır
+  (UNPROVEN). Şimdilik yalnız "kapak yok / yüklenemedi" durumunda afiş gösterilir.
+- Kontrast değerleri hesaplandığında `light-2`/ink 11,92:1 çıktı (tasarım notunda 11,8).
+
+### Görsel etki (bilinçli)
+
+Mevcut ekranlar artık Archivo ile çiziliyor. Paylaşılan Button/Input/Card/Alert yeni
+biçimde. Ekranların düzeni G6–G16'da yenilenecek. `rounded-md`/`rounded-lg` kullanan eski
+ekranlarda köşe 1–2 px küçüldü, çünkü eski `--radius-*` türetmeleri kaldırıldı.
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| Yeni `tokens.test.ts` | PASS (24): 15 metin/zemin çiftinin kontrast oranı sabit ve ≥ 4,5:1, form kenarı ≥ 3:1, tek renk kaynağı, Archivo/`wdth`/`<html>`, CSP font kuralı, düğme hedefi/köşe/odak, Chip, Field bağlantıları, Steps `aria-current`, StatusLine rolleri | LOCAL_TEST |
+| Yeni `poster.test.ts` | PASS (5): deterministik ton, sabit FNV-1a değerleri, iki tonun da kullanılması, afiş ve kapak/afiş seçimi | LOCAL_TEST |
+| `npm run lint`, `npx tsc --noEmit --incremental false`, `test:wallet-provenance` | PASS | LOCAL_TEST |
+| `npm test -- --run` | PASS: 42 dosya, 728 test (G4: 40 / 699) | LOCAL_TEST |
+| `test:livepeer-canary`, `test:multi-creator-upload-canary` | PASS: 7/7; 24 test, 3 atlandı | LOCAL_TEST |
+| `npm run build`, docs build | PASS | LOCAL_TEST |
+| Yerel `next start`, 1440 ve 390 px | Archivo yüklü (`font-stretch` 62%, 800), köşe 2 px, form kenarı `rgb(107,107,110)`, 390 px'te yatay taşma yok, en küçük düğme 48 px. Bileşenler geçici galeri olarak sayfaya enjekte edildi; galeri dosyası silindi. Landing ve Koşullar sayfası bozulmadı | LOCAL_STATIC |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** Dialog'un tarayıcıda açılıp kapanması ve odak davranışı (henüz
+  kullanan ekran yok; G6'da hesap menüsüyle doğrulanacak); ekran okuyucu; CI; Preview.
+- **Tek sonraki gate:** G6 `SAHNE_SHELL`. G5 commit'i ve G6 başlangıcı ayrı açık onay bekler.
