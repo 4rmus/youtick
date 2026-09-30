@@ -39,10 +39,12 @@ import {
     clearLivepeerUploadDraft,
     configuredCreatorFeeGasReserveYocto,
     createLivepeerJobId,
+    findPendingLivepeerUpload,
     fingerprintLivepeerSource,
     LIVEPEER_SOURCE_ACCEPT,
     heartbeatLivepeerUploadLease,
     livepeerUploadFeeUsdc,
+    matchPendingLivepeerUpload,
     parseLivepeerPriceUsdc,
     preflightLivepeerUpload,
     prepareCreatorFeePaymentOptions,
@@ -57,6 +59,7 @@ import {
     writeLivepeerUploadDraft,
     type CreatorFeeAsset,
     type LivepeerUploadIntent,
+    type PendingLivepeerUpload,
     type SignedNearCreatorFeeQuote,
     type SponsoredUploadQuoteSummary,
 } from '@/lib/livepeer-upload';
@@ -134,6 +137,7 @@ export function LivepeerPaidUploadForm() {
     const [error, setError] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState(false);
     const [resumeAvailable, setResumeAvailable] = React.useState(false);
+    const [pendingUpload, setPendingUpload] = React.useState<PendingLivepeerUpload | null>(null);
     const operation = React.useRef<AbortController | null>(null);
     const [uploadStage, setUploadStage] = React.useState<UploadStage>('draft');
     const [failedStep, setFailedStep] = React.useState<number | null>(null);
@@ -229,6 +233,7 @@ export function LivepeerPaidUploadForm() {
             ? new URL(window.location.href).searchParams.get('job') || readRememberedLivepeerUploadJob(accountId)
             : null;
         setTrackedUpload(accountId && trackedJobId ? { accountId, jobId: trackedJobId } : null);
+        setPendingUpload(null);
         setJobId(null);
         setStatus(null);
         setError(null);
@@ -264,6 +269,7 @@ export function LivepeerPaidUploadForm() {
         setPaymentAsset(null);
         setSponsorQuote(null);
         setJobId(null);
+        setPendingUpload(null);
         if (typeof selected !== 'object' || !(selected instanceof File)) {
             setFile(null);
             return setFileError(null);
@@ -272,8 +278,17 @@ export function LivepeerPaidUploadForm() {
         const validation = validateLivepeerSourceFile(selected);
         if (!validation.ok) return setFileError(fileValidationMessage(validation.error));
         setFileError(null);
-        const draft = accountId ? await readLivepeerUploadDraft(accountId, selected) : null;
+        let draft = accountId ? await readLivepeerUploadDraft(accountId, selected) : null;
+        let pending: PendingLivepeerUpload | null = null;
+        if (accountId && !draft && FEATURE_FLAGS.publicTestnetVideoV1) {
+            try {
+                ({ draft, pending } = await matchPendingLivepeerUpload(accountId, selected));
+            } catch {
+                // Payment preparation checks the pending job again before any new job is created.
+            }
+        }
         if (selectionVersion !== fileSelectionVersion.current) return;
+        setPendingUpload(draft ? null : pending);
         setJobId(draft?.jobId || null);
         if (draft) {
             setResumeAvailable(Boolean(FEATURE_FLAGS.publicTestnetVideoV1
@@ -298,6 +313,14 @@ export function LivepeerPaidUploadForm() {
         let finishPreparation: ReturnType<typeof startVideoMeasurement> | undefined;
         try {
             parseLivepeerPriceUsdc(price);
+            if (FEATURE_FLAGS.publicTestnetVideoV1) {
+                const pending = await findPendingLivepeerUpload(accountId);
+                controller.signal.throwIfAborted();
+                if (pending && pending.jobId !== jobId) {
+                    setPendingUpload(pending);
+                    throw new Error('livepeer_pending_upload_exists');
+                }
+            }
             const activeJobId = jobId || createLivepeerJobId();
             finishPreparation = startVideoMeasurement('payment_preparation', file.size);
             setJobId(activeJobId);
@@ -666,6 +689,17 @@ export function LivepeerPaidUploadForm() {
                         <span>I own the rights required to publish this video.</span>
                     </label>
 
+                    {pendingUpload && !resumeAvailable && (
+                        <Alert>
+                            <AlertTitle>You have a paid upload waiting</AlertTitle>
+                            <AlertDescription>
+                                “{pendingUpload.title}” is paid and waiting for its video file
+                                ({formatBytes(pendingUpload.sourceBytes)}{pendingUpload.sourceName ? `, ${pendingUpload.sourceName}` : ''}).
+                                Choose that same file to resume it without paying again. A new upload can start after it is published
+                                {pendingUpload.deadlineAtMs ? ` or after its deadline (${new Date(pendingUpload.deadlineAtMs).toLocaleString()})` : ''}.
+                            </AlertDescription>
+                        </Alert>
+                    )}
                     {file && !fileError && <p className="text-sm">Creator upload fee: {formatMicroUsdc(livepeerUploadFeeUsdc(file.size))} USDC (minimum 0.50)</p>}
                     {payment && (
                         <div className="space-y-2 text-sm">
@@ -752,7 +786,7 @@ export function LivepeerPaidUploadForm() {
                             {publicationView.buttonLabel}
                         </Button>
                     ) : !payment ? (
-                        <Button className="w-full" disabled={!formReady || busy} onClick={() => void preparePayment()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Check payment options</Button>
+                        <Button className="w-full" disabled={!formReady || busy || Boolean(pendingUpload)} onClick={() => void preparePayment()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Check payment options</Button>
                     ) : (
                         <Button className="w-full" disabled={!formReady || busy || !paymentAsset} onClick={() => void start()}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />} Pay and upload</Button>
                     )}
@@ -812,6 +846,8 @@ export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; 
                     <p className="text-sm text-muted-foreground">
                         {progress && !progress.expired && 'Livepeer processing details are unavailable in this view. '}
                         No new payment or upload has been started.
+                        {progress && !progress.expired && progress.job.status === 'Authorized' && progress.job.expected_source_bytes
+                            && ` To continue, choose the same video file (${formatBytes(Number(progress.job.expected_source_bytes))}) below and select Resume.`}
                     </p>
                 )}
                 <Link className="text-sm underline" href={`/upload?job=${encodeURIComponent(jobId)}`}>
@@ -820,6 +856,10 @@ export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; 
             </CardContent>
         </Card>
     );
+}
+
+function formatBytes(bytes: number): string {
+    return `${bytes.toLocaleString('en-US')} bytes`;
 }
 
 function fileValidationMessage(error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type'): string {
@@ -836,6 +876,9 @@ export function uploadErrorMessage(reason: unknown, availabilityConfirmed: boole
         return 'Enable secure site storage and use a supported browser before continuing. No payment was sent.';
     }
     if (code === 'livepeer_resume_required') return 'This job is already paid. Resume the existing upload.';
+    if (code === 'livepeer_pending_upload_exists') {
+        return 'You already have a paid upload waiting. Choose its original file to resume it; no new payment was started.';
+    }
     if (code === 'livepeer_resume_file_mismatch') return 'Select the same original file to resume this upload.';
     if (code === 'livepeer_key_replacement_pending') return 'The previous wallet action is not confirmed. Check it before trying this upload again.';
     if (code === 'livepeer_payment_pending' || code === 'livepeer_job_missing') return 'Payment is not confirmed yet. Check your wallet; no new payment was started.';
