@@ -2,11 +2,10 @@
 
 import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Video } from 'lucide-react';
-import { LivepeerWatch } from '@/components/LivepeerWatch';
 import { PageShell } from '@/components/PageShell';
 import { RuntimeClosed } from '@/components/RuntimeClosed';
-import { ScreenState } from '@/components/ScreenState';
+import { ScreeningView } from '@/components/screening/ScreeningView';
+import { StateScreen } from '@/components/states/StateScreen';
 import { FEATURE_FLAGS } from '@/lib/constants';
 import { useMessages } from '@/lib/i18n/I18nProvider';
 
@@ -20,14 +19,11 @@ function WatchContent() {
     const t = useMessages().discover;
     if (!jobId) {
         return (
-            <PageShell className="flex items-center justify-center">
-                <ScreenState
-                    icon={<Video className="h-7 w-7" />}
-                    title={t.chooseTitle}
-                    description={t.chooseDescription}
-                />
+            <PageShell>
+                <StateScreen glyph="→" title={t.chooseTitle} body={t.chooseDescription} />
             </PageShell>
         );
     }
-    return <LivepeerWatch jobId={jobId} />;
+    // Valid ids are redirected to /s/[id] by next.config.ts; this renders only what the redirect does not match.
+    return <ScreeningView jobId={jobId} />;
 }

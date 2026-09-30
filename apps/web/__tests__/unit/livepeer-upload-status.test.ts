@@ -34,7 +34,9 @@ vi.mock('@/lib/constants', async importOriginal => {
 
 vi.mock('@/components/providers/WalletProvider', () => ({ useWallet: () => ({ accountId: 'creator.testnet', connect: vi.fn(), getWallet: vi.fn(), isReady: true }) }));
 
-import { getLivepeerPublicationView, LivepeerPaidUploadForm, LivepeerUploadStatus, uploadErrorMessage } from '@/components/LivepeerPaidUploadForm';
+import { NewScreeningWizard as LivepeerPaidUploadForm } from '@/components/studio/wizard/NewScreeningWizard';
+import { SavedUploadStatus as LivepeerUploadStatus } from '@/components/studio/wizard/SavedUploadStatus';
+import { getLivepeerPublicationView, uploadErrorMessage } from '@/features/upload/upload-job';
 
 describe('publication polling during the Published transition', () => {
     const pending = { job: { job_id: 'job-001', creator_id: 'creator.testnet', generation: 1, status: 'Authorized' }, publication: null, expired: false };

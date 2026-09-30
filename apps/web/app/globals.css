@@ -24,15 +24,6 @@
   --color-alert: #FF8A7A;
   --color-alert-deep: #2E1715;
   --color-poster-dark: #151517;
-
-  /* Legacy V1 brand colours, still used by the landing page and unmigrated screens. */
-  --color-near-black: #000000;
-  --color-near-white: #FFFFFF;
-  --color-near-off-white: #f2f1e9;
-  --color-near-green: #00ec97;
-  --color-near-red: #ff7966;
-  --color-near-purple: #9797ff;
-  --color-near-blue: #17d9d4;
 }
 
 @theme inline {

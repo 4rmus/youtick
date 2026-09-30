@@ -90,7 +90,7 @@ vi.mock('@/lib/multi-asset-payments', () => ({
     verifyConvertedUsdcReady: state.verifyUsdc,
 }));
 
-import { LivepeerWatch } from '@/components/LivepeerWatch';
+import { ScreeningView as LivepeerWatch } from '@/components/screening/ScreeningView';
 
 const purchaseHandler = () => [...state.handlers].find(([label]) => label.startsWith('Buy ticket'))?.[1];
 

@@ -2,7 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Sahne interface: Discover, screening page with box office and screening
+  room, creator page, tickets, studio and a five-step new screening wizard,
+  English/Turkish dictionaries, shared tokens and primitives, and opt-in
+  read-model account views (off by default).
+
 ### Changed
+
+- Permanent redirects from `/watch?job=`, `/discover`, `/upload` and
+  `/profile` to the new addresses.
 
 - Reduced the repository to the Next.js app, NEAR market/access contracts,
   Livepeer Bridge Worker and Livepeer paid-media protocol.

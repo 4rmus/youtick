@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import { Button } from '@/components/ui/button';
 import { Chip } from '@/components/ui/chip';
 import { Field } from '@/components/ui/field';
-import { Panel } from '@/components/ui/panel';
 import { StatusLine } from '@/components/ui/status-line';
 import { Steps } from '@/components/ui/steps';
 
@@ -58,9 +57,7 @@ describe('Sahne tokens', () => {
         expect(existsSync('tailwind.config.js')).toBe(false);
         expect(css).not.toMatch(/--(chart|sidebar)-/);
         expect(css).not.toMatch(/oklch\(/);
-        for (const name of ['near-green', 'near-red']) {
-            expect(css.match(new RegExp(`--(color-)?${name}:`, 'g'))).toHaveLength(1);
-        }
+        expect(css).not.toMatch(/--(color-)?near-/);
         expect(css).not.toContain('var(--near-');
     });
 
@@ -116,6 +113,5 @@ describe('Sahne primitives', () => {
         expect(markup).toContain('aria-label="Publication steps"');
         expect(html(React.createElement(Status, { tone: 'progress' }, 'Checking'))).toContain('role="status"');
         expect(html(React.createElement(Status, { tone: 'error' }, 'Failed'))).toContain('role="alert"');
-        expect(html(React.createElement(Panel, { as: 'section' }, 'x'))).toMatch(/^<section class="[^"]*bg-panel/);
     });
 });

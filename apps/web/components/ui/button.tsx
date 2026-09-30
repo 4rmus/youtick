@@ -19,8 +19,6 @@ const buttonVariants = cva(
           "bg-raised text-light hover:bg-line",
         ghost: "text-light hover:bg-raised",
         link: "px-2 text-light underline underline-offset-4 hover:text-ice",
-        // Legacy V1 name; renders as the primary action until the profile screen migrates.
-        near: "bg-light font-extrabold text-ink hover:bg-light-2",
       },
       size: {
         default: "min-h-12 px-5 py-2",

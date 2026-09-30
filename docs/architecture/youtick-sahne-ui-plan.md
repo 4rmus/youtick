@@ -1314,3 +1314,50 @@ onay bekler.
 - **Çalıştırılmayanlar:** ekran okuyucu (VoiceOver/NVDA) turu; bağlı cüzdanla ve gerçek veriyle
   dolu ekranların denetimi; Safari ve fiziksel cihaz; CI; Preview.
 - **Tek sonraki gate:** G18 `SAHNE_CLEANUP`. G17 commit'i ve G18 başlangıcı ayrı açık onay bekler.
+
+## 25. G18 kaydı — 30 Eylül 2026
+
+**Sonuç: PASS.** Kullanıcı G17 commit'ini (`eeb5f74`) ve G18'i onayladı. G18 commit'i ayrı
+onay bekler.
+
+### Yapılan
+
+- Silinen ölü/geçiş dosyaları: `components/ScreenState.tsx` (son kullanıcı `/watch` idi),
+  `components/LivepeerWatch.tsx` ve `components/LivepeerPaidUploadForm.tsx` (yalnız eski adlı
+  yeniden dışa aktarımlardı), `components/ui/alert.tsx` ve `components/ui/panel.tsx` (uygulamada
+  kullanılmıyordu).
+- `/watch` (geçersiz/eksik `job`) doğrudan `ScreeningView` ve `StateScreen` kullanır.
+- Token temizliği: `--color-near-*` ve `Button`'ın `near` varyantı kaldırıldı; token testi eski
+  paletin tanımlı olmadığını doğrular.
+- Kullanılmayan 13 metin anahtarı iki dilden kaldırıldı (`watch.ticketRequired/connectToBuy/pay`,
+  `wizard.feeTitle/shareTitle`, `upload.cardTitle/cardDescription/progressLabel/deadlinePassed`,
+  `profile.withdrawFailed/descriptionPublishing/descriptionReadOnly/loadingActivity`).
+  `wallet.*` anahtarları metin anahtarıyla kullanıldığından korunur.
+- Bayrak: Biletlerim de `FEATURE_FLAGS.enableAccountReadModel` kullanır (Stüdyo ile tek kaynak);
+  `lib/market-read-model.ts` içindeki `accountReadModelEnabled` aynı değişkene bağlı istemci
+  koruması olarak kalır.
+- `active-ui-copy.test.ts` artık 60 aktif UI dosyasını tarar (tüm Sahne ekranları, kabuk,
+  durumlar, landing ve sözlük).
+- Belgeler: `apps/web/README.md` (Sahne arayüzü bölümü), `CHANGELOG.md`,
+  `docs/architecture/current-state.md` (30 Eylül girişi, NOT_DEPLOYED).
+- Testlerde yalnız içe aktarma yolları güncellendi (`livepeer-watch`, `livepeer-upload-status`,
+  `tokens`, `tickets-view`).
+
+### Bilinçli olarak dokunulmayanlar
+
+- `lib/keystore-v7.ts` yalnız testlerde kullanılıyor; UI dışı, G18 kapsamı dışı.
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| Uygulama kodunca içe aktarılmayan modül taraması | Yalnız `lib/keystore-v7.ts` (kapsam dışı) | LOCAL_STATIC |
+| `active-ui-copy.test.ts` (60 dosya), `tokens.test.ts`, `i18n.test.ts` | PASS | LOCAL_TEST |
+| `npm test -- --run` | PASS: 52 dosya, 936 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build, docs build | PASS | LOCAL_TEST |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** CI, Preview, Production.
+- **Tek sonraki gate:** G19 `SAHNE_PREVIEW_RELEASE`. Push, PR, CI ve Preview deploy içerir; her
+  biri ayrı açık onay ister. G18 commit'i ayrı onay bekler.

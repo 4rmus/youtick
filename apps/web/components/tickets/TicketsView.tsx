@@ -11,7 +11,8 @@ import { Chip } from '@/components/ui/chip';
 import { StatusLine } from '@/components/ui/status-line';
 import { useLocale, useMessages } from '@/lib/i18n/I18nProvider';
 import { livepeerPublicationCoverUrl } from '@/lib/livepeer-publication';
-import { accountReadModelEnabled, readAccountTickets, type AccountTicket } from '@/lib/market-read-model';
+import { FEATURE_FLAGS } from '@/lib/constants';
+import { readAccountTickets, type AccountTicket } from '@/lib/market-read-model';
 import { playerTime } from '@/lib/player-copy';
 import { continueWatching, ticketState } from './ticket-model';
 import { ThisDevice } from './ThisDevice';
@@ -32,7 +33,7 @@ export function TicketsView() {
     }
     return (
         <Page title={t.title}>
-            {accountReadModelEnabled ? <TicketList accountId={accountId} /> : (
+            {FEATURE_FLAGS.enableAccountReadModel ? <TicketList accountId={accountId} /> : (
                 <StateScreen glyph="—" title={t.unavailableTitle} body={t.unavailableBody}
                     actions={<Button asChild variant="outline"><Link href="/">{t.browse}</Link></Button>} />
             )}

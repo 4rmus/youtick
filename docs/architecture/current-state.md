@@ -1,5 +1,14 @@
 # Current state
 
+> 30 Eylül 2026 — **Sahne arayüzü kaynak güncellemesi / LOCAL_STATIC + LOCAL_TEST / NOT_DEPLOYED**.
+> `agent/sahne-ui` dalında G1–G18 tamamlandı ([plan ve kayıtlar](./youtick-sahne-ui-plan.md)):
+> yeni adresler ve kalıcı yönlendirmeler, TR/EN sözlükler, Keşif, gösterim + gişe barı + salon,
+> yapımcı, Biletlerim, Stüdyo, yeni gösterim sihirbazı, erişilebilirlik geçişi. Ödeme, yükleme,
+> oynatma ve yetki mantığı değişmedi; bayrakların kapalı varsayılanları korunur. Read-model hesap
+> görünümleri (G12) koda eklendi ama `READ_MODEL_ACCOUNT_VIEWS_ENABLED` ile kapalıdır (K7 owner
+> kararı); `0009` migration'ı uygulanmadı. CI, Preview, Production ve deploy çalıştırılmadı;
+> sıradaki tek gate ayrı onaylı G19 Preview kabulüdür.
+
 > 15 Eylül 2026 — **Bilet komisyonu kaynak güncellemesi / LOCAL_STATIC + LOCAL_TEST / NOT_DEPLOYED**.
 > Sözleşme ve landing hesaplayıcısı yeni satışlarda **%5 platform / %95 üretici**
 > paylaşımını kullanır. Platform payı her bilette tam micro-USDC'ye aşağı yuvarlanır;

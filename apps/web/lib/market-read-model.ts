@@ -119,7 +119,8 @@ function requireReadModelOrigin(): string {
 }
 
 // Account views (Sahne G12). Derived from past events and possibly behind the current catalogue;
-// callers show `indexedAtMs` and keep NEAR as the authority for playback access.
+// callers show `indexedAtMs` and keep NEAR as the authority for playback access. UI gates on
+// FEATURE_FLAGS.enableAccountReadModel; this is the client-side guard on the same variable.
 export const accountReadModelEnabled = process.env.NEXT_PUBLIC_ENABLE_ACCOUNT_READ_MODEL === 'true';
 
 const AMOUNT_PATTERN = /^(0|[1-9][0-9]{0,38})$/;

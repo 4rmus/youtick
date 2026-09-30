@@ -19,10 +19,13 @@ const s = vi.hoisted(() => ({
 }));
 
 vi.mock('next/image', () => ({ default: () => null }));
-vi.mock('@/lib/market-read-model', () => ({
-    get accountReadModelEnabled() { return s.enabled; },
-    readAccountTickets: vi.fn(),
-}));
+vi.mock('@/lib/market-read-model', () => ({ readAccountTickets: vi.fn() }));
+vi.mock('@/lib/constants', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/lib/constants')>();
+    const FEATURE_FLAGS = { ...actual.FEATURE_FLAGS };
+    Object.defineProperty(FEATURE_FLAGS, 'enableAccountReadModel', { get: () => s.enabled, enumerable: true });
+    return { ...actual, FEATURE_FLAGS };
+});
 vi.mock('@/components/providers/WalletProvider', () => ({ useWallet: () => ({ accountId: s.accountId, connect: vi.fn(), isReady: true }) }));
 vi.mock('@tanstack/react-query', () => ({
     useInfiniteQuery: () => s.tickets,
