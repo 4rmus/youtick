@@ -56,6 +56,7 @@ describe('Livepeer-only configuration', () => {
             publicTestnetBeta: false,
             enableDerivedReadModel: false,
             enableCurrentCatalog: false,
+            enableAccountReadModel: false,
         });
         expect(MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes).toBe(32 * 1024 * 1024);
     });

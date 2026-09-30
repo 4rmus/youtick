@@ -1120,3 +1120,58 @@ G13 commit'i ayrı onay bekler.
 - **Çalıştırılmayanlar:** gerçek hesap görünümü verisi (G12 uçları kapalı, K7), gerçek cihaz
   kaydı ve `watch-progress` içeriğiyle tarayıcı kontrolü, CI, Preview.
 - **Tek sonraki gate:** G14 `SAHNE_STUDIO`. G13 commit'i ve G14 başlangıcı ayrı açık onay bekler.
+
+## 21. G14 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G13 commit'ini (`4766f67`) ve G14'ü onayladı.
+G14 commit'i ayrı onay bekler.
+
+### Yapılan
+
+- `components/studio/StudioView.tsx` (`/studio`): başlık ve "Yeni gösterim"; yarım yükleme
+  şeridi; kazanç; gösterimler; çekim geçmişi.
+- **Kazanç:** çekilebilir bakiye `readCreatorBalance` ile okunur ve "NEAR pazar sözleşmesinden
+  okunur; çekimde gönderilecek tutar budur" diye etiketlenir. "Çek" önce onay diyaloğunu açar
+  (tutar, alıcı = bağlı hesap, ağ ücretinin cüzdandan NEAR olarak ödendiği ve cüzdanda
+  gösterildiği, tek işlem notu); onayda `withdrawCreatorBalance`. Cüzdan yanıtı kaybolursa
+  başarısızlık varsayılmaz: bakiye her durumda yeniden okunur ve kullanıcıya kontrol etmesi
+  söylenir. Sıfır bakiye çekilemez.
+- **Gösterimler:** güncel katalog etkinse `useCurrentCatalog(hesap)`, değilse eski profil ekranının
+  `creatorReadModel` sorgusu (5'erli, yalnız görünürken 15 sn yenileme; `catalog-refresh`
+  testinin koruduğu davranış). Tablo: gösterim (`/s/…`), durum etiketi, fiyat. "Satılan bilet"
+  ve "Kazancın" sütunları yalnız `FEATURE_FLAGS.enableAccountReadModel` açık ve G12 satış verisi
+  geldiyse görünür; kazanç USDC satırlarından `BigInt` ile tam toplanır; tazelik satırı vardır.
+- **Çekimler:** hesap görünümü açıkken `readCreatorWithdrawals` listesi (başladı/tamamlandı/başarısız).
+- **Yarım yükleme şeridi:** `readRememberedLivepeerUploadJob` + `readLivepeerUploadProgress`
+  (hesap eşleşmesiyle); yayınlandıysa gizli, süresi dolduysa açıklama, değilse
+  `/studio/new?job=…` bağlantısı.
+- `app/studio/page.tsx` artık `StudioView`'i gösterir (`noindex`); `app/profile/page.tsx`
+  yalnız `app/studio/page`'in takma adıdır (adres zaten `/studio`'ya yönlenir),
+  `app/profile/layout.tsx` silindi.
+- `lib/constants.ts`: `FEATURE_FLAGS.enableAccountReadModel` (türetilmiş read-model açık ve
+  `NEXT_PUBLIC_ENABLE_ACCOUNT_READ_MODEL=true`); varsayılan kapalı.
+
+### Plandan sapmalar
+
+- G14 listesinde olmayanlar: `lib/constants.ts` (bayrak), `lib/i18n/messages.ts` (`studio`
+  metinleri), `constants.test.ts` (yeni bayrağın kapalı varsayılanı), `routes.test.ts` (bayrak
+  koşulu denetimleri `StudioView.tsx`'e taşındı, profil takma adı).
+- Biletlerim (G13) hâlâ `lib/market-read-model.ts` içindeki `accountReadModelEnabled`'i kullanır;
+  iki tanım aynı ortam değişkenine bağlı. G18 temizliğinde tek kaynağa indirilmeli.
+- Satış toplamları ilk 50 (yayın × varlık) satırından gelir; daha fazlası sayfalanmaz.
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| Yeni `studio-view.test.ts` | PASS (13): USDC kazancının tam toplanması ve NEAR satırlarının dışlanması, çekilebilirlik, kanonik etiket + onay diyaloğu + onayda tek çekim ve bakiye yenileme, kayıp cüzdan yanıtında bakiyenin yeniden okunması, sıfır bakiye, katalog listesi ve satış sütunlarının yokluğu, güncel katalog görünümü, hesap verisiyle satış/kazanç sütunları ve çekimler, yarım yükleme şeridinin üç durumu, bağlanma, runtime kapısı, eski profil yolu | LOCAL_TEST |
+| `catalog-refresh`, `routes`, `constants` testleri | PASS | LOCAL_TEST |
+| `npm test -- --run` | PASS: 50 dosya, 892 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** gerçek cüzdanla çekim, gerçek bakiye/satış verisi, tarayıcıda görsel
+  kontrol, CI, Preview.
+- **Tek sonraki gate:** G15 `SAHNE_STUDIO_WIZARD`. G14 commit'i ve G15 başlangıcı ayrı açık onay
+  bekler.

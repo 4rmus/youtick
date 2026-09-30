@@ -40,13 +40,13 @@ describe('Livepeer-only routes', () => {
         expect(screening).toContain('/^[A-Za-z0-9._:-]{1,128}$/');
         expect(screening).toContain('if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) return <RuntimeClosed />;');
         expect(await readFile('app/studio/new/page.tsx', 'utf8')).toContain('if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) return <RuntimeClosed />;');
-        expect(await readFile('app/studio/page.tsx', 'utf8')).toContain("export { default } from '@/app/profile/page';");
+        expect(await readFile('app/profile/page.tsx', 'utf8')).toContain("export { default } from '@/app/studio/page';");
     });
 
     it('opens publication reads without opening paid media actions', async () => {
         const [discover, profile, card] = await Promise.all([
             readFile('app/page.tsx', 'utf8'),
-            readFile('app/profile/page.tsx', 'utf8'),
+            readFile('components/studio/StudioView.tsx', 'utf8'),
             readFile('components/VideoCard.tsx', 'utf8'),
         ]);
 
