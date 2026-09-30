@@ -796,3 +796,54 @@ G7 commit'i ayrı onay bekler.
 - **Çalıştırılmayanlar:** runtime açıkken `/` Keşif ve `/s/[id]` gerçek meta veri okuması;
   OpenNext/Cloudflare üzerinde yönlendirmeler; CI; Preview.
 - **Tek sonraki gate:** G8 `SAHNE_DISCOVER`. G7 commit'i ve G8 başlangıcı ayrı açık onay bekler.
+
+## 15. G8 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G7 commit'ini (`93dad42`) ve G8'i onayladı.
+G8 commit'i ayrı onay bekler.
+
+### Yapılan
+
+- `components/discover/discover-model.ts` (saf): öne çıkanlar (yüklü verideki satışı açık en
+  yeni 4 yayın), en yeni / artan fiyat sıralaması (girdi değişmez, eşitlikte en yeni),
+  büyük-küçük harf, aksan ve Türkçe i/ı duyarsız başlık/yapımcı araması, dönme kararı,
+  UTC sabit tarih biçimi (sunucu/istemci farkı olmaz).
+- `FeaturedStage`: dev başlık, yapımcı · tarih, "Bilet al — X USDC" ve "Ayrıntılar"
+  (`/s/[id]`), 4 seçici (`aria-pressed`). 7 sn'de bir döner; azaltılmış harekette, odak veya
+  imleç alandayken ve sekme gizliyken durur. Kapak yoksa sahne koyu kalır.
+- `ProgramSection`: "Program" ve yüklü sayı, arama (yalnız yüklü sayfalar, bunu söyleyen
+  ipucuyla), sıralama düğmeleri, 1/2/3/4 sütunlu ızgara, eşleşme yoksa temizleme düğmesi.
+- `DiscoverView`: tek `h1` (ekran okuyucu için), `useCurrentCatalog`/`useAllVideos` seçimi
+  aynen; `stale` uyarısı, veri varken/yokken hata, boş, boş sayfa ve "Daha fazla" durumları
+  G6 durum bileşenleriyle. Altta "Üreticiler için" bölümü.
+- `VideoCard`: `CoverImage` (kapak yoksa afiş), durum etiketi (Satış durdu / Yayında değil),
+  bağlantı `/s/[id]` (bir yönlendirme adımı azaldı). Ücretli medya kapalıyken bağlantı yok.
+
+### Plandan sapmalar
+
+- **"Biletlerin" rafı çizilmiyor**; G12/G13 verisi yok (kabul kriteri gereği).
+- **Öne çıkan alanda satışı açık yayınlar kullanılır**; durdurulmuş veya kaldırılmış yayın
+  "Bilet al" düğmesiyle öne çıkarılmaz.
+- `lib/i18n/messages.ts` G8 listesinde değildi; yeni metinler eklendi, kullanılmayan
+  `discover.eyebrow` ve `discover.description` kaldırıldı.
+- Kart üzerindeki afiş başlığı, kartın altındaki başlıkla aynı metni tekrar eder (tasarımdaki
+  gibi); afiş `aria-hidden` olduğu için ekran okuyucu bir kez okur.
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| Yeni `discover-view.test.ts` | PASS (20): öne çıkan seçimi, iki sıralama ve girdinin değişmemesi, Türkçe i dahil arama, 5 dönme koşulu, iki dilde UTC tarih, sahne + program + `/s/` bağlantıları, ücretli medya kapalıyken bağlantısızlık, 7 katalog durumu, seçici sayısı, kaldırılmış yayın etiketi | LOCAL_TEST |
+| `public-video-discover.test.ts` | PASS; kart bağlantısı artık `/s/new-video` | LOCAL_TEST |
+| `catalog-refresh`, `current-catalog`, `useAllVideos`, `near-read-budget` | PASS, değiştirilmedi; yeni okuma yok | LOCAL_TEST |
+| `npm test -- --run` | PASS: 44 dosya, 772 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+| Yerel tarayıcı, 1440 ve 390 px | Sahte verili sunucu çıktısı sayfaya enjekte edildi (Türkçe, 6 yayın, biri durdurulmuş): sahne, seçiciler, program, arama/sıralama, afişli kartlar ve etiket doğru; 390 px'te taşma yok, en küçük hedef 44 px. Geçici dosyalar silindi | LOCAL_STATIC |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** gerçek katalogla ve kapaklarla tarayıcı görünümü (runtime yerelde
+  kapalı; canlı testnet okuması yapılmadı); dönmenin tarayıcıda zamanlanması ve odakta
+  durması (mantık birim testli); ekran okuyucu; CI; Preview.
+- **Tek sonraki gate:** G9 `SAHNE_SCREENING_GISE`. G8 commit'i ve G9 başlangıcı ayrı açık onay
+  bekler.

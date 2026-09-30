@@ -1,49 +1,52 @@
 import Link from 'next/link';
-import Image from 'next/image';
-import { Play } from 'lucide-react';
-import { Card } from '@/components/ui/card';
+import { CoverImage } from '@/components/media/CoverImage';
+import { Chip } from '@/components/ui/chip';
 import {
     formatUsdc,
     livepeerPublicationCoverUrl,
     type LivepeerPublication,
 } from '@/lib/livepeer-publication';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import type { Messages } from '@/lib/i18n/messages';
 
-export function VideoCard({ publication }: { publication: LivepeerPublication }) {
+type VideoCardProps = {
+    publication: LivepeerPublication;
+    /** Card copy; the English dictionary keeps server and legacy callers working. */
+    t?: Pick<Messages['discover'], 'salesPaused' | 'unavailable'>;
+    meta?: string;
+};
+
+export function VideoCard({ publication, t = { salesPaused: 'Sales paused', unavailable: 'Unavailable' }, meta }: VideoCardProps) {
     const coverUrl = livepeerPublicationCoverUrl(publication);
+    const open = publication.availability === 'ACTIVE';
     const card = (
-        <Card className="overflow-hidden transition group-hover:-translate-y-1 group-hover:border-emerald-400/40">
-            <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-gradient-to-br from-zinc-800 to-zinc-950">
-                {coverUrl && (
-                    <Image
-                        fill
-                        unoptimized
-                        src={coverUrl}
-                        alt=""
-                        sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
-                        className="object-cover"
-                        onError={(event) => { event.currentTarget.hidden = true; }}
-                    />
+        <>
+            <span className="relative block border border-line">
+                <CoverImage
+                    publicationId={publication.publication_id}
+                    title={publication.title}
+                    src={coverUrl}
+                    sizes="(min-width: 1280px) 25vw, (min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
+                />
+                {!open && (
+                    <Chip tone={publication.availability === 'TAKEDOWN' ? 'neutral' : 'paused'} className="absolute right-2.5 top-2.5">
+                        {publication.availability === 'TAKEDOWN' ? t.unavailable : t.salesPaused}
+                    </Chip>
                 )}
-                <span aria-hidden="true" className="absolute inset-0 bg-black/20" />
-                <span className="relative flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-black/50">
-                    <Play className="h-6 w-6 fill-current" />
-                </span>
-            </div>
-            <div className="p-4">
-                <div className="flex items-start justify-between gap-4">
-                    <h2 className="font-semibold group-hover:text-emerald-300">{publication.title}</h2>
-                    <span className="shrink-0 text-xs font-bold">{formatUsdc(publication.price_usdc)} USDC</span>
-                </div>
-                <p className="mt-3 truncate text-xs text-zinc-400">{publication.creator_id}</p>
-            </div>
-        </Card>
+            </span>
+            <span className="flex items-baseline justify-between gap-3">
+                <span className="font-display text-2xl leading-none group-hover:text-ice">{publication.title}</span>
+                <span className={`tabular shrink-0 text-xl ${open ? 'text-light' : 'text-light-3'}`}>{formatUsdc(publication.price_usdc)} USDC</span>
+            </span>
+            <span className="truncate text-[13px] text-light-3">{meta ? `${publication.creator_id} · ${meta}` : publication.creator_id}</span>
+        </>
     );
+    const className = 'group flex min-w-0 flex-col gap-2.5 rounded-xs';
     return FEATURE_FLAGS.enablePaidMediaLivepeerV1 ? (
-        <Link href={`/watch?job=${encodeURIComponent(publication.publication_id)}`} className="group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400">
+        <Link href={`/s/${encodeURIComponent(publication.publication_id)}`} className={`${className} focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ice`}>
             {card}
         </Link>
     ) : (
-        <div className="group rounded-lg">{card}</div>
+        <div className={className}>{card}</div>
     );
 }

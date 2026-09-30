@@ -32,7 +32,7 @@ it('takes a normal public Discover result to its Watch link', async () => {
     const result = await fetchDiscoverPage({ source: 'auto' });
     expect(result.publications[0].title).toBe('My video');
     const html = renderToStaticMarkup(React.createElement(VideoCard, { publication: result.publications[0] }));
-    expect(html).toContain('href="/watch?job=new-video"');
+    expect(html).toContain('href="/s/new-video"');
     expect(near.view).not.toHaveBeenCalled();
 });
 
