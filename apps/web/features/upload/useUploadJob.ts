@@ -583,6 +583,9 @@ export function useUploadJob() {
         setPaymentAsset,
         sponsorQuote,
         publicationView,
+        // Exposed for the wizard timeline; derived from the same publication query.
+        providerState: publicationQuery.data?.providerState ?? null,
+        jobStatus: publicationQuery.data?.job?.status ?? null,
         publicationReady,
         publicationExpired,
         uploaded,

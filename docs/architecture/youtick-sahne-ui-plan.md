@@ -1175,3 +1175,56 @@ G14 commit'i ayrı onay bekler.
   kontrol, CI, Preview.
 - **Tek sonraki gate:** G15 `SAHNE_STUDIO_WIZARD`. G14 commit'i ve G15 başlangıcı ayrı açık onay
   bekler.
+
+## 22. G15 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G14 commit'ini (`e7b69ab`) ve G15'i onayladı.
+G15 commit'i ayrı onay bekler. Yükleme, ödeme ve kurtarma mantığı değişmedi.
+
+### Yapılan
+
+- `components/studio/wizard/NewScreeningWizard.tsx` (`/studio/new`): solda adım rayı
+  (Dosya · Detaylar · Ücret ve ödeme · Yükleme · Yayın), sağda beş bölüm. Tüm durum ve
+  eylemler `useUploadJob`'dan (G3) gelir; `useUploadJob` bileşenin ilk hook'udur
+  (`livepeer-upload-status` testinin izlediği `useState` sırası korunur).
+- `wizard-model.ts` (saf):
+  - Beş adım G3 `uploadStepStates` değerlerinden türetilir (Ödeme seçenekleri + Cüzdan onayı →
+    Ücret ve ödeme; Yükleme → Yükleme; İşleme + Yayında → Yayın; dosya hatası ve süre dolması
+    başarısız).
+  - İşleme zaman çizelgesi `providerState`'e eşlenir: `PROCESSING` → kalite seçenekleri,
+    `READY_VERIFIED` → çıktılar doğrulanıyor, `FINALIZE_QUEUED`/`FINALIZE_RETRY`/`ONCHAIN_PUBLISHED`
+    veya NEAR iş durumu `Published` → NEAR'a yazılıyor, yayın okununca Yayında.
+  - Ücret dökümü `livepeerUploadFeeUsdc` ile aynı hesap: GB (ondalık) başına 0,30 USDC yukarı
+    yuvarlanır, en az 0,50 USDC; sponsor teklifi varsa sponsor ve toplam satırı.
+  - Başlık `hasTitleContent` + en fazla 200 bayt; fiyat en az 2 USDC, en fazla 6 ondalık.
+- Devam etme (aynı dosya, mevcut `resume`), iptal (yalnız `authorized`), durum bağlantısı
+  (`/studio/new?job=…`), aktarım hızı ve kalan süre (G3 `transferStats`), yayında
+  "Gösterimi aç" (`/s/…`) ve paylaşım bağlantısı.
+- `SavedUploadStatus`: kapatılan sekmeden sonra NEAR'dan okunan iş kartı (bağlantılar
+  `/studio/new?job=` ve `/s/`); ödeme veya yükleme başlatmaz.
+- `components/LivepeerPaidUploadForm.tsx` yalnız eski adlarla yeniden dışa aktarım yapar.
+
+### Plandan sapmalar
+
+- `features/upload/useUploadJob.ts` G15 listesinde yoktu: dönüş nesnesine yalnız `providerState`
+  ve `jobStatus` eklendi (aynı yayın sorgusundan; durum sırası ve mantık değişmedi).
+- `lib/i18n/messages.ts` (`wizard` metinleri) değişti.
+- Sihirbaz tek sayfada beş bölüm olarak çizilir; adımlar arası gizleme/gezinme yoktur (yarım
+  kalan işlerde tüm bilgi görünür kalsın diye).
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| Yeni `studio-wizard.test.ts` | PASS (35): başlık (6) ve fiyat (8) doğrulaması, dört boyutta ücret dökümünün `livepeerUploadFeeUsdc` ile eşitliği, G3 aşamalarının beş adıma eşlenmesi, 8 `providerState`/iş durumu eşlemesi, zaman çizelgesi durumları, `useUploadJob`'un ilk hook olması, adımlar + doğrulama + ücret, en az ücret + sponsor toplamı, iptalin yalnız `authorized`'da olması + aktarım hızı + durum bağlantısı, devam, işleme çizelgesi ve yayında bağlantı + paylaşım, bağlanma ve kaydedilmiş iş | LOCAL_TEST |
+| `livepeer-upload-status.test.ts` (bağlantılar güncellendi) | PASS (41) | LOCAL_TEST |
+| `upload-job`, `livepeer-upload`, `compact-upload` testleri | PASS | LOCAL_TEST |
+| `npm test -- --run` | PASS: 51 dosya, 927 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** gerçek dosya ile TUS yüklemesi, gerçek ödeme, Livepeer işleme, tarayıcıda
+  görsel kontrol, CI, Preview. Gerçek yükleme ancak ayrı onaylı PREVIEW kabulünde.
+- **Tek sonraki gate:** G16 `SAHNE_CREATORS_PAGE`. G15 commit'i ve G16 başlangıcı ayrı açık onay
+  bekler.

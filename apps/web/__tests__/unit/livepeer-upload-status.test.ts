@@ -134,18 +134,18 @@ describe('upload status after closing its tab', () => {
         const html = render();
         expect(html).toContain('Payment confirmed. Publication is still pending.');
         expect(html).toContain('Livepeer processing details are unavailable');
-        expect(html).toContain('/upload?job=job-001');
-        expect(html).not.toContain('/watch');
+        expect(html).toContain('/studio/new?job=job-001');
+        expect(html).not.toContain('/s/job-001');
         expect(html).not.toContain('<button');
     });
 
     it('opens a confirmed publication and explains deadline expiry', () => {
         state.query.data = { ...progress, publication: { publication_id: 'job-001' } };
-        expect(render()).toContain('/watch?job=job-001');
+        expect(render()).toContain('/s/job-001');
         state.query.data = { ...progress, expired: true };
         const html = render();
         expect(html).toContain('publication deadline has passed');
-        expect(html).not.toContain('/watch');
+        expect(html).not.toContain('/s/job-001');
         expect(html).not.toContain('<button');
     });
 
@@ -153,7 +153,7 @@ describe('upload status after closing its tab', () => {
         state.query = { data: { ...progress, publication: {} }, isError: true };
         const html = render();
         expect(html).toContain('could not be verified for this account');
-        expect(html).not.toContain('/watch');
+        expect(html).not.toContain('/s/job-001');
     });
 });
 
