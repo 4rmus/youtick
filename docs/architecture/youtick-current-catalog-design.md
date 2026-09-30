@@ -337,3 +337,84 @@ yayın-aracı/belge dosyasını kapsar. Ana çalışma alanı, mevcut ekonomik v
 ve operasyon arşivleri korunur. Merge, migration ve deploy bu gate'in dışında.
 **Tek sonraki gate:** `YOUTICK_CURRENT_CATALOG_PR_CHECKS` — PR'ın tam commit'i
 üzerindeki CI sonuçlarını ve inceleme bulgularını doğrulamak.
+
+## Canlı gölge ve geçiş doğrulaması — 30 Eylül 2026
+
+**Gate:** `YOUTICK_CURRENT_CATALOG_SHADOW_PUBLIC_TESTNET` — **COMPLETED_WITH_WARNINGS**.
+Bu gate'te deploy, migration, D1 yazması, bayrak değişikliği, ödeme veya yükleme
+yapılmadı. Yalnız salt-okunur Cloudflare/D1/NEAR/HTTP okumaları ve bu kayıt.
+
+### Kayda geçmemiş canlı işlemler (sonradan tespit)
+
+Planlanan gölge ve okuma geçişi bu gate açılmadan önce korumalı workflow ile
+yapılmıştı; kayıt bu bölümle tamamlanır:
+
+| Zaman (UTC) | İşlem | Kanıt |
+| --- | --- | --- |
+| 29 Eyl 13:35 | D1 `0007_publications_discover_index.sql` | `d1_migrations` id 6 |
+| 29 Eyl 16:59 | `deploy-public-testnet` 54797a0, `mode=acceptance`, `catalog_mode=shadow` | run 36601772823 |
+| 29 Eyl 17:04 | D1 `0008_current_catalog.sql` | `d1_migrations` id 7 |
+| 29 Eyl 17:28 | `deploy-public-testnet` 54797a0, `mode=acceptance`, `catalog_mode=current` | run 36605120542; Worker sürümleri a9e7b26e (read-model), 93b2bdce (Bridge), 50c4710b (Web) |
+
+Gölge dönemi yaklaşık 30 dakika sürdü; o döneme ait bağımsız karşılaştırma
+kaydı bulunmadı. Kabul aşağıdaki `current` dönemi ölçümüne dayanır.
+Public-testnet `acceptance` modunda açıktır; bu, pilot politika belgelerindeki
+NO-GO kaydından sonra alınmış bir owner kararıdır ve burada yeniden değerlendirilmedi.
+
+### Kabul ölçümü
+
+Bağımsız okuyucu: D1 `current_catalog_state.verified_block_height` alınıp aynı
+blokta `get_publications_count` ve `get_publications` NEAR RPC
+(`test.rpc.fastnear.com`) çağrıları yapıldı; `publication_id`, `creator_id`,
+`title`, `generation`, `price_usdc`, `playback_id`, `availability` alan alan
+karşılaştırıldı. Worker'ın kendi okuma kodu kullanılmadı.
+
+| Ölçüt | Sonuç |
+| --- | --- |
+| 10 ardışık cron, 10 farklı final blok (270927923 → 270928885) | 18/18 eşleşme, **0 fark** |
+| Güncellik (kontrol yaşı / kaynak blok gecikmesi) | 27–56 s / 2–4 s; 90 s eşiğinin altında |
+| `lp-877b7f80-f832-4da5-ac2b-cc80bfb9a433` | ACTIVE, `soteri.testnet`; üreticinin 9 yayını listede |
+| v1 ve v2 uçları | İkisi de 18 kayıt; `/__health` 200, Web kök 200 |
+| Eski geçmiş tarayıcısı | Çalışıyor (son güncelleme saniyeler önce), final bloğun ~199 bin blok gerisinde |
+
+Kanıt sınıfı: **PRODUCTION** (public-testnet canlı okuma) + **CI** (workflow
+girdileri). Tarayıcı üzerinden Keşfet/Profil görsel kabulü, 90 saniyelik yeni
+yayın görünürlük gecikmesi ve SALES_SUSPENDED/TAKEDOWN geçişi ölçülmedi
+(**EXTERNAL_NOT_RUN**); yeni işlem başlatmadan ölçülemezler.
+
+### Uyarılar
+
+1. **D1 migration kaydı tutarsız:** `0006_scan_cursor.sql` şeması canlıda mevcut
+   (`scan_height`, `scan_revision`, `finality_watermarks_scan_reset`) ama
+   `d1_migrations` tablosunda yok. `wrangler d1 migrations apply` çalıştırılırsa
+   `0006` tekrar denenir ve `ALTER TABLE ... ADD COLUMN` hatasıyla durur; `0009`
+   ve sonrası da bu yüzden uygulanamaz. Düzeltme, şemaya dokunmadan yalnız
+   `d1_migrations` kaydının eklenmesidir; ayrı D1 yazma onayı gerekir.
+2. Eski tarayıcının gecikmesi yeni kataloğu etkilemez ama satış/geçmiş
+   raporlarını etkiler; emekliye ayırma ayrı işletim kararıdır.
+3. Kilitli `workerd` sürümünün yerel D1 denemesi hâlâ yapılmadı.
+
+**Tek sonraki gate:** `YOUTICK_READ_MODEL_D1_MIGRATION_LEDGER_REPAIR` —
+`0006` için yalnız `d1_migrations` kaydını ekleyip `migrations list` çıktısının
+boş olduğunu doğrulamak; açık D1 yazma onayı gerekir.
+
+Owner teyidi (30 Eylül): public-testnet'in `acceptance` modunda herkese açık
+olması **bilinçli karardır**; 100 USD toplam bütçe pilot ön koşulu olmaktan
+owner kararıyla çıkarıldı. Kodda uygulanmış dolar tavanı yoktur.
+
+## D1 migration kaydı onarımı — 30 Eylül 2026
+
+**Gate:** `YOUTICK_READ_MODEL_D1_MIGRATION_LEDGER_REPAIR` — **PASS**.
+Açık owner onayıyla `youtick-market-read-model-public-testnet` üzerinde tek
+yazma yapıldı; şema, veri, Worker ve bayraklar değişmedi.
+
+| Adım | Sonuç |
+| --- | --- |
+| Önceki Time Travel bookmark | `000000d9-000000ae-000050f6-786ab67f5b4e35cafe41a547199dfd04` |
+| Ön koşul | `scan_height`/`scan_revision` kolonları ve `finality_watermarks_scan_reset` mevcut; `0006` kaydı yok |
+| Yazma (13:36:20 UTC) | Koşullu `INSERT INTO d1_migrations (name) SELECT '0006_scan_cursor.sql' WHERE <şema mevcut> AND NOT EXISTS <kayıt>`; `changes=1` |
+| Sonrası | `wrangler d1 migrations list --remote`: **No migrations to apply**; kayıt id 8 |
+| Servis | Katalog 31 s önce yenilendi (18 yayın), geçmiş tarayıcı ilerliyor, `/__health` 200 |
+
+`id` sırası uygulama sırasını değil kayıt sırasını gösterir; wrangler adla
+karşılaştırır. Kanıt: **PRODUCTION**.
