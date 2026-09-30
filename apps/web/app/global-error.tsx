@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect } from 'react';
+import { useLocale } from '@/lib/i18n/I18nProvider';
+import { messages } from '@/lib/i18n/messages';
 
 interface GlobalErrorProps {
   error: Error & { digest?: string };
@@ -10,13 +12,15 @@ interface GlobalErrorProps {
 // This error boundary catches errors in the root layout
 // It must render its own <html> and <body> tags
 export default function GlobalError({ error, reset }: GlobalErrorProps) {
+  const locale = useLocale();
+  const t = messages[locale].errorPage;
   useEffect(() => {
     // Log critical errors - this is a root-level failure
     console.error('Global error (root layout):', error);
   }, [error]);
 
   return (
-    <html lang="en">
+    <html lang={locale}>
       <body className="bg-black">
         <div className="min-h-screen flex items-center justify-center px-4">
           <div className="max-w-md w-full text-center">
@@ -39,17 +43,16 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
             </div>
 
             <h1 className="text-3xl font-bold text-white mb-4">
-              Application Error
+              {t.criticalTitle}
             </h1>
 
             <p className="text-zinc-400 mb-6">
-              A critical error occurred. We apologize for the inconvenience.
-              Please refresh the page or try again later.
+              {t.criticalDescription}
             </p>
 
             {error.digest && (
               <p className="text-xs text-zinc-500 mb-6">
-                Error ID: {error.digest}
+                {t.errorId}{error.digest}
               </p>
             )}
 
@@ -59,14 +62,14 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
                 onClick={reset}
                 className="px-6 py-3 bg-near-green hover:bg-near-green/80 text-near-black font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
               >
-                Try again
+                {t.retry}
               </button>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
                 className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
               >
-                Refresh page
+                {t.refresh}
               </button>
             </div>
           </div>

@@ -8,6 +8,7 @@ import { PageShell } from '@/components/PageShell';
 import { RuntimeClosed } from '@/components/RuntimeClosed';
 import { ScreenState } from '@/components/ScreenState';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import { useMessages } from '@/lib/i18n/I18nProvider';
 
 export default function WatchPage() {
     if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) return <RuntimeClosed />;
@@ -16,13 +17,14 @@ export default function WatchPage() {
 
 function WatchContent() {
     const jobId = useSearchParams().get('job');
+    const t = useMessages().discover;
     if (!jobId) {
         return (
             <PageShell className="flex items-center justify-center">
                 <ScreenState
                     icon={<Video className="h-7 w-7" />}
-                    title="Choose a video"
-                    description="Open a release from Discover to start watching."
+                    title={t.chooseTitle}
+                    description={t.chooseDescription}
                 />
             </PageShell>
         );

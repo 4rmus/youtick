@@ -16,6 +16,11 @@ vi.mock('@/components/providers/WalletProvider', () => ({
     }),
 }));
 
+vi.mock('@/lib/i18n/I18nProvider', async () => {
+    const { messages } = await import('@/lib/i18n/messages');
+    return { useMessages: () => messages.en };
+});
+
 import { Navbar } from '@/components/Navbar';
 
 describe('Navbar', () => {

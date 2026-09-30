@@ -8,6 +8,8 @@ import { QueryProvider } from '@/components/providers/QueryProvider';
 import { WalletProvider } from '@/components/providers/WalletProvider';
 import { PublicTestnetBetaBanner } from '@/components/PublicTestnetBetaBanner';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import { I18nProvider } from '@/lib/i18n/I18nProvider';
+import { resolveLocale } from '@/lib/i18n/locale';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
 
@@ -21,9 +23,11 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
     await connection();
     const cspNonce = (await headers()).get('x-nonce') ?? undefined;
+    const locale = resolveLocale((await headers()).get('accept-language'));
     return (
-        <html lang="en" data-scroll-behavior="smooth">
+        <html lang={locale} data-scroll-behavior="smooth">
             <body className={`${geist.variable} min-h-screen bg-black text-white antialiased`}>
+                <I18nProvider initialLocale={locale}>
                 <QueryProvider>
                     {(FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1) && <PublicTestnetBetaBanner />}
                     <WalletProvider cspNonce={cspNonce}>
@@ -31,6 +35,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                         <main>{children}</main>
                     </WalletProvider>
                 </QueryProvider>
+                </I18nProvider>
             </body>
         </html>
     );

@@ -13,18 +13,19 @@ import { publicationPollIntervalMs } from '@/lib/livepeer-upload-state';
 import { readLivepeerUploadProgress } from '@/lib/livepeer-publication';
 import { LIVEPEER_SOURCE_ACCEPT, rememberLivepeerUploadJob } from '@/lib/livepeer-upload';
 import {
-    UPLOAD_EXPIRED_MESSAGE,
-    UPLOAD_STEPS,
     formatMicroUsdc,
     formatYoctoNear,
     sourceSizeLimitLabel,
 } from '@/features/upload/upload-job';
 import { useUploadJob } from '@/features/upload/useUploadJob';
+import { useMessages } from '@/lib/i18n/I18nProvider';
+import { messages } from '@/lib/i18n/messages';
 
 export { getLivepeerPublicationView, uploadErrorMessage } from '@/features/upload/upload-job';
 
 export function LivepeerPaidUploadForm() {
     const {
+        locale,
         accountId,
         connect,
         getWallet,
@@ -63,13 +64,14 @@ export function LivepeerPaidUploadForm() {
         resume,
         cancel,
     } = useUploadJob();
+    const t = messages[locale].upload;
 
     return (
         <div className="mx-auto max-w-3xl space-y-6">
             <div>
-                <p className="text-sm font-medium text-emerald-300">Livepeer paid media</p>
-                <h1 className="mt-2 text-3xl font-semibold">Publish a video</h1>
-                <p className="mt-2 text-zinc-400">The browser sends the source directly to Livepeer. NEAR records payment and publication state.</p>
+                <p className="text-sm font-medium text-emerald-300">{t.eyebrow}</p>
+                <h1 className="mt-2 text-3xl font-semibold">{t.title}</h1>
+                <p className="mt-2 text-zinc-400">{t.description}</p>
             </div>
 
             {!jobId && accountId && trackedUpload?.accountId === accountId && (
@@ -77,7 +79,7 @@ export function LivepeerPaidUploadForm() {
             )}
             {jobId && (
                 <Link className="text-sm underline" href={`/upload?job=${encodeURIComponent(jobId)}`}>
-                    Upload status link — bookmark to return later
+                    {t.statusLink}
                 </Link>
             )}
             {uploaded && (
@@ -90,9 +92,9 @@ export function LivepeerPaidUploadForm() {
 
             <Card>
                 <CardHeader>
-                    <CardTitle>Publication</CardTitle>
-                    <CardDescription>MP4, MOV, AVI, WebM, WMV, MKV or FLV; maximum {sourceSizeLimitLabel()} and minimum ticket price 2 USDC.</CardDescription>
-                    {FEATURE_FLAGS.publicTestnetVideoV1 && <p className="text-sm text-zinc-400">Use free test USDC for uploads and tickets, and test NEAR for network fees. <a className="underline" href="/terms#test-tokens" target="_blank" rel="noreferrer">Get test tokens</a>, then check payment options again.</p>}
+                    <CardTitle>{t.cardTitle}</CardTitle>
+                    <CardDescription>{t.cardDescription(sourceSizeLimitLabel())}</CardDescription>
+                    {FEATURE_FLAGS.publicTestnetVideoV1 && <p className="text-sm text-zinc-400">{t.testTokensBefore}<a className="underline" href="/terms#test-tokens" target="_blank" rel="noreferrer">{t.testTokensLink}</a>{t.testTokensAfter}</p>}
                 </CardHeader>
                 <CardContent className="space-y-5">
                     <Input type="file" accept={LIVEPEER_SOURCE_ACCEPT} disabled={busy || (uploaded && !publicationExpired)} onChange={selectFile} />
@@ -101,7 +103,7 @@ export function LivepeerPaidUploadForm() {
                         <div className="relative overflow-hidden rounded-xl border border-zinc-800 bg-black">
                             <video
                                 ref={previewRef}
-                                aria-label="Selected video cover preview"
+                                aria-label={t.coverPreviewLabel}
                                 className="aspect-video w-full object-cover"
                                 muted
                                 playsInline
@@ -113,29 +115,29 @@ export function LivepeerPaidUploadForm() {
                                     }
                                 }}
                             />
-                            <span className="absolute bottom-3 left-3 rounded-full bg-black/70 px-3 py-1 text-xs text-white">Cover preview</span>
+                            <span className="absolute bottom-3 left-3 rounded-full bg-black/70 px-3 py-1 text-xs text-white">{t.coverPreview}</span>
                         </div>
                     )}
-                    <Input aria-label="Title" placeholder="Title" maxLength={200} value={title} disabled={busy || uploaded || resumeAvailable} onChange={(event) => setTitle(event.target.value)} />
-                    <Input aria-label="Ticket price in USDC" type="number" min="2" step="0.000001" value={price} disabled={busy || uploaded || resumeAvailable} onChange={(event) => setPrice(event.target.value)} />
+                    <Input aria-label={t.titleLabel} placeholder={t.titleLabel} maxLength={200} value={title} disabled={busy || uploaded || resumeAvailable} onChange={(event) => setTitle(event.target.value)} />
+                    <Input aria-label={t.priceLabel} type="number" min="2" step="0.000001" value={price} disabled={busy || uploaded || resumeAvailable} onChange={(event) => setPrice(event.target.value)} />
                     <label className="flex items-start gap-3 text-sm">
                         <input type="checkbox" checked={rightsAccepted} disabled={busy || uploaded || resumeAvailable} onChange={(event) => setRightsAccepted(event.target.checked)} />
-                        <span>I own the rights required to publish this video.</span>
+                        <span>{t.rights}</span>
                     </label>
 
-                    {uploadFeeUsdc && <p className="text-sm">Creator upload fee: {formatMicroUsdc(uploadFeeUsdc)} USDC (minimum 0.50)</p>}
+                    {uploadFeeUsdc && <p className="text-sm">{t.fee(formatMicroUsdc(uploadFeeUsdc))}</p>}
                     {payment && (
                         <div className="space-y-2 text-sm">
                             {payment.usable.map((asset) => (
                                 <label key={asset} className="flex items-center gap-2">
                                     <input type="radio" name="creator-fee" checked={paymentAsset === asset} disabled={busy} onChange={() => setPaymentAsset(asset)} />
-                                    <span>{asset === 'USDC' ? `${formatMicroUsdc(payment.usdcFee)} USDC · 1 payment approval` : `${formatYoctoNear(payment.nearQuote!.quote.fee_near_yocto)} NEAR · 1 payment approval`}</span>
+                                    <span>{asset === 'USDC' ? t.usdcOption(formatMicroUsdc(payment.usdcFee)) : t.nearOption(formatYoctoNear(payment.nearQuote!.quote.fee_near_yocto))}</span>
                                 </label>
                             ))}
-                            {FEATURE_FLAGS.enableLivepeerNearCreatorFee && !payment.nearQuote && <p className="text-xs text-zinc-400">NEAR payment is unavailable; USDC remains available.</p>}
+                            {FEATURE_FLAGS.enableLivepeerNearCreatorFee && !payment.nearQuote && <p className="text-xs text-zinc-400">{t.nearUnavailable}</p>}
                             {sponsorQuote && (
                                 <p role="status" className="text-xs text-emerald-300">
-                                    Upload {formatMicroUsdc(sponsorQuote.uploadFeeUsdc)} + gas sponsor {formatMicroUsdc(sponsorQuote.sponsorFeeUsdc)} = {formatMicroUsdc(sponsorQuote.totalFeeUsdc)} USDC total
+                                    {t.sponsorTotal(formatMicroUsdc(sponsorQuote.uploadFeeUsdc), formatMicroUsdc(sponsorQuote.sponsorFeeUsdc), formatMicroUsdc(sponsorQuote.totalFeeUsdc))}
                                 </p>
                             )}
                         </div>
@@ -153,8 +155,8 @@ export function LivepeerPaidUploadForm() {
 
                     {file && !fileError && (
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
-                            <ol aria-label="Publication progress" className="grid gap-3 sm:grid-cols-5">
-                                {UPLOAD_STEPS.map((label, index) => {
+                            <ol aria-label={t.progressLabel} className="grid gap-3 sm:grid-cols-5">
+                                {t.steps.map((label, index) => {
                                     const failed = stepStates[index] === 'failed';
                                     const complete = stepStates[index] === 'complete';
                                     const active = stepStates[index] === 'active';
@@ -175,11 +177,11 @@ export function LivepeerPaidUploadForm() {
                             {uploadStage === 'uploading' && (
                                 <div className="mt-4">
                                     <div className="mb-2 flex justify-between text-sm text-zinc-300">
-                                        <span>Uploading</span>
+                                        <span>{t.uploading}</span>
                                         <span>{uploadProgress}%</span>
                                     </div>
                                     <progress
-                                        aria-label="Video upload progress"
+                                        aria-label={t.uploadProgressLabel}
                                         className="h-2 w-full accent-emerald-400"
                                         max={100}
                                         value={uploadProgress}
@@ -190,17 +192,17 @@ export function LivepeerPaidUploadForm() {
                     )}
 
                     {!accountId ? (
-                        <Button onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>
+                        <Button onClick={() => void connect()} disabled={!isReady}>{t.connectWallet}</Button>
                     ) : publicationReady && jobId ? (
-                        <Button asChild className="w-full"><Link href={`/watch?job=${encodeURIComponent(jobId)}`}>Open publication</Link></Button>
+                        <Button asChild className="w-full"><Link href={`/watch?job=${encodeURIComponent(jobId)}`}>{t.openPublication}</Link></Button>
                     ) : publicationExpired ? (
-                        <Button className="w-full" disabled>Publication deadline passed</Button>
+                        <Button className="w-full" disabled>{t.deadlinePassed}</Button>
                     ) : resumeAvailable ? (
                         <div className="space-y-2">
                             <Button className="w-full" disabled={busy} onClick={() => void resume()}>
-                                {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Resume / check existing upload
+                                {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} {t.resume}
                             </Button>
-                            <p className="text-xs text-zinc-400">Use the same file. A wallet approval and NEAR network fee may be needed; your upload payment is not charged again.</p>
+                            <p className="text-xs text-zinc-400">{t.resumeNote}</p>
                         </div>
                     ) : uploaded ? (
                         <Button className="w-full" disabled>
@@ -208,16 +210,16 @@ export function LivepeerPaidUploadForm() {
                             {publicationView.buttonLabel}
                         </Button>
                     ) : !payment ? (
-                        <Button className="w-full" disabled={!formReady || busy} onClick={() => void preparePayment()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Check payment options</Button>
+                        <Button className="w-full" disabled={!formReady || busy} onClick={() => void preparePayment()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} {t.checkPayment}</Button>
                     ) : (
-                        <Button className="w-full" disabled={!formReady || busy || !paymentAsset} onClick={() => void start()}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />} Pay and upload</Button>
+                        <Button className="w-full" disabled={!formReady || busy || !paymentAsset} onClick={() => void start()}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />} {t.payAndUpload}</Button>
                     )}
                     {accountId && jobId && uploadStage === 'authorized' && (
                         <div className="space-y-2">
                             <Button className="w-full" variant="destructive" disabled={busy} onClick={() => void cancel()}>
-                                Cancel job (no refund)
+                                {t.cancelJob}
                             </Button>
-                            <p className="text-xs text-zinc-400">Cancellation stops provider creation only. The technical-pilot fee is not refunded.</p>
+                            <p className="text-xs text-zinc-400">{t.cancelNote}</p>
                         </div>
                     )}
                     {displayedStatus && <p role="status" className="text-sm text-zinc-400">{displayedStatus}</p>}
@@ -229,6 +231,10 @@ export function LivepeerPaidUploadForm() {
 }
 
 export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; jobId: string }) {
+    const upload = useMessages().upload;
+    const t = upload.saved;
+    const { statusLink, openPublication } = upload;
+    const expiredMessage = upload.publication.expiredMessage;
     const query = useQuery({
         queryKey: ['livepeerSavedUpload', accountId, jobId],
         queryFn: async () => {
@@ -246,26 +252,26 @@ export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; 
     return (
         <Card>
             <CardHeader>
-                <CardTitle>Your upload</CardTitle>
+                <CardTitle>{t.title}</CardTitle>
                 <CardDescription role="status" aria-live="polite">
-                    {query.isError ? 'This upload could not be verified for this account.'
-                        : !progress ? 'Checking upload status…'
-                            : progress.publication ? 'Publication ready.'
-                                : progress.expired ? UPLOAD_EXPIRED_MESSAGE
-                                    : 'Payment confirmed. Publication is still pending.'}
+                    {query.isError ? t.unverified
+                        : !progress ? t.checking
+                            : progress.publication ? t.ready
+                                : progress.expired ? expiredMessage
+                                    : t.pending}
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
                 {progress?.publication ? (
-                    <Button asChild><Link href={`/watch?job=${encodeURIComponent(jobId)}`}>Open publication</Link></Button>
+                    <Button asChild><Link href={`/watch?job=${encodeURIComponent(jobId)}`}>{openPublication}</Link></Button>
                 ) : (
                     <p className="text-sm text-muted-foreground">
-                        {progress && !progress.expired && 'Livepeer processing details are unavailable in this view. '}
-                        No new payment or upload has been started.
+                        {progress && !progress.expired && t.detailsUnavailable}
+                        {t.noNewPayment}
                     </p>
                 )}
                 <Link className="text-sm underline" href={`/upload?job=${encodeURIComponent(jobId)}`}>
-                    Upload status link — bookmark to return later
+                    {statusLink}
                 </Link>
             </CardContent>
         </Card>

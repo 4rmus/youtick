@@ -15,6 +15,8 @@ import {
     paymentErrorMessage,
 } from '@/features/checkout/conversion-checkout';
 import { useConversionCheckout } from '@/features/checkout/useConversionCheckout';
+import { useLocale } from '@/lib/i18n/I18nProvider';
+import { messages, type Messages } from '@/lib/i18n/messages';
 
 type Props = {
     accountId: string;
@@ -34,6 +36,8 @@ export function MultiAssetPaymentPanel({
     onUsdcReady,
 }: Props) {
     const conversion = useConversionCheckout({ accountId, getWallet, purpose, requiredUsdcMicro, onUsdcReady });
+    const locale = useLocale();
+    const t = messages[locale].conversion;
     const {
         enabled,
         assets,
@@ -55,12 +59,12 @@ export function MultiAssetPaymentPanel({
         <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/80 p-4 text-left">
             <div className="flex items-start justify-between gap-3">
                 <div>
-                    <p className="font-medium text-white">Convert another asset · 2 approvals</p>
-                    <p className="mt-1 text-xs text-zinc-400">The conversion lands as USDC in your NEAR account. You approve the existing USDC payment afterwards.</p>
+                    <p className="font-medium text-white">{t.title}</p>
+                    <p className="mt-1 text-xs text-zinc-400">{t.description}</p>
                 </div>
                 {checkout && CONVERSION_TERMINAL_STATES.includes(checkout.state) && (
                     <Button type="button" variant="ghost" size="sm" onClick={conversion.resetTerminal}>
-                        {enabled ? 'New quote' : 'Dismiss'}
+                        {enabled ? t.newQuote : t.dismiss}
                     </Button>
                 )}
             </div>
@@ -68,9 +72,9 @@ export function MultiAssetPaymentPanel({
             {!checkout && enabled && (
                 <div className="mt-4 space-y-3">
                     <label className="block text-xs text-zinc-300">
-                        Asset
+                        {t.asset}
                         <select
-                            aria-label="Asset to convert"
+                            aria-label={t.assetLabel}
                             className="mt-1 h-10 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm text-white"
                             value={assetId}
                             disabled={disabled || busy || assets.length === 0}
@@ -82,11 +86,11 @@ export function MultiAssetPaymentPanel({
                         </select>
                     </label>
                     {selectedAsset && (
-                        <p className="break-all text-xs text-zinc-500">Token: {selectedAsset.contract_address}</p>
+                        <p className="break-all text-xs text-zinc-500">{t.token(selectedAsset.contract_address)}</p>
                     )}
                     <Input
-                        aria-label="Refund address"
-                        placeholder="Refund address on the source network"
+                        aria-label={t.refundLabel}
+                        placeholder={t.refundPlaceholder}
                         value={refundAddress}
                         disabled={disabled || busy}
                         onChange={(event) => conversion.changeRefundAddress(event.target.value)}
@@ -98,15 +102,15 @@ export function MultiAssetPaymentPanel({
                         onClick={() => void conversion.getPreview()}
                     >
                         {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Preview conversion
+                        {t.preview}
                     </Button>
                 </div>
             )}
 
-            {shownQuote && <QuoteDetails quote={shownQuote} />}
+            {shownQuote && <QuoteDetails quote={shownQuote} t={t} />}
 
             {!checkout && preview && multiAssetPaymentMode === 'preview' && (
-                <p className="mt-3 text-xs text-amber-300">Preview only. No deposit address will be created.</p>
+                <p className="mt-3 text-xs text-amber-300">{t.previewOnly}</p>
             )}
             {!checkout && preview && multiAssetPaymentMode === 'live' && (
                 <Button
@@ -116,62 +120,63 @@ export function MultiAssetPaymentPanel({
                     onClick={() => void conversion.createDeposit()}
                 >
                     {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Create deposit address
+                    {t.createDeposit}
                 </Button>
             )}
-            {routeSlow && <p className="mt-3 text-xs text-amber-300">This route is temporarily too slow for checkout.</p>}
+            {routeSlow && <p className="mt-3 text-xs text-amber-300">{t.routeSlow}</p>}
 
             {preflight && preflight.marketRegistered && preflight.gasSufficient && !preflight.userRegistered && (
                 <div className="mt-3 rounded-lg border border-amber-700/50 p-3">
-                    <p className="text-xs text-amber-200">Your NEAR account needs a one-time USDC registration before conversion.</p>
+                    <p className="text-xs text-amber-200">{t.registrationNeeded}</p>
                     <Button type="button" size="sm" className="mt-2" disabled={busy} onClick={() => void conversion.prepareAccount()}>
                         {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Prepare USDC account
+                        {t.prepareAccount}
                     </Button>
                 </div>
             )}
 
             {checkout?.quote.quote_response.quote.depositAddress && (
                 <div className="mt-4 space-y-3 rounded-lg border border-zinc-700 p-3">
-                    <CopyField label="Deposit address" value={checkout.quote.quote_response.quote.depositAddress} />
+                    <CopyField label={t.depositAddress} copyLabel={t.copy(t.depositAddress)} value={checkout.quote.quote_response.quote.depositAddress} />
                     {checkout.quote.quote_response.quote.depositMemo && (
-                        <CopyField label="Memo" value={checkout.quote.quote_response.quote.depositMemo} />
+                        <CopyField label={t.memo} copyLabel={t.copy(t.memo)} value={checkout.quote.quote_response.quote.depositMemo} />
                     )}
                     <p role="status" className="flex items-center gap-2 text-xs text-zinc-300">
                         {CONVERSION_READY_STATES.includes(checkout.state)
                             ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                             : <RefreshCw className={`h-4 w-4 ${CONVERSION_WAITING_STATES.includes(checkout.state) ? 'animate-spin' : ''}`} />}
-                        {checkoutStateLabel(checkout.state)}
+                        {checkoutStateLabel(checkout.state, locale)}
                     </p>
                 </div>
             )}
 
-            {error && <p role="alert" className="mt-3 text-xs text-red-400">{paymentErrorMessage(error)}</p>}
+            {error && <p role="alert" className="mt-3 text-xs text-red-400">{paymentErrorMessage(error, locale)}</p>}
         </div>
     );
 }
 
-function QuoteDetails({ quote }: { quote: PaymentQuoteResponse }) {
+function QuoteDetails({ quote, t }: { quote: PaymentQuoteResponse; t: Messages['conversion'] }) {
     const value = quote.quote_response.quote;
     const request = quote.quote_response.quoteRequest;
+    const labels = t.quote;
     return (
         <dl className="mt-4 grid gap-2 text-xs text-zinc-300 sm:grid-cols-2">
-            <div><dt className="text-zinc-500">Network</dt><dd>{quote.origin_asset.network}</dd></div>
-            <div><dt className="text-zinc-500">Token contract</dt><dd className="break-all">{quote.origin_asset.contract_address}</dd></div>
-            <div><dt className="text-zinc-500">Send</dt><dd>{formatAssetAmount(value.amountIn, quote.origin_asset.decimals)} {quote.origin_asset.symbol}</dd></div>
-            <div><dt className="text-zinc-500">Receive</dt><dd>{formatUsdc(value.amountOut)} USDC</dd></div>
-            <div><dt className="text-zinc-500">Estimated time</dt><dd>{typeof value.timeEstimate === 'number' ? `${value.timeEstimate}s` : 'Unavailable'}</dd></div>
-            <div><dt className="text-zinc-500">Deadline</dt><dd>{value.deadline ? new Date(value.deadline).toLocaleString() : 'Set on firm quote'}</dd></div>
-            <div><dt className="text-zinc-500">Refund fee</dt><dd>{value.refundFee ?? '0'} base units</dd></div>
-            <div><dt className="text-zinc-500">Withdrawal fee</dt><dd>{value.withdrawFee ?? '0'} base units</dd></div>
-            <div><dt className="text-zinc-500">Refund address</dt><dd className="break-all">{String(request?.refundTo || 'Unavailable')}</dd></div>
-            <div><dt className="text-zinc-500">App fee</dt><dd>None</dd></div>
-            <div><dt className="text-zinc-500">Slippage limit</dt><dd>1%</dd></div>
+            <div><dt className="text-zinc-500">{labels.network}</dt><dd>{quote.origin_asset.network}</dd></div>
+            <div><dt className="text-zinc-500">{labels.tokenContract}</dt><dd className="break-all">{quote.origin_asset.contract_address}</dd></div>
+            <div><dt className="text-zinc-500">{labels.send}</dt><dd>{formatAssetAmount(value.amountIn, quote.origin_asset.decimals)} {quote.origin_asset.symbol}</dd></div>
+            <div><dt className="text-zinc-500">{labels.receive}</dt><dd>{formatUsdc(value.amountOut)} USDC</dd></div>
+            <div><dt className="text-zinc-500">{labels.estimatedTime}</dt><dd>{typeof value.timeEstimate === 'number' ? `${value.timeEstimate}s` : labels.unavailable}</dd></div>
+            <div><dt className="text-zinc-500">{labels.deadline}</dt><dd>{value.deadline ? new Date(value.deadline).toLocaleString() : labels.setOnFirmQuote}</dd></div>
+            <div><dt className="text-zinc-500">{labels.refundFee}</dt><dd>{labels.baseUnits(value.refundFee ?? '0')}</dd></div>
+            <div><dt className="text-zinc-500">{labels.withdrawalFee}</dt><dd>{labels.baseUnits(value.withdrawFee ?? '0')}</dd></div>
+            <div><dt className="text-zinc-500">{labels.refundAddress}</dt><dd className="break-all">{String(request?.refundTo || labels.unavailable)}</dd></div>
+            <div><dt className="text-zinc-500">{labels.appFee}</dt><dd>{labels.none}</dd></div>
+            <div><dt className="text-zinc-500">{labels.slippage}</dt><dd>1%</dd></div>
         </dl>
     );
 }
 
-function CopyField({ label, value }: { label: string; value: string }) {
+function CopyField({ label, copyLabel, value }: { label: string; copyLabel: string; value: string }) {
     return (
         <div>
             <p className="text-xs text-zinc-500">{label}</p>
@@ -181,7 +186,7 @@ function CopyField({ label, value }: { label: string; value: string }) {
                     type="button"
                     variant="ghost"
                     size="icon"
-                    aria-label={`Copy ${label.toLowerCase()}`}
+                    aria-label={copyLabel}
                     onClick={() => void navigator.clipboard.writeText(value).catch(() => undefined)}
                 >
                     <Copy className="h-4 w-4" />

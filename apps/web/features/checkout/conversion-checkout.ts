@@ -6,6 +6,8 @@ import {
     type PaymentPurpose,
     type PaymentQuoteResponse,
 } from '@/lib/multi-asset-payments';
+import type { Locale } from '@/lib/i18n/locale';
+import { messages } from '@/lib/i18n/messages';
 
 export const CONVERSION_POLLING_STATES: readonly PaymentCheckoutState[] = ['awaiting_deposit', 'converting', 'quoted'];
 export const CONVERSION_TERMINAL_STATES: readonly PaymentCheckoutState[] = ['usdc_final', 'complete', 'refunded', 'failed'];
@@ -66,45 +68,23 @@ export function formatAssetAmount(value: string, decimals: number): string {
     return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
-export function checkoutStateLabel(state: ActivePaymentCheckout['state']): string {
-    if (state === 'awaiting_deposit') return 'Waiting for the source transfer.';
-    if (state === 'converting') return 'Converting to USDC…';
-    if (state === 'usdc_final') return 'USDC is ready. Continue with the existing payment.';
-    if (state === 'core_pending') return 'The USDC payment is finalizing…';
-    if (state === 'complete') return 'Payment completed.';
-    if (state === 'refunded') return 'The source transfer was refunded.';
-    if (state === 'failed') return 'The conversion failed.';
-    return 'Conversion status updated.';
+export function checkoutStateLabel(state: ActivePaymentCheckout['state'], locale: Locale = 'en'): string {
+    return messages[locale].conversion.states[state] ?? messages[locale].conversion.states.quoted;
 }
 
 export function errorCode(reason: unknown): string {
     return reason instanceof Error ? reason.message : 'payment_unknown_error';
 }
 
-export function paymentErrorMessage(code: string): string {
-    if (code === 'another_payment_checkout_active' || code === 'payment_checkout_active') {
-        return 'Another conversion is active for this NEAR account. Complete it before starting a new one.';
-    }
-    if (code === 'payment_market_usdc_not_registered' || code === 'payment_usdc_contract_mismatch') {
-        return 'Payments are temporarily unavailable because the USDC setup does not match the market.';
-    }
-    if (code === 'payment_gas_reserve_insufficient') {
-        return 'Keep enough NEAR in this account for the final USDC payment and one-time setup.';
-    }
-    if (code === 'payment_amount_changed') {
-        return 'The payment amount changed. Review it before creating another conversion.';
-    }
-    if (code === 'payment_route_temporarily_unavailable') {
-        return 'This conversion route is temporarily unavailable. Try another asset.';
-    }
-    if (code === 'payment_usdc_registration_pending') {
-        return 'USDC registration is still syncing. Try again shortly.';
-    }
-    if (code === 'payment_converted_usdc_not_ready') {
-        return 'The conversion finished, but the final USDC balance or NEAR gas reserve is not ready.';
-    }
-    if (code === 'payment_mode_mismatch') {
-        return 'Conversion is temporarily unavailable because the web and payment service modes do not match.';
-    }
-    return 'The conversion could not be prepared. Check the asset and refund address, then try again.';
+export function paymentErrorMessage(code: string, locale: Locale = 'en'): string {
+    const t = messages[locale].conversion.errors;
+    if (code === 'another_payment_checkout_active' || code === 'payment_checkout_active') return t.anotherActive;
+    if (code === 'payment_market_usdc_not_registered' || code === 'payment_usdc_contract_mismatch') return t.usdcMismatch;
+    if (code === 'payment_gas_reserve_insufficient') return t.gasReserve;
+    if (code === 'payment_amount_changed') return t.amountChanged;
+    if (code === 'payment_route_temporarily_unavailable') return t.routeUnavailable;
+    if (code === 'payment_usdc_registration_pending') return t.registrationPending;
+    if (code === 'payment_converted_usdc_not_ready') return t.convertedNotReady;
+    if (code === 'payment_mode_mismatch') return t.modeMismatch;
+    return t.fallback;
 }

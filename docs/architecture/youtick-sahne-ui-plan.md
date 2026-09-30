@@ -162,6 +162,7 @@ Durum: tamamlandı; sonuç §10'da.
   `__tests__/unit/landing.test.ts`, `active-ui-copy.test.ts`, yeni `i18n.test.ts`.
 - **Kabul:**
   - Tipli sözlükler kullanılır. Dil seçimi çerez → `Accept-Language` → `en` sırasıyla çözülür.
+    (Uygulanan: `localStorage` tercihi → `Accept-Language` → `en`; bkz. §11.)
   - `<html lang>` sunucuda seçilen dile göre yazılır.
   - Eski oynatıcı dil anahtarı `youtick:player-language` bir kez okunup taşınır.
   - Her iki dilde anahtar eksiksizliği test edilir.
@@ -540,3 +541,67 @@ Hepsi LOCAL_TEST; ortam G1 ile aynı.
 - **Çalıştırılmayanlar:** tarayıcıda gerçek dosya ile TUS yüklemesi; cüzdan; CI; Preview.
   Hız ve kalan süre değerleri henüz arayüzde gösterilmiyor; G15'te kullanılacak.
 - **Tek sonraki gate:** G4 `SAHNE_I18N`. G3 commit'i ve G4 başlangıcı ayrı açık onay bekler.
+
+## 11. G4 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G4'ü onayladı. Commit bu gate'te yapılmadı; ayrı
+onay bekler. Uyarılar aşağıdaki "Plandan sapmalar" ve "Bulgular" bölümlerindedir.
+
+### Yapılan
+
+- `lib/i18n/locale.ts`: `Locale = 'en' | 'tr'`, q-ağırlıklı `resolveLocale(Accept-Language)`,
+  `localStorage` tercihi (`youtick:locale`), eski `youtick:player-language` anahtarının okunup
+  ilk seçimde silinmesi, `youtick:locale-changed` olayı.
+- `lib/i18n/messages.ts`: tipli `en` sözlüğü; `tr: Messages` aynı şekli zorunlu kılar.
+- `lib/i18n/I18nProvider.tsx`: sunucunun seçtiği dil başlangıç değeridir; istemcide kayıtlı
+  tercih `useSyncExternalStore` ile okunur ve `<html lang>` güncellenir.
+- `app/layout.tsx`: `<html lang>` sunucuda `Accept-Language`'a göre yazılır. CSP nonce satırları
+  değişmedi.
+- Metinleri sözlüğe taşınan ekranlar: Navbar, test ağı bandı, RuntimeClosed, hata ve global
+  hata sayfaları, Keşif, izleme sayfası ve `LivepeerWatch`, çoklu varlık ödeme paneli, yükleme
+  formu ve kayıtlı yükleme kartı, profil, cüzdan hata mesajları, katalog "eski veri" uyarısı.
+- G2/G3 yardımcıları (`purchaseErrorMessage`, `checkoutStateLabel`, `paymentErrorMessage`,
+  `fileValidationMessage`, `uploadErrorMessage`, yayın görünümü) isteğe bağlı `locale` alır;
+  varsayılan `en` olduğu için mevcut çağıranlar değişmedi.
+- `lib/player-copy.ts` ortak dil tercihini kullanır; oynatıcı metinleri aynı kaldı.
+- Değişmeyenler: landing ve `/tr` sayfası (kendi onaylı metinleri var), koşullar/gizlilik,
+  flag varsayılanları, ödeme ve yükleme akış mantığı. Yeni paket yok.
+
+### Plandan sapmalar
+
+- **Dil çerezi yok.** Sıra: kayıtlı tercih (`localStorage`) → `Accept-Language` → `en`.
+  Gizlilik metni şu an yalnız yerel tercihleri listeliyor; çerez K6 kararı ve gizlilik metni
+  güncellemesi gerektirir. Bedeli: kayıtlı tercih tarayıcı diliyle farklıysa ilk yüklemede
+  kısa bir dil geçişi görülür.
+- `landing-copy.ts` ve `landing.test.ts` değişmedi; landing zaten iki dilli.
+- `navbar.test.ts` listede yoktu; Navbar artık sözlük kancası kullandığı için teste sözlük
+  mock'u eklendi. `active-ui-copy.test.ts` bant metinlerini `messages.ts` içinde, banttaki
+  anahtar kullanımını bileşende arar.
+
+### Bulgular
+
+- Bant, `closed_at_ms` varken "Closed remaining" benzeri eski bir kenar durumu üretiyor;
+  birebir eşitlik için korundu, G6'da ele alınmalı.
+- Dil değiştirildiğinde zaten gösterilen bir hata metni eski dilde kalır (metin hata anında
+  üretiliyor). Yeni hata yeni dilde gelir.
+- TAKEDOWN yayında sahibi için sonsuz "checking" (G2 bulgusu) sürüyor; G9'da düzeltilecek.
+
+### Doğrulama
+
+Hepsi LOCAL_TEST; ortam G1 ile aynı.
+
+| Kontrol | Sonuç |
+|---|---|
+| Yeni `i18n.test.ts` | PASS (20): iki dilde anahtar/şekil eşitliği, boş metin yok, her cümle çevrilmiş, değişkenler iki dilde de var, `resolveLocale` (9 durum), eski anahtarın taşınması, `tr` sağlayıcıyla sunucu çıktısı, yardımcıların `tr`/varsayılan `en` davranışı |
+| Geçici eski/yeni İngilizce HTML ve metin karşılaştırması | PASS: 85 test. Kabuk ve sayfalar 33 (Navbar 5, bant 7, RuntimeClosed/hata sayfaları, Keşif 8, izleme sayfası 2, profil 10), izleme ve ödeme paneli 30 (10 izleme durumu, 8 checkout durumu dahil 20 panel durumu), yükleme formu 19, yardımcı mesajlar 3 (eski kaynaklardaki tüm hata kodları × iki bayrak, tüm yayın görünümleri). Kancalardan ve cüzdan sağlayıcısından çıkarılan 24 İngilizce metnin sözlükte birebir bulunduğu ayrıca kontrol edildi. Geçici dosyalar silindi |
+| `npm run lint`, `npx tsc --noEmit --incremental false`, `test:wallet-provenance` | PASS |
+| `npm test -- --run` | PASS: 40 dosya, 699 test (G3: 39 / 679) |
+| `test:livepeer-canary`, `test:multi-creator-upload-canary` | PASS: 0 hata; 24 test, 3 atlandı |
+| `npm run build`, docs build | PASS |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** tarayıcıda gerçek dil değişimi ve Türkçe ekranların görsel kontrolü
+  (dil seçici G6'da gelecek); cüzdan; CI; Preview.
+- **Tek sonraki gate:** G5 `SAHNE_TOKENS_PRIMITIVES`. G4 commit'i ve G5 başlangıcı ayrı açık
+  onay bekler.

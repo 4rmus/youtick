@@ -11,6 +11,8 @@ import {
     type PaymentPurpose,
 } from '@/lib/multi-asset-payments';
 import type { WalletInstance } from '@/lib/types';
+import type { Locale } from '@/lib/i18n/locale';
+import { messages } from '@/lib/i18n/messages';
 
 // UI progress markers at the existing call sites; the payment state stays ActivePaymentCheckout.state.
 export type TicketPurchaseStep =
@@ -168,27 +170,16 @@ async function recoverRefundedTicketPayment(
     throw new Error('livepeer_entitlement_pending');
 }
 
-export function purchaseErrorMessage(reason: unknown): string {
+export function purchaseErrorMessage(reason: unknown, locale: Locale = 'en'): string {
+    const t = messages[locale].purchaseErrors;
     const message = reason instanceof Error ? reason.message : '';
-    if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(message)) {
-        return 'Enable secure site storage and use a supported browser before continuing. No payment was sent.';
-    }
-    if (message === 'livepeer_entitlement_pending') {
-        return 'Your ticket is still syncing. Try again shortly.';
-    }
-    if (message === 'livepeer_sales_closed') {
-        return 'Ticket sales are paused for this video.';
-    }
-    if (message === 'payment_amount_changed') {
-        return 'The ticket price changed. Review the updated amount before paying.';
-    }
-    if (message === 'payment_converted_usdc_not_ready') {
-        return 'The converted USDC balance or NEAR gas reserve is no longer sufficient.';
-    }
-    if (message === 'livepeer_ticket_payment_refunded') {
-        return 'The ticket payment did not settle. Your USDC is still available to retry.';
-    }
-    return 'The ticket could not be purchased. Check your wallet and try again.';
+    if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(message)) return t.storage;
+    if (message === 'livepeer_entitlement_pending') return t.entitlementPending;
+    if (message === 'livepeer_sales_closed') return t.salesClosed;
+    if (message === 'payment_amount_changed') return t.amountChanged;
+    if (message === 'payment_converted_usdc_not_ready') return t.convertedNotReady;
+    if (message === 'livepeer_ticket_payment_refunded') return t.refunded;
+    return t.fallback;
 }
 
 export type TicketAccessView = 'playable' | 'checking' | 'access_error' | 'locked';

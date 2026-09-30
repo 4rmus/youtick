@@ -4,6 +4,8 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { hasTitleContent } from '../../../../protocol/paid-media-livepeer-v1/title';
 import { useWallet } from '@/components/providers/WalletProvider';
+import { useLocale } from '@/lib/i18n/I18nProvider';
+import { messages } from '@/lib/i18n/messages';
 import { FEATURE_FLAGS } from '@/lib/constants';
 import { startVideoMeasurement } from '@/lib/video-measurements';
 import {
@@ -54,7 +56,7 @@ import {
     fileValidationMessage,
     findMatchingUploadCheckout,
     formatMicroUsdc,
-    getLivepeerPublicationView,
+    localizedPublicationView,
     recordTransferSample,
     transferStats,
     uploadErrorMessage,
@@ -72,6 +74,8 @@ export type UploadPaymentOptions = {
 
 export function useUploadJob() {
     const { accountId, connect, getWallet, isReady } = useWallet();
+    const locale = useLocale();
+    const copy = messages[locale].upload.status;
     // The React.useState order is observed by existing tests; append new state at the end.
     const [file, setFile] = React.useState<File | null>(null);
     const [fileError, setFileError] = React.useState<string | null>(null);
@@ -144,7 +148,7 @@ export function useUploadJob() {
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: true,
     });
-    const publicationView = getLivepeerPublicationView(publicationQuery);
+    const publicationView = localizedPublicationView(publicationQuery, locale);
     const publicationReady = publicationView.kind === 'published';
     const publicationExpired = publicationView.kind === 'expired';
     const displayedStage = uploaded && !publicationReady ? 'provider_processing' : uploadStage;
@@ -221,7 +225,7 @@ export function useUploadJob() {
         }
         setFile(selected);
         const validation = validateLivepeerSourceFile(selected);
-        if (!validation.ok) return setFileError(fileValidationMessage(validation.error));
+        if (!validation.ok) return setFileError(fileValidationMessage(validation.error, locale));
         setFileError(null);
         const draft = accountId ? await readLivepeerUploadDraft(accountId, selected) : null;
         if (selectionVersion !== fileSelectionVersion.current) return;
@@ -245,7 +249,7 @@ export function useUploadJob() {
         setFailedStep(null);
         moveUploadStage('draft');
         moveUploadStage('preflight');
-        setStatus('Checking payment options…');
+        setStatus(copy.checkingPayment);
         let finishPreparation: ReturnType<typeof startVideoMeasurement> | undefined;
         try {
             parseLivepeerPriceUsdc(price);
@@ -303,7 +307,7 @@ export function useUploadJob() {
             if (controller.signal.aborted) return;
             finishPreparation?.('failed');
             setFailedStep(0);
-            setError(uploadErrorMessage(reason, false));
+            setError(uploadErrorMessage(reason, false, locale));
         } finally {
             if (operation.current === controller) { operation.current = null; setBusy(false); }
         }
@@ -316,7 +320,7 @@ export function useUploadJob() {
         moveUploadStage('upload_ready');
         advanceLivepeerUploadDraftStage(accountId, jobId, 'uploading');
         moveUploadStage('uploading');
-        setStatus('Uploading directly to Livepeer…');
+        setStatus(copy.uploading);
         await uploadLivepeerSource(file, intent, {
             signal: controller.signal,
             onProgress: (sent, total) => {
@@ -331,7 +335,7 @@ export function useUploadJob() {
         setUploadProgress(100);
         setResumeAvailable(false);
         moveUploadStage('provider_processing');
-        setStatus('Upload complete. Waiting for Livepeer processing…');
+        setStatus(copy.uploadComplete);
     };
 
     const start = async () => {
@@ -361,7 +365,7 @@ export function useUploadJob() {
                 clearLivepeerUploadDraft(accountId);
                 clearLivepeerJobSessionKey(accountId, jobId);
                 moveUploadStage('published');
-                setStatus('Publication ready.');
+                setStatus(copy.publicationReady);
                 await publicationQuery.refetch();
                 return;
             }
@@ -370,7 +374,7 @@ export function useUploadJob() {
                 setResumeAvailable(true);
                 throw new Error('livepeer_resume_required');
             }
-            setStatus('Checking upload availability…');
+            setStatus(copy.checkingAvailability);
             await preflightLivepeerUpload({
                 accountId,
                 jobId,
@@ -380,7 +384,7 @@ export function useUploadJob() {
             controller.signal.throwIfAborted();
             availabilityConfirmed = true;
             moveUploadStage('payment_pending');
-            setStatus('Authorizing the paid job…');
+            setStatus(copy.authorizing);
             const wallet = await getWallet();
             const conversionExpectation = {
                 purpose: { type: 'upload' as const, expected_source_bytes: String(file.size) },
@@ -430,12 +434,12 @@ export function useUploadJob() {
                 onSponsoredQuote: async (quote) => {
                     controller.signal.throwIfAborted();
                     setSponsorQuote(quote);
-                    setStatus(`Confirm the ${formatMicroUsdc(quote.totalFeeUsdc)} USDC total in your wallet.`);
+                    setStatus(copy.confirmSponsored(formatMicroUsdc(quote.totalFeeUsdc)));
                     await new Promise<void>((resolve) => setTimeout(resolve, 0));
                 },
             });
             controller.signal.throwIfAborted();
-            setStatus('Waiting for the payment to finalize…');
+            setStatus(copy.waitingPayment);
             await waitForAuthorizedLivepeerJob(jobId, accountId, uploadPublicKey);
             controller.signal.throwIfAborted();
             advanceLivepeerUploadDraftStage(accountId, jobId, 'authorized');
@@ -447,7 +451,7 @@ export function useUploadJob() {
             activeStep = 2;
             moveUploadStage('intent_pending');
             resetProgress();
-            setStatus('Preparing the Livepeer upload…');
+            setStatus(copy.preparingUpload);
             const intent = await requestLivepeerUploadIntent({
                 accountId,
                 jobId,
@@ -473,7 +477,7 @@ export function useUploadJob() {
             if (controller.signal.aborted) return;
             setFailedStep(activeStep);
             setStatus(null);
-            setError(uploadErrorMessage(reason, availabilityConfirmed));
+            setError(uploadErrorMessage(reason, availabilityConfirmed, locale));
         } finally {
             if (operation.current === controller) { operation.current = null; setBusy(false); }
         }
@@ -486,7 +490,7 @@ export function useUploadJob() {
         setBusy(true);
         setError(null);
         setFailedStep(null);
-        setStatus('Checking your existing upload…');
+        setStatus(copy.checkingExisting);
         try {
             const result = await prepareLivepeerUploadResume(await getWallet(), { accountId, jobId, file, signal: controller.signal });
             controller.signal.throwIfAborted();
@@ -507,12 +511,12 @@ export function useUploadJob() {
                 setResumeAvailable(false);
                 clearLivepeerUploadDraft(accountId);
                 clearLivepeerJobSessionKey(accountId, jobId);
-                setStatus('Publication ready.');
+                setStatus(copy.publicationReady);
                 await publicationQuery.refetch();
             } else {
-                const publicationError = getLivepeerPublicationView({ isError: true, error: reason });
+                const publicationError = localizedPublicationView({ isError: true, error: reason }, locale);
                 setError(publicationError.kind === 'unknown_error'
-                    ? uploadErrorMessage(reason, true) : publicationError.message);
+                    ? uploadErrorMessage(reason, true, locale) : publicationError.message);
                 setStatus(null);
             }
         } finally {
@@ -526,7 +530,7 @@ export function useUploadJob() {
         operation.current = controller;
         setBusy(true);
         setError(null);
-        setStatus('Cancelling the upload job…');
+        setStatus(copy.cancelling);
         try {
             await cancelLivepeerUpload({ accountId, jobId, generation: 1, signal: controller.signal });
             controller.signal.throwIfAborted();
@@ -539,11 +543,11 @@ export function useUploadJob() {
             setFailedStep(null);
             resetProgress();
             moveUploadStage('draft');
-            setStatus('Upload job cancelled. The technical-pilot fee is non-refundable.');
+            setStatus(copy.cancelled);
         } catch (reason) {
             if (controller.signal.aborted) return;
             setStatus(null);
-            setError(reason instanceof Error ? reason.message : 'Upload job could not be cancelled.');
+            setError(reason instanceof Error ? reason.message : copy.cancelFailed);
         } finally {
             if (operation.current === controller) { operation.current = null; setBusy(false); }
         }
@@ -552,6 +556,7 @@ export function useUploadJob() {
     const formReady = Boolean(accountId && file && !fileError && hasTitleContent(title.trim()) && price.trim() && rightsAccepted);
 
     return {
+        locale,
         accountId,
         connect,
         getWallet,

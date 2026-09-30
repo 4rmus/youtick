@@ -3,6 +3,7 @@
 import React from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useWallet } from '@/components/providers/WalletProvider';
+import { useLocale } from '@/lib/i18n/I18nProvider';
 import { hasLivepeerEntitlement, readLivepeerPublication } from '@/lib/livepeer-publication';
 import {
     canStartTicketPurchase,
@@ -15,6 +16,7 @@ import {
 export function useTicketCheckout(jobId: string) {
     const { accountId, connect, getWallet, isReady } = useWallet();
     const queryClient = useQueryClient();
+    const locale = useLocale();
     const [busy, setBusy] = React.useState(false);
     const [step, setStep] = React.useState<TicketPurchaseStep | null>(null);
     const [error, setError] = React.useState<string | null>(null);
@@ -53,7 +55,7 @@ export function useTicketCheckout(jobId: string) {
                 onStep: setStep,
             });
         } catch (reason) {
-            setError(purchaseErrorMessage(reason));
+            setError(purchaseErrorMessage(reason, locale));
         } finally {
             setBusy(false);
             setStep(null);
@@ -62,6 +64,7 @@ export function useTicketCheckout(jobId: string) {
 
     const publication = publicationQuery.data;
     return {
+        locale,
         accountId,
         connect,
         getWallet,

@@ -1,28 +1,18 @@
-export type PlayerLanguage = 'tr' | 'en';
-const LANGUAGE_KEY = 'youtick:player-language';
-const LANGUAGE_EVENT = 'youtick:player-language-changed';
-let selectedLanguage: PlayerLanguage | undefined;
+import { readStoredLocale, setStoredLocale, subscribeLocale, type Locale } from './i18n/locale';
+
+// The player shares the app language preference; the legacy player key is migrated by lib/i18n.
+export type PlayerLanguage = Locale;
 
 export function playerLanguage(): PlayerLanguage {
-    if (selectedLanguage) return selectedLanguage;
-    try {
-        const value = localStorage.getItem(LANGUAGE_KEY);
-        if (value === 'tr' || value === 'en') return value;
-    } catch { /* Language selection still works without persistent storage. */ }
+    const stored = readStoredLocale();
+    if (stored) return stored;
     return typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('tr') ? 'tr' : 'en';
 }
 export function setPlayerLanguage(language: PlayerLanguage): void {
-    selectedLanguage = language;
-    try { localStorage.setItem(LANGUAGE_KEY, language); } catch { /* Optional preference. */ }
-    window.dispatchEvent(new Event(LANGUAGE_EVENT));
+    setStoredLocale(language);
 }
 export function subscribePlayerLanguage(notify: () => void): () => void {
-    const changed = (event: StorageEvent) => {
-        if (event.key === null || event.key === LANGUAGE_KEY) { selectedLanguage = undefined; notify(); }
-    };
-    window.addEventListener(LANGUAGE_EVENT, notify);
-    window.addEventListener('storage', changed);
-    return () => { window.removeEventListener(LANGUAGE_EVENT, notify); window.removeEventListener('storage', changed); };
+    return subscribeLocale(notify);
 }
 export const playerCopy = {
     en: {

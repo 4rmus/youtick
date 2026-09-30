@@ -1,6 +1,5 @@
 'use client';
 
-import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ArrowLeft, Loader2, Lock, Video } from 'lucide-react';
@@ -11,11 +10,13 @@ import { LivepeerPlayer } from '@/components/LivepeerPlayer';
 import { MultiAssetPaymentPanel } from '@/components/MultiAssetPaymentPanel';
 import { useTicketCheckout } from '@/features/checkout/useTicketCheckout';
 import { FEATURE_FLAGS } from '@/lib/constants';
-import { playerCopy, playerLanguage, subscribePlayerLanguage, type PlayerLanguage } from '@/lib/player-copy';
+import { messages } from '@/lib/i18n/messages';
+import { playerCopy } from '@/lib/player-copy';
 import { formatUsdc, livepeerPublicationCoverUrl } from '@/lib/livepeer-publication';
 
 export function LivepeerWatch({ jobId }: { jobId: string }) {
     const {
+        locale,
         accountId,
         connect,
         getWallet,
@@ -30,8 +31,8 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
         accessView,
         salesOpen,
     } = useTicketCheckout(jobId);
-    const language = React.useSyncExternalStore(subscribePlayerLanguage, playerLanguage, () => 'en' as PlayerLanguage);
-    const copy = playerCopy[language];
+    const copy = playerCopy[locale];
+    const t = messages[locale].watch;
 
     if (publicationQuery.isLoading) {
         return <PageShell className="flex items-center justify-center"><Loader2 role="status" className="h-10 w-10 animate-spin" /></PageShell>;
@@ -43,9 +44,9 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
             <PageShell className="flex items-center justify-center">
                 <ScreenState
                     icon={<Video className="h-7 w-7" />}
-                    title="Video unavailable"
-                    description="This video may still be processing, or the link may be invalid."
-                    actions={<Button asChild variant="outline"><Link href="/discover">Back to discover</Link></Button>}
+                    title={t.unavailableTitle}
+                    description={t.unavailableDescription}
+                    actions={<Button asChild variant="outline"><Link href="/discover">{t.backToDiscover}</Link></Button>}
                 />
             </PageShell>
         );
@@ -56,7 +57,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
     return (
         <PageShell className="max-w-5xl">
             <Link href="/discover" className="mb-6 inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white">
-                <ArrowLeft className="h-4 w-4" /> Discover
+                <ArrowLeft className="h-4 w-4" /> {t.discover}
             </Link>
             <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -78,7 +79,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                     />
                 </div>
             ) : accessView === 'checking' || accessView === 'access_error' ? (
-                <div lang={language} className="flex min-h-48 flex-col items-center justify-center gap-4 rounded-2xl border border-zinc-800 bg-black p-6 text-center">
+                <div lang={locale} className="flex min-h-48 flex-col items-center justify-center gap-4 rounded-2xl border border-zinc-800 bg-black p-6 text-center">
                     {accessView === 'access_error' ? <>
                         <p role="alert" className="text-sm text-zinc-300">{copy.accessError}</p>
                         <Button disabled={entitlementQuery.isFetching} onClick={() => void entitlementQuery.refetch()}>{copy.checkAgain}</Button>
@@ -102,24 +103,24 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                         <div aria-hidden="true" className="absolute inset-0 bg-black/70" />
                         <div className="relative max-w-lg">
                             <Lock className="mx-auto mb-3 h-8 w-8 text-zinc-300 sm:mb-4 sm:h-10 sm:w-10" />
-                            <h2 className="text-lg font-semibold">Ticket required</h2>
+                            <h2 className="text-lg font-semibold">{t.ticketRequired}</h2>
                             <p className="mt-2 text-sm text-zinc-300">
                                 {publication.availability === 'TAKEDOWN'
-                                    ? 'This video is unavailable.'
+                                    ? t.takedown
                                     : publication.availability === 'SALES_SUSPENDED'
-                                        ? 'Ticket sales are paused. Existing ticket holders can still watch.'
-                                        : 'Connect your wallet to buy a ticket with USDC.'}
+                                        ? t.salesPaused
+                                        : t.connectToBuy}
                             </p>
                             {!accountId ? (
-                                <Button className="mt-4 sm:mt-6" onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>
+                                <Button className="mt-4 sm:mt-6" onClick={() => void connect()} disabled={!isReady}>{t.connectWallet}</Button>
                             ) : (
                                 <>
                                     <Button className="mt-4 sm:mt-6" disabled={!salesOpen || busy || entitlementQuery.isLoading} onClick={() => void purchase()}>
                                         {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                        Pay {formatUsdc(publication.price_usdc)} USDC · 1 payment approval
+                                        {t.pay(formatUsdc(publication.price_usdc))}
                                     </Button>
                                     {!FEATURE_FLAGS.enablePlaybackAuthorizerV2 && (
-                                        <p className="mt-2 text-xs text-zinc-400">Your wallet may request one-time playback-key setup if it was not prepared when you connected.</p>
+                                        <p className="mt-2 text-xs text-zinc-400">{t.playbackKeyNote}</p>
                                     )}
                                 </>
                             )}

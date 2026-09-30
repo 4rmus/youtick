@@ -12,12 +12,14 @@ import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import { useMessages } from '@/lib/i18n/I18nProvider';
 import { formatUsdc, readCreatorBalance, withdrawCreatorBalance } from '@/lib/livepeer-publication';
 import { readMarketCreatorPublicationPage } from '@/lib/market-read-model';
 
 export default function ProfilePage() {
     const { accountId, connect, getWallet, isReady } = useWallet();
     const queryClient = useQueryClient();
+    const t = useMessages().profile;
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const balanceQuery = useQuery({
@@ -45,9 +47,9 @@ export default function ProfilePage() {
             <PageShell className="flex items-center justify-center">
                 <ScreenState
                     icon={<User className="h-7 w-7" />}
-                    title="Wallet not connected"
-                    description="Connect the NEAR wallet that owns your publications."
-                    actions={<Button onClick={() => void connect()} disabled={!isReady}>Connect wallet</Button>}
+                    title={t.notConnectedTitle}
+                    description={t.notConnectedDescription}
+                    actions={<Button onClick={() => void connect()} disabled={!isReady}>{t.connectWallet}</Button>}
                 />
             </PageShell>
         );
@@ -61,7 +63,7 @@ export default function ProfilePage() {
             await withdrawCreatorBalance(await getWallet());
             await queryClient.invalidateQueries({ queryKey: ['creatorBalance', accountId] });
         } catch (reason) {
-            setError(reason instanceof Error ? reason.message : 'Withdrawal failed.');
+            setError(reason instanceof Error ? reason.message : t.withdrawFailed);
         } finally {
             setBusy(false);
         }
@@ -72,14 +74,14 @@ export default function ProfilePage() {
             <div className="mx-auto max-w-7xl space-y-8">
                 <div className="flex items-center gap-4">
                     <Button asChild variant="ghost" size="icon">
-                        <Link href="/discover" aria-label="Back to discover"><ArrowLeft /></Link>
+                        <Link href="/discover" aria-label={t.back}><ArrowLeft /></Link>
                     </Button>
                     <div>
-                        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Profile</h1>
+                        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{t.title}</h1>
                         <p className="mt-1 text-sm text-zinc-400">
                             {FEATURE_FLAGS.enablePaidMediaLivepeerV1
-                                ? 'Manage your publishing account and withdraw ticket revenue.'
-                                : 'Review publications for the connected creator account.'}
+                                ? t.descriptionPublishing
+                                : t.descriptionReadOnly}
                         </p>
                     </div>
                 </div>
@@ -88,9 +90,9 @@ export default function ProfilePage() {
                     <Card className="bg-zinc-900 p-6">
                         <div className="mb-4 flex items-center gap-3">
                             <div className="rounded-lg bg-zinc-800 p-2"><User className="h-5 w-5 text-zinc-400" /></div>
-                            <h2 className="font-semibold text-zinc-200">Account</h2>
+                            <h2 className="font-semibold text-zinc-200">{t.account}</h2>
                         </div>
-                        <p className="text-xs uppercase tracking-wider text-zinc-500">Account ID</p>
+                        <p className="text-xs uppercase tracking-wider text-zinc-500">{t.accountId}</p>
                         <p className="mt-2 break-all font-mono text-sm text-white">{accountId}</p>
                     </Card>
 
@@ -98,18 +100,18 @@ export default function ProfilePage() {
                         <Card className="border-near-green/20 bg-zinc-900 p-6">
                             <div className="mb-4 flex items-center gap-3">
                                 <div className="rounded-lg bg-zinc-800 p-2"><Wallet className="h-5 w-5 text-zinc-400" /></div>
-                                <h2 className="font-semibold text-zinc-200">Creator balance</h2>
+                                <h2 className="font-semibold text-zinc-200">{t.balance}</h2>
                             </div>
-                            <p className="text-xs uppercase tracking-wider text-zinc-500">Available to withdraw</p>
+                            <p className="text-xs uppercase tracking-wider text-zinc-500">{t.available}</p>
                             {balanceQuery.isLoading ? (
-                                <Loader2 role="status" aria-label="Loading balance" className="mt-4 h-6 w-6 animate-spin text-zinc-500" />
+                                <Loader2 role="status" aria-label={t.loadingBalance} className="mt-4 h-6 w-6 animate-spin text-zinc-500" />
                             ) : balanceQuery.error ? (
-                                <p role="alert" className="mt-4 text-sm text-red-400">Balance could not be loaded.</p>
+                                <p role="alert" className="mt-4 text-sm text-red-400">{t.balanceFailed}</p>
                             ) : (
                                 <p className="mt-4 text-3xl font-bold text-white">{formatUsdc(balanceQuery.data || '0')} <span className="text-sm font-normal text-zinc-400">USDC</span></p>
                             )}
                             <Button variant="near" className="mt-6 w-full" disabled={busy || !balanceQuery.data || BigInt(balanceQuery.data) === 0n} onClick={() => void withdraw()}>
-                                {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Withdraw
+                                {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} {t.withdraw}
                             </Button>
                             {error && <p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}
                         </Card>
@@ -118,32 +120,32 @@ export default function ProfilePage() {
 
                 {FEATURE_FLAGS.enableDerivedReadModel && (
                     <Card className="max-w-4xl bg-zinc-900 p-6">
-                        <h2 className="font-semibold text-zinc-200">Publication activity</h2>
+                        <h2 className="font-semibold text-zinc-200">{t.activity}</h2>
                         <p className="mt-1 text-sm text-zinc-500">
                             {FEATURE_FLAGS.enableCurrentCatalog
-                                ? 'Latest verified publication status. Your available balance is shown above.'
-                                : 'Rebuildable history; available balance above remains canonical NEAR state.'}
+                                ? t.activityCurrent
+                                : t.activityHistory}
                         </p>
                         {FEATURE_FLAGS.enableCurrentCatalog ? <CurrentCreatorPublications accountId={accountId} /> : activityQuery.isLoading ? (
-                            <Loader2 role="status" aria-label="Loading publication activity" className="mt-6 h-6 w-6 animate-spin text-zinc-500" />
+                            <Loader2 role="status" aria-label={t.loadingActivity} className="mt-6 h-6 w-6 animate-spin text-zinc-500" />
                         ) : activityQuery.error ? (
-                            <p role="alert" className="mt-6 text-sm text-red-400">Publication activity could not be loaded.</p>
+                            <p role="alert" className="mt-6 text-sm text-red-400">{t.activityFailed}</p>
                         ) : activityQuery.data ? (
                             <div className="mt-6">
-                                <p className="text-xs uppercase tracking-wider text-zinc-500">Publications</p>
+                                <p className="text-xs uppercase tracking-wider text-zinc-500">{t.publications}</p>
                                 {activityQuery.data.length === 0 ? (
-                                    <p className="mt-2 text-sm text-zinc-400">No publications yet.</p>
+                                    <p className="mt-2 text-sm text-zinc-400">{t.noPublications}</p>
                                 ) : (
                                     <ul className="mt-2 space-y-2">
                                         {activityQuery.data.slice(0, 5).map((publication) => (
                                             <li key={publication.publication_id}>
                                                 {FEATURE_FLAGS.enablePaidMediaLivepeerV1 ? (
                                                     <Link className="text-sm text-zinc-200 hover:text-emerald-300" href={`/watch?job=${encodeURIComponent(publication.publication_id)}`}>
-                                                        {publication.title} · {publication.availability.replaceAll('_', ' ').toLowerCase()}
+                                                        {publication.title} · {t.availability[publication.availability]}
                                                     </Link>
                                                 ) : (
                                                     <span className="text-sm text-zinc-200">
-                                                        {publication.title} · {publication.availability.replaceAll('_', ' ').toLowerCase()}
+                                                        {publication.title} · {t.availability[publication.availability]}
                                                     </span>
                                                 )}
                                             </li>
@@ -161,15 +163,16 @@ export default function ProfilePage() {
 
 function CurrentCreatorPublications({ accountId }: { accountId: string }) {
     const query = useCurrentCatalog(accountId);
+    const t = useMessages().profile;
     return <div className="mt-6">
-        <p className="text-xs uppercase tracking-wider text-zinc-500">Publications</p>
-        {query.loading && <p role="status">Loading publications…</p>}
-        {query.error && <p role="alert" className="text-red-400">Publication activity could not be updated.</p>}
+        <p className="text-xs uppercase tracking-wider text-zinc-500">{t.publications}</p>
+        {query.loading && <p role="status">{t.loadingPublications}</p>}
+        {query.error && <p role="alert" className="text-red-400">{t.activityUpdateFailed}</p>}
         {query.warning && <p role="status" className="text-amber-300">{query.warning}</p>}
-        {!query.loading && !query.error && query.publications.length === 0 && <p>No publications yet.</p>}
+        {!query.loading && !query.error && query.publications.length === 0 && <p>{t.noPublications}</p>}
         <ul className="mt-2 space-y-2">{query.publications.map(publication => <li key={publication.publication_id}>
             <Link className="text-sm text-zinc-200 hover:text-emerald-300" href={`/watch?job=${encodeURIComponent(publication.publication_id)}`}>
-                {publication.title} · {publication.availability.replaceAll('_', ' ').toLowerCase()}
+                {publication.title} · {t.availability[publication.availability]}
             </Link>
         </li>)}</ul>
     </div>;

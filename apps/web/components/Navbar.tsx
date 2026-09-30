@@ -8,17 +8,19 @@ import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { getLandingCtas, landingCopy, type LandingLocale } from '@/components/landing/landing-copy';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import { useMessages } from '@/lib/i18n/I18nProvider';
 
 const LINKS = [
-    { href: '/discover', label: 'Discover' },
-    { href: '/upload', label: 'Upload' },
-    { href: '/profile', label: 'Profile' },
-];
+    { href: '/discover', key: 'discover' },
+    { href: '/upload', key: 'upload' },
+    { href: '/profile', key: 'profile' },
+] as const;
 
 export function Navbar() {
     const pathname = usePathname();
     const { accountId, connect, isReady, signOut } = useWallet();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const t = useMessages().nav;
     const isLanding = pathname === '/' || pathname === '/tr';
     const locale: LandingLocale = pathname === '/tr' ? 'tr' : 'en';
     const copy = landingCopy[locale];
@@ -60,7 +62,7 @@ export function Navbar() {
                             href={link.href}
                             className={pathname === link.href ? 'text-sm font-bold text-near-green' : 'text-sm font-medium text-zinc-400 transition-colors hover:text-near-green'}
                         >
-                            {link.label}
+                            {t[link.key]}
                         </Link>
                     ))}
                 </div>
@@ -71,13 +73,13 @@ export function Navbar() {
                             <User className="h-3 w-3 text-near-green" />
                             <span className="max-w-[100px] truncate font-mono text-xs text-zinc-400">{accountId}</span>
                             {FEATURE_FLAGS.publicTestnetVideoV1 && (
-                                <Button aria-label="Switch account" title="Switch account" size="icon" variant="ghost"
+                                <Button aria-label={t.switchAccount} title={t.switchAccount} size="icon" variant="ghost"
                                     className="h-11 w-11 rounded-full" disabled={!isReady} onClick={() => void connect()}>
                                     <ArrowRightLeft />
                                 </Button>
                             )}
                             <Button
-                                aria-label="Disconnect"
+                                aria-label={t.disconnect}
                                 size="icon"
                                 variant="ghost"
                                 className="h-11 w-11 rounded-full text-zinc-500 hover:bg-near-red/10 hover:text-near-red focus-visible:ring-near-red"
@@ -87,13 +89,13 @@ export function Navbar() {
                             </Button>
                         </div>
                     ) : (
-                        <Button className="rounded-full" disabled={!isReady} onClick={() => void connect()}>Connect</Button>
+                        <Button className="rounded-full" disabled={!isReady} onClick={() => void connect()}>{t.connect}</Button>
                     )}
                 </div>
 
                 <button
                     type="button"
-                    aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
+                    aria-label={isMenuOpen ? t.closeMenu : t.openMenu}
                     aria-expanded={isMenuOpen}
                     className="flex h-11 w-11 items-center justify-center rounded-md text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green md:hidden"
                     onClick={() => setIsMenuOpen((open) => !open)}
@@ -111,13 +113,13 @@ export function Navbar() {
                             onClick={() => setIsMenuOpen(false)}
                             className={pathname === link.href ? 'min-h-11 py-2 text-lg font-bold text-white' : 'min-h-11 py-2 text-lg font-medium text-zinc-400'}
                         >
-                            {link.label}
+                            {t[link.key]}
                         </Link>
                     ))}
                     <div className="h-px bg-white/10" />
                     <div className="flex min-h-11 items-center gap-4 text-sm">
-                        <Link href="/terms" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300">Terms</Link>
-                        <Link href="/privacy" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300">Privacy</Link>
+                        <Link href="/terms" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300">{t.terms}</Link>
+                        <Link href="/privacy" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300">{t.privacy}</Link>
                     </div>
                     <div className="h-px bg-white/10" />
                     {accountId ? (
@@ -125,12 +127,12 @@ export function Navbar() {
                             <span className="truncate font-mono text-xs text-zinc-400">{accountId}</span>
                             {FEATURE_FLAGS.publicTestnetVideoV1 && (
                                 <button type="button" disabled={!isReady} onClick={() => void connect()}
-                                    className="min-h-11 rounded-md text-near-green focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green disabled:opacity-50">Switch account</button>
+                                    className="min-h-11 rounded-md text-near-green focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green disabled:opacity-50">{t.switchAccount}</button>
                             )}
-                            <button type="button" onClick={() => void signOut()} className="min-h-11 rounded-md font-medium text-near-red focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-red">Disconnect</button>
+                            <button type="button" onClick={() => void signOut()} className="min-h-11 rounded-md font-medium text-near-red focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-red">{t.disconnect}</button>
                         </div>
                     ) : (
-                        <button type="button" disabled={!isReady} onClick={() => void connect()} className="min-h-11 rounded-md text-left font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green disabled:opacity-50">Connect</button>
+                        <button type="button" disabled={!isReady} onClick={() => void connect()} className="min-h-11 rounded-md text-left font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green disabled:opacity-50">{t.connect}</button>
                     )}
                 </div>
             )}

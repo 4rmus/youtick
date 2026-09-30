@@ -1,9 +1,11 @@
 import { FEATURE_FLAGS } from '@/lib/constants';
 import type { UploadStage } from '@/lib/livepeer-upload-state';
 import type { ActivePaymentCheckout } from '@/lib/multi-asset-payments';
+import type { Locale } from '@/lib/i18n/locale';
+import { messages } from '@/lib/i18n/messages';
 
-export const UPLOAD_STEPS = ['Payment options', 'Wallet approval', 'Upload', 'Processing', 'Published'] as const;
-export const UPLOAD_EXPIRED_MESSAGE = 'The publication deadline has passed. This paid upload can no longer be published or retried.';
+export const UPLOAD_STEPS = messages.en.upload.steps;
+export const UPLOAD_EXPIRED_MESSAGE = messages.en.upload.publication.expiredMessage;
 export const UPLOAD_STAGE_STATE: Record<UploadStage, { active: number; completeThrough: number }> = {
     draft: { active: -1, completeThrough: -1 },
     preflight: { active: 0, completeThrough: -1 },
@@ -29,49 +31,52 @@ export function uploadStepStates(stage: UploadStage, failedStep: number | null):
     });
 }
 
-export function getLivepeerPublicationView(query: {
+type PublicationQueryState = {
     isError: boolean;
     error?: unknown;
     data?: { publication?: unknown; expired?: boolean; providerState?: string | null; job?: { status?: string } };
-}) {
+};
+
+// Kept single-argument so it stays safe as an Array.map callback.
+export function getLivepeerPublicationView(query: PublicationQueryState) {
+    return localizedPublicationView(query, 'en');
+}
+
+export function localizedPublicationView(query: PublicationQueryState, locale: Locale) {
+    const t = messages[locale].upload.publication;
     if (query.isError) {
         const code = query.error instanceof Error ? query.error.message : '';
         if (['provider_playback_mismatch', 'provider_verification_incomplete', 'provider_identity_mismatch',
             'provider_state_invalid', 'provider_playback_exposed', 'provider_asset_missing', 'provider_playback_missing',
             'on_chain_job_mismatch', 'livepeer_job_creator_mismatch'].includes(code)) {
-            return { kind: 'verification_error', title: 'Publication verification blocked',
-                message: 'The video outputs or upload details could not pass publication verification. Keep this paid job; no new payment or upload has been started.',
-                buttonLabel: 'Verification blocked', failed: true, pending: false };
+            return { kind: 'verification_error', title: t.verificationTitle, message: t.verificationMessage,
+                buttonLabel: t.verificationButton, failed: true, pending: false };
         }
         if (['provider_unavailable', 'near_job_query_failed', 'near_finalize_pending', 'rate_limited'].includes(code)
             || query.error instanceof TypeError && ['Failed to fetch', 'fetch failed', 'Load failed',
                 'NetworkError when attempting to fetch resource.'].includes(query.error.message)
             || query.error instanceof Error && ['AbortError', 'TimeoutError'].includes(query.error.name)) {
-            return { kind: 'temporary_error', title: 'Temporary connection problem',
-                message: 'Publication status could not be checked because of a temporary connection problem. Keep this job and check its status again.',
-                buttonLabel: 'Connection unavailable', failed: false, pending: false };
+            return { kind: 'temporary_error', title: t.temporaryTitle, message: t.temporaryMessage,
+                buttonLabel: t.temporaryButton, failed: false, pending: false };
         }
-        return { kind: 'unknown_error', title: 'Publication status unavailable',
-            message: 'Publication status could not be verified. Keep this paid job; no new payment or upload has been started.',
-            buttonLabel: 'Status unavailable', failed: false, pending: false };
+        return { kind: 'unknown_error', title: t.unknownTitle, message: t.unknownMessage,
+            buttonLabel: t.unknownButton, failed: false, pending: false };
     }
-    if (query.data?.publication) return { kind: 'published', title: 'Publication ready', message: 'Publication ready.',
-        buttonLabel: 'Open publication', failed: false, pending: false };
+    if (query.data?.publication) return { kind: 'published', title: t.readyTitle, message: t.readyMessage,
+        buttonLabel: t.readyButton, failed: false, pending: false };
     if (query.data?.expired || query.data?.providerState === 'UPLOAD_EXPIRED') {
-        return { kind: 'expired', title: 'Publication deadline passed', message: UPLOAD_EXPIRED_MESSAGE,
-            buttonLabel: 'Publication deadline passed', failed: true, pending: false };
+        return { kind: 'expired', title: t.expiredTitle, message: t.expiredMessage,
+            buttonLabel: t.expiredButton, failed: true, pending: false };
     }
     if (query.data?.providerState === 'PROVIDER_FAILED') {
-        return { kind: 'provider_failed', title: 'Video processing failed',
-            message: 'Livepeer could not process this upload. No new payment or upload has been started.',
-            buttonLabel: 'Processing failed', failed: true, pending: false };
+        return { kind: 'provider_failed', title: t.failedTitle, message: t.failedMessage,
+            buttonLabel: t.failedButton, failed: true, pending: false };
     }
     const finalizing = query.data?.job?.status === 'Published'
         || ['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY', 'ONCHAIN_PUBLISHED'].includes(query.data?.providerState || '');
-    return { kind: 'pending', title: 'Upload complete; awaiting publication',
-        message: finalizing ? 'Finalizing publication…' : query.data?.providerState === 'PROCESSING'
-            ? 'Livepeer is processing the upload…' : 'Upload complete. Waiting for Livepeer processing…',
-        buttonLabel: 'Waiting for publication', failed: false, pending: true };
+    return { kind: 'pending', title: t.pendingTitle,
+        message: finalizing ? t.finalizing : query.data?.providerState === 'PROCESSING' ? t.processing : t.waiting,
+        buttonLabel: t.pendingButton, failed: false, pending: true };
 }
 
 export function findMatchingUploadCheckout(
@@ -141,69 +146,48 @@ export function sourceSizeLimitLabel(): string {
     return FEATURE_FLAGS.publicTestnetVideoV1 ? '5 GB' : FEATURE_FLAGS.publicTestnetBeta ? '1 GB' : '20 GB';
 }
 
-export function fileValidationMessage(error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type'): string {
-    if (error === 'empty_file') return 'Choose a non-empty video file.';
-    if (error === 'source_limit_exceeded') {
-        return `Choose a video file no larger than ${sourceSizeLimitLabel()}.`;
-    }
-    return 'Choose an MP4, MOV, AVI, WebM, WMV, MKV or FLV video file.';
+export function fileValidationMessage(
+    error: 'empty_file' | 'source_limit_exceeded' | 'unsupported_video_type',
+    locale: Locale = 'en',
+): string {
+    const t = messages[locale].upload.fileErrors;
+    if (error === 'empty_file') return t.empty;
+    if (error === 'source_limit_exceeded') return t.tooLarge(sourceSizeLimitLabel());
+    return t.unsupported;
 }
 
-export function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean): string {
+const DRAFT_ERROR_CODES = [
+    'livepeer_draft_missing', 'livepeer_draft_invalid', 'livepeer_draft_job_mismatch',
+    'livepeer_draft_read_failed', 'livepeer_draft_write_failed', 'livepeer_draft_readback_failed',
+    'livepeer_draft_unavailable',
+] as const;
+
+export function uploadErrorMessage(reason: unknown, availabilityConfirmed: boolean, locale: Locale = 'en'): string {
+    const t = messages[locale].upload.errors;
     const code = reason instanceof Error ? reason.message : '';
-    if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(code)) {
-        return 'Enable secure site storage and use a supported browser before continuing. No payment was sent.';
-    }
-    if (code === 'livepeer_resume_required') return 'This job is already paid. Resume the existing upload.';
-    if (code === 'livepeer_resume_file_mismatch') return 'Select the same original file to resume this upload.';
-    if (code === 'livepeer_key_replacement_pending') return 'The previous wallet action is not confirmed. Check it before trying this upload again.';
-    if (code === 'livepeer_payment_pending' || code === 'livepeer_job_missing') return 'Payment is not confirmed yet. Check your wallet; no new payment was started.';
-    if (code === 'livepeer_wallet_account_mismatch') return 'Reconnect the wallet account that paid for this upload.';
-    if (['livepeer_draft_missing', 'livepeer_draft_invalid', 'livepeer_draft_job_mismatch',
-        'livepeer_draft_read_failed', 'livepeer_draft_write_failed', 'livepeer_draft_readback_failed',
-        'livepeer_draft_unavailable'].includes(code)) {
-        const reason = code === 'livepeer_draft_missing' ? 'is missing'
-            : code === 'livepeer_draft_invalid' ? 'is invalid'
-            : code === 'livepeer_draft_job_mismatch' ? 'belongs to another upload'
-            : code === 'livepeer_draft_read_failed' ? 'could not be read'
-            : code === 'livepeer_draft_write_failed' ? 'could not be saved'
-            : code === 'livepeer_draft_readback_failed' ? 'could not be verified after saving'
-            : 'is unavailable';
-        return `Recovery information ${reason} (${code}). Keep this upload and check any existing signing or payment attempt before retrying.`;
-    }
-    if (code === 'livepeer_wallet_rejected') return 'Wallet approval was cancelled. You can check this upload again.';
-    if (code === 'livepeer_resume_in_progress') return 'This upload is being recovered in another tab. Wait for it to finish.';
-    if (code === 'livepeer_resume_browser_unsupported') return 'Use a current Chrome or Edge browser to resume this upload.';
-    if (code === 'provider_recovery_not_ready') return 'The original upload source is unavailable. No new upload was created.';
-    if (code === 'livepeer_upload_expired') return UPLOAD_EXPIRED_MESSAGE;
-    if (code === 'livepeer_upload_status_unavailable') {
-        return 'Publication status could not be confirmed. Recovery has not been started.';
-    }
+    if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(code)) return t.storage;
+    if (code === 'livepeer_resume_required') return t.resumeRequired;
+    if (code === 'livepeer_resume_file_mismatch') return t.resumeFileMismatch;
+    if (code === 'livepeer_key_replacement_pending') return t.keyReplacementPending;
+    if (code === 'livepeer_payment_pending' || code === 'livepeer_job_missing') return t.paymentPending;
+    if (code === 'livepeer_wallet_account_mismatch') return t.walletMismatch;
+    const draftCode = DRAFT_ERROR_CODES.find((item) => item === code);
+    if (draftCode) return t.draft(t.draftReasons[draftCode], draftCode);
+    if (code === 'livepeer_wallet_rejected') return t.walletRejected;
+    if (code === 'livepeer_resume_in_progress') return t.resumeInProgress;
+    if (code === 'livepeer_resume_browser_unsupported') return t.resumeBrowser;
+    if (code === 'provider_recovery_not_ready') return t.recoveryNotReady;
+    if (code === 'livepeer_upload_expired') return messages[locale].upload.publication.expiredMessage;
+    if (code === 'livepeer_upload_status_unavailable') return t.statusUnavailable;
     if (code === 'admission_closed' || code === 'admission_denied') {
-        return availabilityConfirmed
-            ? 'Upload availability changed after authorization. Retry this same upload job.'
-            : 'Upload is not available for this account right now. No wallet approval was requested.';
+        return availabilityConfirmed ? t.admissionAfter : t.admissionBefore;
     }
-    if (code === 'livepeer_job_pending') {
-        return 'The payment was sent, but the exact upload key is still finalizing. Retry this upload job.';
-    }
-    if (code === 'payment_converted_usdc_not_ready') {
-        return 'The converted USDC balance or NEAR gas reserve is no longer sufficient.';
-    }
-    if (code === 'creator_fee_payment_options_changed') {
-        return 'Payment options changed. Check payment options again.';
-    }
-    if (FEATURE_FLAGS.publicTestnetVideoV1 && code === 'creator_fee_balance_or_gas_insufficient') {
-        return 'You need enough test USDC and NEAR. Use Get test tokens, then check payment options again.';
-    }
-    if (code === 'sponsor_balance_insufficient') {
-        return 'Your USDC balance is below the quoted upload and gas-sponsor total.';
-    }
-    if (code === 'sponsored_upload_wallet_unsupported') {
-        return 'This testnet requires a Meteor wallet that supports one-step sponsored approval.';
-    }
-    if (code === 'livepeer_upload_key_recovery_unavailable') {
-        return 'This upload key is unavailable. Keep the existing job; no new payment or key change has been started.';
-    }
-    return 'The upload could not continue. Keep the original file and check this job before retrying.';
+    if (code === 'livepeer_job_pending') return t.jobPending;
+    if (code === 'payment_converted_usdc_not_ready') return t.convertedNotReady;
+    if (code === 'creator_fee_payment_options_changed') return t.optionsChanged;
+    if (FEATURE_FLAGS.publicTestnetVideoV1 && code === 'creator_fee_balance_or_gas_insufficient') return t.testTokens;
+    if (code === 'sponsor_balance_insufficient') return t.sponsorBalance;
+    if (code === 'sponsored_upload_wallet_unsupported') return t.sponsorWallet;
+    if (code === 'livepeer_upload_key_recovery_unavailable') return t.keyUnavailable;
+    return t.fallback;
 }
