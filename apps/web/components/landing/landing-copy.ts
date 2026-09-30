@@ -345,12 +345,17 @@ export function getLandingCtas(locale: LandingLocale, enabled: boolean): Landing
     const copy = landingCopy[locale].ctas;
     return enabled
         ? {
-            primary: { label: copy.enabled.primary, href: '/upload' },
-            secondary: { label: copy.enabled.secondary, href: '/discover' },
+            primary: { label: copy.enabled.primary, href: '/studio/new' },
+            secondary: { label: copy.enabled.secondary, href: '/' },
         }
         : {
             primary: { label: copy.disabled.primary, href: '#how-it-works' },
             secondary: { label: copy.disabled.secondary, href: '#trust' },
             status: copy.disabled.status,
         };
+}
+
+/** The English introduction moves to /creators once `/` becomes Discover (runtime open). */
+export function landingHomePath(locale: LandingLocale, runtimeOpen: boolean): string {
+    return locale === 'tr' ? '/tr' : runtimeOpen ? '/creators' : '/';
 }

@@ -1228,3 +1228,45 @@ G15 commit'i ayrı onay bekler. Yükleme, ödeme ve kurtarma mantığı değişm
   görsel kontrol, CI, Preview. Gerçek yükleme ancak ayrı onaylı PREVIEW kabulünde.
 - **Tek sonraki gate:** G16 `SAHNE_CREATORS_PAGE`. G15 commit'i ve G16 başlangıcı ayrı açık onay
   bekler.
+
+## 23. G16 kaydı — 30 Eylül 2026
+
+**Sonuç: PASS.** Kullanıcı G15 commit'ini (`378a605`) ve G16'yı onayladı. G16 commit'i ayrı
+onay bekler.
+
+### Yapılan
+
+- `/creators` (G7'de açıldı) ve runtime kapalıyken `/` aynı tanıtım sayfasını gösterir; V1 onaylı
+  TR/EN metinler (`landing-copy.ts`) değişmedi.
+- `LandingPage.tsx`, `ROICalculator.tsx`: yalnız görsel — Sahne token'ları (`near-green` → `ice`,
+  zinc tonları → `panel`/`raised`/`light-*`/`edge`), 2 px köşe, başlıklar Archivo dar kesim,
+  alt bilgi logosu `font-logo`.
+- `landingHomePath(locale, runtimeOpen)`: İngilizce tanıtım runtime açıkken `/creators`, kapalıyken
+  `/`; Türkçe `/tr`. Dil değiştirici ve alt bilgi logosu bunu kullanır. `/tr` SEO
+  alternatifleri İngilizceyi aynı kurala göre gösterir; `/` ve `/creators` alternatifleri
+  korunur.
+- CTA'lar yeni adreslere gider: "Gösterim aç" `/studio/new`, "Gösterimleri keşfet" `/`
+  (yönlendirme adımı kalktı).
+- Hesaplayıcı `roi.ts`'yi kullanmaya devam eder; 12 × 800 örneği 9.600 brüt, 9.120 yapımcı,
+  480 platform verir (sözleşmedeki `amount / 20`).
+
+### Kalan iş
+
+- Landing ziyaretçi başlığı `components/Navbar.tsx` içindedir (G16 listesi dışında) ve eski
+  sınıfları taşır; G17'de düzeltilmeli.
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| `landing.test.ts` | PASS (12): metin şekli ve V1 kuralları (mevcut), CTA adresleri, 95/5 tam aritmetik (mevcut), `/creators` yolu ve SEO alternatifleri, iki dilde hesaplayıcının 12 × 800 örneği, iki dilde onaylı metnin aynen render edilmesi ve eski sınıfların kalmaması | LOCAL_TEST |
+| `npm test -- --run` | PASS: 51 dosya, 932 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+| Yerel `next start`, 1440 ve 390 px | `/` ve `/tr` tanıtımı Sahne görünümünde; Türkçe büyük harfler doğru (`BİLETLİ`); hesaplayıcı 9,120 USDC; 390 px'te taşma yok | LOCAL_STATIC |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** runtime açıkken `/creators` ve SEO çıktısının arama motoru doğrulaması,
+  CI, Preview.
+- **Tek sonraki gate:** G17 `SAHNE_A11Y_MOBILE`. G16 commit'i ve G17 başlangıcı ayrı açık onay
+  bekler.
