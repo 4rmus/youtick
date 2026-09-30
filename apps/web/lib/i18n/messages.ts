@@ -178,6 +178,9 @@ const en = {
         timelineTitle: 'Processing',
         timeline: ['Uploaded to Livepeer', 'Preparing quality options', 'Verifying outputs', 'Writing the publication to NEAR', 'Published'],
         canLeave: 'You can close this page; the status link and Studio keep the progress.',
+        pendingTitle: 'You have a paid upload waiting',
+        pendingBody: (title: string, file: string, deadline: string | null) => `“${title}” is paid and waiting for its video file (${file}). Choose that same file to resume it without paying again. A new upload can start after it is published${deadline ? ` or after its deadline (${deadline})` : ''}.`,
+        bytes: (count: string) => `${count} bytes`,
         openScreening: 'Open screening',
         shareLink: 'Copy screening link',
         shared: 'Link copied.',
@@ -380,6 +383,7 @@ const en = {
             pending: 'Payment confirmed. Publication is still pending.',
             detailsUnavailable: 'Livepeer processing details are unavailable in this view. ',
             noNewPayment: 'No new payment or upload has been started.',
+            resumeHint: (bytes: string) => ` To continue, choose the same video file (${bytes}) below and select Resume.`,
         },
         publication: {
             verificationTitle: 'Publication verification blocked',
@@ -414,6 +418,7 @@ const en = {
         errors: {
             storage: 'Enable secure site storage and use a supported browser before continuing. No payment was sent.',
             resumeRequired: 'This job is already paid. Resume the existing upload.',
+            pendingExists: 'You already have a paid upload waiting. Choose its original file to resume it; no new payment was started.',
             resumeFileMismatch: 'Select the same original file to resume this upload.',
             keyReplacementPending: 'The previous wallet action is not confirmed. Check it before trying this upload again.',
             paymentPending: 'Payment is not confirmed yet. Check your wallet; no new payment was started.',
@@ -652,6 +657,9 @@ const tr: Messages = {
         timelineTitle: 'İşleme',
         timeline: ['Livepeer’a yüklendi', 'Kalite seçenekleri hazırlanıyor', 'Çıktılar doğrulanıyor', 'Yayın NEAR’a yazılıyor', 'Yayında'],
         canLeave: 'Sayfayı kapatabilirsin; durum bağlantısı ve Stüdyo ilerlemeyi korur.',
+        pendingTitle: 'Bekleyen ödenmiş bir yüklemen var',
+        pendingBody: (title: string, file: string, deadline: string | null) => `“${title}” ödendi ve video dosyasını bekliyor (${file}). Yeniden ödemeden devam etmek için aynı dosyayı seç. Yeni bir yükleme, bu yayınlandıktan sonra${deadline ? ` ya da süresi dolduktan sonra (${deadline})` : ''} başlayabilir.`,
+        bytes: (count: string) => `${count} bayt`,
         openScreening: 'Gösterimi aç',
         shareLink: 'Gösterim bağlantısını kopyala',
         shared: 'Bağlantı kopyalandı.',
@@ -854,6 +862,7 @@ const tr: Messages = {
             pending: 'Ödeme onaylandı. Yayın hâlâ bekliyor.',
             detailsUnavailable: 'Livepeer işleme ayrıntıları bu görünümde yok. ',
             noNewPayment: 'Yeni ödeme veya yükleme başlatılmadı.',
+            resumeHint: (bytes: string) => ` Devam etmek için aşağıda aynı video dosyasını (${bytes}) seç ve Devam et'i kullan.`,
         },
         publication: {
             verificationTitle: 'Yayın doğrulaması engellendi',
@@ -888,6 +897,7 @@ const tr: Messages = {
         errors: {
             storage: 'Devam etmeden önce güvenli site depolamasına izin ver ve desteklenen bir tarayıcı kullan. Ödeme gönderilmedi.',
             resumeRequired: 'Bu işin ödemesi zaten yapıldı. Mevcut yüklemeye devam et.',
+            pendingExists: 'Bekleyen ödenmiş bir yüklemen var. Devam etmek için orijinal dosyasını seç; yeni ödeme başlatılmadı.',
             resumeFileMismatch: 'Bu yüklemeye devam etmek için aynı orijinal dosyayı seç.',
             keyReplacementPending: 'Önceki cüzdan işlemi henüz onaylanmadı. Bu yüklemeyi tekrar denemeden önce onu kontrol et.',
             paymentPending: 'Ödeme henüz onaylanmadı. Cüzdanını kontrol et; yeni ödeme başlatılmadı.',

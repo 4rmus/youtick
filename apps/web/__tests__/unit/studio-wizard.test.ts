@@ -16,6 +16,7 @@ vi.mock('@/lib/constants', async (importOriginal) => {
 import { feeBreakdown, priceValid, timelineIndex, timelineStates, titleValid, wizardSteps } from '@/components/studio/wizard/wizard-model';
 import { NewScreeningWizard } from '@/components/studio/wizard/NewScreeningWizard';
 import { livepeerUploadFeeUsdc } from '@/lib/livepeer-upload';
+import { uploadErrorMessage } from '@/features/upload/upload-job';
 
 const FILE = { name: 'film.mp4', size: 1_670_000_000 } as File;
 function job(overrides: Record<string, unknown> = {}) {
@@ -23,7 +24,7 @@ function job(overrides: Record<string, unknown> = {}) {
         locale: 'en', accountId: 'creator.testnet', connect: vi.fn(), getWallet: vi.fn(), isReady: true,
         file: FILE, fileError: null, title: 'Winter Concert', setTitle: vi.fn(), price: '12', setPrice: vi.fn(),
         rightsAccepted: true, setRightsAccepted: vi.fn(), jobId: null, trackedUpload: null, error: null, busy: false,
-        resumeAvailable: false, uploadStage: 'draft', uploadProgress: 0, previewRef: { current: null },
+        resumeAvailable: false, pendingUpload: null, uploadStage: 'draft', uploadProgress: 0, previewRef: { current: null },
         payment: null, paymentAsset: null, setPaymentAsset: vi.fn(), sponsorQuote: null,
         publicationView: getLivepeerPublicationView({ isError: false, data: {} }), providerState: null, jobStatus: null,
         publicationReady: false, publicationExpired: false, uploaded: false, displayedStatus: null,
@@ -145,5 +146,21 @@ describe('new screening wizard', () => {
         expect(render()).toContain('Connect wallet');
         s.job = job({ trackedUpload: { accountId: 'creator.testnet', jobId: 'job-9' } });
         expect(render()).toContain('href="/studio/new?job=job-9"');
+    });
+
+    it('blocks a new paid upload while another paid upload waits for its file', () => {
+        s.job = job({ pendingUpload: { jobId: 'job-p', title: 'Winter Concert', priceUsdc: '2000000', sourceBytes: 1_670_000_000, sourceName: 'film.mp4', deadlineAtMs: Date.UTC(2026, 9, 1, 12) } });
+        const html = render();
+        expect(html).toContain('You have a paid upload waiting');
+        expect(html).toContain('1,670,000,000 bytes, film.mp4');
+        expect(html).toContain('without paying again');
+        expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Check payment options/);
+        s.job = job({ resumeAvailable: true, pendingUpload: { jobId: 'job-p', title: 'T', priceUsdc: '2000000', sourceBytes: 1 } });
+        expect(render()).not.toContain('You have a paid upload waiting');
+    });
+
+    it.each(['en', 'tr'] as const)('explains the pending-upload refusal without claiming a payment (%s)', (locale) => {
+        const message = uploadErrorMessage(new Error('livepeer_pending_upload_exists'), false, locale);
+        expect(message).toMatch(locale === 'en' ? /no new payment was started/ : /yeni ödeme başlatılmadı/);
     });
 });

@@ -1,5 +1,7 @@
 # Testnet Beta ve Mainnet V1 Runbook
 
+> **30 Eylül 2026 — güncel durum:** Public-testnet `acceptance` + `catalog_mode=current` ile owner kararıyla açık; 100 USD toplam bütçe owner kararıyla ön koşul olmaktan çıkarıldı (uygulanmış dolar tavanı yok). Canlı kabul sonuçları ve açık bulgular: [V1 canlı kabul kaydı](architecture/youtick-v1-pilot-live-acceptance.md). Aşağıdaki 27 Eylül notu tarihli kayıt olarak korunur.
+>
 > **27 Eylül 2026 — güncel V1 public pilot kararı ve owner closeout:** Herkese açık testnet, 30 gün, toplam gerçek hizmet gideri tavanı 100 USD; başlangıç/bitiş UTC henüz belirlenmedi. Kullanıcı paket/hesap kontrolünü şimdilik erteledi; mevcut hesap varsayımıyla yerel hazırlık sürer, paket bilinmemesi bu hazırlığı durdurmaz. Plan/credit/cap doğrulanmış sayılmaz: public kaynakta dolar rezervi 0 ve aylık bütçe kontrolü null'dır (`workers/livepeer-bridge/src/index.ts:3257-3267`), env'e 100 yazmak cap oluşturmaz. 30 gün/100 USD kararı ve test NEAR/USDC ile gerçek Livepeer/Cloudflare USD gideri ayrımı korunur; aşım harcaması, deploy veya terms kabul yetkisi yoktur. Eski 14 günlük beta takvimi uygulanmaz. Gizlilik ve canlı kabul/yayın kararı ayrı açık gate'te kapanmadan pilot GO ilan edilmez.
 
 Durum — 5 Eylül 2026:

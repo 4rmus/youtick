@@ -33,9 +33,11 @@ import {
     clearLivepeerUploadDraft,
     configuredCreatorFeeGasReserveYocto,
     createLivepeerJobId,
+    findPendingLivepeerUpload,
     fingerprintLivepeerSource,
     heartbeatLivepeerUploadLease,
     livepeerUploadFeeUsdc,
+    matchPendingLivepeerUpload,
     parseLivepeerPriceUsdc,
     preflightLivepeerUpload,
     prepareCreatorFeePaymentOptions,
@@ -49,6 +51,7 @@ import {
     writeLivepeerUploadDraft,
     type CreatorFeeAsset,
     type LivepeerUploadIntent,
+    type PendingLivepeerUpload,
     type SignedNearCreatorFeeQuote,
     type SponsoredUploadQuoteSummary,
 } from '@/lib/livepeer-upload';
@@ -98,6 +101,7 @@ export function useUploadJob() {
     const [sponsorQuote, setSponsorQuote] = React.useState<SponsoredUploadQuoteSummary | null>(null);
     const fileSelectionVersion = React.useRef(0);
     const [transferSamples, setTransferSamples] = React.useState<TransferSample[]>([]);
+    const [pendingUpload, setPendingUpload] = React.useState<PendingLivepeerUpload | null>(null);
     const moveUploadStage = React.useCallback((next: UploadStage) => {
         setUploadStage((current) => transitionUploadStage(current, next));
     }, []);
@@ -183,6 +187,14 @@ export function useUploadJob() {
             ? new URL(window.location.href).searchParams.get('job') || readRememberedLivepeerUploadJob(accountId)
             : null;
         setTrackedUpload(accountId && trackedJobId ? { accountId, jobId: trackedJobId } : null);
+        setPendingUpload(null);
+        let cancelled = false;
+        if (accountId && !trackedJobId && FEATURE_FLAGS.publicTestnetVideoV1) {
+            // Without a local bookmark, look for a paid job relayed from another tab or device.
+            void findPendingLivepeerUpload(accountId).then((pending) => {
+                if (!cancelled && pending) setTrackedUpload({ accountId, jobId: pending.jobId });
+            }).catch(() => undefined);
+        }
         setJobId(null);
         setStatus(null);
         setError(null);
@@ -193,6 +205,7 @@ export function useUploadJob() {
         setPayment(null);
         setPaymentAsset(null);
         setSponsorQuote(null);
+        return () => { cancelled = true; };
     }, [accountId, moveUploadStage]);
 
     React.useEffect(() => {
@@ -219,6 +232,7 @@ export function useUploadJob() {
         setPaymentAsset(null);
         setSponsorQuote(null);
         setJobId(null);
+        setPendingUpload(null);
         if (typeof selected !== 'object' || !(selected instanceof File)) {
             setFile(null);
             return setFileError(null);
@@ -227,8 +241,17 @@ export function useUploadJob() {
         const validation = validateLivepeerSourceFile(selected);
         if (!validation.ok) return setFileError(fileValidationMessage(validation.error, locale));
         setFileError(null);
-        const draft = accountId ? await readLivepeerUploadDraft(accountId, selected) : null;
+        let draft = accountId ? await readLivepeerUploadDraft(accountId, selected) : null;
+        let pending: PendingLivepeerUpload | null = null;
+        if (accountId && !draft && FEATURE_FLAGS.publicTestnetVideoV1) {
+            try {
+                ({ draft, pending } = await matchPendingLivepeerUpload(accountId, selected));
+            } catch {
+                // Payment preparation checks the pending job again before any new job is created.
+            }
+        }
         if (selectionVersion !== fileSelectionVersion.current) return;
+        setPendingUpload(draft ? null : pending);
         setJobId(draft?.jobId || null);
         if (draft) {
             setResumeAvailable(Boolean(FEATURE_FLAGS.publicTestnetVideoV1
@@ -253,6 +276,14 @@ export function useUploadJob() {
         let finishPreparation: ReturnType<typeof startVideoMeasurement> | undefined;
         try {
             parseLivepeerPriceUsdc(price);
+            if (FEATURE_FLAGS.publicTestnetVideoV1) {
+                const pending = await findPendingLivepeerUpload(accountId);
+                controller.signal.throwIfAborted();
+                if (pending && pending.jobId !== jobId) {
+                    setPendingUpload(pending);
+                    throw new Error('livepeer_pending_upload_exists');
+                }
+            }
             const activeJobId = jobId || createLivepeerJobId();
             finishPreparation = startVideoMeasurement('payment_preparation', file.size);
             setJobId(activeJobId);
@@ -575,6 +606,7 @@ export function useUploadJob() {
         error,
         busy,
         resumeAvailable,
+        pendingUpload,
         uploadStage,
         uploadProgress,
         previewRef,

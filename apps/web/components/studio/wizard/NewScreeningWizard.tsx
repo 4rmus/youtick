@@ -25,7 +25,7 @@ export function NewScreeningWizard() {
     const job = useUploadJob();
     const {
         locale, accountId, connect, getWallet, isReady, file, fileError, title, setTitle, price, setPrice,
-        rightsAccepted, setRightsAccepted, jobId, trackedUpload, error, busy, resumeAvailable, uploadStage,
+        rightsAccepted, setRightsAccepted, jobId, trackedUpload, error, busy, resumeAvailable, pendingUpload, uploadStage,
         uploadProgress, previewRef, payment, paymentAsset, setPaymentAsset, sponsorQuote, publicationView,
         providerState, jobStatus, publicationReady, publicationExpired, uploaded, displayedStatus, stepStates,
         transfer, uploadFeeUsdc, formReady, selectFile, preparePayment, start, resume, cancel,
@@ -102,6 +102,19 @@ export function NewScreeningWizard() {
                 </Section>
 
                 <Section index={3} title={t.steps[2]}>
+                    {pendingUpload && !resumeAvailable && (
+                        <div role="status" className="flex flex-col gap-1 border border-ice/40 bg-ice-deep p-4">
+                            <p className="font-semibold text-light">{t.pendingTitle}</p>
+                            <p className="text-sm text-light-2">
+                                {t.pendingBody(
+                                    pendingUpload.title,
+                                    t.bytes(pendingUpload.sourceBytes.toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-US'))
+                                        + (pendingUpload.sourceName ? `, ${pendingUpload.sourceName}` : ''),
+                                    pendingUpload.deadlineAtMs ? new Date(pendingUpload.deadlineAtMs).toLocaleString(locale) : null,
+                                )}
+                            </p>
+                        </div>
+                    )}
                     {FEATURE_FLAGS.publicTestnetVideoV1 && (
                         <p className="text-sm text-light-3">{u.testTokensBefore}<a className="underline underline-offset-4" href="/terms#test-tokens" target="_blank" rel="noreferrer">{u.testTokensLink}</a>{u.testTokensAfter}</p>
                     )}
@@ -148,7 +161,7 @@ export function NewScreeningWizard() {
                                 <p className="text-xs text-light-3">{u.resumeNote}</p>
                             </>
                         ) : uploaded ? null : !payment ? (
-                            <Button size="lg" disabled={!formReady || !titleOk || !priceOk || busy} onClick={() => void preparePayment()}>{busy && <Loader2 className="animate-spin" />} {u.checkPayment}</Button>
+                            <Button size="lg" disabled={!formReady || !titleOk || !priceOk || busy || Boolean(pendingUpload)} onClick={() => void preparePayment()}>{busy && <Loader2 className="animate-spin" />} {u.checkPayment}</Button>
                         ) : (
                             <Button size="lg" disabled={!formReady || !titleOk || !priceOk || busy || !paymentAsset} onClick={() => void start()}>{busy ? <Loader2 className="animate-spin" /> : <Upload />} {u.payAndUpload}</Button>
                         )}

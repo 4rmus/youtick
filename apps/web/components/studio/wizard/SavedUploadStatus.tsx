@@ -7,11 +7,13 @@ import { StatusLine } from '@/components/ui/status-line';
 import { publicationPollIntervalMs } from '@/lib/livepeer-upload-state';
 import { readLivepeerUploadProgress } from '@/lib/livepeer-publication';
 import { rememberLivepeerUploadJob } from '@/lib/livepeer-upload';
-import { useMessages } from '@/lib/i18n/I18nProvider';
+import { useLocale, useMessages } from '@/lib/i18n/I18nProvider';
+import { messages } from '@/lib/i18n/messages';
 
 /** A creator-owned job read from NEAR after its tab was closed; never starts a payment or upload. */
 export function SavedUploadStatus({ accountId, jobId }: { accountId: string; jobId: string }) {
     const upload = useMessages().upload;
+    const locale = useLocale();
     const t = upload.saved;
     const query = useQuery({
         queryKey: ['livepeerSavedUpload', accountId, jobId],
@@ -43,6 +45,8 @@ export function SavedUploadStatus({ accountId, jobId }: { accountId: string; job
                 <p className="text-sm text-light-3">
                     {progress && !progress.expired && t.detailsUnavailable}
                     {t.noNewPayment}
+                    {progress && !progress.expired && progress.job.status === 'Authorized' && progress.job.expected_source_bytes
+                        && t.resumeHint(messages[locale].wizard.bytes(Number(progress.job.expected_source_bytes).toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-US')))}
                 </p>
             )}
             <Link className="self-start text-sm underline underline-offset-4 hover:text-ice" href={`/studio/new?job=${encodeURIComponent(jobId)}`}>

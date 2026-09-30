@@ -333,13 +333,16 @@ function sponsoredRuntime(overrides?: Partial<Env>): {
     admissionState: TestState;
     quoteState: TestState;
     relayerState: TestState;
+    pendingState: TestState;
 } {
     const admissionState = createState();
     const quoteState = createState();
     const relayerState = createState();
+    const pendingState = createState();
     let admission!: LivepeerControl;
     let quote!: LivepeerControl;
     let relayer!: LivepeerControl;
+    let pending!: LivepeerControl;
     const env = createEnv({
         LIVEPEER_BRIDGE_ENABLED: 'true',
         LIVEPEER_SPONSORED_UPLOADS_ENABLED: 'true',
@@ -357,6 +360,7 @@ function sponsoredRuntime(overrides?: Partial<Env>): {
                     if (name.startsWith('admission:')) return admission.fetch(request);
                     if (name.startsWith('creator-fee-quote:')) return quote.fetch(request);
                     if (name.startsWith('sponsor-relayer:')) return relayer.fetch(request);
+                    if (name.startsWith('creator-pending-upload:')) return pending.fetch(request);
                     throw new Error(`unexpected_object:${name}`);
                 },
             }),
@@ -366,7 +370,8 @@ function sponsoredRuntime(overrides?: Partial<Env>): {
     admission = new LivepeerControl(admissionState.state, env);
     quote = new LivepeerControl(quoteState.state, env);
     relayer = new LivepeerControl(relayerState.state, env);
-    return { env, admissionState, quoteState, relayerState };
+    pending = new LivepeerControl(pendingState.state, env);
+    return { env, admissionState, quoteState, relayerState, pendingState };
 }
 
 function oracleRpcResponse(
@@ -1078,6 +1083,36 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(deniedRuntime.quoteState.values.size).toBe(0);
     });
 
+    it('serves only a recorded paid job id per creator from the pending-upload lookup', async () => {
+        const url = (creator: string) => `https://bridge.youtick.net/v1/creators/${creator}/pending-upload`;
+        const disabled = await handler.fetch(new Request(url('creator.testnet'), { headers: { Origin: ORIGIN } }), createEnv());
+        expect(disabled.status).toBe(503);
+        expect(await disabled.json()).toEqual({ error: 'control_plane_disabled' });
+
+        const runtime = sponsoredRuntime();
+        const empty = await handler.fetch(new Request(url('creator.testnet'), { headers: { Origin: ORIGIN } }), runtime.env);
+        expect(empty.status).toBe(200);
+        expect(await empty.json()).toEqual({
+            schema: 'youtick.creator-pending-upload.v1', creator_id: 'creator.testnet', job_id: null,
+        });
+        const invalid = await handler.fetch(new Request(url('Not%20An%20Account')), runtime.env);
+        expect(invalid.status).toBe(400);
+        expect(await invalid.json()).toEqual({ error: 'invalid_creator_pending_upload' });
+        expect(runtime.pendingState.values.size).toBe(0);
+
+        const post = await handler.fetch(new Request(url('creator.testnet'), { method: 'POST' }), runtime.env);
+        expect(post.status).toBe(404);
+
+        const limit = vi.fn().mockResolvedValue({ success: false });
+        const limited = sponsoredRuntime({
+            VIDEO_ENVIRONMENT: 'public-testnet',
+            PUBLIC_BETA_RATE_LIMITER: { limit } as RateLimit,
+        });
+        const rateLimited = await handler.fetch(new Request(url('creator.testnet'), { headers: { Origin: ORIGIN } }), limited.env);
+        expect(rateLimited.status).toBe(429);
+        expect(limit).toHaveBeenCalledWith({ key: expect.stringMatching(/^\/v1\/creators\/pending-upload:ip:/) });
+    });
+
     it('requires the native limiter for the combined public-beta packet', async () => {
         const missing = publicBetaEnv();
         const health = await handler.fetch(new Request('https://bridge.youtick.net/__health'), missing);
@@ -1462,6 +1497,8 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(runtime.relayerState.values.has('sponsor-relay:job-sponsored')).toBe(true);
         expect(runtime.admissionState.values.has('admission:v1')).toBe(true);
         expect(runtime.relayerState.alarms).toHaveLength(1);
+        // An unconfirmed broadcast is not a paid job yet.
+        expect(runtime.pendingState.values.size).toBe(0);
 
         blockHeight=1500;
         now.mockReturnValue(1_785_589_500_000);
@@ -1482,6 +1519,20 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         });
         expect(sendCount).toBe(1);
         expect(runtime.relayerState.values.has('sponsor-relay:job-sponsored')).toBe(false);
+        const creator = String((quoteBody.quote as Record<string, unknown>).creator_id);
+        expect(runtime.pendingState.values.get('creator-pending-upload')).toMatchObject({
+            creator, jobId: 'job-sponsored',
+        });
+        const discovered = await handler.fetch(new Request(
+            `https://bridge.youtick.net/v1/creators/${creator}/pending-upload`,
+            { headers: { Origin: ORIGIN } },
+        ), runtime.env);
+        expect(discovered.status).toBe(200);
+        expect(discovered.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
+        expect(discovered.headers.get('Cache-Control')).toBe('no-store');
+        expect(await discovered.json()).toEqual({
+            schema: 'youtick.creator-pending-upload.v1', creator_id: creator, job_id: 'job-sponsored',
+        });
 
         const duplicate = await handler.fetch(relayRequest, runtime.env);
         expect(duplicate.status).toBe(200);

@@ -167,6 +167,7 @@ export function uploadErrorMessage(reason: unknown, availabilityConfirmed: boole
     const code = reason instanceof Error ? reason.message : '';
     if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(code)) return t.storage;
     if (code === 'livepeer_resume_required') return t.resumeRequired;
+    if (code === 'livepeer_pending_upload_exists') return t.pendingExists;
     if (code === 'livepeer_resume_file_mismatch') return t.resumeFileMismatch;
     if (code === 'livepeer_key_replacement_pending') return t.keyReplacementPending;
     if (code === 'livepeer_payment_pending' || code === 'livepeer_job_missing') return t.paymentPending;
