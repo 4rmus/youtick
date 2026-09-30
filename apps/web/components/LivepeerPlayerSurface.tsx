@@ -161,7 +161,7 @@ export function LivepeerPlayerSurface({ input, title, poster, language, mode, to
         void video.play().catch(() => {});
     };
 
-    return <Player.Container lang={language} className="relative overflow-hidden rounded-xs bg-black text-white">
+    return <Player.Container lang={language} className="relative overflow-hidden rounded-lg bg-black text-white">
         <Player.Video ref={videoRef} title={title} poster={poster ?? null} hlsConfig={config} className="h-full w-full"
             onPlay={() => setResume(null)}
             onPointerDown={event => { pointerType.current = event.pointerType; }}
@@ -183,8 +183,8 @@ export function LivepeerPlayerSurface({ input, title, poster, language, mode, to
         </Player.LoadingIndicator>
         {jump !== null && <div role="status" className={`pointer-events-none absolute top-1/3 rounded-full bg-black/75 px-4 py-3 text-sm ${jump < 0 ? 'left-4' : 'right-4'}`}>{jump < 0 ? copy.back : copy.forward}</div>}
         {resume && <div data-state="open" className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 p-4">
-            <button disabled={!durationReady} className="min-h-11 rounded-xs bg-ice px-4 text-sm font-medium text-black hover:bg-ice/90 active:bg-ice/80 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white" onClick={() => chooseResume(resume.position)}>{copy.resume} {playerTime(resume.position)}</button>
-            <button disabled={!durationReady} className="min-h-11 rounded-xs px-4 text-sm text-white hover:bg-white/15 active:bg-white/25 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-ice" onClick={() => chooseResume(0)}>{copy.restart}</button>
+            <button disabled={!durationReady} className="min-h-11 rounded-md bg-near-green px-4 text-sm font-medium text-black hover:bg-near-green/90 active:bg-near-green/80 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white" onClick={() => chooseResume(resume.position)}>{copy.resume} {playerTime(resume.position)}</button>
+            <button disabled={!durationReady} className="min-h-11 rounded-md px-4 text-sm text-white hover:bg-white/15 active:bg-white/25 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-near-green" onClick={() => chooseResume(0)}>{copy.restart}</button>
         </div>}
         <LivepeerPlayerControls language={language} qualities={qualities} quality={quality} token={token} previewVttUrl={previewVttUrl} onQuality={index => {
             const hls = hlsRef.current;
@@ -195,7 +195,7 @@ export function LivepeerPlayerSurface({ input, title, poster, language, mode, to
         }} />
         <Player.ErrorIndicator matcher="all" role="alert" className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/85 p-5 text-center">
             <p className="text-sm">{copy.unavailable}</p>
-            <button className="min-h-11 rounded-xs border border-white/30 px-4 hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-ice" onClick={retry}>{copy.retry}</button>
+            <button className="min-h-11 rounded-md border border-white/30 px-4 hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-near-green" onClick={retry}>{copy.retry}</button>
         </Player.ErrorIndicator>
     </Player.Container>;
 }

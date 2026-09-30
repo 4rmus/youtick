@@ -61,23 +61,6 @@ session-only job key, clears that key and draft only after the bridge confirms
 terminal cancellation, and then resets the UI for a new job. Provider-pending
 and later work cannot be cancelled through this action.
 
-## Interface (Sahne)
-
-The UI follows the Sahne design (`docs/architecture/youtick-sahne-ui-plan.md`):
-
-- routes: `/` Discover once the runtime is open (introduction while closed),
-  `/creators`, `/s/[id]` screening, box office and room, `/c/[account]`,
-  `/tickets`, `/studio`, `/studio/new`; `/watch?job=`, `/discover`, `/upload`
-  and `/profile` redirect permanently (`next.config.ts`);
-- one colour source in `app/globals.css` (contrast pairs pinned by
-  `__tests__/unit/tokens.test.ts`), Archivo with the width axis, shared
-  primitives in `components/ui`, `components/media` and `components/states`;
-- English and Turkish dictionaries in `lib/i18n/messages.ts`; the stored
-  preference wins over `Accept-Language`;
-- account tickets, sales and withdrawals read the opt-in read-model views only
-  when `NEXT_PUBLIC_ENABLE_ACCOUNT_READ_MODEL=true`; access stays verified on
-  NEAR.
-
 ## Local checks
 
 ```bash

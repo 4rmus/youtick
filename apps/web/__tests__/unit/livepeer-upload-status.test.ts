@@ -34,9 +34,7 @@ vi.mock('@/lib/constants', async importOriginal => {
 
 vi.mock('@/components/providers/WalletProvider', () => ({ useWallet: () => ({ accountId: 'creator.testnet', connect: vi.fn(), getWallet: vi.fn(), isReady: true }) }));
 
-import { NewScreeningWizard as LivepeerPaidUploadForm } from '@/components/studio/wizard/NewScreeningWizard';
-import { SavedUploadStatus as LivepeerUploadStatus } from '@/components/studio/wizard/SavedUploadStatus';
-import { getLivepeerPublicationView, uploadErrorMessage } from '@/features/upload/upload-job';
+import { getLivepeerPublicationView, LivepeerPaidUploadForm, LivepeerUploadStatus, uploadErrorMessage } from '@/components/LivepeerPaidUploadForm';
 
 describe('publication polling during the Published transition', () => {
     const pending = { job: { job_id: 'job-001', creator_id: 'creator.testnet', generation: 1, status: 'Authorized' }, publication: null, expired: false };
@@ -136,18 +134,18 @@ describe('upload status after closing its tab', () => {
         const html = render();
         expect(html).toContain('Payment confirmed. Publication is still pending.');
         expect(html).toContain('Livepeer processing details are unavailable');
-        expect(html).toContain('/studio/new?job=job-001');
-        expect(html).not.toContain('/s/job-001');
+        expect(html).toContain('/upload?job=job-001');
+        expect(html).not.toContain('/watch');
         expect(html).not.toContain('<button');
     });
 
     it('opens a confirmed publication and explains deadline expiry', () => {
         state.query.data = { ...progress, publication: { publication_id: 'job-001' } };
-        expect(render()).toContain('/s/job-001');
+        expect(render()).toContain('/watch?job=job-001');
         state.query.data = { ...progress, expired: true };
         const html = render();
         expect(html).toContain('publication deadline has passed');
-        expect(html).not.toContain('/s/job-001');
+        expect(html).not.toContain('/watch');
         expect(html).not.toContain('<button');
     });
 
@@ -155,7 +153,7 @@ describe('upload status after closing its tab', () => {
         state.query = { data: { ...progress, publication: {} }, isError: true };
         const html = render();
         expect(html).toContain('could not be verified for this account');
-        expect(html).not.toContain('/s/job-001');
+        expect(html).not.toContain('/watch');
     });
 });
 

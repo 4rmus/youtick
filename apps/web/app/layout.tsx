@@ -1,18 +1,15 @@
 import type { Metadata } from 'next';
-import { Archivo } from 'next/font/google';
+import { Geist } from 'next/font/google';
 import { headers } from 'next/headers';
 import { connection } from 'next/server';
 import './globals.css';
 import { Navbar } from '@/components/Navbar';
-import { MobileTabBar } from '@/components/shell/MobileTabBar';
 import { QueryProvider } from '@/components/providers/QueryProvider';
 import { WalletProvider } from '@/components/providers/WalletProvider';
 import { PublicTestnetBetaBanner } from '@/components/PublicTestnetBetaBanner';
 import { FEATURE_FLAGS } from '@/lib/constants';
-import { I18nProvider } from '@/lib/i18n/I18nProvider';
-import { resolveLocale } from '@/lib/i18n/locale';
 
-const archivo = Archivo({ subsets: ['latin', 'latin-ext'], axes: ['wdth'], variable: '--font-archivo' });
+const geist = Geist({ subsets: ['latin'], variable: '--font-geist-sans' });
 
 export const metadata: Metadata = {
     title: { default: 'YouTick', template: '%s | YouTick' },
@@ -24,20 +21,16 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
     await connection();
     const cspNonce = (await headers()).get('x-nonce') ?? undefined;
-    const locale = resolveLocale((await headers()).get('accept-language'));
     return (
-        <html lang={locale} className={archivo.variable} data-scroll-behavior="smooth">
-            <body className="min-h-screen bg-ink text-light antialiased">
-                <I18nProvider initialLocale={locale}>
+        <html lang="en" data-scroll-behavior="smooth">
+            <body className={`${geist.variable} min-h-screen bg-black text-white antialiased`}>
                 <QueryProvider>
                     {(FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1) && <PublicTestnetBetaBanner />}
                     <WalletProvider cspNonce={cspNonce}>
                         <Navbar />
                         <main>{children}</main>
-                        <MobileTabBar />
                     </WalletProvider>
                 </QueryProvider>
-                </I18nProvider>
             </body>
         </html>
     );

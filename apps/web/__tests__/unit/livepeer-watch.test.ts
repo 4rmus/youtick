@@ -9,7 +9,7 @@ const state = vi.hoisted(() => ({
     hasEntitlement: vi.fn(),
     invalidateQueries: vi.fn(),
     loadCheckout: vi.fn(),
-    handlers: new Map<string, () => unknown>(),
+    onPurchase: null as null | (() => void),
     readPublication: vi.fn(),
     setQueryData: vi.fn(),
     updateCheckout: vi.fn(),
@@ -23,23 +23,15 @@ const state = vi.hoisted(() => ({
     queries: [] as Array<{ queryKey: string[]; enabled?: boolean }>,
 }));
 
-vi.mock('@/lib/constants', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/lib/constants')>();
-    return { ...actual, FEATURE_FLAGS: state.featureFlags };
-});
+vi.mock('@/lib/constants', () => ({ FEATURE_FLAGS: state.featureFlags }));
 
 vi.mock('@tanstack/react-query', () => ({
     useQuery: (options: { queryKey: string[]; enabled?: boolean }) => {
         state.queries.push(options);
-        if (options.queryKey[0] === 'livepeerPublication') {
-            return { data: state.publicationReady ? PUBLICATION : undefined, error: null, isLoading: !state.publicationReady };
-        }
-        if (options.queryKey[0] === 'livepeerEntitlement') {
-            return { data: state.entitlement, error: state.entitlementError, isLoading: state.entitlement === undefined, isFetching: state.entitlementFetching, refetch: state.refetch };
-        }
-        return { data: undefined, error: null, isLoading: false };
+        return options.queryKey[0] === 'livepeerPublication'
+            ? { data: state.publicationReady ? PUBLICATION : undefined, error: null, isLoading: !state.publicationReady }
+            : { data: state.entitlement, error: state.entitlementError, isLoading: state.entitlement === undefined, isFetching: state.entitlementFetching, refetch: state.refetch };
     },
-    useInfiniteQuery: () => ({ data: undefined }),
     useQueryClient: () => ({
         invalidateQueries: state.invalidateQueries,
         setQueryData: state.setQueryData,
@@ -55,24 +47,25 @@ vi.mock('@/components/providers/WalletProvider', () => ({
     }),
 }));
 
-function textOf(node: React.ReactNode): string {
-    return React.Children.toArray(node).map((child) => typeof child === 'string' || typeof child === 'number'
-        ? String(child)
-        : React.isValidElement<{ children?: React.ReactNode }>(child) ? textOf(child.props.children) : '').join('');
-}
-
 vi.mock('@/components/ui/button', () => ({
-    Button: ({ children, onClick }: { children?: React.ReactNode; onClick?: () => unknown }) => {
-        if (onClick) state.handlers.set(textOf(children), onClick);
+    Button: ({ children, onClick }: { children?: React.ReactNode; onClick?: () => void }) => {
+        if (onClick) state.onPurchase = onClick;
         return children;
     },
 }));
 
+vi.mock('@/components/PageShell', () => ({ PageShell: ({ children }: { children: React.ReactNode }) => children }));
+vi.mock('@/components/ScreenState', () => ({ ScreenState: () => null }));
 vi.mock('@/components/LivepeerPlayer', () => ({ LivepeerPlayer: () => null }));
 vi.mock('@/components/MultiAssetPaymentPanel', () => ({ MultiAssetPaymentPanel: () => { state.paymentPanel(); return null; } }));
 vi.mock('next/link', () => ({ default: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('next/image', () => ({ default: () => null }));
-vi.mock('@/lib/market-read-model', () => ({ readMarketCreatorPublicationPage: vi.fn() }));
+vi.mock('lucide-react', () => ({
+    ArrowLeft: () => null,
+    Loader2: () => null,
+    Lock: () => null,
+    Video: () => null,
+}));
 
 vi.mock('@/lib/livepeer-publication', () => ({
     buyLivepeerTicket: state.buyTicket,
@@ -83,16 +76,12 @@ vi.mock('@/lib/livepeer-publication', () => ({
 }));
 
 vi.mock('@/lib/multi-asset-payments', () => ({
-    multiAssetPaymentsEnabled: false,
-    readPaymentPreflight: vi.fn(),
     loadActivePaymentCheckout: state.loadCheckout,
     updateActivePaymentCheckoutState: state.updateCheckout,
     verifyConvertedUsdcReady: state.verifyUsdc,
 }));
 
-import { ScreeningView as LivepeerWatch } from '@/components/screening/ScreeningView';
-
-const purchaseHandler = () => [...state.handlers].find(([label]) => label.startsWith('Buy ticket'))?.[1];
+import { LivepeerWatch } from '@/components/LivepeerWatch';
 
 const PUBLICATION = {
     publication_id: 'job-001',
@@ -116,7 +105,7 @@ describe('Livepeer ticket payment recovery', () => {
         vi.useFakeTimers();
         vi.clearAllMocks();
         state.featureFlags.enablePlaybackAuthorizerV2 = false;
-        state.handlers.clear();
+        state.onPurchase = null;
         state.publicationReady = true;
         state.entitlement = false;
         state.entitlementError = null;
@@ -137,14 +126,11 @@ describe('Livepeer ticket payment recovery', () => {
         else if (problem === 'refetching a stale false response') state.entitlementFetching = true;
         else state.entitlementError = new Error('rpc_failed');
         const markup = renderToStaticMarkup(React.createElement(LivepeerWatch, { jobId: PUBLICATION.publication_id }));
-        expect(markup).not.toContain('Buy ticket');
+        expect(markup).not.toContain('Ticket required');
         expect(state.paymentPanel).not.toHaveBeenCalled();
-        expect(purchaseHandler()).toBeUndefined();
+        state.onPurchase?.();
         expect(state.buyTicket).not.toHaveBeenCalled();
-        if (state.entitlementError) {
-            state.handlers.get('Check again')!();
-            expect(state.refetch).toHaveBeenCalledOnce();
-        }
+        if (state.entitlementError) expect(state.refetch).toHaveBeenCalledOnce();
     });
 
     it('starts the entitlement query while publication data is still loading', () => {
@@ -160,7 +146,7 @@ describe('Livepeer ticket payment recovery', () => {
             jobId: PUBLICATION.publication_id,
         }));
 
-        void purchaseHandler()!();
+        state.onPurchase?.();
         await vi.advanceTimersByTimeAsync(1_000);
 
         expect(state.buyTicket).not.toHaveBeenCalled();
@@ -181,7 +167,7 @@ describe('Livepeer ticket payment recovery', () => {
             jobId: PUBLICATION.publication_id,
         }));
 
-        void purchaseHandler()!();
+        state.onPurchase?.();
         await vi.advanceTimersByTimeAsync(15_000);
 
         expect(state.buyTicket).not.toHaveBeenCalled();
