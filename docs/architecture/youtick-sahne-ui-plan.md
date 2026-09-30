@@ -119,6 +119,10 @@ Durum: tamamlandı; sonuç §8'de.
 ### Faz 1 — Görünmez temel (davranış ve görünüm değişmez)
 
 #### G2 · `SAHNE_HEADLESS_CHECKOUT` (Orta)
+Durum: tamamlandı; sonuç §9'da. Uygulamada ilk kabul maddesi `youtick-payment-flow` skill'i gereği
+düzeltildi: yeni bir ödeme durum makinesi kurulmadı; ödeme durumu `ActivePaymentCheckout.state`
+olarak kaldı. Arayüz, erişim görünümünü (`ticketAccessView`) ve gerçek çağrı noktalarındaki
+adım işaretlerini (`TicketPurchaseStep`) kullanır.
 - **Amaç:** Bilet satın alma ve dönüşüm orkestrasyonunu arayüzden ayırmak.
 - **Değişebilir:** `components/LivepeerWatch.tsx`, `components/MultiAssetPaymentPanel.tsx`,
   yeni `features/checkout/*`, yeni `__tests__/unit/ticket-checkout.test.ts`,
@@ -437,3 +441,57 @@ G12 yalnız read-model tarafındadır; G8'den sonra herhangi bir noktada açıla
 - **Metne bağlı testler (G2+ için):** §4 G1'deki liste. Yeni aktif UI dosyaları
   `active-ui-copy.test.ts` listesine eklenecek.
 - **Tek sonraki gate:** G2 `SAHNE_HEADLESS_CHECKOUT`. Başlamak için açık onay bekler.
+
+## 9. G2 kaydı — 30 Eylül 2026
+
+**Sonuç: PASS.** Kullanıcı G2'yi onayladı. Commit bu gate'te yapılmadı; ayrı onay bekler.
+
+### Yapılan
+
+- `features/checkout/ticket-checkout.ts` (saf):
+  - `purchaseLivepeerTicket`: satın alma sırası birebir korunur; bağımlılıklar test için enjekte edilebilir.
+  - `waitForLivepeerEntitlement`: 1+2+4+8 sn bekleme.
+  - İade kurtarması.
+  - `purchaseErrorMessage`.
+  - `ticketAccessView`: `playable`, `checking`, `access_error`, `locked`.
+  - `canStartTicketPurchase`.
+  - `TicketPurchaseStep`: `verifying_price`, `reconciling_conversion`, `wallet_approval`, `waiting_entitlement`.
+- `features/checkout/useTicketCheckout.ts`: yayın ve hak sorguları, meşgul/hata/adım durumu.
+  Sorgu anahtarları ve seçenekleri aynı.
+- `features/checkout/conversion-checkout.ts` (saf):
+  - Amaç kimliği ve eşleşme kontrolü.
+  - Tutar doğrulaması, yavaş rota eşiği, tutar biçimlendirme.
+  - Durum etiketleri ve durum grupları.
+  - Hata metinleri.
+  - `waitForPreflight`: 1+2+4 sn.
+- `features/checkout/useConversionCheckout.ts`: panelin tüm durumu, iki efekti ve dört aksiyonu.
+  Efekt bağımlılıkları aynı.
+- `components/LivepeerWatch.tsx` ve `components/MultiAssetPaymentPanel.tsx` yalnız görüntüleme yapar.
+  Panelin props arayüzü değişmedi; yükleme formu etkilenmedi.
+- `active-ui-copy.test.ts` listesine taşınan metin dosyaları eklendi.
+
+### Doğrulama
+
+Hepsi LOCAL_TEST; ortam G1 ile aynı (CI web job ortam değişkenleri).
+
+| Kontrol | Sonuç |
+|---|---|
+| Yeni `ticket-checkout.test.ts` ve `conversion-checkout.test.ts` | PASS: normal satın alma, satış kapalı (3 durum), fiyat değişimi, 1+2+4+8 sn bekleme, başka yayının checkout'u, `usdc_final` → `core_pending` → `complete`, yetersiz dönüşüm, iade kurtarması, çözülmemiş bekleme, cüzdan hatasında geri alma, `core_pending` tamamlama/iade/bekleme, erişim görünümü tablosu, bütün hata metinleri, `waitForPreflight` |
+| Değiştirilmemiş `livepeer-watch.test.ts` ve `multi-asset-payments.test.ts` | PASS |
+| Geçici eski/yeni HTML karşılaştırması | PASS: 17 senaryoda birebir aynı çıktı (15 `LivepeerWatch` durumu, 2 panel durumu). Geçici dosyalar silindi |
+| `npm run lint`, `npx tsc --noEmit --incremental false` | PASS |
+| `npm test -- --run` | PASS: 38 dosya, 584 test (G1: 36 / 510) |
+| `test:livepeer-canary`, `test:multi-creator-upload-canary` | PASS: 7/7; 24 test, 3 atlandı |
+| `npm run build` | PASS |
+
+### Bulgu
+
+Silinmiş (TAKEDOWN) bir gösterimin bilet sahibi, "yayın kullanılamıyor" yerine sonu gelmeyen
+"erişim doğrulanıyor" görünümünü görüyor. Mevcut davranış bu; G2 davranış değiştirmediği için
+düzeltilmedi ve testte açıkça kayıtlı. G9'da gişe barı tasarlanırken düzeltilmeli.
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** tarayıcı kontrol betikleri (oynatıcı ve cihaz kodu değişmedi);
+  gerçek cüzdan veya ödeme; CI; Preview.
+- **Tek sonraki gate:** G3 `SAHNE_HEADLESS_UPLOAD`. G2 commit'i ve G3 başlangıcı ayrı açık onay bekler.

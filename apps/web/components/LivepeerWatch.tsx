@@ -3,152 +3,35 @@
 import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, Lock, Video } from 'lucide-react';
-import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { PageShell } from '@/components/PageShell';
 import { ScreenState } from '@/components/ScreenState';
 import { LivepeerPlayer } from '@/components/LivepeerPlayer';
 import { MultiAssetPaymentPanel } from '@/components/MultiAssetPaymentPanel';
+import { useTicketCheckout } from '@/features/checkout/useTicketCheckout';
 import { FEATURE_FLAGS } from '@/lib/constants';
 import { playerCopy, playerLanguage, subscribePlayerLanguage, type PlayerLanguage } from '@/lib/player-copy';
-import {
-    buyLivepeerTicket,
-    formatUsdc,
-    hasLivepeerEntitlement,
-    livepeerPublicationCoverUrl,
-    readLivepeerPublication,
-} from '@/lib/livepeer-publication';
-import {
-    loadActivePaymentCheckout,
-    updateActivePaymentCheckoutState,
-    verifyConvertedUsdcReady,
-    type PaymentPurpose,
-} from '@/lib/multi-asset-payments';
+import { formatUsdc, livepeerPublicationCoverUrl } from '@/lib/livepeer-publication';
 
 export function LivepeerWatch({ jobId }: { jobId: string }) {
-    const { accountId, connect, getWallet, isReady } = useWallet();
-    const queryClient = useQueryClient();
-    const [busy, setBusy] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const {
+        accountId,
+        connect,
+        getWallet,
+        isReady,
+        publicationQuery,
+        entitlementQuery,
+        paymentPurpose,
+        busy,
+        error,
+        clearError,
+        purchase,
+        accessView,
+        salesOpen,
+    } = useTicketCheckout(jobId);
     const language = React.useSyncExternalStore(subscribePlayerLanguage, playerLanguage, () => 'en' as PlayerLanguage);
     const copy = playerCopy[language];
-    const publicationQuery = useQuery({
-        queryKey: ['livepeerPublication', jobId],
-        queryFn: () => readLivepeerPublication(jobId),
-        retry: false,
-    });
-    const entitlementQuery = useQuery({
-        queryKey: ['livepeerEntitlement', accountId, jobId],
-        queryFn: () => hasLivepeerEntitlement(accountId!, jobId),
-        enabled: Boolean(accountId && jobId),
-        staleTime: 15_000,
-    });
-    const paymentPurpose = React.useMemo(() => ({
-        type: 'ticket' as const,
-        publication_id: jobId,
-    }), [jobId]);
-
-    const purchase = async () => {
-        const publication = publicationQuery.data;
-        if (!accountId || !publication || entitlementQuery.error || entitlementQuery.isFetching || entitlementQuery.data !== false) return;
-        setBusy(true);
-        setError(null);
-        let convertedCheckout = false;
-        let conversionExpectation: {
-            purpose: PaymentPurpose;
-            requiredUsdcMicro: string;
-        } | null = null;
-        try {
-            const current = await readLivepeerPublication(jobId);
-            if (!current || current.availability !== 'ACTIVE') throw new Error('livepeer_sales_closed');
-            if (current.price_usdc !== publication.price_usdc) {
-                queryClient.setQueryData(['livepeerPublication', jobId], current);
-                throw new Error('payment_amount_changed');
-            }
-            const activeCheckout = loadActivePaymentCheckout(accountId);
-            const matchingCheckout = activeCheckout
-                && activeCheckout.quote.purpose.type === 'ticket'
-                && activeCheckout.quote.purpose.publication_id === jobId
-                ? activeCheckout
-                : null;
-            if (matchingCheckout?.state === 'usdc_final') {
-                const ready = await verifyConvertedUsdcReady({
-                    accountId,
-                    requiredUsdcMicro: current.price_usdc,
-                    status: 'SUCCESS',
-                });
-                if (!ready) throw new Error('payment_converted_usdc_not_ready');
-                conversionExpectation = {
-                    purpose: paymentPurpose,
-                    requiredUsdcMicro: matchingCheckout.required_usdc_micro,
-                };
-                convertedCheckout = updateActivePaymentCheckoutState(
-                    accountId,
-                    conversionExpectation,
-                    'core_pending',
-                ) !== null;
-            } else if (matchingCheckout?.state === 'core_pending') {
-                conversionExpectation = {
-                    purpose: paymentPurpose,
-                    requiredUsdcMicro: matchingCheckout.required_usdc_micro,
-                };
-                convertedCheckout = true;
-                if (await waitForLivepeerEntitlement(accountId, jobId)) {
-                    await queryClient.invalidateQueries({
-                        queryKey: ['livepeerEntitlement', accountId, jobId],
-                    });
-                    updateActivePaymentCheckoutState(
-                        accountId,
-                        conversionExpectation,
-                        'complete',
-                    );
-                    return;
-                }
-                await recoverRefundedTicketPayment(
-                    accountId,
-                    conversionExpectation.requiredUsdcMicro,
-                    conversionExpectation,
-                );
-            }
-            await buyLivepeerTicket(await getWallet(), accountId, current);
-            if (await waitForLivepeerEntitlement(accountId, jobId)) {
-                await queryClient.invalidateQueries({
-                    queryKey: ['livepeerEntitlement', accountId, jobId],
-                });
-                if (convertedCheckout && conversionExpectation) {
-                    updateActivePaymentCheckoutState(
-                        accountId,
-                        conversionExpectation,
-                        'complete',
-                    );
-                }
-                return;
-            }
-            if (convertedCheckout && conversionExpectation) {
-                await recoverRefundedTicketPayment(
-                    accountId,
-                    current.price_usdc,
-                    conversionExpectation,
-                );
-            }
-            throw new Error('livepeer_entitlement_pending');
-        } catch (reason) {
-            if (convertedCheckout
-                && conversionExpectation
-                && !(reason instanceof Error && reason.message === 'livepeer_entitlement_pending')) {
-                updateActivePaymentCheckoutState(
-                    accountId,
-                    conversionExpectation,
-                    'usdc_final',
-                );
-            }
-            setError(purchaseErrorMessage(reason));
-        } finally {
-            setBusy(false);
-        }
-    };
 
     if (publicationQuery.isLoading) {
         return <PageShell className="flex items-center justify-center"><Loader2 role="status" className="h-10 w-10 animate-spin" /></PageShell>;
@@ -168,8 +51,6 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
         );
     }
 
-    const canPlay = entitlementQuery.data === true && publication.availability !== 'TAKEDOWN';
-    const salesOpen = publication.availability === 'ACTIVE';
     const coverUrl = livepeerPublicationCoverUrl(publication);
 
     return (
@@ -185,7 +66,7 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                 <p className="text-xl font-bold">{formatUsdc(publication.price_usdc)} USDC</p>
             </div>
 
-            {canPlay && accountId ? (
+            {accessView === 'playable' && accountId ? (
                 <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-black">
                     <LivepeerPlayer
                         accountId={accountId}
@@ -196,9 +77,9 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                         poster={coverUrl ?? undefined}
                     />
                 </div>
-            ) : !isReady || (accountId && (entitlementQuery.error || entitlementQuery.isFetching || entitlementQuery.data !== false)) ? (
+            ) : accessView === 'checking' || accessView === 'access_error' ? (
                 <div lang={language} className="flex min-h-48 flex-col items-center justify-center gap-4 rounded-2xl border border-zinc-800 bg-black p-6 text-center">
-                    {entitlementQuery.error ? <>
+                    {accessView === 'access_error' ? <>
                         <p role="alert" className="text-sm text-zinc-300">{copy.accessError}</p>
                         <Button disabled={entitlementQuery.isFetching} onClick={() => void entitlementQuery.refetch()}>{copy.checkAgain}</Button>
                     </> : <p role="status" className="flex items-center gap-3 text-sm"><Loader2 className="h-5 w-5 motion-safe:animate-spin" aria-hidden="true" />{copy.checking}</p>}
@@ -252,59 +133,11 @@ export function LivepeerWatch({ jobId }: { jobId: string }) {
                             purpose={paymentPurpose}
                             requiredUsdcMicro={publication.price_usdc}
                             disabled={busy || !salesOpen}
-                            onUsdcReady={() => setError(null)}
+                            onUsdcReady={clearError}
                         />
                     )}
                 </div>
             )}
         </PageShell>
     );
-}
-
-async function waitForLivepeerEntitlement(accountId: string, jobId: string): Promise<boolean> {
-    for (const delay of [1_000, 2_000, 4_000, 8_000]) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        if (await hasLivepeerEntitlement(accountId, jobId).catch(() => false)) return true;
-    }
-    return false;
-}
-
-async function recoverRefundedTicketPayment(
-    accountId: string,
-    requiredUsdcMicro: string,
-    expectation: { purpose: PaymentPurpose; requiredUsdcMicro: string },
-): Promise<never> {
-    const refunded = await verifyConvertedUsdcReady({
-        accountId,
-        requiredUsdcMicro,
-        status: 'SUCCESS',
-    }).catch(() => false);
-    if (refunded) {
-        updateActivePaymentCheckoutState(accountId, expectation, 'usdc_final');
-        throw new Error('livepeer_ticket_payment_refunded');
-    }
-    throw new Error('livepeer_entitlement_pending');
-}
-
-function purchaseErrorMessage(reason: unknown): string {
-    const message = reason instanceof Error ? reason.message : '';
-    if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(message)) {
-        return 'Enable secure site storage and use a supported browser before continuing. No payment was sent.';
-    }
-    if (message === 'livepeer_entitlement_pending') {
-        return 'Your ticket is still syncing. Try again shortly.';
-    }
-    if (message === 'livepeer_sales_closed') {
-        return 'Ticket sales are paused for this video.';
-    }
-    if (message === 'payment_amount_changed') {
-        return 'The ticket price changed. Review the updated amount before paying.';
-    }
-    if (message === 'payment_converted_usdc_not_ready') {
-        return 'The converted USDC balance or NEAR gas reserve is no longer sufficient.';
-    }
-    if (message === 'livepeer_ticket_payment_refunded') {
-        return 'The ticket payment did not settle. Your USDC is still available to retry.';
-    }
-    return 'The ticket could not be purchased. Check your wallet and try again.';
 }
