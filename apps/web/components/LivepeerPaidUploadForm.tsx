@@ -234,6 +234,13 @@ export function LivepeerPaidUploadForm() {
             : null;
         setTrackedUpload(accountId && trackedJobId ? { accountId, jobId: trackedJobId } : null);
         setPendingUpload(null);
+        let cancelled = false;
+        if (accountId && !trackedJobId && FEATURE_FLAGS.publicTestnetVideoV1) {
+            // Without a local bookmark, look for a paid job relayed from another tab or device.
+            void findPendingLivepeerUpload(accountId).then((pending) => {
+                if (!cancelled && pending) setTrackedUpload({ accountId, jobId: pending.jobId });
+            }).catch(() => undefined);
+        }
         setJobId(null);
         setStatus(null);
         setError(null);
@@ -243,6 +250,7 @@ export function LivepeerPaidUploadForm() {
         setPayment(null);
         setPaymentAsset(null);
         setSponsorQuote(null);
+        return () => { cancelled = true; };
     }, [accountId, moveUploadStage]);
 
     React.useEffect(() => {

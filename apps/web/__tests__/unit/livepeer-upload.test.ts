@@ -87,6 +87,7 @@ import {
     prepareLivepeerUploadResume,
     livepeerUploadFeeUsdc,
     matchPendingLivepeerUpload,
+    readBridgePendingUploadJob,
     requestLivepeerUploadIntent,
     requestNearCreatorFeeQuote,
     readLivepeerUploadDraft,
@@ -338,6 +339,49 @@ describe('Livepeer browser upload', () => {
         near.viewContract.mockRejectedValue(new Error('rpc_unavailable'));
         await expect(findPendingLivepeerUpload('creator.testnet')).rejects.toThrow('rpc_unavailable');
         expect((await readLivepeerUploadDraft('creator.testnet', file))?.jobId).toBe('job-001');
+    });
+
+    it('finds a paid job through the Bridge when local recovery state is gone', async () => {
+        const { file, job, wallet, input } = await publicResumeFixture();
+        localStorage.clear();
+        sessionStorage.clear();
+        const intentFetch = vi.mocked(fetch);
+        const bridgeFetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => String(url).includes('/pending-upload')
+            ? Response.json({ schema: 'youtick.creator-pending-upload.v1', creator_id: 'creator.testnet', job_id: job.job_id })
+            : intentFetch(url, init));
+        vi.stubGlobal('fetch', bridgeFetch);
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toMatchObject({ jobId: 'job-001', title: 'Paid video' });
+        expect(String(bridgeFetch.mock.calls[0][0])).toBe('https://bridge.youtick.net/v1/creators/creator.testnet/pending-upload');
+        expect(readRememberedLivepeerUploadJob('creator.testnet')).toBe('job-001');
+        localStorage.clear();
+        const { draft } = await matchPendingLivepeerUpload('creator.testnet', file);
+        expect(draft).toMatchObject({ jobId: 'job-001', paymentAttempted: true });
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).resolves.toMatchObject({ created: false });
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
+    });
+
+    it('offers a Bridge hint only after the creator-owned paid job is verified on chain', async () => {
+        const { job } = await publicResumeFixture();
+        localStorage.clear();
+        const hint = (value: unknown) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(value)));
+        hint({ schema: 'youtick.creator-pending-upload.v1', creator_id: 'other.testnet', job_id: 'job-001' });
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toBeNull();
+        hint({ schema: 'youtick.creator-pending-upload.v1', creator_id: 'creator.testnet', job_id: null });
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toBeNull();
+        hint({ schema: 'youtick.creator-pending-upload.v1', creator_id: 'creator.testnet', job_id: 'job-001' });
+        job.creator_id = 'other.testnet';
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toBeNull();
+        job.creator_id = 'creator.testnet';
+        job.status = 'Published';
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toBeNull();
+        expect(readRememberedLivepeerUploadJob('creator.testnet')).toBeNull();
+        vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+        await expect(readBridgePendingUploadJob('creator.testnet')).resolves.toBeNull();
+        const disabled = vi.fn();
+        vi.stubGlobal('fetch', disabled);
+        featureFlags.enableSponsoredLivepeerUploads = false;
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toBeNull();
+        expect(disabled).not.toHaveBeenCalled();
     });
 
     it('keeps an expired session while an upload-intent read fails', async () => {
