@@ -37,15 +37,43 @@ Düzeltme [#221](https://github.com/4rmus/youtick/pull/221) `70851d7` ile
 yayınlandı (`acceptance`, `catalog_mode=current`; Web `885c6e85`, Bridge `f38f3017`, read-model
 `9104c0e3`). `DEPLOY_PUBLIC_TESTNET_ENABLED` deploy için açıldı ve 16:06:55 UTC'de tekrar `false` yapıldı.
 
+## Yerel kayıt olmadan kurtarma — 30 Eylül 2026
+
+Gate'ler: `YOUTICK_UPLOAD_PENDING_JOB_DISCOVERY_*`, `YOUTICK_UPLOAD_RECOVERY_LIVE_RECORD` — **PASS**.
+
+[#223](https://github.com/4rmus/youtick/pull/223) (`6b7d59f`) Bridge'e üretici başına son ödenmiş job
+kaydını ve `GET /v1/creators/:account/pending-upload` ucunu, Web'e bu ipucunu zincirde doğrulayan geri
+dönüşü ekledi. [run 36756237995](https://github.com/4rmus/youtick/actions/runs/36756237995) ile 18:11 UTC'de
+yayınlandı (Web `757a9815`, Bridge `7dc7aaa9`, read-model `8c42098c`; Next.js 16.3.6 derlemesi);
+deploy anahtarı 18:12:15 UTC'de tekrar `false` yapıldı. Uç nokta canlıda 200/`no-store`/izinli-origin CORS,
+geçersiz hesapta 400 döndü.
+
+| Adım — `utick2.testnet`, "testtest" `lp-d8d4ad26-1f8c-4f15-9e8c-844f8230f673`, 28.683.934 bayt | Kanıt |
+| --- | --- |
+| Başlangıç (20:05 UTC) | USDC 1,20; Bridge kaydı `job_id: null` |
+| Ödeme (20:12:14) | Tek sponsorlu `create_paid_job` 0,60 USDC; Bridge 20:13'te bu job'u döndürdü |
+| Yerel kayıt silindi + yenileme | Owner `youtick:livepeer-*` localStorage/sessionStorage anahtarlarını sildi ve sayfayı yeniledi; "Your upload" kartı göründü (**OWNER_DECLARED**) |
+| Resume (20:15:35) | `utick2.testnet` imzalı `replace_upload_key`; upload anahtarı `ed25519:B4rZ9424J3…` → `ed25519:546pwjJLPw…` |
+| Yayın (20:19:41) | Operator `finalize_livepeer_publication` → `ACTIVE`, playback `c322z5aukzeppzf1`, tek `asset_id_hash`, doğrulanan = beklenen bayt |
+| Ödeme uzlaşması | USDC 1,20 → 0,60 ve sabit; Market 40,64 → 41,24 ve sabit; bu job için üç işlem (ödeme, anahtar değişimi, yayın), ikinci ödeme yok |
+| Katalog | 22 yayın, D1 ↔ aynı bloktaki NEAR 0 fark |
+
+Önceki deneme (`soteri.testnet`, `lp-fcf7bc1a-2a07-47ba-911f-dcf1d48164ec`) Bridge kaydının relay'de
+yazıldığını gösterdi; 17 MB kaynak owner müdahalesinden önce yayınlandığı için Resume adımını kapsamadı.
+Bridge kaydı yayından sonra da job id'yi döndürür; Web yalnız `Authorized` job'u bekleyen sayar.
+
+[#224](https://github.com/4rmus/youtick/pull/224) (Sahne UI) 18:39'da merge edildi ve Preview'a çıktı;
+[#225](https://github.com/4rmus/youtick/pull/225) ile geri alındı (`c6a5375`, ağaç `6b7d59f` ile aynı).
+Preview'ın revert deploy'u ilk denemede smoke'ta chunk 404 ile otomatik geri döndü, yeniden çalıştırmada
+geçti (Web `605c1a4e`). Public-testnet #224'ü hiç almadı.
+
 ## Açık bulgular
 
-1. **Yenileme sonrası "Your upload" kartı görünmedi.** Kurtarma dosya seçimiyle çalıştı, ancak kartın
-   yönlendirme metni gözlenmedi. Yer işareti ödeme gönderilirken yazılıyor
-   (`apps/web/lib/livepeer-upload.ts` `setUploadDraftFlag`); neden **UNPROVEN**.
-2. **Bekleyen job yalnız tarayıcının yerel kaydıyla bulunuyor.** Taslak ve `livepeer-last-job` yer işareti
-   yoksa (başka tarayıcı/cihaz, silinmiş site verisi) ödenmiş job arayüzden bulunamaz.
-   `lp-524cbcdb-…` bu yüzden kurtarılamadı; 1 Ekim 14:37 UTC'de süresi dolar, kayıp 0,60 test USDC.
-   Kalıcı çözüm üreticinin bekleyen job'unu zincirden veya Bridge'den bulmaktır.
+1. ~~Yenileme sonrası "Your upload" kartı görünmedi.~~ Yerel kayıt olmadan kart ve Resume yukarıdaki
+   kabulde gözlendi; ilk gözlemin nedeni **UNPROVEN** kalır.
+2. ~~Bekleyen job yalnız tarayıcının yerel kaydıyla bulunuyor.~~ #223 ile Bridge ipucu eklendi ve canlıda
+   doğrulandı. Yalnız deploy sonrası relay'ler kayıtlıdır; `lp-524cbcdb-…` kapsam dışıdır (1 Ekim 14:37 UTC'de
+   süresi dolar, kayıp 0,60 test USDC).
 3. **İptal oturum anahtarına bağlı.** "Cancel job (no refund)" yeni sekmede anahtar yoksa çalışmaz.
 4. **Belge/kod uyumsuzluğu:** `near-auth-upload-safety.md`, kodda olmayan `allowUploadKeyReplacement`
    bayrağından söz ediyor.
@@ -55,9 +83,10 @@ yayınlandı (`acceptance`, `catalog_mode=current`; Web `885c6e85`, Bridge `f38f
 
 ## Çalıştırılmayanlar
 
-Yeni sekmede Resume (`replace_upload_key`), iptal, takedown → provider `404`, mobil/Safari ve diğer
+Başka tarayıcı/cihazda Resume (aynı sekmede yerel kayıt silinerek taklit edildi), iptal, takedown → provider `404`, mobil/Safari ve diğer
 tarayıcılar, provider hesabında asset sayısı okuması, yeni yayının katalogda ilk görünme gecikmesi
 (90 s hedefi) — **EXTERNAL_NOT_RUN**.
 
-**Tek sonraki gate:** `YOUTICK_UPLOAD_PENDING_JOB_DISCOVERY` — bulgu 1 ve 2: bekleyen ödenmiş job'u
-yerel kayıttan bağımsız bulmak ve yenileme sonrası kartın görünmesini sağlamak.
+**Tek sonraki gate:** `YOUTICK_UPLOAD_CANCEL_WITHOUT_SESSION_KEY` — bulgu 3: oturum anahtarı olmadan
+bekleyen ödenmiş job'u iptal edebilmek (yalnız `replace_upload_key` sonrası mevcut kurtarma yolunu yeniden
+kullanarak).
