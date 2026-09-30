@@ -161,6 +161,16 @@ const en = {
         ],
         moreFrom: (creator: string) => `More from ${creator}`,
     },
+    creator: {
+        label: 'Creator',
+        screenings: (count: number) => `${count} screenings loaded`,
+        empty: 'No screenings from this creator yet.',
+        unavailable: 'This creator’s catalogue is not available in this environment.',
+        share: 'Copy link',
+        shared: 'Link copied.',
+        shareFailed: 'The link could not be copied.',
+        fullAccount: 'NEAR account',
+    },
     salon: {
         enter: 'Enter the screening room',
         lightsOn: 'Lights on',
@@ -553,6 +563,16 @@ const tr: Messages = {
             { title: 'Erişilebilirlik', body: 'Sağlayıcı kesintisi, askıya alma ya da kaldırma izlemeyi engelleyebilir.' },
         ],
         moreFrom: (creator: string) => `${creator} yapımcısından`,
+    },
+    creator: {
+        label: 'Yapımcı',
+        screenings: (count: number) => `${count} gösterim yüklendi`,
+        empty: 'Bu yapımcının henüz gösterimi yok.',
+        unavailable: 'Bu yapımcının kataloğu bu ortamda kullanılamıyor.',
+        share: 'Bağlantıyı kopyala',
+        shared: 'Bağlantı kopyalandı.',
+        shareFailed: 'Bağlantı kopyalanamadı.',
+        fullAccount: 'NEAR hesabı',
     },
     salon: {
         enter: 'Salona gir',

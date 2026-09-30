@@ -967,3 +967,51 @@ G10 commit'i ayrı onay bekler.
   cihaz; CI; Preview.
 - **Tek sonraki gate:** G11 `SAHNE_CREATOR_PAGE`. G10 commit'i ve G11 başlangıcı ayrı açık onay
   bekler.
+
+## 18. G11 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G10 commit'ini (`a50a504`) ve G11'i onayladı.
+G11 commit'i ayrı onay bekler.
+
+### Yapılan
+
+- `app/c/[account]/page.tsx`: hesap `[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]` ile doğrulanır (bozuk
+  kodlama ve geçersiz hesap 404); runtime kapalıyken `RuntimeClosed`; meta veri yalnız hesap
+  adından üretilir (okuma yok), `canonical: /c/{hesap}`.
+- `components/creator/useCreatorCatalog.ts`: mevcut yapımcı kataloğu — güncel katalog etkinse
+  `useCurrentCatalog(hesap)` (v2), değilse `readMarketCreatorPublicationPage` sayfalaması (v1,
+  12'şer, yoklama yok). İkisi de kapalıysa kaynak "yok" ve sayfa bunu söyler.
+- `components/creator/CreatorView.tsx`: "Yapımcı" etiketi, hesap adı (implicit hesaplar
+  `aaaaaa…beef` biçiminde kısaltılır, tam kimlik altında ve `title` içinde), yüklü gösterim
+  sayısı, en yeniden eskiye kart ızgarası, "Daha fazla göster", yükleniyor/hata/boş/eski veri
+  durumları. Biyografi, avatar veya takipçi gibi olmayan veri gösterilmez.
+- `components/creator/ShareLink.tsx`: kanonik adresi panoya kopyalar; pano engelliyse hata
+  satırı gösterir.
+- `components/creator/creator-account.ts`: hesap deseni, implicit hesap (64 hex, `0x`+40 hex)
+  algısı ve kısaltma.
+
+### Plandan sapmalar ve bulgular
+
+- `lib/i18n/messages.ts` G11 listesinde değildi; `creator` metinleri eklendi.
+- **Gösterim sayfası ve kartlardaki yapımcı adı henüz `/c/…` bağlantısı değil**
+  (`ScreeningView`, `VideoCard` G11 listesi dışında). G17'de veya ilgili ekran gate'inde
+  bağlanmalı.
+- **Bulgu:** bozuk yüzde kodlaması içeren dinamik adresler (`/c/%E0%A4%A`, `/s/%E0%A4%A`)
+  Next'in parametre çözümünde sayfa koduna ulaşmadan 500 döner; statik yollarda 404 döner.
+  Uygulama kodu bunu yakalayamaz; middleware değişikliği ayrı onay ister.
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| Yeni `creator-page.test.ts` | PASS (18): 9 hesap doğrulama örneği, implicit kısaltma, v1 kaynağı ve sıralama, paylaşım ve "Daha fazla", uydurma profil alanı olmaması, v2 kaynağı ve eski veri uyarısı, yükleniyor/hata/boş, kaynak yokken açıklama, implicit başlık ve tam kimlik, geçersiz hesap ve bozuk kodlamada 404, kapalı runtime, meta veri | LOCAL_TEST |
+| `npm test -- --run` | PASS: 47 dosya, 846 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+| Yerel `next start` | `/c/kule.testnet` 200 "kule.testnet \| YouTick"; implicit hesap 200 "aaaaaa…beef \| YouTick"; `/c/Bad%20Account` 404; `/c/%E0%A4%A` 500 (yukarıdaki bulgu) | LOCAL_STATIC |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** gerçek katalog verisiyle yapımcı sayfası, pano izni farklı
+  tarayıcılarda, CI, Preview.
+- **Tek sonraki gate:** G12 `SAHNE_READ_MODEL_ACCOUNT_API`. Read-model tarafıdır (D1 yalnız
+  okuma/indeks); G11 commit'i ve G12 başlangıcı ayrı açık onay bekler.
