@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const navState = vi.hoisted(() => ({
-    pathname: '/discover',
+    pathname: '/',
     accountId: 'creator.testnet' as string | null,
     publicTestnetVideoV1: false,
     balance: { data: undefined as unknown, isError: false },
@@ -66,7 +66,7 @@ async function clickablesOf(component: () => React.ReactNode): Promise<Clickable
     }
 }
 
-const anchor = (html: string, href: string) => html.match(new RegExp(`<a[^>]*href="${href}"[^>]*>`))?.[0] ?? '';
+const anchor = (html: string, href: string) => (html.match(new RegExp(`<a[^>]*href="${href}"[^>]*>`, 'g')) ?? []).join('\n');
 
 const label = (element: Clickable) => element.props['aria-label'] ?? (typeof element.props.children === 'string'
     ? element.props.children
@@ -74,7 +74,7 @@ const label = (element: Clickable) => element.props['aria-label'] ?? (typeof ele
 
 describe('app shell navigation', () => {
     afterEach(() => {
-        Object.assign(navState, { pathname: '/discover', accountId: 'creator.testnet', publicTestnetVideoV1: false,
+        Object.assign(navState, { pathname: '/', accountId: 'creator.testnet', publicTestnetVideoV1: false,
             balance: { data: undefined, isError: false } });
         vi.clearAllMocks();
     });
@@ -83,8 +83,8 @@ describe('app shell navigation', () => {
         expect(NAV_ITEMS.map((item) => item.key)).toEqual(['discover', 'tickets', 'studio']);
         const html = renderToStaticMarkup(React.createElement(Navbar));
         expect(html).toContain('aria-label="Main navigation"');
-        expect(anchor(html, '/discover')).toContain('aria-current="page"');
-        expect(anchor(html, '/upload')).not.toContain('aria-current');
+        expect(anchor(html, '/')).toContain('aria-current="page"');
+        expect(anchor(html, '/studio')).not.toContain('aria-current');
         expect(html).not.toContain('href="/tickets"');
         expect(html).toContain('aria-label="Account menu: creator.testnet"');
         expect(html).toContain('aria-label="Language: English. Switch to Türkçe"');
@@ -92,18 +92,20 @@ describe('app shell navigation', () => {
 
     it('treats nested studio and screening paths as active', () => {
         const studio = NAV_ITEMS.find((item) => item.key === 'studio')!;
-        expect(isNavItemActive(studio, '/profile')).toBe(true);
-        expect(isNavItemActive(studio, '/upload')).toBe(true);
-        expect(isNavItemActive(studio, '/uploader')).toBe(false);
-        expect(isNavItemActive(NAV_ITEMS[0], '/watch')).toBe(true);
+        expect(isNavItemActive(studio, '/studio')).toBe(true);
+        expect(isNavItemActive(studio, '/studio/new')).toBe(true);
+        expect(isNavItemActive(studio, '/studios')).toBe(false);
+        expect(isNavItemActive(NAV_ITEMS[0], '/s/job-1')).toBe(true);
+        expect(isNavItemActive(NAV_ITEMS[0], '/studio')).toBe(false);
     });
 
     it('keeps the landing header for visitors and the app shell elsewhere', () => {
-        expect(usesAppShell('/', null)).toBe(false);
+        // The runtime is open in this suite, so `/` is Discover and the introduction lives at /creators.
+        expect(usesAppShell('/', null)).toBe(true);
+        expect(usesAppShell('/creators', null)).toBe(false);
         expect(usesAppShell('/tr', null)).toBe(false);
-        expect(usesAppShell('/', 'a.testnet')).toBe(true);
-        expect(usesAppShell('/discover', null)).toBe(true);
-        Object.assign(navState, { pathname: '/', accountId: null });
+        expect(usesAppShell('/creators', 'a.testnet')).toBe(true);
+        Object.assign(navState, { pathname: '/creators', accountId: null });
         expect(renderToStaticMarkup(React.createElement(Navbar))).not.toContain('Main navigation');
         expect(renderToStaticMarkup(React.createElement(MobileTabBar))).toBe('');
     });
@@ -118,8 +120,8 @@ describe('app shell navigation', () => {
     it('renders the mobile tab bar with an account tab and a spacer', () => {
         const html = renderToStaticMarkup(React.createElement(MobileTabBar));
         expect(html).toContain('md:hidden');
-        expect(anchor(html, '/discover')).toContain('aria-current="page"');
-        expect(html).toContain('href="/upload"');
+        expect(anchor(html, '/')).toContain('aria-current="page"');
+        expect(html).toContain('href="/studio"');
         expect(html).toContain('aria-haspopup="dialog"');
         expect(html).toContain('>Account</button>');
     });

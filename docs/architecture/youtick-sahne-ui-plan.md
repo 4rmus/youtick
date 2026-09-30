@@ -728,3 +728,71 @@ G6 commit'i ayrı onay bekler.
   (yerelde cüzdan yok); testnet bayrakları açıkken şeridin tarayıcı görünümü (yalnız sunucu
   çıktısı test edildi); ekran okuyucu; CI; Preview.
 - **Tek sonraki gate:** G7 `SAHNE_ROUTES`. G6 commit'i ve G7 başlangıcı ayrı açık onay bekler.
+
+## 14. G7 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G6 commit'ini (`b0de8ec`) ve G7'yi onayladı.
+G7 commit'i ayrı onay bekler.
+
+### Yapılan
+
+- `next.config.ts` kalıcı (308) yönlendirmeler:
+  - `/watch?job=X` → `/s/X`, yalnız `job` geçerli yayın kimliği ise (`has` sorgu koşulu,
+    `[A-Za-z0-9._:-]{1,128}`); geçersiz ya da eksik `job` mevcut `/watch` ekranında kalır.
+  - `/discover` → `/`, `/upload` → `/studio/new`, `/profile` → `/studio`.
+  - Next sorgu dizesini taşır: `/upload?job=X` → `/studio/new?job=X`, yarım iş bağlantısı
+    korunur. `/watch?job=X` hedefi `?job=X` ekini de taşır; zararsızdır.
+- `/`: runtime açıkken (`enablePaidMediaLivepeerV1 || enableDerivedReadModel`) Keşif, kapalıyken
+  tanıtım. Meta veri de buna göre seçilir. `app/discover/*` silindi.
+- `/creators`: tanıtım sayfası (mevcut `LandingPage`), `canonical: '/creators'`.
+- `/s/[id]`: `LivepeerWatch`; geçersiz kimlik 404, runtime kapalıyken `RuntimeClosed`.
+  `generateMetadata` başlık, "yapımcı · fiyat" açıklaması ve Bridge kapağını üretir. Okuma,
+  tarayıcının kullandığı `handleNearRpcRequest` üzerinden süreç içinde yapılır (izin listesi,
+  istek sahibinin IP'sine bağlı hız sınırı, devre kesici), 1,5 sn zaman aşımı vardır; her
+  hatada genel meta veriye düşer.
+- `/studio`: mevcut profil ekranı (`app/profile/page.tsx` yeniden dışa aktarılır; dosya
+  `catalog-refresh.test.ts` tarafından içe aktarıldığı için yerinde kaldı). `/studio/new`:
+  yükleme ekranı (`app/upload/page.tsx` taşındı).
+- `app/not-found.tsx`: G6 "Bulunamadı" ekranı; dönüş `/`.
+- `sitemap.ts`: `''`, `/tr`, `/creators`, `/privacy`, `/terms`.
+- Kabuk: Keşfet `/`, Stüdyo `/studio`; `/creators`, `/tr` ve runtime kapalıyken `/` tanıtım
+  başlığını kullanır.
+- Middleware/CSP değişmedi; `robots.ts` değişmedi.
+
+### Plandan sapmalar
+
+- **`/tickets` ve `/c/[account]` oluşturulmadı.** Bunları gösterecek mevcut bileşen yok; boş
+  sayfa açmak yerine G13 ve G11'e bırakıldı. Biletlerim gezinmede gizli kalır.
+- **`/tr` tanıtım olarak kaldı.** "Dil tercihine taşıma" middleware değişikliği gerektirir;
+  G7 kabulü middleware'i değiştirmeyi yasaklıyor. G16'da ele alınmalı.
+- **İç bağlantılar hâlâ eski adreslerde** (`VideoCard` → `/watch?job=`, `LivepeerWatch` →
+  `/discover`, yükleme formu → `/upload?job=`, landing CTA'ları). Yönlendirmeler sayesinde
+  çalışıyorlar ama bir ek istek maliyeti var. Dosyalar G8, G9, G15, G16 kapsamında güncellenir.
+- G7 listesi dışında değişen dosyalar: `components/shell/nav.ts`, `components/Navbar.tsx`
+  (yeni adresler ve tanıtım yolu), `navbar.test.ts` (yeni adresler), yeni
+  `screening-metadata.test.ts`.
+
+### Riskler
+
+- `/s/[id]` meta veri okuması her sayfa açılışında ve bağlantı önizlemesinde bir RPC okumasıdır.
+  Okuma, market sözleşmesi hesabı için paylaşılan hız sınırı anahtarına da sayılır. Yerelde
+  Cloudflare hız sınırlayıcısı olmadığı için proxy `503` döner ve her zaman genel meta veri
+  gösterilir; gerçek okuma Preview'da doğrulanmalıdır (UNPROVEN).
+- 308 yönlendirmeleri tarayıcılarda kalıcı önbelleğe alınır; geri alma zordur.
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| `next-config.test.ts` | PASS: dört yönlendirme, `job` desenin geçerli/geçersiz örnekleri, statik CSP yok | LOCAL_TEST |
+| `routes.test.ts` | PASS: yeni dosyalar var, `app/discover` ve `app/upload` yok, `/s/[id]` kimlik deseni ve runtime kapısı, bayrak koşulları | LOCAL_TEST |
+| `screening-metadata.test.ts` (yeni) | PASS (7): başlık/açıklama/kapak/canonical, salt-okunur sorgu ve istek sahibinin IP'si, yayın yok / 429 / geçersiz yayın / bozuk yanıt / zaman aşımında genel meta veri | LOCAL_TEST |
+| `npm test -- --run` | PASS: 43 dosya, 752 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+| Yerel `next start` (runtime kapalı) | `/watch?job=job-001` → 308 `/s/job-001?job=job-001`; `/watch?job=../x` ve `/watch` → 200; `/discover` → `/`; `/upload?job=job-9` → `/studio/new?job=job-9`; `/profile` → `/studio`; `/s/job-001` 200 (RuntimeClosed); `/s/bad%20id` ve `/nope` → 404 (Sahne ekranı); sayfa yanıtlarında CSP başlığı var; başlıklar "Studio \| YouTick", "Publish Your Work \| YouTick", "Screening \| YouTick" | LOCAL_STATIC |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** runtime açıkken `/` Keşif ve `/s/[id]` gerçek meta veri okuması;
+  OpenNext/Cloudflare üzerinde yönlendirmeler; CI; Preview.
+- **Tek sonraki gate:** G8 `SAHNE_DISCOVER`. G7 commit'i ve G8 başlangıcı ayrı açık onay bekler.

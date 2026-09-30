@@ -19,7 +19,7 @@ export function Navbar() {
     const locale: LandingLocale = pathname === '/tr' ? 'tr' : 'en';
     const copy = landingCopy[locale];
     const ctas = getLandingCtas(locale, FEATURE_FLAGS.enablePaidMediaLivepeerV1);
-    const landingHome = locale === 'tr' ? '/tr' : '/';
+    const landingHome = locale === 'tr' ? '/tr' : pathname === '/creators' ? '/creators' : '/';
 
     if (!usesAppShell(pathname, accountId)) {
         return (

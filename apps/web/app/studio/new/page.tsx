@@ -1,4 +1,8 @@
-import { Metadata } from 'next';
+import type { Metadata } from 'next';
+import { LivepeerPaidUploadForm } from '@/components/LivepeerPaidUploadForm';
+import { PageShell } from '@/components/PageShell';
+import { RuntimeClosed } from '@/components/RuntimeClosed';
+import { FEATURE_FLAGS } from '@/lib/constants';
 
 export const metadata: Metadata = {
     title: 'Publish Your Work',
@@ -13,10 +17,7 @@ export const metadata: Metadata = {
     },
 };
 
-export default function UploadLayout({
-    children,
-}: {
-    children: React.ReactNode;
-}) {
-    return children;
+export default function StudioNewPage() {
+    if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) return <RuntimeClosed />;
+    return <PageShell><LivepeerPaidUploadForm /></PageShell>;
 }

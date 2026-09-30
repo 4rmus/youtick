@@ -1,16 +1,18 @@
+import { FEATURE_FLAGS } from '@/lib/constants';
+
 export type NavKey = 'discover' | 'tickets' | 'studio';
 
 export type NavItem = {
     key: NavKey;
-    /** null until the route exists; G7 adds /tickets and /studio. */
+    /** null until the route exists; /tickets arrives with G13. */
     href: string | null;
     matches: readonly string[];
 };
 
 export const NAV_ITEMS: readonly NavItem[] = [
-    { key: 'discover', href: '/discover', matches: ['/discover', '/watch'] },
+    { key: 'discover', href: '/', matches: ['/', '/s', '/watch'] },
     { key: 'tickets', href: null, matches: [] },
-    { key: 'studio', href: '/upload', matches: ['/upload', '/profile'] },
+    { key: 'studio', href: '/studio', matches: ['/studio'] },
 ];
 
 export function visibleNavItems(): Array<NavItem & { href: string }> {
@@ -21,7 +23,14 @@ export function isNavItemActive(item: NavItem, pathname: string): boolean {
     return item.matches.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
-/** The landing page keeps its own header for visitors; everyone else gets the app shell. */
+const RUNTIME_OPEN = FEATURE_FLAGS.enablePaidMediaLivepeerV1 || FEATURE_FLAGS.enableDerivedReadModel;
+
+/** Paths that render the introduction page; `/` is Discover once the runtime is open. */
+export function isLandingPath(pathname: string): boolean {
+    return pathname === '/creators' || pathname === '/tr' || (pathname === '/' && !RUNTIME_OPEN);
+}
+
+/** The introduction keeps its own header for visitors; everyone else gets the app shell. */
 export function usesAppShell(pathname: string, accountId: string | null): boolean {
-    return Boolean(accountId) || (pathname !== '/' && pathname !== '/tr');
+    return Boolean(accountId) || !isLandingPath(pathname);
 }
