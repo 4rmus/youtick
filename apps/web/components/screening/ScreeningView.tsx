@@ -77,7 +77,7 @@ export function ScreeningView({ jobId }: { jobId: string }) {
                     <p className="label-caps text-ice">{t.screeningLabel}</p>
                     <h1 className="font-display mt-3 break-words text-6xl leading-[0.86] sm:text-8xl">{publication.title}</h1>
                     <p className="mt-4 text-base text-light-2">
-                        <span className="font-bold text-light">{publication.creator_id}</span> · {t.published(formatPublishedDate(publication.published_at_ms, locale))}
+                        <Link href={`/c/${encodeURIComponent(publication.creator_id)}`} className="font-bold text-light underline-offset-4 hover:text-ice hover:underline">{publication.creator_id}</Link> · {t.published(formatPublishedDate(publication.published_at_ms, locale))}
                     </p>
                     {playable && (
                         <div className="mt-6 flex flex-col items-start gap-3">

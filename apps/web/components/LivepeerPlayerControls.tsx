@@ -61,7 +61,7 @@ export function LivepeerPlayerControls({ language, qualities, quality, onQuality
                 onKeyDownCapture={event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) { setPointerPreview(null); setKeyboardPreview(true); } }}
                 onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardPreview(false); }}>
             {preview && <LivepeerSeekPreview key={previewVttUrl ?? 'time'} time={preview.time} ratio={preview.ratio} token={token} vttUrl={previewVttUrl} />}
-            <Player.Seek aria-label={copy.seek} className="relative flex h-8 w-full touch-none select-none items-center focus-visible:outline-2 focus-visible:outline-ice">
+            <Player.Seek aria-label={copy.seek} className="relative flex h-11 w-full touch-none select-none items-center focus-visible:outline-2 focus-visible:outline-ice">
                 <Player.Track className="relative h-1 grow rounded-full bg-white/30">
                     <Player.SeekBuffer className="absolute h-full rounded-full bg-white/35" />
                     <Player.Range className="absolute h-full rounded-full bg-ice" />

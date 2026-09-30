@@ -372,7 +372,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
 
     return (
         <WalletContext.Provider value={{ accountId, getWallet, signOut, connect, isReady }}>
-            {error && <p role="alert" className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md rounded-lg border border-red-500/40 bg-black p-3 text-sm text-red-300">{error}</p>}
+            {error && <p role="alert" className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md rounded-xs border border-alert bg-alert-deep p-3 text-sm text-alert">{error}</p>}
             {children}
         </WalletContext.Provider>
     );

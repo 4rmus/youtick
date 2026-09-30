@@ -21,13 +21,13 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
 
   return (
     <html lang={locale}>
-      <body className="bg-black">
+      <body className="bg-ink font-sans text-light">
         <div className="min-h-screen flex items-center justify-center px-4">
           <div className="max-w-md w-full text-center">
             <div className="mb-8">
-              <div className="w-20 h-20 mx-auto bg-near-red/10 rounded-full flex items-center justify-center">
+              <div className="mx-auto flex h-20 w-20 items-center justify-center border-2 border-alert">
                 <svg
-                  className="w-10 h-10 text-near-red"
+                  className="h-10 w-10 text-alert"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -42,16 +42,16 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
               </div>
             </div>
 
-            <h1 className="text-3xl font-bold text-white mb-4">
+            <h1 className="font-display mb-4 text-5xl">
               {t.criticalTitle}
             </h1>
 
-            <p className="text-zinc-400 mb-6">
+            <p className="mb-6 text-light-2">
               {t.criticalDescription}
             </p>
 
             {error.digest && (
-              <p className="text-xs text-zinc-500 mb-6">
+              <p className="mb-6 text-xs text-light-3">
                 {t.errorId}{error.digest}
               </p>
             )}
@@ -60,14 +60,14 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
               <button
                 type="button"
                 onClick={reset}
-                className="px-6 py-3 bg-near-green hover:bg-near-green/80 text-near-black font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
+                className="min-h-12 rounded-xs bg-light px-6 py-3 font-extrabold text-ink transition-colors hover:bg-light-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ice"
               >
                 {t.retry}
               </button>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
+                className="min-h-12 rounded-xs border border-light/40 px-6 py-3 font-semibold text-light transition-colors hover:bg-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ice"
               >
                 {t.refresh}
               </button>

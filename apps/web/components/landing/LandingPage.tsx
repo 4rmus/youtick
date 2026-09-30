@@ -225,19 +225,19 @@ export function LandingPage({ locale, enabled }: Props) {
                 </div>
             </section>
 
-            <footer className="border-t border-white/10 bg-black py-14">
+            <footer className="border-t border-line bg-ink py-14">
                 <div className="container mx-auto flex flex-col gap-10 px-4 md:flex-row md:items-end md:justify-between">
                     <div>
-                        <Link href={landingHomePath(locale, RUNTIME_OPEN)} className="font-logo text-2xl">YOUTICK</Link>
+                        <Link href={landingHomePath(locale, RUNTIME_OPEN)} className="font-logo inline-flex min-h-11 items-center text-2xl">YOUTICK</Link>
                         <p className="mt-3 max-w-sm text-sm leading-relaxed text-light-3">{copy.footer.description}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-5 gap-y-3 text-sm text-light-3">
-                        <a href="https://livepeer.org" target="_blank" rel="noreferrer" className="hover:text-white">Livepeer</a>
-                        <a href="https://near.org" target="_blank" rel="noreferrer" className="hover:text-white">NEAR</a>
-                        <a href="https://github.com/4rmus/youtick" target="_blank" rel="noreferrer" aria-label="GitHub" className="hover:text-white"><Github aria-hidden="true" className="h-5 w-5" /></a>
-                        <Link href="/privacy" className="hover:text-white">{copy.footer.privacy}</Link>
-                        <Link href="/terms" className="hover:text-white">{copy.footer.terms}</Link>
-                        <a href="mailto:contact@youtick.net" className="hover:text-white">{copy.footer.support}</a>
+                        <a href="https://livepeer.org" target="_blank" rel="noreferrer" className="inline-flex min-h-11 min-w-11 items-center hover:text-light">Livepeer</a>
+                        <a href="https://near.org" target="_blank" rel="noreferrer" className="inline-flex min-h-11 min-w-11 items-center hover:text-light">NEAR</a>
+                        <a href="https://github.com/4rmus/youtick" target="_blank" rel="noreferrer" aria-label="GitHub" className="inline-flex min-h-11 min-w-11 items-center hover:text-light"><Github aria-hidden="true" className="h-5 w-5" /></a>
+                        <Link href="/privacy" className="inline-flex min-h-11 min-w-11 items-center hover:text-light">{copy.footer.privacy}</Link>
+                        <Link href="/terms" className="inline-flex min-h-11 min-w-11 items-center hover:text-light">{copy.footer.terms}</Link>
+                        <a href="mailto:contact@youtick.net" className="inline-flex min-h-11 min-w-11 items-center hover:text-light">{copy.footer.support}</a>
                     </div>
                 </div>
             </footer>

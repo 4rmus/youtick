@@ -43,7 +43,7 @@ export function ROICalculator({ locale, copy }: Props) {
                                     setTicketPrice(Number(preset.price));
                                     setTicketCount(preset.sales);
                                 }}
-                                className={`rounded-xs border px-4 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ice ${active ? 'border-ice/50 bg-ice/10 text-ice' : 'border-white/10 bg-panel text-light-2 hover:border-white/40 hover:text-white'}`}
+                                className={`min-h-11 rounded-xs border px-4 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ice ${active ? 'border-ice/50 bg-ice/10 text-ice' : 'border-white/10 bg-panel text-light-2 hover:border-white/40 hover:text-white'}`}
                             >
                                 {preset.label}
                             </button>
@@ -68,7 +68,7 @@ export function ROICalculator({ locale, copy }: Props) {
                                 onChange={(event) => setTicketPrice(Number(event.target.value))}
                                 className="landing-range h-2 w-full cursor-pointer appearance-none rounded-xs bg-raised accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ice"
                             />
-                            <div className="mt-1 flex justify-between text-xs text-edge"><span>2 USDC</span><span>100 USDC</span></div>
+                            <div className="mt-1 flex justify-between text-xs text-light-3"><span>2 USDC</span><span>100 USDC</span></div>
                         </div>
 
                         <div className="mb-8">
@@ -87,7 +87,7 @@ export function ROICalculator({ locale, copy }: Props) {
                                 onChange={(event) => setTicketCount(Number(event.target.value))}
                                 className="landing-range h-2 w-full cursor-pointer appearance-none rounded-xs bg-raised accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ice"
                             />
-                            <div className="mt-1 flex justify-between text-xs text-edge"><span>10</span><span>{(5000).toLocaleString(numberLocale)}</span></div>
+                            <div className="mt-1 flex justify-between text-xs text-light-3"><span>10</span><span>{(5000).toLocaleString(numberLocale)}</span></div>
                         </div>
 
                         <div className="rounded-xs border border-white/10 bg-black p-4">

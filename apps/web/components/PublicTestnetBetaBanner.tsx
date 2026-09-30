@@ -49,7 +49,7 @@ function TestnetStrip({ label, limits, termsLabel, status }: { label: string; li
                 <strong className="text-[11px] font-bold uppercase tracking-[0.14em] text-light">{label}</strong>
                 <span>{t.noValue}</span>
                 {status && <span>· {status}</span>}
-                <Link className="inline-flex min-h-11 items-center text-light underline underline-offset-4 hover:text-ice sm:min-h-8" href="/terms">{termsLabel}</Link>
+                <Link className="inline-flex min-h-11 items-center text-light underline underline-offset-4 hover:text-ice" href="/terms">{termsLabel}</Link>
             </p>
             <p className="text-xs text-light-3"><span className="sr-only">{t.limitsTitle}: </span>{limits}</p>
         </aside>

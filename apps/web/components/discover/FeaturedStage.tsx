@@ -71,7 +71,7 @@ export function FeaturedStage({ publications }: { publications: readonly Livepee
                     <p className="label-caps text-ice">{t.featured} · {pad(index + 1)} / {pad(publications.length)}</p>
                     <h2 className="font-display break-words text-6xl leading-[0.86] sm:text-8xl lg:text-[150px]">{current.title}</h2>
                     <p className="text-base text-light-2 sm:text-lg">
-                        <span className="font-bold text-light">{current.creator_id}</span> · {formatPublishedDate(current.published_at_ms, locale)}
+                        <Link href={`/c/${encodeURIComponent(current.creator_id)}`} className="font-bold text-light underline-offset-4 hover:text-ice hover:underline">{current.creator_id}</Link> · {formatPublishedDate(current.published_at_ms, locale)}
                     </p>
                     {FEATURE_FLAGS.enablePaidMediaLivepeerV1 && (
                         <div className="flex flex-wrap gap-3">

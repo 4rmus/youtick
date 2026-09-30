@@ -1270,3 +1270,47 @@ onay bekler.
   CI, Preview.
 - **Tek sonraki gate:** G17 `SAHNE_A11Y_MOBILE`. G16 commit'i ve G17 başlangıcı ayrı açık onay
   bekler.
+
+## 24. G17 kaydı — 30 Eylül 2026
+
+**Sonuç: PASS.** Kullanıcı G16 commit'ini (`9f05241`) ve G17'yi onayladı. G17 commit'i ayrı
+onay bekler.
+
+### Bulunan ve düzeltilenler
+
+- **Dokunma hedefi < 44 px:** oynatıcı arama çubuğu 32 → 44 px; ödeme paneli varlık seçimi
+  40 → 44 px; testnet şeridindeki Koşullar bağlantısı masaüstünde 32 px'ti; tanıtım hesaplayıcı
+  ön ayarları 38 px; tanıtım alt bilgi bağlantıları ve logosu 20–26 px; landing başlık bağlantıları;
+  Koşullar/Gizlilik "Ana sayfa" bağlantısı.
+- **Kontrast:** tanıtım kaydırıcı uç etiketleri 3,5:1'di (G16'da `zinc-600` → `edge` eşlemesi metin
+  için yetersizdi) → `light-3`.
+- **Eski palet kalıntıları** Sahne token'larına geçti: `app/error.tsx`, `app/global-error.tsx`
+  (odak halkası dahil), Koşullar/Gizlilik (metin aynen), landing ziyaretçi başlığı
+  (`Navbar.tsx`, G16'dan kalan), cüzdan hata balonu, `MultiAssetPaymentPanel` (alanlar ve mantık
+  aynı).
+- **Odak:** üst bar gezinme bağlantıları ve logolar tarayıcı varsayılanı yerine açık `ice`
+  halkası kullanır.
+- **G11 notu kapandı:** gösterim sahnesindeki ve öne çıkan alandaki yapımcı adı `/c/…`
+  bağlantısıdır (kartların tamamı zaten bağlantı olduğu için kartlarda iç içe bağlantı yok).
+- Yeni `a11y-static.test.ts`: odak çizgisini karşılıksız kaldıran sınıf, 44 px altı kontrol ve eski
+  palet kullanımı için regresyon koruması; azaltılmış hareket CSS kuralının varlığı.
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| Yerel tarayıcı denetimi (ücretli medya açık yerel build; NEAR proxy'si yerelde 503, dış istek yok), 390 px: `/`, `/creators`, `/s/job-001`, `/studio`, `/studio/new`, `/tickets`, `/c/kule.testnet`, `/terms`, `/privacy` | Düzeltmelerden sonra hepsinde yatay taşma 0, 44 px altı etkileşimli öğe 0, WCAG AA altı metin kontrastı 0 (satır içi metin bağlantıları hariç tutuldu) | LOCAL_STATIC |
+| 1440 px: `/creators` | Taşma 0, küçük hedef 0 | LOCAL_STATIC |
+| Klavye (gerçek Tab tuşu) | Odak sırası mantıklı; odaklanan her öğede görünür halka (düğmelerde 2 px `#8FD3FF`) | LOCAL_STATIC |
+| Diyaloglar | Yerel `<dialog>`: odak içeride, Escape kapatır, odak açana döner (G6, G10'da tarayıcıda doğrulandı; kod değişmedi) | LOCAL_STATIC |
+| Azaltılmış hareket | Genel CSS kuralı + `FeaturedStage` ve salon geçişi (`motion-safe`) birim testli | LOCAL_TEST |
+| `a11y-static.test.ts`, `tokens.test.ts` (kontrast) | PASS | LOCAL_TEST |
+| `npm test -- --run` | PASS: 52 dosya, 936 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+| `player-browser-check`, `player-device-browser-check`, `device-session-browser-check` | PASS (arama çubuğu yüksekliği değişikliğinden sonra) | LOCAL_TEST |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** ekran okuyucu (VoiceOver/NVDA) turu; bağlı cüzdanla ve gerçek veriyle
+  dolu ekranların denetimi; Safari ve fiziksel cihaz; CI; Preview.
+- **Tek sonraki gate:** G18 `SAHNE_CLEANUP`. G17 commit'i ve G18 başlangıcı ayrı açık onay bekler.
