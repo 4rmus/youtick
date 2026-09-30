@@ -139,6 +139,21 @@ describe('upload status after closing its tab', () => {
         expect(html).not.toContain('<button');
     });
 
+    it('offers to abandon only a paid job that is still waiting for its file', () => {
+        const onAbandon = vi.fn();
+        const card = () => renderToStaticMarkup(React.createElement(LivepeerUploadStatus, {
+            accountId: 'creator.testnet', jobId: 'job-001', onAbandon,
+        }));
+        state.query.data = { ...progress, job: { ...progress.job, status: 'Authorized', expected_source_bytes: '1000' } };
+        expect(card()).toContain('Abandon this paid upload (no refund)');
+        expect(render()).not.toContain('Abandon this paid upload');
+        state.query.data = { ...progress, job: { ...progress.job, status: 'Authorized' }, expired: true };
+        expect(card()).not.toContain('Abandon');
+        state.query.data = { ...progress, job: { ...progress.job, status: 'Published' }, publication: { publication_id: 'job-001' } };
+        expect(card()).not.toContain('Abandon');
+        expect(uploadErrorMessage(new Error('livepeer_abandon_unavailable'), false)).toContain('could not save your choice');
+    });
+
     it('opens a confirmed publication and explains deadline expiry', () => {
         state.query.data = { ...progress, publication: { publication_id: 'job-001' } };
         expect(render()).toContain('/watch?job=job-001');

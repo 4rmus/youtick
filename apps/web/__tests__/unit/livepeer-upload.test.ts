@@ -71,6 +71,7 @@ vi.mock('@/lib/constants', () => ({
 }));
 
 import {
+    abandonLivepeerUploadJob,
     assertLivepeerUploadDraftReady,
     advanceLivepeerUploadDraftStage,
     authorizeLivepeerPaidJob,
@@ -81,6 +82,7 @@ import {
     findPendingLivepeerUpload,
     fingerprintLivepeerSource,
     heartbeatLivepeerUploadLease,
+    isLivepeerUploadJobAbandoned,
     parseLivepeerPriceUsdc,
     preflightLivepeerUpload,
     prepareCreatorFeePaymentOptions,
@@ -332,6 +334,41 @@ describe('Livepeer browser upload', () => {
         await publicResumeFixture();
         near.viewContract.mockImplementation(async () => null);
         await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toBeNull();
+    });
+
+    it('lets the creator abandon a paid job so a new upload can start', async () => {
+        const { file, job } = await publicResumeFixture();
+        rememberLivepeerUploadJob('creator.testnet', job.job_id);
+        const bridge = vi.fn().mockResolvedValue(Response.json({
+            schema: 'youtick.creator-pending-upload.v1', creator_id: 'creator.testnet', job_id: job.job_id,
+        }));
+        vi.stubGlobal('fetch', bridge);
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toMatchObject({ jobId: 'job-001' });
+        abandonLivepeerUploadJob('creator.testnet', job.job_id);
+        expect(isLivepeerUploadJobAbandoned('creator.testnet', job.job_id)).toBe(true);
+        expect(await readLivepeerUploadDraft('creator.testnet', file)).toBeNull();
+        expect(readRememberedLivepeerUploadJob('creator.testnet')).toBeNull();
+        // The Bridge still reports the job and NEAR still has it Authorized; neither revives it.
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toBeNull();
+        expect(bridge).toHaveBeenCalled();
+        await expect(matchPendingLivepeerUpload('creator.testnet', file)).resolves.toEqual({ draft: null, pending: null });
+        const other = new File(['other-source'], 'other.mp4', { type: 'video/mp4', lastModified: 456 });
+        const otherFingerprint = await fingerprintLivepeerSource(other);
+        expect(() => writeLivepeerUploadDraft('creator.testnet', {
+            schema: 'youtick.livepeer-ui-draft.v2', stage: 'payment_pending', jobId: 'job-002', title: 'Other', price: '2.00',
+            sourceBytes: other.size, sourceName: other.name, sourceLastModified: other.lastModified,
+            sourceFingerprintSha256: otherFingerprint,
+        })).not.toThrow();
+        expect(isLivepeerUploadJobAbandoned('other.testnet', job.job_id)).toBe(false);
+    });
+
+    it('does not release a paid job when the abandon choice cannot be stored', async () => {
+        const { file, job } = await publicResumeFixture();
+        const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('QuotaExceededError'); });
+        expect(() => abandonLivepeerUploadJob('creator.testnet', job.job_id)).toThrow('livepeer_abandon_unavailable');
+        setItem.mockRestore();
+        expect(isLivepeerUploadJobAbandoned('creator.testnet', job.job_id)).toBe(false);
+        expect((await readLivepeerUploadDraft('creator.testnet', file))?.jobId).toBe('job-001');
     });
 
     it('keeps the paid draft when the pending job cannot be read', async () => {
