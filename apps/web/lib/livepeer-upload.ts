@@ -299,10 +299,19 @@ export function assertLivepeerUploadDraftReady(accountId: string, jobId: string)
     if (requireStoredUploadDraft(accountId, jobId).paymentAttempted) throw new Error('livepeer_payment_pending');
 }
 
+function isPaidUploadDraft(draft: LivepeerUploadDraft): boolean {
+    return Boolean(draft.paymentAttempted || draft.keyReplacementPending) || draft.stage !== 'payment_pending';
+}
+
 export function writeLivepeerUploadDraft(accountId: string, draft: LivepeerUploadDraft): void {
     validateJobSessionIdentity(accountId, draft.jobId);
     if (!isLivepeerUploadDraft(draft)) throw new Error('invalid_livepeer_draft');
     const previous = readStoredUploadDraft(accountId);
+    // The only local recovery record of a paid job must not be replaced by another job's draft.
+    // Only V1 releases settled jobs through findPendingLivepeerUpload, so only V1 enforces this.
+    if (FEATURE_FLAGS.publicTestnetVideoV1 && previous && previous.jobId !== draft.jobId && isPaidUploadDraft(previous)) {
+        throw new Error('livepeer_pending_upload_exists');
+    }
     const existing = previous?.jobId === draft.jobId
         && previous.sourceFingerprintSha256 === draft.sourceFingerprintSha256 ? previous : null;
     const stage = existing && LIVEPEER_RECOVERY_STAGE_ORDER[existing.stage] > LIVEPEER_RECOVERY_STAGE_ORDER[draft.stage]
@@ -336,6 +345,79 @@ export async function readLivepeerUploadDraft(accountId: string, file: File): Pr
     return draft.sourceBytes === file.size && draft.sourceName === file.name
         && draft.sourceLastModified === file.lastModified
         && draft.sourceFingerprintSha256 === await fingerprintLivepeerSource(file) ? draft : null;
+}
+
+export type PendingLivepeerUpload = {
+    jobId: string;
+    title: string;
+    priceUsdc: string;
+    sourceBytes: number;
+    sourceName?: string;
+    deadlineAtMs?: number;
+};
+
+// Finds a paid job for this account that can still be uploaded. Settled jobs release the local record.
+export async function findPendingLivepeerUpload(accountId: string): Promise<PendingLivepeerUpload | null> {
+    const stored = readStoredUploadDraft(accountId);
+    const draft = stored && isPaidUploadDraft(stored) ? stored : null;
+    const jobId = draft?.jobId ?? readRememberedLivepeerUploadJob(accountId);
+    if (!jobId) return null;
+    let progress: Awaited<ReturnType<typeof readLivepeerUploadProgress>>;
+    try {
+        progress = await readLivepeerUploadProgress(jobId, accountId);
+    } catch (error) {
+        if (!(error instanceof Error) || !['livepeer_job_missing', 'livepeer_job_creator_mismatch'].includes(error.message)) {
+            throw error;
+        }
+        if (draft) clearLivepeerUploadDraft(accountId);
+        return null;
+    }
+    if (progress.publication || progress.expired || progress.job.status !== 'Authorized') {
+        if (draft) clearLivepeerUploadDraft(accountId);
+        return null;
+    }
+    return {
+        jobId,
+        title: progress.job.title ?? '',
+        priceUsdc: progress.job.price_usdc ?? '',
+        sourceBytes: Number(progress.job.expected_source_bytes ?? 0),
+        ...(draft?.jobId === jobId ? { sourceName: draft.sourceName } : {}),
+        ...(progress.deadlineAtMs ? { deadlineAtMs: progress.deadlineAtMs } : {}),
+    };
+}
+
+// Matches a selected file to the pending paid job. When the local record was lost, it is rebuilt
+// from the on-chain job (title, price, size) so the existing resume flow can reuse the same job.
+export async function matchPendingLivepeerUpload(accountId: string, file: File): Promise<{
+    draft: LivepeerUploadDraft | null;
+    pending: PendingLivepeerUpload | null;
+}> {
+    const pending = await findPendingLivepeerUpload(accountId);
+    if (!pending || file.size !== pending.sourceBytes || !pending.title || !/^[0-9]+$/.test(pending.priceUsdc)) {
+        return { draft: null, pending };
+    }
+    const stored = readStoredUploadDraft(accountId);
+    if (stored?.jobId === pending.jobId) {
+        return { draft: await readLivepeerUploadDraft(accountId, file), pending };
+    }
+    writeLivepeerUploadDraft(accountId, {
+        schema: 'youtick.livepeer-ui-draft.v2',
+        stage: 'authorized',
+        paymentAttempted: true,
+        jobId: pending.jobId,
+        title: pending.title,
+        price: formatPriceUsdc(pending.priceUsdc),
+        sourceBytes: file.size,
+        sourceName: file.name,
+        sourceLastModified: file.lastModified,
+        sourceFingerprintSha256: await fingerprintLivepeerSource(file),
+    });
+    return { draft: await readLivepeerUploadDraft(accountId, file), pending };
+}
+
+function formatPriceUsdc(micro: string): string {
+    const amount = BigInt(micro);
+    return `${amount / 1_000_000n}.${(amount % 1_000_000n).toString().padStart(6, '0')}`;
 }
 
 export function clearLivepeerUploadDraft(accountId: string): void {

@@ -78,6 +78,7 @@ import {
     clearLivepeerJobSessionKey,
     clearLivepeerUploadDraft,
     configuredCreatorFeeGasReserveYocto,
+    findPendingLivepeerUpload,
     fingerprintLivepeerSource,
     heartbeatLivepeerUploadLease,
     parseLivepeerPriceUsdc,
@@ -85,6 +86,7 @@ import {
     prepareCreatorFeePaymentOptions,
     prepareLivepeerUploadResume,
     livepeerUploadFeeUsdc,
+    matchPendingLivepeerUpload,
     requestLivepeerUploadIntent,
     requestNearCreatorFeeQuote,
     readLivepeerUploadDraft,
@@ -278,6 +280,64 @@ describe('Livepeer browser upload', () => {
         const saved = Array.from({ length: localStorage.length }, (_, i) => localStorage.getItem(localStorage.key(i)!));
         expect(JSON.stringify(saved)).not.toMatch(/ed25519:|tus_endpoint|secretKey|signedDelegate|origin.livepeer/);
         expect(await readLivepeerUploadDraft('other.testnet', file)).toBeNull();
+    });
+
+    it('keeps a paid draft when another file tries to start a new job', async () => {
+        const { file } = await publicResumeFixture();
+        const other = new File(['other-source'], 'other.mp4', { type: 'video/mp4', lastModified: 456 });
+        const otherFingerprint = await fingerprintLivepeerSource(other);
+        expect(() => writeLivepeerUploadDraft('creator.testnet', {
+            schema: 'youtick.livepeer-ui-draft.v2', stage: 'payment_pending', jobId: 'job-002', title: 'Other', price: '2.00',
+            sourceBytes: other.size, sourceName: other.name, sourceLastModified: other.lastModified,
+            sourceFingerprintSha256: otherFingerprint,
+        })).toThrow('livepeer_pending_upload_exists');
+        expect((await readLivepeerUploadDraft('creator.testnet', file))?.jobId).toBe('job-001');
+        await expect(matchPendingLivepeerUpload('creator.testnet', other)).resolves.toEqual({
+            draft: null,
+            pending: expect.objectContaining({ jobId: 'job-001', title: 'Paid video', sourceBytes: file.size, sourceName: file.name }),
+        });
+    });
+
+    it('rebuilds a lost draft from the paid job and resumes it without a second payment', async () => {
+        const { file, job, wallet, fetchMock, input } = await publicResumeFixture();
+        const other = new File(['a-different-source'], 'other.mp4', { type: 'video/mp4', lastModified: 456 });
+        clearLivepeerUploadDraft('creator.testnet');
+        writeLivepeerUploadDraft('creator.testnet', {
+            schema: 'youtick.livepeer-ui-draft.v2', stage: 'payment_pending', jobId: 'job-002', title: 'Other', price: '2.00',
+            sourceBytes: other.size, sourceName: other.name, sourceLastModified: other.lastModified,
+            sourceFingerprintSha256: await fingerprintLivepeerSource(other),
+        });
+        rememberLivepeerUploadJob('creator.testnet', job.job_id);
+        expect(await readLivepeerUploadDraft('creator.testnet', file)).toBeNull();
+        const { draft, pending } = await matchPendingLivepeerUpload('creator.testnet', file);
+        expect(pending?.jobId).toBe('job-001');
+        expect(draft).toMatchObject({ jobId: 'job-001', stage: 'authorized', paymentAttempted: true, title: 'Paid video', price: '2.000001' });
+        await expect(prepareLivepeerUploadResume(wallet as never, input)).resolves.toMatchObject({ created: false });
+        expect(wallet.signAndSendTransaction).toHaveBeenCalledOnce();
+        expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).body.recovery).toBe('resume');
+    });
+
+    it('releases a published, expired or missing job so a new upload can start', async () => {
+        const { job } = await publicResumeFixture();
+        job.status = 'Published';
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toBeNull();
+        expect(localStorage.length).toBe(0);
+        await publicResumeFixture();
+        job.status = 'Authorized';
+        job.created_at_ms = Date.now() - 86_400_001;
+        near.viewContract.mockImplementation(async (_provider, _contract, method) => method === 'get_media_job' ? job : null);
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toBeNull();
+        await publicResumeFixture();
+        near.viewContract.mockImplementation(async () => null);
+        await expect(findPendingLivepeerUpload('creator.testnet')).resolves.toBeNull();
+    });
+
+    it('keeps the paid draft when the pending job cannot be read', async () => {
+        const { file } = await publicResumeFixture();
+        near.viewContract.mockRejectedValue(new Error('rpc_unavailable'));
+        await expect(findPendingLivepeerUpload('creator.testnet')).rejects.toThrow('rpc_unavailable');
+        expect((await readLivepeerUploadDraft('creator.testnet', file))?.jobId).toBe('job-001');
     });
 
     it('keeps an expired session while an upload-intent read fails', async () => {
