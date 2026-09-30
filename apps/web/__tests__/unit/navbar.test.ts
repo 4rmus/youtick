@@ -85,7 +85,7 @@ describe('app shell navigation', () => {
         expect(html).toContain('aria-label="Main navigation"');
         expect(anchor(html, '/')).toContain('aria-current="page"');
         expect(anchor(html, '/studio')).not.toContain('aria-current');
-        expect(html).not.toContain('href="/tickets"');
+        expect(anchor(html, '/tickets')).not.toContain('aria-current');
         expect(html).toContain('aria-label="Account menu: creator.testnet"');
         expect(html).toContain('aria-label="Language: English. Switch to Türkçe"');
     });

@@ -1071,3 +1071,52 @@ G12 commit'i ayrı onay bekler. D1 migration uygulaması ve Worker deploy'u yap�
   sorgu süresi ve plan, CI, Preview. Bunlar ayrı onaylı release gate'idir (EXTERNAL_NOT_RUN).
 - **Açık karar:** K7 (hesap görünümlerinin açılması) ve K2 (gecikme gösterimi).
 - **Tek sonraki gate:** G13 `SAHNE_TICKETS`. G12 commit'i ve G13 başlangıcı ayrı açık onay bekler.
+
+## 20. G13 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G12 commit'ini (`2ac9266`) ve G13'ü onayladı.
+G13 commit'i ayrı onay bekler.
+
+### Yapılan
+
+- `app/tickets/page.tsx`: runtime kapısı (`enablePaidMediaLivepeerV1 || enableDerivedReadModel`),
+  arama motorlarına kapalı (`noindex`).
+- `components/tickets/TicketsView.tsx`:
+  - Cüzdan yoksa ücretsiz bağlanma çağrısı.
+  - `NEXT_PUBLIC_ENABLE_ACCOUNT_READ_MODEL` kapalıyken bilgilendirici durum ("liste henüz açık
+    değil; aldığın gösterimi Keşfet'ten aç, erişim NEAR'dan doğrulanır").
+  - Açıkken `readAccountTickets` sayfaları; "Liste … itibarıyla güncel" satırı `indexed_at_ms`'ten
+    (K2 önerisi: gecikebilir, erişim açılışta NEAR'dan doğrulanır). Yükleniyor/hata/boş/daha fazla.
+  - "İzlemeye devam": bu cihazın `watch-progress` kaydından, en son izlenen 3 izlenebilir bilet,
+    konum/süre ve ilerleme çizgisi.
+  - Bilet durumu `availability`'den: izlenebilir, satış durdu · izlenebilir, kaldırıldı ·
+    izlenemez (kaldırılanlar bağlantısız). Yayın satırı yoksa kimlik ve "bilgi henüz yok".
+- `components/tickets/useWatchPositions.ts`: kayıtları yalnız okur ve her birini kapatır;
+  soğuk sayfada `watch-progress`'in istediği oturum revizyonu için en fazla bir
+  `getDeviceSession` çağrısı yapar. Kaldırılan ve bilgisi olmayan biletler okunmaz.
+- `components/tickets/ThisDevice.tsx`: yalnız bu cihaz (K3): genel testnet yetkilendiricisinde
+  `useDeviceStatus` (G10), diğer durumda güvenli depolama hazırlığı. Başka cihaz/yuva yok.
+- Gezinme: Biletlerim artık görünür (`/tickets`).
+
+### Plandan sapmalar
+
+- G13 listesinde olmayanlar: `lib/i18n/messages.ts` (`tickets` metinleri),
+  `components/shell/nav.ts` (Biletlerim adresi), `navbar.test.ts` (Biletlerim artık bağlantı).
+- Hesap okuma bayrağı hâlâ `lib/market-read-model.ts` içinde (G12); `FEATURE_FLAGS`'e taşınmadı.
+- Tarayıcıda görsel kontrol yapılmadı (runtime ve hesap görünümleri yerelde kapalı; kabul
+  kanıtı LOCAL_TEST).
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| Yeni `tickets-view.test.ts` | PASS (15): üç durum eşlemesi, izlemeye devam seçimi ve sırası, misafir, bayrak kapalı bilgilendirme, liste + durum etiketleri + bağlantılar + tazelik + devam satırı (`12:34 of 1:20:00`), yükleniyor/hata/boş, yalnız bu cihazın üç durumu, konum okumanın yalnız izlenebilir biletlerde yapılıp kapatılması ve revizyon biliniyorsa oturumun yeniden okunmaması | LOCAL_TEST |
+| `navbar.test.ts` | PASS | LOCAL_TEST |
+| `npm test -- --run` | PASS: 49 dosya, 879 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** gerçek hesap görünümü verisi (G12 uçları kapalı, K7), gerçek cihaz
+  kaydı ve `watch-progress` içeriğiyle tarayıcı kontrolü, CI, Preview.
+- **Tek sonraki gate:** G14 `SAHNE_STUDIO`. G13 commit'i ve G14 başlangıcı ayrı açık onay bekler.

@@ -4,14 +4,14 @@ export type NavKey = 'discover' | 'tickets' | 'studio';
 
 export type NavItem = {
     key: NavKey;
-    /** null until the route exists; /tickets arrives with G13. */
+    /** null hides an item whose route does not exist yet. */
     href: string | null;
     matches: readonly string[];
 };
 
 export const NAV_ITEMS: readonly NavItem[] = [
     { key: 'discover', href: '/', matches: ['/', '/s', '/watch'] },
-    { key: 'tickets', href: null, matches: [] },
+    { key: 'tickets', href: '/tickets', matches: ['/tickets'] },
     { key: 'studio', href: '/studio', matches: ['/studio'] },
 ];
 
