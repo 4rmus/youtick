@@ -17,6 +17,7 @@ const ACTIVE_UI_FILES = [
     'components/landing/landing-copy.ts',
     'features/checkout/conversion-checkout.ts',
     'features/checkout/ticket-checkout.ts',
+    'features/upload/upload-job.ts',
 ];
 
 describe('active UI copy', () => {

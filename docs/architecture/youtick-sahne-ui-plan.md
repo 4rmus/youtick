@@ -140,6 +140,7 @@ adım işaretlerini (`TicketPurchaseStep`) kullanır.
 - **Kanıt:** LOCAL_TEST.
 
 #### G3 · `SAHNE_HEADLESS_UPLOAD` (Büyük)
+Durum: tamamlandı; sonuç §10'da.
 - **Amaç:** Yükleme akışını arayüzden ayırmak ve sihirbazın ihtiyaç duyduğu görünüm modelini üretmek.
 - **Değişebilir:** `components/LivepeerPaidUploadForm.tsx`, yeni `features/upload/*`,
   yeni `__tests__/unit/upload-job.test.ts`.
@@ -495,3 +496,47 @@ düzeltilmedi ve testte açıkça kayıtlı. G9'da gişe barı tasarlanırken d�
 - **Çalıştırılmayanlar:** tarayıcı kontrol betikleri (oynatıcı ve cihaz kodu değişmedi);
   gerçek cüzdan veya ödeme; CI; Preview.
 - **Tek sonraki gate:** G3 `SAHNE_HEADLESS_UPLOAD`. G2 commit'i ve G3 başlangıcı ayrı açık onay bekler.
+
+G2, kullanıcı onayıyla `2a2d6bd` olarak commit edildi.
+
+## 10. G3 kaydı — 30 Eylül 2026
+
+**Sonuç: PASS.** Kullanıcı G3'ü onayladı. Commit bu gate'te yapılmadı; ayrı onay bekler.
+
+### Yapılan
+
+- `features/upload/upload-job.ts` (saf):
+  - Adım etiketleri ve `UploadStage` tablosu; adım durumları (`uploadStepStates`).
+  - `getLivepeerPublicationView`.
+  - Yükleme checkout eşleşmesi (`findMatchingUploadCheckout`).
+  - Yüzde kuralı, kayan 10 sn pencereli hız ve kalan süre (`recordTransferSample`, `transferStats`).
+  - Biçimlendiriciler, kaynak boyut sınırı, dosya ve yükleme hata metinleri.
+- `features/upload/useUploadJob.ts`: formun tüm durumu, dört efekti, yayın yoklaması ve
+  `selectFile`, `preparePayment`, `start`, `transfer`, `resume`, `cancel` aksiyonları.
+  - `React.useState` çağrı sırası korunur, çünkü mevcut test buna dayanır. Tek yeni durum
+    (hız örnekleri) en sonda.
+  - Hız örnekleri mevcut `onProgress` geri çağrısından alınır; yeni ağ çağrısı yok.
+- `components/LivepeerPaidUploadForm.tsx` yalnız görüntüleme yapar. `LivepeerUploadStatus`
+  bu dosyada kalır. `getLivepeerPublicationView` ve `uploadErrorMessage` buradan yeniden
+  dışa aktarılır.
+- Değişmeyenler: `transitionUploadStage`, taslak şeması, compact yükleme yolu ve `lib/*`.
+
+### Doğrulama
+
+Hepsi LOCAL_TEST; ortam G1 ile aynı.
+
+| Kontrol | Sonuç |
+|---|---|
+| Yeni `upload-job.test.ts` | PASS: 10 aşama × 6 hata adımında orijinal adım göstergesiyle eşitlik, checkout eşleşmesi (8 durum), yüzde, hız/kalan süre ve devam edilen yüklemede pencerenin sıfırlanması, biçimlendiriciler, bayrağa bağlı boyut sınırı ve hata metinleri |
+| Değiştirilmemiş yükleme testleri (`livepeer-upload-status`, `livepeer-upload`, `livepeer-upload-state`, `compact-upload`) | PASS |
+| Geçici eski/yeni HTML karşılaştırması | PASS: 16 senaryoda birebir aynı (boş form, cüzdansız, geçersiz dosya, hazır, ön kontrol, ödeme seçenekleri, sponsor teklifi, ödeme hatası, iptal, yükleme %42, devam, işleme, doğrulama hatası, yayında, süresi dolmuş, izlenen iş). Senaryoların birbirinden farklı ekran ürettiği ayrıca doğrulandı. Geçici dosyalar silindi |
+| `npm run lint`, `npx tsc --noEmit --incremental false`, `test:wallet-provenance` | PASS |
+| `npm test -- --run` | PASS: 39 dosya, 679 test (G2: 38 / 584) |
+| `test:livepeer-canary`, `test:multi-creator-upload-canary` | PASS: 7/7; 24 test, 3 atlandı |
+| `npm run build` | PASS |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** tarayıcıda gerçek dosya ile TUS yüklemesi; cüzdan; CI; Preview.
+  Hız ve kalan süre değerleri henüz arayüzde gösterilmiyor; G15'te kullanılacak.
+- **Tek sonraki gate:** G4 `SAHNE_I18N`. G3 commit'i ve G4 başlangıcı ayrı açık onay bekler.
