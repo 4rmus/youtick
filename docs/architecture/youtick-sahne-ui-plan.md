@@ -668,3 +668,63 @@ ekranlarda köşe 1–2 px küçüldü, çünkü eski `--radius-*` türetmeleri 
 - **Çalıştırılmayanlar:** Dialog'un tarayıcıda açılıp kapanması ve odak davranışı (henüz
   kullanan ekran yok; G6'da hesap menüsüyle doğrulanacak); ekran okuyucu; CI; Preview.
 - **Tek sonraki gate:** G6 `SAHNE_SHELL`. G5 commit'i ve G6 başlangıcı ayrı açık onay bekler.
+
+## 13. G6 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G5 commit'ini (`768c2b2`) ve G6'yı onayladı.
+G6 commit'i ayrı onay bekler.
+
+### Yapılan
+
+- `components/shell/nav.ts`: tek gezinme listesi (Keşfet, Biletlerim, Stüdyo). Adresi olmayan
+  öğe gösterilmez. Etkin öğe `aria-current="page"` alır.
+- `components/Navbar.tsx`: uygulama üst barı (YOUTICK logosu, masaüstü gezinme, dil düğmesi,
+  hesap menüsü). Ziyaretçi landing başlığı aynen korundu.
+- `components/shell/AccountMenu.tsx`: hesap, bakiye (USDC + NEAR; yalnız menü açıkken okunur),
+  bu cihazın güvenli depolama durumu, dil, "Kazanç ve yayınlar", Koşullar/Gizlilik, "Hesabı
+  değiştir" (yalnız `publicTestnetVideoV1`) ve "Bağlantıyı kes". Masaüstünde açılır panel
+  (Escape ve dışarı tıklama kapatır); mobilde aynı içerik `Dialog` içinde.
+- `components/shell/account-balance.ts`: menü için küçük bakiye okuması. Yükleme istemcisi
+  (`tus-js-client`) kabuğa girmesin diye `readCreatorFeeBalances` kullanılmadı.
+- `components/shell/MobileTabBar.tsx`: mobil sekme çubuğu (Keşfet, Stüdyo, Hesap) ve içerik
+  için alt boşluk.
+- `components/shell/LanguageToggle.tsx`: üst bardaki TR/EN düğmesi (G4 tercihini yazar).
+- `components/states/*`: `StateScreen` ile boş, yükleme hatası, bulunamadı ve depolama kapalı
+  ekranları. `RuntimeClosed` yeni ekrana geçti ve "Bu ortamda hiçbir ödeme alınmaz" satırını
+  aldı. `ScreenState` Sahne token'larına geçti (API aynı).
+- Test ağı şeridi Sahne görünümüne geçti. "closed remaining" hatası düzeltildi: süre dolunca
+  yalnız "closed" yazar.
+- `WalletProvider` değişmedi.
+
+### Plandan sapmalar
+
+- **Test ağı sınırları açılır panele alınmadı.** Mevcut `public-video-discover.test.ts` ve
+  `active-ui-copy.test.ts`, herkese açık testnet sınırlarının her sayfada görünmesini şart
+  koşuyor. Bu V1 koruması zayıflatılmadı. Şerit iki kısa satırdır: etiket ve uyarı, altında
+  sınırlar. Owner, sınırların panelde olmasını istiyorsa önce bu koşulun değişmesi gerekir.
+- **Biletlerim gezinmede görünmüyor**, çünkü `/tickets` adresi yok (G7). **Stüdyo** şimdilik
+  `/upload`'a gider; `/profile` da Stüdyo altında sayılır ve hesap menüsünde "Kazanç ve
+  yayınlar" olarak durur. G7'de `nav.ts` içindeki iki adres güncellenir.
+- **Hesap düğmesinde bakiye gösterilmiyor** (tasarımda vardı). Her sayfa açılışında RPC okuması
+  yapmamak için bakiye yalnız menü açılınca okunur.
+- **Cihaz durumu** bu cihazın güvenli depolama/şifreleme desteğidir; oturumun kalan süresi
+  G13 (Cihazlar) kapsamındadır.
+- **Bulunamadı ekranı** bileşen olarak hazır; `app/not-found.tsx` rotası G7'de bağlanır.
+- G6 listesinde olmayan iki dosya değişti: `lib/i18n/messages.ts` (G4'ten beri tüm arayüz
+  metni burada) ve `active-ui-copy.test.ts` (yeni aktif UI dosyaları listeye eklendi, §2.3).
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| `navbar.test.ts` (yeniden yazıldı) | PASS (17): yalnız var olan adresler ve `aria-current`, iç içe yollar, landing/uygulama ayrımı, bağlı değilken "Connect", mobil sekme çubuğu, hesap değiştir/bağlantıyı kes ayrımı (bayrak açık/kapalı), menüden dil değişimi, bakiye durumları, cüzdansız menü, şerit (sınırlar görünür, süre bitince "closed"), durum ekranlarının rolleri | LOCAL_TEST |
+| `npm test -- --run` | PASS: 42 dosya, 742 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+| Yerel `next start`, 1440 ve 390 px | Üst bar ve RuntimeClosed doğru; 390 px'te yatay taşma yok, sekmeler 56 px. Hesap diyaloğu modal açılıyor, odak "Menüyü kapat"a geçiyor, Escape kapatıp odağı "Hesap"a döndürüyor. Dil üst bardan ve menüden iki yönde değişiyor, `<html lang>` güncelleniyor | LOCAL_STATIC |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** bağlı cüzdanla masaüstü hesap menüsü ve gerçek bakiye okuması
+  (yerelde cüzdan yok); testnet bayrakları açıkken şeridin tarayıcı görünümü (yalnız sunucu
+  çıktısı test edildi); ekran okuyucu; CI; Preview.
+- **Tek sonraki gate:** G7 `SAHNE_ROUTES`. G6 commit'i ve G7 başlangıcı ayrı açık onay bekler.

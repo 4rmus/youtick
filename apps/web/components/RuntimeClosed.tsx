@@ -1,19 +1,14 @@
 'use client';
 
-import { Lock } from 'lucide-react';
 import { useMessages } from '@/lib/i18n/I18nProvider';
 import { PageShell } from './PageShell';
-import { ScreenState } from './ScreenState';
+import { StateScreen } from './states/StateScreen';
 
 export function RuntimeClosed() {
     const t = useMessages().runtime;
     return (
-        <PageShell className="flex items-center justify-center">
-            <ScreenState
-                icon={<Lock className="h-7 w-7" />}
-                title={t.title}
-                description={t.description}
-            />
+        <PageShell>
+            <StateScreen glyph="—" title={t.title} body={t.description} safe={t.safe} />
         </PageShell>
     );
 }

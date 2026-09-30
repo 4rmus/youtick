@@ -27,18 +27,18 @@ export function ScreenState({
             {icon && (
                 <div
                     className={cn(
-                        'mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-lg border bg-white/[0.04]',
-                        tone === 'danger' && 'border-near-red/30 bg-near-red/10 text-near-red',
-                        tone === 'success' && 'border-near-green/30 bg-near-green/10 text-near-green',
-                        tone === 'default' && 'border-white/10 text-zinc-500',
+                        'mx-auto mb-5 flex h-14 w-14 items-center justify-center border-2',
+                        tone === 'danger' && 'border-alert text-alert',
+                        tone === 'success' && 'border-ice text-ice',
+                        tone === 'default' && 'border-line-strong text-light-3',
                     )}
                 >
                     {icon}
                 </div>
             )}
-            <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{title}</h1>
+            <h1 className="font-display text-4xl text-light sm:text-5xl">{title}</h1>
             {description && (
-                <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-zinc-400">
+                <p className="mx-auto mt-3 max-w-md text-base leading-relaxed text-light-2">
                     {description}
                 </p>
             )}

@@ -4,6 +4,7 @@ import { headers } from 'next/headers';
 import { connection } from 'next/server';
 import './globals.css';
 import { Navbar } from '@/components/Navbar';
+import { MobileTabBar } from '@/components/shell/MobileTabBar';
 import { QueryProvider } from '@/components/providers/QueryProvider';
 import { WalletProvider } from '@/components/providers/WalletProvider';
 import { PublicTestnetBetaBanner } from '@/components/PublicTestnetBetaBanner';
@@ -26,13 +27,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     const locale = resolveLocale((await headers()).get('accept-language'));
     return (
         <html lang={locale} className={archivo.variable} data-scroll-behavior="smooth">
-            <body className="min-h-screen bg-black text-white antialiased">
+            <body className="min-h-screen bg-ink text-light antialiased">
                 <I18nProvider initialLocale={locale}>
                 <QueryProvider>
                     {(FEATURE_FLAGS.publicTestnetBeta || FEATURE_FLAGS.publicTestnetVideoV1) && <PublicTestnetBetaBanner />}
                     <WalletProvider cspNonce={cspNonce}>
                         <Navbar />
                         <main>{children}</main>
+                        <MobileTabBar />
                     </WalletProvider>
                 </QueryProvider>
                 </I18nProvider>
