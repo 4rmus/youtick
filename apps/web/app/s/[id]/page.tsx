@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
-import { LivepeerWatch } from '@/components/LivepeerWatch';
+import { ScreeningView } from '@/components/screening/ScreeningView';
 import { RuntimeClosed } from '@/components/RuntimeClosed';
 import { FEATURE_FLAGS } from '@/lib/constants';
 import { GENERIC_SCREENING_METADATA, screeningMetadata } from './screening-metadata';
@@ -20,5 +20,5 @@ export default async function ScreeningPage({ params }: Props) {
     const { id } = await params;
     if (!JOB_ID_PATTERN.test(id)) notFound();
     if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) return <RuntimeClosed />;
-    return <LivepeerWatch jobId={id} />;
+    return <ScreeningView jobId={id} />;
 }

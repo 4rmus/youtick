@@ -847,3 +847,63 @@ G8 commit'i ayrı onay bekler.
   durması (mantık birim testli); ekran okuyucu; CI; Preview.
 - **Tek sonraki gate:** G9 `SAHNE_SCREENING_GISE`. G8 commit'i ve G9 başlangıcı ayrı açık onay
   bekler.
+
+## 16. G9 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G8 commit'ini (`c101a8d`) ve G9'u onayladı.
+G9 commit'i ayrı onay bekler. `youtick-payment-flow` skill'i okundu; ödeme mantığı değişmedi.
+
+### Yapılan
+
+- `components/screening/gise-model.ts` (saf): `gisePhase` G2 kancasının gerçek değerlerinden
+  (`ticketAccessView`, `busy`, `TicketPurchaseStep`, hata) türetilir; yeni checkout makinesi
+  yoktur, ödeme durumu `ActivePaymentCheckout.state` olarak kalır. Aşamalar: misafir, hazır,
+  onay (`verifying_price`, `reconciling_conversion`, `wallet_approval`), kesiliyor
+  (`waiting_entitlement`), sahip, hata, kontrol, erişim hatası, satış kapalı. Dört adım
+  (Cüzdan · Ödeme · Bilet · İzle) bu aşamadan çizilir.
+- `GiseBar`: yapışkan bar (mobilde sekme çubuğunun üstünde). Fiyat, adımlar, tek durum cümlesi,
+  sonraki eylem. Bakiye yalnız "hazır" aşamasında `readPaymentPreflight` ile tek çağrıda okunur
+  (USDC ve NEAR ağ ücreti yeterliliği); yalnız bilgi verir, düğmeyi engellemez.
+- **Güvenli yeniden deneme:** `livepeer_entitlement_pending` hatasında yeni ödeme düğmesi yok,
+  yalnız "Bilet durumunu kontrol et" var. Diğer hatalarda "Yeniden dene" önce bilet hakkını
+  yeniden okur, yalnız hâlâ `false` ise satın almayı başlatır.
+- "Başka varlıkla öde": yalnız `multiAssetPaymentsEnabled` iken ve istenince açılır; teklif
+  alanları mevcut `MultiAssetPaymentPanel`/`QuoteDetails` ile aynıdır. Bu gösterim için
+  bitmemiş bir dönüşüm varsa panel kendiliğinden açık kalır ve kapatılamaz (yeni ödemeden önce
+  uzlaştırma). Erişim durumu bilinmiyorken (kontrol / okuma hatası) hiçbir ödeme yüzeyi yoktur.
+- `ScreeningView`: sahne (kapak veya sahipse oynatıcı), başlık, yapımcı · yayın tarihi,
+  "Bilet neleri kapsar" (Koşullar metnindeki ifadelerle: hesaba bağlı; satış durunca izleme
+  sürer, kaldırılınca kapanır; 30 günlük cihaz yetkisi bilet süresi değildir; sağlayıcı
+  kesintisi izlemeyi engelleyebilir), aynı yapımcının diğer gösterimleri.
+- "Aynı yapımcıdan": mevcut yapımcı kataloğu (`currentCatalogQueryOptions(creator)` veya
+  `readMarketCreatorPublicationPage`), ziyaret başına bir okuma, yoklama yok; iki kaynak da
+  kapalıysa veya okuma başarısızsa gizli.
+- `LivepeerWatch.tsx` yalnız `ScreeningView`'i eski adla dışa aktarır (`/watch` ve testler için).
+  `/s/[id]` doğrudan `ScreeningView` kullanır.
+
+### Plandan sapmalar ve kullanılmayan tasarım ifadeleri
+
+- Tasarımdaki doğrulanamayan ifadeler kullanılmadı: "genelde 15 sn içinde", bilet kodu
+  (`#YT-…`), "3 cihaz / dördüncüsü en eskinin yerini alır" (kodda sınır bulunamadı),
+  "11,40 yapımcıya · 0,60 platforma", her hatada "Ödeme gönderilmedi". Hata metinleri mevcut
+  `purchaseErrorMessage` eşlemesinden gelir.
+- Sahip olunca oynatıcı yine sayfada açılır; "Salona gir" ve ışıkların kararması G10'dadır.
+- `MultiAssetPaymentPanel` yeniden stillenmedi (mantığı ve alanları aynı); G17'de ele alınabilir.
+- `lib/i18n/messages.ts` G9 listesinde değildi; `watch` bölümüne yeni metinler eklendi.
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| Yeni `screening-gise.test.ts` | PASS (31): 14 aşama eşlemesi, adım işaretleri, iki dilde "bekleyen bilet" algısı, misafir bağlanma, bakiye tek ön kontrol ve yetersiz USDC/NEAR, çalışırken düğmenin kilitli olması ve ön kontrolün kapanması, bekleyen bilette yalnız yeniden kontrol, yeniden denemenin önce bilet hakkını okuması (sahipse ödeme yok), sahip ve satış kapalı durumları, başka varlık düğmesinin koşulları, kapsam metninde yasak ifade olmaması | LOCAL_TEST |
+| `livepeer-watch.test.ts` (uyarlandı) | PASS (8): erişim belirsizken ödeme yüzeyi ve satın alma yok, bilet sorgusu yayın yüklenirken başlar, gönderilmiş dönüşüm cüzdan çağrısı olmadan tamamlanır, iade edilen ödeme bakiye doğrulamasından sonra yeniden açılır, eski anahtar notu bayrağa bağlı | LOCAL_TEST |
+| `ticket-checkout`, `conversion-checkout`, `multi-asset-payments` testleri | PASS, değiştirilmedi | LOCAL_TEST |
+| `npm test -- --run` | PASS: 45 dosya, 803 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+| Yerel tarayıcı, 1440 ve 390 px | Sahte verili "hazır" ve "kesiliyor" durumları sayfaya enjekte edildi: bar, adımlar, bakiye cümlesi, başka varlık bağlantısı ve kilitli düğme doğru; mobilde bar sekme çubuğunun üstünde, taşma yok. Geçici dosyalar silindi | LOCAL_STATIC |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** gerçek cüzdanla satın alma, gerçek `readPaymentPreflight` okuması,
+  1Click dönüşümü, CI, Preview. Gerçek ödeme ancak ayrı onaylı PREVIEW kabulünde yapılır.
+- **Tek sonraki gate:** G10 `SAHNE_SALON`. G9 commit'i ve G10 başlangıcı ayrı açık onay bekler.
