@@ -53,8 +53,6 @@ export const FEATURE_FLAGS = {
     enableDerivedReadModel,
     enableCurrentCatalog: enableDerivedReadModel && publicTestnetVideoV1 && enablePaidMediaLivepeerV1
         && process.env.NEXT_PUBLIC_ENABLE_CURRENT_CATALOG === 'true',
-    // Account tickets, sales and withdrawals (read-model G12 views); off unless explicitly enabled.
-    enableAccountReadModel: enableDerivedReadModel && process.env.NEXT_PUBLIC_ENABLE_ACCOUNT_READ_MODEL === 'true',
 } as const;
 
 export const MEDIA_UPLOAD_POLICY = {

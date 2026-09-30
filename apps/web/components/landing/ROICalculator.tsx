@@ -24,11 +24,11 @@ export function ROICalculator({ locale, copy }: Props) {
             <div className="container mx-auto px-4">
                 <div className="mb-12 max-w-3xl">
                     <div className="mb-4 flex items-center gap-3">
-                        <Calculator aria-hidden="true" className="h-7 w-7 text-light-2" />
-                        <p className="text-sm font-semibold uppercase tracking-wide text-light-2">{copy.eyebrow}</p>
+                        <Calculator aria-hidden="true" className="h-7 w-7 text-zinc-300" />
+                        <p className="text-sm font-semibold uppercase tracking-wide text-zinc-400">{copy.eyebrow}</p>
                     </div>
-                    <h2 className="mb-4 text-3xl font-display text-white md:text-5xl">{copy.title}</h2>
-                    <p className="text-lg leading-relaxed text-light-2">{copy.description}</p>
+                    <h2 className="mb-4 text-3xl font-black text-white md:text-5xl">{copy.title}</h2>
+                    <p className="text-lg leading-relaxed text-zinc-400">{copy.description}</p>
                 </div>
 
                 <div className="mb-8 flex flex-wrap gap-3">
@@ -43,7 +43,7 @@ export function ROICalculator({ locale, copy }: Props) {
                                     setTicketPrice(Number(preset.price));
                                     setTicketCount(preset.sales);
                                 }}
-                                className={`min-h-11 rounded-xs border px-4 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ice ${active ? 'border-ice/50 bg-ice/10 text-ice' : 'border-white/10 bg-panel text-light-2 hover:border-white/40 hover:text-white'}`}
+                                className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green ${active ? 'border-near-green/50 bg-near-green/10 text-near-green' : 'border-white/10 bg-zinc-950 text-zinc-300 hover:border-white/40 hover:text-white'}`}
                             >
                                 {preset.label}
                             </button>
@@ -52,10 +52,10 @@ export function ROICalculator({ locale, copy }: Props) {
                 </div>
 
                 <div className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
-                    <div className="rounded-xs border border-white/10 bg-panel p-6 md:p-8">
+                    <div className="rounded-lg border border-white/10 bg-zinc-950 p-6 md:p-8">
                         <div className="mb-8">
                             <div className="mb-3 flex items-center justify-between gap-4">
-                                <label htmlFor="ticket-price" className="text-sm font-medium text-light-2">{copy.ticketPrice}</label>
+                                <label htmlFor="ticket-price" className="text-sm font-medium text-zinc-400">{copy.ticketPrice}</label>
                                 <span className="text-2xl font-black text-white">{ticketPrice} USDC</span>
                             </div>
                             <input
@@ -66,14 +66,14 @@ export function ROICalculator({ locale, copy }: Props) {
                                 value={ticketPrice}
                                 aria-valuetext={`${ticketPrice} USDC`}
                                 onChange={(event) => setTicketPrice(Number(event.target.value))}
-                                className="landing-range h-2 w-full cursor-pointer appearance-none rounded-xs bg-raised accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ice"
+                                className="landing-range h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                             />
-                            <div className="mt-1 flex justify-between text-xs text-light-3"><span>2 USDC</span><span>100 USDC</span></div>
+                            <div className="mt-1 flex justify-between text-xs text-zinc-600"><span>2 USDC</span><span>100 USDC</span></div>
                         </div>
 
                         <div className="mb-8">
                             <div className="mb-3 flex items-center justify-between gap-4">
-                                <label htmlFor="ticket-count" className="text-sm font-medium text-light-2">{copy.estimatedSales}</label>
+                                <label htmlFor="ticket-count" className="text-sm font-medium text-zinc-400">{copy.estimatedSales}</label>
                                 <span className="text-2xl font-black text-white">{ticketCount.toLocaleString(numberLocale)}</span>
                             </div>
                             <input
@@ -85,45 +85,45 @@ export function ROICalculator({ locale, copy }: Props) {
                                 value={ticketCount}
                                 aria-valuetext={ticketCount.toLocaleString(numberLocale)}
                                 onChange={(event) => setTicketCount(Number(event.target.value))}
-                                className="landing-range h-2 w-full cursor-pointer appearance-none rounded-xs bg-raised accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ice"
+                                className="landing-range h-2 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green"
                             />
-                            <div className="mt-1 flex justify-between text-xs text-light-3"><span>10</span><span>{(5000).toLocaleString(numberLocale)}</span></div>
+                            <div className="mt-1 flex justify-between text-xs text-zinc-600"><span>10</span><span>{(5000).toLocaleString(numberLocale)}</span></div>
                         </div>
 
-                        <div className="rounded-xs border border-white/10 bg-black p-4">
+                        <div className="rounded-lg border border-white/10 bg-black p-4">
                             <div className="flex items-center justify-between gap-4">
-                                <span className="text-sm text-light-2">{copy.totalSales}</span>
+                                <span className="text-sm text-zinc-400">{copy.totalSales}</span>
                                 <span className="text-xl font-bold text-white">{formatMicroUsdc(split.grossMicroUsdc, locale)}</span>
                             </div>
                         </div>
                     </div>
 
-                    <div className="rounded-xs border border-white/10 bg-panel p-6 md:p-8">
+                    <div className="rounded-lg border border-white/10 bg-zinc-950 p-6 md:p-8">
                         <div className="mb-6">
-                            <p className="text-sm font-semibold uppercase tracking-wide text-light-2">{copy.creatorShare}</p>
+                            <p className="text-sm font-semibold uppercase tracking-wide text-zinc-400">{copy.creatorShare}</p>
                             <p className="mt-3 text-5xl font-black text-white">{formatMicroUsdc(split.creatorMicroUsdc, locale)}</p>
-                            <p className="mt-2 text-sm text-light-2">{copy.creatorShareDescription}</p>
+                            <p className="mt-2 text-sm text-zinc-400">{copy.creatorShareDescription}</p>
 
                             <dl className="mt-5 grid gap-3 sm:grid-cols-2">
-                                <div className="rounded-xs border border-white/10 bg-black/50 p-4">
-                                    <dt className="text-xs uppercase tracking-wide text-light-3">{locale === 'tr' ? 'Örnek üretici payı' : 'Illustrative creator share'}</dt>
+                                <div className="rounded-md border border-white/10 bg-black/50 p-4">
+                                    <dt className="text-xs uppercase tracking-wide text-zinc-500">{locale === 'tr' ? 'Örnek üretici payı' : 'Illustrative creator share'}</dt>
                                     <dd className="mt-1 text-2xl font-black text-white">95%</dd>
                                 </div>
-                                <div className="rounded-xs border border-white/10 bg-black/50 p-4">
-                                    <dt className="text-xs uppercase tracking-wide text-light-3">{copy.platformFee}</dt>
+                                <div className="rounded-md border border-white/10 bg-black/50 p-4">
+                                    <dt className="text-xs uppercase tracking-wide text-zinc-500">{copy.platformFee}</dt>
                                     <dd className="mt-1 text-2xl font-black text-white">{formatMicroUsdc(split.platformMicroUsdc, locale)}</dd>
                                 </div>
                             </dl>
                         </div>
 
                         <div className="grid gap-4 md:grid-cols-2">
-                            <div className="rounded-xs border border-white/10 bg-black/60 p-5">
-                                <p className="mb-2 text-sm font-semibold text-light-2">{copy.uploadFeeTitle}</p>
-                                <p className="text-xs leading-relaxed text-light-3">{copy.uploadFeeDescription}</p>
+                            <div className="rounded-lg border border-white/10 bg-black/60 p-5">
+                                <p className="mb-2 text-sm font-semibold text-zinc-300">{copy.uploadFeeTitle}</p>
+                                <p className="text-xs leading-relaxed text-zinc-500">{copy.uploadFeeDescription}</p>
                             </div>
-                            <div className="rounded-xs border border-white/10 bg-black/60 p-5">
-                                <p className="mb-2 text-sm font-semibold text-light-2">{locale === 'tr' ? 'Test tokenı simülasyonu' : 'Test-token simulation'}</p>
-                                <p className="text-xs leading-relaxed text-light-3">{copy.estimateNote}</p>
+                            <div className="rounded-lg border border-white/10 bg-black/60 p-5">
+                                <p className="mb-2 text-sm font-semibold text-zinc-300">{locale === 'tr' ? 'Test tokenı simülasyonu' : 'Test-token simulation'}</p>
+                                <p className="text-xs leading-relaxed text-zinc-500">{copy.estimateNote}</p>
                             </div>
                         </div>
                     </div>

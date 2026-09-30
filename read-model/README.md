@@ -181,17 +181,7 @@ hold evidence are required before destructive cleanup source may be added.
 `api.mjs` is a GET-only, disabled-by-default D1 Worker module. It exposes
 `/v1/publications`, `/v1/publications/:id`,
 and `/v1/creators/:account/publications`. Creator sales remain in the D1
-accounting projection and are not exposed by the public read API by default.
-Three read-only account views (Sahne G12) exist behind a separate
-`READ_MODEL_ACCOUNT_VIEWS_ENABLED=true` Worker variable, off by default and
-returning 404 until the owner opts in: `/v1/accounts/:account/tickets`
-(`viewer_entitlements` joined to publications), `/v1/creators/:account/sales`
-(`sale_ledger` totals per publication and asset, exact integer sums that fail
-closed beyond the safe integer range) and `/v1/creators/:account/withdrawals`
-(creator withdrawal statuses only). They are paged (limit ≤ 50, key cursors),
-carry the watermark plus `indexed_at_ms` because they can lag the current
-catalogue, and use `0009_account_read_indexes.sql` (index only). The web
-client reads them only when `NEXT_PUBLIC_ENABLE_ACCOUNT_READ_MODEL=true`. Every
+accounting projection but are not exposed by the public read API. Every
 projection response carries the finality watermark; cache identity binds both
 the watermark and exact request URL. Payments, balances, entitlements and
 playback authorization never use it.
