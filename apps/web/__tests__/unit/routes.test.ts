@@ -26,10 +26,27 @@ describe('Livepeer-only routes', () => {
         expect(source).not.toContain("get('cid')");
     });
 
+    it('serves the Sahne addresses and removes the old Discover route', async () => {
+        await expect(Promise.all([
+            exists('app/s/[id]/page.tsx'),
+            exists('app/studio/page.tsx'),
+            exists('app/studio/new/page.tsx'),
+            exists('app/creators/page.tsx'),
+            exists('app/not-found.tsx'),
+            exists('app/discover/page.tsx'),
+            exists('app/upload/page.tsx'),
+        ])).resolves.toEqual([true, true, true, true, true, false, false]);
+        const screening = await readFile('app/s/[id]/page.tsx', 'utf8');
+        expect(screening).toContain('/^[A-Za-z0-9._:-]{1,128}$/');
+        expect(screening).toContain('if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) return <RuntimeClosed />;');
+        expect(await readFile('app/studio/new/page.tsx', 'utf8')).toContain('if (!FEATURE_FLAGS.enablePaidMediaLivepeerV1) return <RuntimeClosed />;');
+        expect(await readFile('app/profile/page.tsx', 'utf8')).toContain("export { default } from '@/app/studio/page';");
+    });
+
     it('opens publication reads without opening paid media actions', async () => {
         const [discover, profile, card] = await Promise.all([
-            readFile('app/discover/page.tsx', 'utf8'),
-            readFile('app/profile/page.tsx', 'utf8'),
+            readFile('app/page.tsx', 'utf8'),
+            readFile('components/studio/StudioView.tsx', 'utf8'),
             readFile('components/VideoCard.tsx', 'utf8'),
         ]);
 

@@ -16,6 +16,7 @@ import { playbackMode } from '@/lib/livepeer-player-media';
 import { playerCopy, playerLanguage, subscribePlayerLanguage, type PlayerLanguage } from '@/lib/player-copy';
 import { LivepeerPlayerSurface, type PlaybackRecovery } from './LivepeerPlayerSurface';
 import { activatePlaybackDevice } from '@/lib/playback-device-activation';
+import { isDeviceSessionError, playbackErrorMessage } from '@/components/salon/playback-errors';
 
 type LivepeerPlayerProps = LivepeerPlaybackInput & {
     title: string;
@@ -182,12 +183,12 @@ function LivepeerPlayerSession({
         const publicActivation = FEATURE_FLAGS.publicTestnetVideoV1 && FEATURE_FLAGS.enablePlaybackAuthorizerV2;
         const canActivate = publicActivation && (error?.message === 'device_session_required' || error?.message === 'playback_denied' || activationPending);
         const primaryVerification = needsSession && !activationPending && (canActivate || !FEATURE_FLAGS.publicTestnetVideoV1);
-        return <div lang={language} className={`relative flex items-center justify-center overflow-hidden rounded-lg bg-black p-6 text-center text-white ${canActivate ? 'min-h-64 sm:aspect-video' : 'aspect-video'}`}>
+        return <div lang={language} className={`relative flex items-center justify-center overflow-hidden rounded-xs bg-black p-6 text-center text-white ${canActivate ? 'min-h-64 sm:aspect-video' : 'aspect-video'}`}>
             {poster && <Image fill priority unoptimized src={poster} alt="" sizes="(min-width: 1024px) 1024px, 100vw" className="object-cover" onError={event => { event.currentTarget.hidden = true; }} />}
             <div aria-hidden="true" className="absolute inset-0 bg-black/75" />
             {error ? <div role="alert" className="relative max-w-sm">
                 <p className="text-sm">{playbackErrorMessage(error, language)}</p>
-                {canActivate && <p className="mt-3 text-xs text-zinc-300">{copy.activationInfo}</p>}
+                {canActivate && <p className="mt-3 text-xs text-light-2">{copy.activationInfo}</p>}
                 <Button className="mt-4 min-h-11" variant="outline" disabled={verifying} onClick={primaryVerification ? () => void verifySession() : retry}>
                     {verifying ? copy.verifying : primaryVerification ? publicActivation ? copy.activate : copy.verify : activationPending ? copy.checkAgain : copy.retry}
                 </Button>
@@ -205,22 +206,4 @@ function LivepeerPlayerSession({
         <LivepeerPlayerSurface input={input} title={title} poster={poster} language={language} mode={mode}
             token={accessToken} tokenRef={tokenRef} recoveryRef={recovery} retry={retry} previewVttUrl={previewVttUrl} />
     </Player.Root>;
-}
-
-function isDeviceSessionError(error: unknown): boolean {
-    return error instanceof Error && error.message.startsWith('device_session_');
-}
-
-function playbackErrorMessage(error: Error, language: PlayerLanguage): string {
-    const copy = playerCopy[language];
-    if (error.message === 'device_activation_pending') return copy.activationPending;
-    if (error.message === 'device_activation_account_changed') return copy.accountChanged;
-    if (['device_activation_disabled', 'device_activation_unavailable'].includes(error.message)) return copy.activationUnavailable;
-    if (['device_session_storage_unavailable', 'device_session_crypto_unavailable'].includes(error.message)) return copy.storage;
-    if (isDeviceSessionError(error)) return FEATURE_FLAGS.publicTestnetVideoV1 ? copy.session : copy.legacySession;
-    if (error.message === 'livepeer_playback_unsupported') return copy.unsupported;
-    if (error.message === 'device_verification_failed') return copy.verificationFailed;
-    if (['livepeer_play_grant_missing', 'livepeer_play_grant_pending', 'livepeer_play_grant_mismatch', 'playback_denied'].includes(error.message)) return copy.denied;
-    if (error instanceof TypeError) return copy.network;
-    return copy.unavailable;
 }

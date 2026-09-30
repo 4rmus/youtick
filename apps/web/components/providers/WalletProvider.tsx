@@ -5,6 +5,8 @@ import { NearConnector, type Account, type NearWalletBase, type WalletManifest }
 import { clearSessionGrantCache } from '@/lib/access-grants';
 import { clearDeviceSession, connectDeviceSession, suspendDeviceSession } from '@/lib/device-session';
 import { FEATURE_FLAGS, NEAR_NETWORK } from '@/lib/constants';
+import { currentLocale } from '@/lib/i18n/locale';
+import { messages, type Messages } from '@/lib/i18n/messages';
 import { getRpcEndpoints } from '@/lib/rpc-failover';
 import { startVideoMeasurement } from '@/lib/video-measurements';
 import {
@@ -17,6 +19,11 @@ import {
     PINNED_WALLET_MANIFEST,
     isPinnedMeteorManifest,
 } from '@/lib/pinned-wallet-manifest';
+
+// Copy is resolved when the error is raised; the provider sits outside route-level language changes.
+function walletCopy(key: keyof Messages['wallet']): string {
+    return messages[currentLocale()].wallet[key];
+}
 
 interface WalletContextValue {
     accountId: string | null;
@@ -167,9 +174,9 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             walletRef.current = null;
             accountIdRef.current = null;
             setAccountId(null);
-            setError('Your wallet account changed in another tab. Reload this page to continue.');
+            setError(walletCopy('accountChanged'));
             void clearAuth(previousAccountId, FEATURE_FLAGS.publicTestnetVideoV1).catch(() => {
-                if (mounted && expectedGeneration === authGenerationRef.current) setError('Secure session cleanup failed. Please retry disconnect.');
+                if (mounted && expectedGeneration === authGenerationRef.current) setError(walletCopy('cleanupRetry'));
             });
         };
         window.addEventListener('storage', onSelectionChanged);
@@ -186,13 +193,13 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             void applyWallet(wallet, accounts).then(() => {
                 if (expectedGeneration === authGenerationRef.current) setError(null);
             }).catch(() => {
-                if (expectedGeneration === authGenerationRef.current) setError('Secure session cleanup failed. Please retry disconnect.');
+                if (expectedGeneration === authGenerationRef.current) setError(walletCopy('cleanupRetry'));
             });
         });
         connector.on('wallet:signOut', () => {
             if (!mounted) return;
             authGenerationRef.current += 1;
-            void clearDeviceSession().catch(() => setError('Secure session cleanup failed. Please retry disconnect.'));
+            void clearDeviceSession().catch(() => setError(walletCopy('cleanupRetry')));
             void clearAuth(accountIdRef.current).catch(() => {});
             walletRef.current = null;
             accountIdRef.current = null;
@@ -208,7 +215,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             setIsReady(true);
             if (!canRestore()) return;
             finishRestore('delayed');
-            setError('Your wallet connection is taking longer than expected. You can wait or reload this page.');
+            setError(walletCopy('restoreSlow'));
         }, WALLET_RESTORE_TIMEOUT_MS);
         connector.whenManifestLoaded
             .then(async () => {
@@ -247,8 +254,8 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
                 }
                 finishRestore(disconnected ? 'disconnected' : 'failed');
                 setError(disconnected ? null : selectionRequired
-                    ? 'Your selected wallet account could not be verified. Choose Connect wallet to select your account.'
-                    : 'Your wallet connection could not be restored. Reload this page to try again.');
+                    ? walletCopy('selectionUnverified')
+                    : walletCopy('restoreFailed'));
             })
             .finally(() => {
                 clearTimeout(timeoutId);
@@ -322,8 +329,8 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             } catch (reason) {
                 if (expectedGeneration === authGenerationRef.current) {
                     setError(reason instanceof Error && reason.message.startsWith('device_session_')
-                        ? 'Session verification was not completed. Enable secure site storage and connect again.'
-                        : 'Wallet connection was not completed. Choose Connect wallet to try again.');
+                        ? walletCopy('sessionNotVerified')
+                        : walletCopy('connectNotCompleted'));
                 }
             }
         })();
@@ -339,14 +346,14 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         try {
             await clearDeviceSession();
         } catch {
-            setError('Secure session cleanup failed. Enable site storage and retry disconnect.');
+            setError(walletCopy('cleanupStorage'));
             return;
         }
         if (id) {
             try {
                 await revokeBrowserAuthority(await getWallet(), id);
             } catch {
-                setError('Secure disconnect was not approved. Your wallet remains connected.');
+                setError(walletCopy('disconnectRejected'));
                 return;
             }
         }
@@ -354,7 +361,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         try {
             await connectorRef.current?.disconnect(walletRef.current ?? undefined);
         } catch {
-            setError('Browser access was revoked, but the wallet could not be disconnected. Please retry.');
+            setError(walletCopy('disconnectFailed'));
             return;
         }
         walletRef.current = null;
@@ -365,7 +372,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
 
     return (
         <WalletContext.Provider value={{ accountId, getWallet, signOut, connect, isReady }}>
-            {error && <p role="alert" className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md rounded-lg border border-red-500/40 bg-black p-3 text-sm text-red-300">{error}</p>}
+            {error && <p role="alert" className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md rounded-xs border border-alert bg-alert-deep p-3 text-sm text-alert">{error}</p>}
             {children}
         </WalletContext.Provider>
     );

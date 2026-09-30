@@ -1,43 +1,38 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ArrowRightLeft, LogOut, Menu, User, X } from 'lucide-react';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { getLandingCtas, landingCopy, type LandingLocale } from '@/components/landing/landing-copy';
+import { AccountMenu } from '@/components/shell/AccountMenu';
+import { LanguageToggle } from '@/components/shell/LanguageToggle';
+import { isNavItemActive, usesAppShell, visibleNavItems } from '@/components/shell/nav';
 import { FEATURE_FLAGS } from '@/lib/constants';
-
-const LINKS = [
-    { href: '/discover', label: 'Discover' },
-    { href: '/upload', label: 'Upload' },
-    { href: '/profile', label: 'Profile' },
-];
+import { useMessages } from '@/lib/i18n/I18nProvider';
+import { cn } from '@/lib/utils';
 
 export function Navbar() {
     const pathname = usePathname();
-    const { accountId, connect, isReady, signOut } = useWallet();
-    const [isMenuOpen, setIsMenuOpen] = useState(false);
-    const isLanding = pathname === '/' || pathname === '/tr';
+    const { accountId, connect, isReady } = useWallet();
+    const t = useMessages().nav;
     const locale: LandingLocale = pathname === '/tr' ? 'tr' : 'en';
     const copy = landingCopy[locale];
     const ctas = getLandingCtas(locale, FEATURE_FLAGS.enablePaidMediaLivepeerV1);
-    const landingHome = locale === 'tr' ? '/tr' : '/';
-    const appLinks = accountId ? LINKS : LINKS.filter((link) => link.href !== '/profile');
+    const landingHome = locale === 'tr' ? '/tr' : pathname === '/creators' ? '/creators' : '/';
 
-    if (isLanding && !accountId) {
+    if (!usesAppShell(pathname, accountId)) {
         return (
-            <nav className="sticky top-0 z-40 border-b border-white/10 bg-black/90 backdrop-blur">
+            <nav className="sticky top-0 z-40 border-b border-line bg-ink/90 backdrop-blur">
                 <div className="container mx-auto flex min-h-16 flex-wrap items-center justify-between gap-4 px-4 py-2">
-                    <Link href={landingHome} className="font-bold tracking-tight">YouTick</Link>
+                    <Link href={landingHome} className="font-logo flex min-h-11 items-center text-lg text-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ice">YOUTICK</Link>
                     <div className="hidden items-center gap-5 lg:flex">
-                        <Link href={`${landingHome}#audience`} className="text-sm text-zinc-400 hover:text-white">{copy.nav.audience}</Link>
-                        <Link href={`${landingHome}#how-it-works`} className="text-sm text-zinc-400 hover:text-white">{copy.nav.howItWorks}</Link>
-                        <Link href={`${landingHome}#roi-calculator`} className="text-sm text-zinc-400 hover:text-white">{copy.nav.calculator}</Link>
+                        <Link href={`${landingHome}#audience`} className="flex min-h-11 items-center text-sm text-light-2 hover:text-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ice">{copy.nav.audience}</Link>
+                        <Link href={`${landingHome}#how-it-works`} className="flex min-h-11 items-center text-sm text-light-2 hover:text-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ice">{copy.nav.howItWorks}</Link>
+                        <Link href={`${landingHome}#roi-calculator`} className="flex min-h-11 items-center text-sm text-light-2 hover:text-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ice">{copy.nav.calculator}</Link>
                     </div>
                     <div className="flex items-center gap-3">
-                        {ctas.status && <span className="hidden text-xs font-semibold text-near-green sm:inline">{ctas.status}</span>}
+                        {ctas.status && <span className="hidden text-xs font-semibold text-ice sm:inline">{ctas.status}</span>}
                         <Button asChild size="sm"><Link href={ctas.primary.href}>{ctas.primary.label}</Link></Button>
                         {FEATURE_FLAGS.enablePaidMediaLivepeerV1 && (
                             <Button size="sm" disabled={!isReady} onClick={() => void connect()}>{copy.nav.connect}</Button>
@@ -49,91 +44,34 @@ export function Navbar() {
     }
 
     return (
-        <nav className="sticky top-0 z-50 w-full border-b border-white/10 bg-black/95 backdrop-blur-md">
-            <div className="container relative mx-auto flex h-16 items-center justify-between px-4">
-                <Link href="/" className="text-xl font-black tracking-tight text-white">YouTick</Link>
+        <header className="sticky top-0 z-50 w-full border-b border-line bg-ink/95 backdrop-blur-md">
+            <div className="container mx-auto flex h-16 items-center justify-between gap-4 px-4 md:h-20">
+                <Link href="/" className="font-logo flex min-h-11 items-center text-lg text-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ice md:text-xl">YOUTICK</Link>
 
-                <div className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-8 md:flex">
-                    {appLinks.map((link) => (
-                        <Link
-                            key={link.href}
-                            href={link.href}
-                            className={pathname === link.href ? 'text-sm font-bold text-near-green' : 'text-sm font-medium text-zinc-400 transition-colors hover:text-near-green'}
-                        >
-                            {link.label}
-                        </Link>
-                    ))}
-                </div>
-
-                <div className="hidden items-center md:flex">
-                    {accountId ? (
-                        <div className="flex items-center gap-2 rounded-full border border-near-green/30 bg-black py-1 pl-3 pr-1">
-                            <User className="h-3 w-3 text-near-green" />
-                            <span className="max-w-[100px] truncate font-mono text-xs text-zinc-400">{accountId}</span>
-                            {FEATURE_FLAGS.publicTestnetVideoV1 && (
-                                <Button aria-label="Switch account" title="Switch account" size="icon" variant="ghost"
-                                    className="h-11 w-11 rounded-full" disabled={!isReady} onClick={() => void connect()}>
-                                    <ArrowRightLeft />
-                                </Button>
-                            )}
-                            <Button
-                                aria-label="Disconnect"
-                                size="icon"
-                                variant="ghost"
-                                className="h-11 w-11 rounded-full text-zinc-500 hover:bg-near-red/10 hover:text-near-red focus-visible:ring-near-red"
-                                onClick={() => void signOut()}
+                <nav aria-label={t.mainNav} className="hidden items-center gap-9 md:flex">
+                    {visibleNavItems().map((item) => {
+                        const active = isNavItemActive(item, pathname);
+                        return (
+                            <Link
+                                key={item.key}
+                                href={item.href}
+                                aria-current={active ? 'page' : undefined}
+                                className={cn(
+                                    'flex min-h-11 items-center border-b-2 text-[15px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ice',
+                                    active ? 'border-ice text-light' : 'border-transparent text-light-2 hover:text-light',
+                                )}
                             >
-                                <LogOut />
-                            </Button>
-                        </div>
-                    ) : (
-                        <Button className="rounded-full" disabled={!isReady} onClick={() => void connect()}>Connect</Button>
-                    )}
-                </div>
+                                {t[item.key]}
+                            </Link>
+                        );
+                    })}
+                </nav>
 
-                <button
-                    type="button"
-                    aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
-                    aria-expanded={isMenuOpen}
-                    className="flex h-11 w-11 items-center justify-center rounded-md text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green md:hidden"
-                    onClick={() => setIsMenuOpen((open) => !open)}
-                >
-                    {isMenuOpen ? <X /> : <Menu />}
-                </button>
+                <div className="flex items-center gap-2">
+                    <LanguageToggle />
+                    <div className="hidden md:block"><AccountMenu /></div>
+                </div>
             </div>
-
-            {isMenuOpen && (
-                <div className="absolute left-0 top-full flex w-full flex-col gap-4 border-b border-white/10 bg-black p-4 shadow-xl md:hidden">
-                    {appLinks.map((link) => (
-                        <Link
-                            key={link.href}
-                            href={link.href}
-                            onClick={() => setIsMenuOpen(false)}
-                            className={pathname === link.href ? 'min-h-11 py-2 text-lg font-bold text-white' : 'min-h-11 py-2 text-lg font-medium text-zinc-400'}
-                        >
-                            {link.label}
-                        </Link>
-                    ))}
-                    <div className="h-px bg-white/10" />
-                    <div className="flex min-h-11 items-center gap-4 text-sm">
-                        <Link href="/terms" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300">Terms</Link>
-                        <Link href="/privacy" onClick={() => setIsMenuOpen(false)} className="text-zinc-500 hover:text-zinc-300">Privacy</Link>
-                    </div>
-                    <div className="h-px bg-white/10" />
-                    {accountId ? (
-                        <div className="flex min-h-11 items-center justify-between gap-4">
-                            <span className="truncate font-mono text-xs text-zinc-400">{accountId}</span>
-                            {FEATURE_FLAGS.publicTestnetVideoV1 && (
-                                <button type="button" disabled={!isReady} onClick={() => void connect()}
-                                    className="min-h-11 rounded-md text-near-green focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green disabled:opacity-50">Switch account</button>
-                            )}
-                            <button type="button" onClick={() => void signOut()} className="min-h-11 rounded-md font-medium text-near-red focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-red">Disconnect</button>
-                        </div>
-                    ) : (
-                        <button type="button" disabled={!isReady} onClick={() => void connect()} className="min-h-11 rounded-md text-left font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-near-green disabled:opacity-50">Connect</button>
-                    )}
-                </div>
-            )}
-        </nav>
+        </header>
     );
 }

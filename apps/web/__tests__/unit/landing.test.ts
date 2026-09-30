@@ -4,8 +4,12 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import TermsPage from '@/app/terms/page';
 import PrivacyPage from '@/app/privacy/page';
-import { describe, expect, it } from 'vitest';
-import { getLandingCtas, landingCopy } from '@/components/landing/landing-copy';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('next/image', () => ({ default: () => null }));
+import { getLandingCtas, landingCopy, landingHomePath } from '@/components/landing/landing-copy';
+import { ROICalculator } from '@/components/landing/ROICalculator';
+import { LandingPage } from '@/components/landing/LandingPage';
 import { calculateTicketSplit, formatMicroUsdc } from '@/components/landing/roi';
 
 function shape(value: unknown): unknown {
@@ -63,8 +67,8 @@ describe('bilingual landing', () => {
             status: 'Pilot publishing is currently closed',
         });
         expect(getLandingCtas('tr', true)).toEqual({
-            primary: { label: 'Gösterim aç', href: '/upload' },
-            secondary: { label: 'Gösterimleri keşfet', href: '/discover' },
+            primary: { label: 'Gösterim aç', href: '/studio/new' },
+            secondary: { label: 'Gösterimleri keşfet', href: '/' },
         });
     });
 
@@ -123,5 +127,31 @@ describe('bilingual landing', () => {
             access('public/hero-concert.webp', constants.F_OK),
             access('public/concert-crowd.webp', constants.F_OK),
         ])).resolves.toEqual([undefined, undefined]);
+    });
+
+    it('keeps the English introduction reachable at /creators once / becomes Discover', async () => {
+        expect(landingHomePath('en', false)).toBe('/');
+        expect(landingHomePath('en', true)).toBe('/creators');
+        expect(landingHomePath('tr', true)).toBe('/tr');
+        const [home, creators] = await Promise.all([readFile('app/page.tsx', 'utf8'), readFile('app/creators/page.tsx', 'utf8')]);
+        expect(home).toContain('return <LandingPage locale="en"');
+        expect(home).toContain('!FEATURE_FLAGS.enablePaidMediaLivepeerV1 && !FEATURE_FLAGS.enableDerivedReadModel');
+        expect(creators).toContain("canonical: '/creators'");
+        expect(creators).toContain("languages: { en: '/creators', tr: '/tr', 'x-default': '/creators' }");
+    });
+
+    it.each(['en', 'tr'] as const)('shows the 12 × 800 example as the contract 95/5 split (%s)', (locale) => {
+        const html = renderToStaticMarkup(React.createElement(ROICalculator, { locale, copy: landingCopy[locale].roi }));
+        expect(html).toContain(locale === 'en' ? '9,120 USDC' : '9.120 USDC');
+        expect(html).toContain('480 USDC');
+    });
+
+    it.each(['en', 'tr'] as const)('renders the approved %s copy verbatim with Sahne styling', (locale) => {
+        const html = renderToStaticMarkup(React.createElement(LandingPage, { locale, enabled: false }));
+        const copy = landingCopy[locale];
+        for (const text of [copy.hero.badge, copy.hero.description, copy.roi.description, copy.footer.description]) {
+            expect(html).toContain(renderToStaticMarkup(React.createElement(React.Fragment, null, text)));
+        }
+        expect(html).not.toMatch(/near-green|zinc-\d|rounded-(lg|xl|2xl|full)/);
     });
 });

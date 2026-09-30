@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
 import { currentCatalogFreshness, readCurrentCatalogPage } from '@/lib/current-catalog';
+import { useMessages } from '@/lib/i18n/I18nProvider';
 
 export function currentCatalogQueryOptions(creator?: string) {
     return {
@@ -19,6 +20,7 @@ export function currentCatalogQueryOptions(creator?: string) {
 
 export function useCurrentCatalog(creator?: string) {
     const client = useQueryClient();
+    const t = useMessages().discover;
     const options = currentCatalogQueryOptions(creator);
     const query = useInfiniteQuery({ ...options,
         refetchInterval: query => 15000 * Math.max(1, query.state.data?.pages.length ?? 0),
@@ -53,7 +55,7 @@ export function useCurrentCatalog(creator?: string) {
         publications: freshness === 'unavailable' ? [] : pages?.flatMap(page => page.items) ?? [],
         loading: query.isLoading,
         error: query.error ?? (unavailable ? new Error('catalog_unavailable') : null),
-        warning: freshness === 'stale' ? 'The catalogue is being updated. These releases were last verified earlier.' : undefined,
+        warning: freshness === 'stale' ? t.stale : undefined,
         hasNextPage: freshness !== 'unavailable' && query.hasNextPage,
         isFetchingNextPage: query.isFetchingNextPage,
         fetchNextPage: query.fetchNextPage,
