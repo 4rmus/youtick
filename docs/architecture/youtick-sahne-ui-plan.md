@@ -907,3 +907,63 @@ G9 commit'i ayrı onay bekler. `youtick-payment-flow` skill'i okundu; ödeme man
 - **Çalıştırılmayanlar:** gerçek cüzdanla satın alma, gerçek `readPaymentPreflight` okuması,
   1Click dönüşümü, CI, Preview. Gerçek ödeme ancak ayrı onaylı PREVIEW kabulünde yapılır.
 - **Tek sonraki gate:** G10 `SAHNE_SALON`. G9 commit'i ve G10 başlangıcı ayrı açık onay bekler.
+
+## 17. G10 kaydı — 30 Eylül 2026
+
+**Sonuç: COMPLETED_WITH_WARNINGS.** Kullanıcı G9 commit'ini (`7bc6122`) ve G10'u onayladı.
+G10 commit'i ayrı onay bekler.
+
+### Yapılan
+
+- `components/salon/SalonView.tsx`: "Işıklar kararır" — aynı adreste tam ekran yerel modal
+  `<dialog>` (arka plan etkisiz, odak içeride, Escape kapatır, kapanınca odak açan düğmeye
+  döner; açılışta 400 ms saydamlık geçişi, azaltılmış harekette yok). "Işıkları aç" çıkar.
+- Oynatıcı yalnız bilet sahibi salona girince `next/dynamic` (`ssr: false`) ile yüklenir;
+  gösterim sayfası, gişe barı ve cihaz diyaloğu `LivepeerPlayer`'ı statik içe aktarmaz.
+- `components/salon/useDeviceStatus.ts`: "Bu cihaz" durumu `getDeviceSession` üzerinden
+  `get_playback_device` ile okunur (yalnız sahip ve genel testnet yetkilendiricisi açıkken).
+- `components/salon/DeviceDialog.tsx`: cihaz kaydı gerekiyorsa salondan önce açılır; tek açık
+  cüzdan işlemi `activatePlaybackDevice` ile yapılır. Metin ve düğmeler mevcut oynatıcı
+  metinlerinden (`activationInfo`, `activate`, `checkAgain`); hata metinleri mevcut eşlemeden.
+- `components/salon/playback-errors.ts`: `playbackErrorMessage` ve `isDeviceSessionError`
+  oynatıcıdan aynen taşındı; oynatıcı artık buradan içe aktarır (diyalog oynatıcı paketini
+  yüklemesin diye).
+- Kaldığın yer önerisi değişmedi: `LivepeerPlayerSurface` mevcut `watch-progress` kaydını
+  kullanmaya devam eder.
+- Oynatıcı dosyalarında yalnız renk/köşe sınıfları Sahne token'larına geçti (`near-green` →
+  `ice`, köşe 2 px, koyu paneller `panel`/`raised`). Oynatma, token ve önizleme mantığı aynı.
+
+### Plandan sapmalar
+
+- G10 listesinde olmayan değişiklikler: `components/screening/ScreeningView.tsx` (sahip için
+  "Salona gir", cihaz durumu, salon ve diyalog bağlantısı; sayfadaki satır içi oynatıcı
+  kaldırıldı), `GiseBar.tsx` (sahip aşamasında "Salona gir"), `lib/i18n/messages.ts` (salon
+  metinleri), yeni `salon.test.ts`.
+- **G9 kaydına düzeltme:** mevcut onaylı oynatıcı metni (`activationInfo`) "en fazla 3 cihaz
+  aktiftir; dördüncüsü en eskinin yerini alır" der. G9'da bu bilgi "kodda bulunamadı" diye
+  kapsam bölümüne alınmamıştı; sınır web kodunda değil, oynatıcı metninde ve (muhtemelen)
+  pazar sözleşmesinde yer alır. Kapsam bölümüne eklenmesi owner/koşullar kararıdır.
+- Tarayıcı kontrol betikleri G10 listesinde değildir ve kendi Tailwind temalarında yalnız
+  `near-green` derler; token sınıflarının renkleri betik sayfasında görünmez, davranış
+  kontrolleri etkilenmez (üçü de PASS).
+
+### Doğrulama
+
+| Kontrol | Sonuç | Sınıf |
+|---|---|---|
+| Yeni `salon.test.ts` | PASS (25): 7 giriş kararı ve bayrak birleşimi, 4 cihaz durumu eşlemesi, sahip/bayrak yokken okuma yapılmaması, cihaz etkinleştirmenin tek açık çağrıyla ve aynı oynatma girdisiyle yapılması, başarısızlıkta salona girilmemesi, iki dilde 9 hata kodu + ağ hatası eşlemesi, salon modalı ve "Işıkları aç", oynatıcının yalnız dinamik yüklenmesi | LOCAL_TEST |
+| `player-controls.test.ts`, `livepeer-watch.test.ts`, `screening-gise.test.ts` | PASS | LOCAL_TEST |
+| `npm test -- --run` | PASS: 46 dosya, 828 test | LOCAL_TEST |
+| lint, tsc, wallet-provenance, iki canary, build | PASS | LOCAL_TEST |
+| `node scripts/player-browser-check.mjs` | PASS (195 medya isteği, 4 yerel token, 9 önizleme isteği; ağ istekleri yerelde yakalandı) | LOCAL_TEST |
+| `node scripts/player-device-browser-check.mjs` | PASS (5 senaryo, senaryo başına 1 cüzdan işlemi; gerçek cüzdan/zincir yok) | LOCAL_TEST |
+| `node scripts/device-session-browser-check.mjs` | PASS | LOCAL_TEST |
+| Yerel tarayıcı, 1440 ve 390 px | Sahte verili sahip ekranı: "Salona gir", cihaz durumu, gişe barında sahip etiketi; salon modalı tam ekran, odak "Işıkları aç"ta; cihaz diyaloğu mobilde taşmadan açılıyor. Geçici dosyalar silindi | LOCAL_STATIC |
+
+### Çalıştırılmayanlar ve sonraki gate
+
+- **Çalıştırılmayanlar:** gerçek cüzdanla cihaz etkinleştirme ve gerçek `get_playback_device`
+  okuması; salonda gerçek oynatma (betikler yüzeyi ayrı paketle çalıştırır); Safari ve fiziksel
+  cihaz; CI; Preview.
+- **Tek sonraki gate:** G11 `SAHNE_CREATOR_PAGE`. G10 commit'i ve G11 başlangıcı ayrı açık onay
+  bekler.

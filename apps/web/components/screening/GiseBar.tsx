@@ -20,12 +20,14 @@ type GiseBarProps = {
     checkout: Checkout;
     publication: LivepeerPublication;
     otherAssetOpen: boolean;
+    /** Opens the screening room for a ticket holder (G10). */
+    onEnterSalon?(): void;
     /** Absent while an unfinished conversion keeps the panel open. */
     onToggleOtherAsset?(): void;
 };
 
 /** Sticky box office: price, the four purchase steps, one status sentence and the next action. */
-export function GiseBar({ checkout, publication, otherAssetOpen, onToggleOtherAsset }: GiseBarProps) {
+export function GiseBar({ checkout, publication, otherAssetOpen, onToggleOtherAsset, onEnterSalon }: GiseBarProps) {
     const { locale, accountId, connect, isReady, busy, step, error, purchase, accessView, entitlementQuery } = checkout;
     const t = messages[locale].watch;
     const player = playerCopy[locale];
@@ -100,6 +102,7 @@ export function GiseBar({ checkout, publication, otherAssetOpen, onToggleOtherAs
                 </div>
 
                 <div className="flex flex-col items-stretch gap-2 md:items-end">
+                    {phase === 'owner' && onEnterSalon && <Button size="lg" onClick={onEnterSalon}>{messages[locale].salon.enter}</Button>}
                     {phase === 'guest' && <Button size="lg" disabled={!isReady} onClick={() => void connect()}>{t.connectWallet}</Button>}
                     {(phase === 'ready' || phase === 'approving' || phase === 'issuing') && (
                         <Button size="lg" disabled={phase !== 'ready' || entitlementQuery.isLoading} onClick={() => void purchase()}>

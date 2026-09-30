@@ -7,8 +7,8 @@ import { playerCopy, playerTime, setPlayerLanguage, type PlayerLanguage } from '
 import type { PlayerQuality } from '@/lib/livepeer-player-media';
 import { LivepeerSeekPreview } from './LivepeerSeekPreview';
 
-const control = 'inline-flex h-11 min-w-11 shrink-0 items-center justify-center rounded-md text-white hover:bg-white/15 active:bg-white/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-near-green disabled:cursor-not-allowed disabled:opacity-50';
-const select = 'h-11 min-w-0 rounded-md border border-white/25 bg-zinc-900 px-2 text-white focus-visible:outline-2 focus-visible:outline-near-green disabled:cursor-not-allowed disabled:opacity-50';
+const control = 'inline-flex h-11 min-w-11 shrink-0 items-center justify-center rounded-xs text-white hover:bg-white/15 active:bg-white/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ice disabled:cursor-not-allowed disabled:opacity-50';
+const select = 'h-11 min-w-0 rounded-xs border border-white/25 bg-raised px-2 text-white focus-visible:outline-2 focus-visible:outline-ice disabled:cursor-not-allowed disabled:opacity-50';
 
 export function LivepeerPlayerControls({ language, qualities, quality, onQuality, token, previewVttUrl }: {
     language: PlayerLanguage; qualities: PlayerQuality[]; quality: number; onQuality: (index: number) => void;
@@ -61,12 +61,12 @@ export function LivepeerPlayerControls({ language, qualities, quality, onQuality
                 onKeyDownCapture={event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) { setPointerPreview(null); setKeyboardPreview(true); } }}
                 onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardPreview(false); }}>
             {preview && <LivepeerSeekPreview key={previewVttUrl ?? 'time'} time={preview.time} ratio={preview.ratio} token={token} vttUrl={previewVttUrl} />}
-            <Player.Seek aria-label={copy.seek} className="relative flex h-8 w-full touch-none select-none items-center focus-visible:outline-2 focus-visible:outline-near-green">
+            <Player.Seek aria-label={copy.seek} className="relative flex h-8 w-full touch-none select-none items-center focus-visible:outline-2 focus-visible:outline-ice">
                 <Player.Track className="relative h-1 grow rounded-full bg-white/30">
                     <Player.SeekBuffer className="absolute h-full rounded-full bg-white/35" />
-                    <Player.Range className="absolute h-full rounded-full bg-near-green" />
+                    <Player.Range className="absolute h-full rounded-full bg-ice" />
                 </Player.Track>
-                <Player.Thumb className="block h-3 w-3 rounded-full bg-near-green" />
+                <Player.Thumb className="block h-3 w-3 rounded-full bg-ice" />
             </Player.Seek>
             </div>
             <div className="flex min-w-0 items-center gap-1">
@@ -77,7 +77,7 @@ export function LivepeerPlayerControls({ language, qualities, quality, onQuality
                     <Player.MuteTrigger className={control} aria-label={muted ? copy.unmute : copy.mute} title={muted ? copy.unmute : copy.mute}>
                         {muted ? <VolumeX aria-hidden="true" size={20} /> : <Volume2 aria-hidden="true" size={20} />}
                     </Player.MuteTrigger>
-                    <Player.Volume aria-label={copy.volume} className="relative flex h-11 w-16 touch-none items-center focus-visible:outline-2 focus-visible:outline-near-green">
+                    <Player.Volume aria-label={copy.volume} className="relative flex h-11 w-16 touch-none items-center focus-visible:outline-2 focus-visible:outline-ice">
                         <Player.Track className="relative h-1 grow rounded-full bg-white/30"><Player.Range className="absolute h-full rounded-full bg-white" /></Player.Track>
                         <Player.Thumb className="block h-3 w-3 rounded-full bg-white" />
                     </Player.Volume>
@@ -94,7 +94,7 @@ export function LivepeerPlayerControls({ language, qualities, quality, onQuality
                     <summary className={`${control} cursor-pointer list-none [&::-webkit-details-marker]:hidden`} aria-label={copy.settings} title={copy.settings}>
                         <Settings aria-hidden="true" size={20} />
                     </summary>
-                    <div role="group" aria-label={copy.settings} style={{ maxHeight: 'calc(100% - 64px)' }} className="absolute bottom-14 right-2 grid w-60 max-w-[calc(100%-1rem)] gap-2 overflow-y-auto rounded-lg border border-white/20 bg-zinc-950 p-3 text-sm shadow-xl">
+                    <div role="group" aria-label={copy.settings} style={{ maxHeight: 'calc(100% - 64px)' }} className="absolute bottom-14 right-2 grid w-60 max-w-[calc(100%-1rem)] gap-2 overflow-y-auto rounded-xs border border-white/20 bg-panel p-3 text-sm shadow-xl">
                         <label className="grid grid-cols-[1fr_8rem] items-center gap-2">{copy.speed}
                             <select aria-label={copy.speed} className={select} value={rate} onChange={event => store.getState().__controlsFunctions.setPlaybackRate(Number(event.target.value))}>
                                 {[0.75, 1, 1.25, 1.5, 2].map(value => <option key={value} value={value}>{value.toLocaleString(language)}×</option>)}

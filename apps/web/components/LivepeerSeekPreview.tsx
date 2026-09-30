@@ -49,7 +49,7 @@ export function LivepeerSeekPreview({ time, ratio, vttUrl, token }: { time: numb
     const crop = cue?.crop ?? (image ? { x: 0, y: 0, width: image.width, height: image.height } : null);
     const visible = image && cue?.url === image.url && crop && crop.x + crop.width <= image.width && crop.y + crop.height <= image.height;
     const scale = crop ? Math.min(128 / crop.width, 72 / crop.height) : 1;
-    return <div data-player-preview="" data-state="open" aria-hidden="true" className="pointer-events-none absolute bottom-full z-30 mb-1 -translate-x-1/2 overflow-hidden rounded-md border border-white/25 bg-black text-center text-xs text-white shadow-lg"
+    return <div data-player-preview="" data-state="open" aria-hidden="true" className="pointer-events-none absolute bottom-full z-30 mb-1 -translate-x-1/2 overflow-hidden rounded-xs border border-white/25 bg-black text-center text-xs text-white shadow-lg"
         style={{ left: `clamp(64px, ${Math.max(0, Math.min(1, ratio)) * 100}%, calc(100% - 64px))` }}>
         {visible && <div className="relative h-[72px] w-32 overflow-hidden">
             {/* Blob from a bounded, authenticated raster fetch; Next Image must not proxy protected media. */}
