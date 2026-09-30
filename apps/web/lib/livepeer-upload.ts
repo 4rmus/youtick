@@ -27,6 +27,8 @@ const PROFILE_ID = 'paid-media-livepeer-v1';
 const LIVEPEER_SESSION_STORAGE_PREFIX = 'youtick:livepeer-job-session:';
 const LIVEPEER_DRAFT_STORAGE_PREFIX = 'youtick:livepeer-ui-draft:';
 const LIVEPEER_LAST_JOB_STORAGE_PREFIX = 'youtick:livepeer-last-job:';
+const LIVEPEER_ABANDONED_JOBS_STORAGE_PREFIX = 'youtick:livepeer-abandoned-jobs:';
+const MAX_ABANDONED_LIVEPEER_JOBS = 20;
 const LIVEPEER_SOURCE_FINGERPRINT_WINDOW_BYTES = 1024 * 1024;
 const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -390,11 +392,56 @@ export async function findPendingLivepeerUpload(accountId: string): Promise<Pend
     return pending;
 }
 
+function abandonedJobsKey(accountId: string): string {
+    return `${LIVEPEER_ABANDONED_JOBS_STORAGE_PREFIX}${NEAR_NETWORK}:${NEAR_CONFIG.marketContractId}:${accountId}`;
+}
+
+function readAbandonedLivepeerJobs(accountId: string): string[] {
+    try {
+        const value: unknown = JSON.parse(localStorage.getItem(abandonedJobsKey(accountId)) || '[]');
+        return Array.isArray(value) ? value.filter((jobId): jobId is string => typeof jobId === 'string') : [];
+    } catch {
+        return [];
+    }
+}
+
+export function isLivepeerUploadJobAbandoned(accountId: string, jobId: string): boolean {
+    return readAbandonedLivepeerJobs(accountId).includes(jobId);
+}
+
+// The creator gives up a paid job that was never published. NEAR keeps the job as the
+// non-refundable record until its deadline; this browser just stops treating it as pending.
+export function abandonLivepeerUploadJob(accountId: string, jobId: string): void {
+    validateJobSessionIdentity(accountId, jobId);
+    const jobs = [jobId, ...readAbandonedLivepeerJobs(accountId).filter((id) => id !== jobId)]
+        .slice(0, MAX_ABANDONED_LIVEPEER_JOBS);
+    const encoded = JSON.stringify(jobs);
+    try {
+        writeCheckedUploadStorage(localStorage, abandonedJobsKey(accountId), encoded);
+    } catch {
+        throw new Error('livepeer_abandon_unavailable');
+    }
+    // The abandoned list above already hides this job; the rest is best-effort cleanup.
+    try {
+        if (readStoredUploadDraft(accountId)?.jobId === jobId) clearLivepeerUploadDraft(accountId);
+        if (readRememberedLivepeerUploadJob(accountId) === jobId) {
+            localStorage.removeItem(`${LIVEPEER_LAST_JOB_STORAGE_PREFIX}${NEAR_NETWORK}:${NEAR_CONFIG.marketContractId}:${accountId}`);
+        }
+        clearLivepeerJobSessionKey(accountId, jobId);
+    } catch {
+        // Keep the abandonment; stale local records are ignored by the pending lookup.
+    }
+}
+
 async function readPendingLivepeerUpload(
     accountId: string,
     jobId: string,
     draft: LivepeerUploadDraft | null,
 ): Promise<PendingLivepeerUpload | null> {
+    if (readAbandonedLivepeerJobs(accountId).includes(jobId)) {
+        if (draft?.jobId === jobId) clearLivepeerUploadDraft(accountId);
+        return null;
+    }
     let progress: Awaited<ReturnType<typeof readLivepeerUploadProgress>>;
     try {
         progress = await readLivepeerUploadProgress(jobId, accountId);

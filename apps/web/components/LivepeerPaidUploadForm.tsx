@@ -32,6 +32,7 @@ import {
     waitForAuthorizedLivepeerJob,
 } from '@/lib/livepeer-publication';
 import {
+    abandonLivepeerUploadJob,
     advanceLivepeerUploadDraftStage,
     authorizeLivepeerPaidJob,
     cancelLivepeerUpload,
@@ -41,6 +42,7 @@ import {
     createLivepeerJobId,
     findPendingLivepeerUpload,
     fingerprintLivepeerSource,
+    isLivepeerUploadJobAbandoned,
     LIVEPEER_SOURCE_ACCEPT,
     heartbeatLivepeerUploadLease,
     livepeerUploadFeeUsdc,
@@ -65,6 +67,8 @@ import {
 } from '@/lib/livepeer-upload';
 
 const UPLOAD_STEPS = ['Payment options', 'Wallet approval', 'Upload', 'Processing', 'Published'] as const;
+const ABANDON_LABEL = 'Abandon this paid upload (no refund)';
+const ABANDON_CONFIRMATION = 'Abandon this paid upload? The upload fee is not refunded, and the paid job stays on NEAR until its deadline. You can then start a new upload.';
 const UPLOAD_EXPIRED_MESSAGE = 'The publication deadline has passed. This paid upload can no longer be published or retried.';
 const UPLOAD_STAGE_STATE: Record<UploadStage, { active: number; completeThrough: number }> = {
     draft: { active: -1, completeThrough: -1 },
@@ -229,8 +233,11 @@ export function LivepeerPaidUploadForm() {
         setBusy(false);
         setResumeAvailable(false);
         fileSelectionVersion.current += 1;
-        const trackedJobId = accountId
+        const requestedJobId = accountId
             ? new URL(window.location.href).searchParams.get('job') || readRememberedLivepeerUploadJob(accountId)
+            : null;
+        const trackedJobId = accountId && requestedJobId && !isLivepeerUploadJobAbandoned(accountId, requestedJobId)
+            ? requestedJobId
             : null;
         setTrackedUpload(accountId && trackedJobId ? { accountId, jobId: trackedJobId } : null);
         setPendingUpload(null);
@@ -636,6 +643,31 @@ export function LivepeerPaidUploadForm() {
         }
     };
 
+    const abandon = (abandonedJobId: string) => {
+        if (!accountId || operation.current) return;
+        if (!window.confirm(ABANDON_CONFIRMATION)) return;
+        try {
+            abandonLivepeerUploadJob(accountId, abandonedJobId);
+        } catch (reason) {
+            setError(uploadErrorMessage(reason, false));
+            return;
+        }
+        setPendingUpload(null);
+        setTrackedUpload(null);
+        setResumeAvailable(false);
+        if (jobId === abandonedJobId) {
+            setJobId(null);
+            setPayment(null);
+            setPaymentAsset(null);
+            setSponsorQuote(null);
+            setFailedStep(null);
+            setUploadProgress(0);
+            moveUploadStage('draft');
+        }
+        setError(null);
+        setStatus('Paid upload abandoned. Its fee is not refunded. You can start a new upload when upload availability allows.');
+    };
+
     const formReady = Boolean(accountId && file && !fileError && hasTitleContent(title.trim()) && price.trim() && rightsAccepted);
 
     return (
@@ -647,7 +679,8 @@ export function LivepeerPaidUploadForm() {
             </div>
 
             {!jobId && accountId && trackedUpload?.accountId === accountId && (
-                <LivepeerUploadStatus accountId={accountId} jobId={trackedUpload.jobId} />
+                <LivepeerUploadStatus accountId={accountId} jobId={trackedUpload.jobId}
+                    onAbandon={FEATURE_FLAGS.publicTestnetVideoV1 ? () => abandon(trackedUpload.jobId) : undefined} />
             )}
             {jobId && (
                 <Link className="text-sm underline" href={`/upload?job=${encodeURIComponent(jobId)}`}>
@@ -706,6 +739,9 @@ export function LivepeerPaidUploadForm() {
                                 Choose that same file to resume it without paying again. A new upload can start after it is published
                                 {pendingUpload.deadlineAtMs ? ` or after its deadline (${new Date(pendingUpload.deadlineAtMs).toLocaleString()})` : ''}.
                             </AlertDescription>
+                            <Button variant="outline" size="sm" className="mt-3" disabled={busy} onClick={() => abandon(pendingUpload.jobId)}>
+                                {ABANDON_LABEL}
+                            </Button>
                         </Alert>
                     )}
                     {file && !fileError && <p className="text-sm">Creator upload fee: {formatMicroUsdc(livepeerUploadFeeUsdc(file.size))} USDC (minimum 0.50)</p>}
@@ -787,6 +823,9 @@ export function LivepeerPaidUploadForm() {
                                 {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Resume / check existing upload
                             </Button>
                             <p className="text-xs text-zinc-400">Use the same file. A wallet approval and NEAR network fee may be needed; your upload payment is not charged again.</p>
+                            {jobId && FEATURE_FLAGS.publicTestnetVideoV1 && (
+                                <Button variant="outline" className="w-full" disabled={busy} onClick={() => abandon(jobId)}>{ABANDON_LABEL}</Button>
+                            )}
                         </div>
                     ) : uploaded ? (
                         <Button className="w-full" disabled>
@@ -820,7 +859,11 @@ function formatMicroUsdc(value: string): string {
     return `${amount / 1_000_000n}.${fraction.padEnd(2, '0')}`;
 }
 
-export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; jobId: string }) {
+export function LivepeerUploadStatus({ accountId, jobId, onAbandon }: {
+    accountId: string;
+    jobId: string;
+    onAbandon?: () => void;
+}) {
     const query = useQuery({
         queryKey: ['livepeerSavedUpload', accountId, jobId],
         queryFn: async () => {
@@ -858,6 +901,9 @@ export function LivepeerUploadStatus({ accountId, jobId }: { accountId: string; 
                             && ` To continue, choose the same video file (${formatBytes(Number(progress.job.expected_source_bytes))}) below and select Resume.`}
                     </p>
                 )}
+                {onAbandon && progress && !progress.publication && !progress.expired && progress.job.status === 'Authorized' && (
+                    <Button variant="outline" size="sm" onClick={onAbandon}>{ABANDON_LABEL}</Button>
+                )}
                 <Link className="text-sm underline" href={`/upload?job=${encodeURIComponent(jobId)}`}>
                     Upload status link — bookmark to return later
                 </Link>
@@ -884,6 +930,9 @@ export function uploadErrorMessage(reason: unknown, availabilityConfirmed: boole
         return 'Enable secure site storage and use a supported browser before continuing. No payment was sent.';
     }
     if (code === 'livepeer_resume_required') return 'This job is already paid. Resume the existing upload.';
+    if (code === 'livepeer_abandon_unavailable') {
+        return 'This browser could not save your choice to abandon the upload. Enable site storage and try again.';
+    }
     if (code === 'livepeer_pending_upload_exists') {
         return 'You already have a paid upload waiting. Choose its original file to resume it; no new payment was started.';
     }
