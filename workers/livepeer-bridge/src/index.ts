@@ -657,6 +657,8 @@ const PROVIDER_INVENTORY_DRIFT_CODES = new Set([
     'provider_publication_mismatch',
 ]);
 const SAFE_ERROR_CODES = new Set([
+    'invalid_creator_pending_upload',
+    'creator_pending_upload_record_failed',
     'control_body_too_large',
     'control_request_expired',
     'creator_fee_quote_rate_limited',
@@ -1019,6 +1021,24 @@ const bridgeWorker = {
             return forwardSponsoredUploadRelay(request, env);
         }
 
+        const pendingUploadRoute = url.pathname.match(/^\/v1\/creators\/([^/]+)\/pending-upload$/);
+        if (request.method === 'GET' && pendingUploadRoute) {
+            const origin = request.headers.get('Origin') || '';
+            const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+            if (env.LIVEPEER_BRIDGE_ENABLED !== 'true'
+                || env.LIVEPEER_SPONSORED_UPLOADS_ENABLED !== 'true') {
+                return withCors(json({ error: 'control_plane_disabled' }, 503), corsOrigin);
+            }
+            if (!env.LIVEPEER_CONTROL) {
+                return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
+            }
+            if (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env)) {
+                const limited = await publicBetaRateLimitResponse(request, env, CREATOR_PENDING_UPLOAD_ROUTE);
+                if (limited) return withCors(limited, corsOrigin);
+            }
+            return forwardCreatorPendingUpload(decodeURIComponent(pendingUploadRoute[1]), env, corsOrigin);
+        }
+
         return json({ error: 'not_found', endpoints: ['/__health'] }, 404);
     },
 };
@@ -1259,6 +1279,10 @@ export class LivepeerControl {
                 const run = this.operatorTail.then(() => relaySponsoredUpload(this.state, this.env, request));
                 this.operatorTail = run.then(() => undefined, () => undefined);
                 return await run;
+            }
+            if (url.pathname === '/internal/creator-pending-upload') {
+                if (request.method === 'POST') return await recordCreatorPendingUpload(this.state, request);
+                if (request.method === 'GET') return await readCreatorPendingUpload(this.state, url);
             }
             if (request.method === 'POST' && url.pathname === '/internal/payment-rate-limit') {
                 return await paymentRateLimit(this.state, request);
@@ -3876,6 +3900,96 @@ export async function forwardSponsoredUploadRelay(request: Request, env: Env): P
     }
 }
 
+const CREATOR_PENDING_UPLOAD_ROUTE = '/v1/creators/pending-upload';
+const CREATOR_PENDING_UPLOAD_KEY = 'creator-pending-upload';
+
+type CreatorPendingUploadRecord = {
+    schema: 'youtick.creator-pending-upload.v1';
+    creator: string;
+    jobId: string;
+    recordedAtMs: number;
+};
+
+// One object per creator keeps this index out of the sponsor relayer's bounded storage.
+function creatorPendingUploadObject(env: Env, creator: string): DurableObjectStub {
+    if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
+    return env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName([
+        'creator-pending-upload',
+        env.NEAR_NETWORK,
+        env.MARKET_CONTRACT_ID,
+        creator,
+    ].join(':')));
+}
+
+// A discovery hint for browsers that lost local recovery state. NEAR remains the job
+// authority: callers verify the returned job on chain, and a failed write never fails a relay.
+async function rememberCreatorPaidJob(env: Env, creator: string, jobId: string): Promise<void> {
+    try {
+        const response = await creatorPendingUploadObject(env, creator).fetch(new Request(
+            'https://object/internal/creator-pending-upload',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ creator_id: creator, job_id: jobId }),
+            },
+        ));
+        if (!response.ok) throw new Error('creator_pending_upload_record_failed');
+    } catch (error) {
+        console.error(formatLog('creator_pending_upload_record_failed', { code: safeErrorCode(error) }));
+    }
+}
+
+async function recordCreatorPendingUpload(state: DurableObjectState, request: Request): Promise<Response> {
+    const value = await readJsonObject(request);
+    requireExactKeys(value, ['creator_id', 'job_id'], 'invalid_creator_pending_upload');
+    const creator = value.creator_id;
+    const jobId = value.job_id;
+    if (typeof creator !== 'string' || !ACCOUNT_ID_PATTERN.test(creator)
+        || typeof jobId !== 'string' || !JOB_ID_PATTERN.test(jobId)) {
+        throw new Error('invalid_creator_pending_upload');
+    }
+    const record: CreatorPendingUploadRecord = {
+        schema: 'youtick.creator-pending-upload.v1',
+        creator,
+        jobId,
+        recordedAtMs: Date.now(),
+    };
+    await state.storage.put(CREATOR_PENDING_UPLOAD_KEY, record);
+    return json({ recorded: true });
+}
+
+async function readCreatorPendingUpload(state: DurableObjectState, url: URL): Promise<Response> {
+    const creator = url.searchParams.get('creator_id') || '';
+    if (!ACCOUNT_ID_PATTERN.test(creator)) throw new Error('invalid_creator_pending_upload');
+    const record = await state.storage.get<CreatorPendingUploadRecord>(CREATOR_PENDING_UPLOAD_KEY);
+    return json({
+        schema: 'youtick.creator-pending-upload.v1',
+        creator_id: creator,
+        job_id: record?.creator === creator ? record.jobId : null,
+    });
+}
+
+export async function forwardCreatorPendingUpload(
+    creator: string,
+    env: Env,
+    corsOrigin: string,
+): Promise<Response> {
+    try {
+        if (!ACCOUNT_ID_PATTERN.test(creator)) throw new Error('invalid_creator_pending_upload');
+        const object = creatorPendingUploadObject(env, creator);
+        const response = await object.fetch(new Request(
+            `https://object/internal/creator-pending-upload?creator_id=${encodeURIComponent(creator)}`,
+        ));
+        const headers = new Headers(response.headers);
+        headers.set('Cache-Control', 'no-store');
+        return withCors(new Response(response.body, { status: response.status, headers }), corsOrigin);
+    } catch (error) {
+        const code = safeErrorCode(error);
+        console.error(formatLog('creator_pending_upload_read_failed', { code }));
+        return withCors(json({ error: code }, errorStatus(code)), corsOrigin);
+    }
+}
+
 async function sponsorRelayerControlObject(env: Env): Promise<DurableObjectStub> {
     if (!env.LIVEPEER_CONTROL || !validSponsoredUploadRelayConfig(env)) {
         throw new Error('runtime_not_configured');
@@ -4204,6 +4318,7 @@ async function relaySponsoredUpload(
     if (existingJob) {
         requireExactSponsoredJob(existingJob, input);
         await state.storage.delete(`${SPONSOR_RELAY_KEY_PREFIX}${input.request.job_id}`);
+        await rememberCreatorPaidJob(env, input.request.creator_id, input.request.job_id);
         return json({
             accepted: true,
             relayed: true,
@@ -4229,6 +4344,7 @@ async function relaySponsoredUpload(
         if (job) {
             requireExactSponsoredJob(job, input);
             await state.storage.delete(key);
+            await rememberCreatorPaidJob(env, input.request.creator_id, input.request.job_id);
             return json({
                 accepted: true,
                 relayed: true,
@@ -4368,6 +4484,7 @@ async function relaySponsoredUpload(
     if (job) {
         requireExactSponsoredJob(job, input);
         await state.storage.delete(key);
+        await rememberCreatorPaidJob(env, input.request.creator_id, input.request.job_id);
         return json({ accepted: true, relayed: true, job_id: input.request.job_id, tx_hash: record.txHash || null });
     }
     if (broadcast === 'failed' || broadcast === 'sent') {

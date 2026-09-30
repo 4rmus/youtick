@@ -356,12 +356,45 @@ export type PendingLivepeerUpload = {
     deadlineAtMs?: number;
 };
 
+// Asks the Bridge for the creator's last relayed paid job. It is only a hint: an unavailable
+// Bridge yields null, and the job is always verified on chain before it is offered.
+export async function readBridgePendingUploadJob(accountId: string): Promise<string | null> {
+    if (!FEATURE_FLAGS.publicTestnetVideoV1 || !FEATURE_FLAGS.enableSponsoredLivepeerUploads) return null;
+    try {
+        const response = await fetch(bridgeRoute(`/v1/creators/${encodeURIComponent(accountId)}/pending-upload`), {
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!response.ok) return null;
+        const value = await response.json() as Record<string, unknown>;
+        if (value?.schema !== 'youtick.creator-pending-upload.v1' || value.creator_id !== accountId
+            || typeof value.job_id !== 'string') return null;
+        validateJobSessionIdentity(accountId, value.job_id);
+        return value.job_id;
+    } catch {
+        return null;
+    }
+}
+
 // Finds a paid job for this account that can still be uploaded. Settled jobs release the local record.
+// Without local state (another tab profile, cleared site data) the Bridge hint is checked instead.
 export async function findPendingLivepeerUpload(accountId: string): Promise<PendingLivepeerUpload | null> {
     const stored = readStoredUploadDraft(accountId);
     const draft = stored && isPaidUploadDraft(stored) ? stored : null;
-    const jobId = draft?.jobId ?? readRememberedLivepeerUploadJob(accountId);
-    if (!jobId) return null;
+    const localJobId = draft?.jobId ?? readRememberedLivepeerUploadJob(accountId);
+    const local = localJobId ? await readPendingLivepeerUpload(accountId, localJobId, draft) : null;
+    if (local) return local;
+    const bridgeJobId = await readBridgePendingUploadJob(accountId);
+    if (!bridgeJobId || bridgeJobId === localJobId) return null;
+    const pending = await readPendingLivepeerUpload(accountId, bridgeJobId, null);
+    if (pending) rememberLivepeerUploadJob(accountId, bridgeJobId);
+    return pending;
+}
+
+async function readPendingLivepeerUpload(
+    accountId: string,
+    jobId: string,
+    draft: LivepeerUploadDraft | null,
+): Promise<PendingLivepeerUpload | null> {
     let progress: Awaited<ReturnType<typeof readLivepeerUploadProgress>>;
     try {
         progress = await readLivepeerUploadProgress(jobId, accountId);
