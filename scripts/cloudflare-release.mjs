@@ -725,7 +725,10 @@ async function writeSanitizedConfigs(extracted, target, config) {
             observability: { enabled: true, head_sampling_rate: 1 },
             vars: {
                 VIDEO_ENVIRONMENT: 'public-testnet', MARKET_CONTRACT_ID: config.bridge.MARKET_CONTRACT_ID,
-                READ_MODEL_ENABLED: String(publicTestnetMode(config) !== 'closed'), READ_MODEL_INGESTION_ENABLED: String(publicTestnetMode(config) !== 'closed'),
+                READ_MODEL_ENABLED: String(publicTestnetMode(config) !== 'closed'),
+                // The history scanner only feeds the v1 reader; with the current catalogue serving Web it is paused.
+                READ_MODEL_INGESTION_ENABLED: String(publicTestnetMode(config) !== 'closed'
+                    && config.web?.NEXT_PUBLIC_ENABLE_CURRENT_CATALOG !== 'true'),
                 READ_MODEL_CURRENT_CATALOG_ENABLED: config.bridge.READ_MODEL_CURRENT_CATALOG_ENABLED ?? 'false',
                 READ_MODEL_BACKFILL_ENABLED: 'false', READ_MODEL_BACKFILL_CONTINUE_ENABLED: 'false',
                 READ_MODEL_NETWORK: 'testnet', READ_MODEL_CONTRACT_ID: config.bridge.MARKET_CONTRACT_ID,
