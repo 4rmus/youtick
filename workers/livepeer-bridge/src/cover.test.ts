@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import handler, { type Env } from './index';
+import handler, { type Env, resetPublicUploadPolicyCache } from './index';
+
+// The public upload policy cache is per isolate; each test starts from a fresh read.
+beforeEach(() => resetPublicUploadPolicyCache());
 
 const RPC_URL = 'https://rpc.testnet.near.org';
 const MARKET_ID = 'paid-media-livepeer-v1.testnet';
@@ -121,14 +124,20 @@ function mockUpstreams(options: FetchOptions = {}) {
     });
 }
 
+// Honors Cache-Control max-age like the Workers Cache API, so visibility expiry is observable.
 function createCache() {
-    const entries = new Map<string, Response>();
+    const entries = new Map<string, { response: Response; expiresAtMs: number }>();
     return {
         default: {
-            match: vi.fn(async (request: Request) => entries.get(request.url)?.clone()),
-            put: vi.fn(async (request: Request, response: Response) => {
-                entries.set(request.url, response.clone());
+            match: vi.fn(async (request: Request) => {
+                const entry = entries.get(request.url);
+                return entry && entry.expiresAtMs > Date.now() ? entry.response.clone() : undefined;
             }),
+            put: vi.fn(async (request: Request, response: Response) => {
+                const maxAge = Number(/max-age=(\d+)/.exec(response.headers.get('Cache-Control') || '')?.[1] ?? 0);
+                entries.set(request.url, { response: response.clone(), expiresAtMs: Date.now() + maxAge * 1_000 });
+            }),
+            delete: vi.fn(async (request: Request) => entries.delete(request.url)),
         },
     };
 }
@@ -151,7 +160,7 @@ describe('publication cover endpoint', () => {
 
         expect(response.status).toBe(200);
         expect(response.headers.get('Content-Type')).toBe('image/jpeg');
-        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(response.headers.get('Cache-Control')).toBe('public, max-age=30');
         expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
         expect(new Uint8Array(await response.arrayBuffer())).toEqual(JPEG);
         const publicHeaders = JSON.stringify([...response.headers]);
@@ -161,18 +170,53 @@ describe('publication cover endpoint', () => {
         expect(publicHeaders).not.toContain(JPEG_URL);
     });
 
-    it('rechecks the final publication before serving a cache hit', async () => {
+    it('serves cache-first within the visibility window and rechecks the final publication after it', async () => {
+        let clock = Date.parse('2026-09-29T12:00:00Z');
+        vi.spyOn(Date, 'now').mockImplementation(() => clock);
         const fetchMock = mockUpstreams();
         vi.stubGlobal('fetch', fetchMock);
         const env = await createEnv();
+        const rpcCalls = () => fetchMock.mock.calls.filter(([input]) => requestUrl(input) === RPC_URL).length;
 
         expect((await handler.fetch(new Request(COVER_URL), env)).status).toBe(200);
         expect((await handler.fetch(new Request(COVER_URL), env)).status).toBe(200);
-
-        expect(fetchMock.mock.calls.filter(([input]) => requestUrl(input) === RPC_URL)).toHaveLength(2);
+        expect(rpcCalls()).toBe(1);
+        clock += 30_001;
+        expect((await handler.fetch(new Request(COVER_URL), env)).status).toBe(200);
+        expect(rpcCalls()).toBe(2);
         expect(fetchMock.mock.calls.filter(([input]) => (
             requestUrl(input) === `https://livepeer.studio/api/playback/${PLAYBACK_ID}`
         ))).toHaveLength(1);
+    });
+
+    it('hides a cached cover within 30 seconds of a takedown', async () => {
+        let clock = Date.parse('2026-09-29T12:00:00Z');
+        vi.spyOn(Date, 'now').mockImplementation(() => clock);
+        vi.stubGlobal('fetch', mockUpstreams());
+        const env = await createEnv();
+        expect((await handler.fetch(new Request(COVER_URL), env)).status).toBe(200);
+
+        vi.stubGlobal('fetch', mockUpstreams({ availability: 'TAKEDOWN' }));
+        clock += 30_001;
+        expect((await handler.fetch(new Request(COVER_URL), env)).status).toBe(404);
+        expect((await handler.fetch(new Request(COVER_URL), env)).status).toBe(404);
+    });
+
+    it('limits cover cache misses per IP with the existing public-beta limiter and skips it on hits', async () => {
+        const limit = vi.fn(async () => ({ success: limit.mock.calls.length <= 1 }));
+        vi.stubGlobal('fetch', mockUpstreams());
+        const env = { ...await createEnv(), VIDEO_ENVIRONMENT: 'public-testnet', PUBLIC_BETA_RATE_LIMITER: { limit } } as Env;
+        const request = () => new Request(COVER_URL, { headers: { 'CF-Connecting-IP': '203.0.113.5' } });
+
+        expect((await handler.fetch(request(), env)).status).toBe(200);
+        expect((await handler.fetch(request(), env)).status).toBe(200);
+        expect(limit).toHaveBeenCalledTimes(1);
+        expect(limit).toHaveBeenCalledWith({ key: '/v1/publication-covers:ip:203.0.113.5' });
+
+        const otherCover = new Request(COVER_URL.replace(/\/1$/, '/2'), { headers: { 'CF-Connecting-IP': '203.0.113.5' } });
+        const limited = await handler.fetch(otherCover, env);
+        expect(limited.status).toBe(429);
+        expect(limited.headers.get('Retry-After')).toBe('60');
     });
 
     it('returns and caches a Livepeer PNG with its verified content type', async () => {

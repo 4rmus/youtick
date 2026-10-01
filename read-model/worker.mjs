@@ -1,7 +1,7 @@
 import { currentCatalogEnabled, refreshCurrentCatalog, CURRENT_CATALOG_QUERY_BUDGET } from './current-catalog.mjs';
 import { fetchNeardataMarketBlock } from '../scripts/fetch-neardata-market-block.mjs';
 import {
-    applyFinalMarketBlockBatch, MAX_FINAL_BLOCKS_PER_BATCH,
+    applyFinalMarketBlockBatch, finalBlockQueryCost, MAX_FINAL_BLOCKS_PER_BATCH,
     MAX_FINAL_BATCH_QUERIES, MAX_FINAL_EVENTS_PER_BATCH,
 } from '../scripts/apply-market-read-model-d1.mjs';
 import { runNearFinalityProbe } from '../workers/livepeer-bridge/scripts/near-finality-canary.mjs';
@@ -25,6 +25,7 @@ const INGESTION_ERROR_CODES = new Set([
     'invalid_d1_block_batch_size',
     'non_contiguous_d1_block_batch',
     'd1_final_block_event_limit_exceeded',
+    'd1_final_block_query_budget_exceeded',
     'd1_block_batch_query_limit_exceeded',
     'invalid_d1_event_batch_size',
     'invalid_d1_final_block',
@@ -106,35 +107,58 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
     let scanHeight = position?.scanHeight ?? nextBlockHeight;
     let requestCount = 0;
     let remainingQueries = dependencies.queryBudget ?? MAX_FINAL_BATCH_QUERIES;
+    const invocationQueries = remainingQueries;
+    // A fetched dense block waiting for the preceding batch to commit; it is never fetched twice.
+    let carried = null;
     while (requestCount < limit && nextBlockHeight <= finalBlockHeight) {
         const blocks = [];
         let batchQueries = 0;
         let budgetReached = false;
         while (blocks.length < (isPublic ? MAX_FINAL_BLOCKS_PER_BATCH : 1) && requestCount < limit
             && scanHeight <= finalBlockHeight && (!isPublic || now() - started < 50_000)) {
-            if (isPublic) {
-                await sleep(Math.min(Math.max(0, 350 - (now() - lastFetchAt)), Math.max(0, 50_000 - (now() - started))));
-                if (now() - started >= 50_000) break;
-                lastFetchAt = now();
+            let block = carried;
+            carried = null;
+            if (!block) {
+                if (isPublic) {
+                    await sleep(Math.min(Math.max(0, 350 - (now() - lastFetchAt)), Math.max(0, 50_000 - (now() - started))));
+                    if (now() - started >= 50_000) break;
+                    lastFetchAt = now();
+                }
+                block = await fetchBlock({ network: config.network, contractId: config.contractId,
+                    blockHeight: scanHeight, ...(isPublic ? { requirePredecessor: true } : {}) });
+                requestCount += 1;
             }
-            const block = await fetchBlock({ network: config.network, contractId: config.contractId,
-                blockHeight: scanHeight, ...(isPublic ? { requirePredecessor: true } : {}) });
-            requestCount += 1;
             if (block === null) {
                 if (!isPublic || scanHeight === config.startBlockHeight) throw new Error('invalid_neardata_block');
             } else {
                 if (block.block_height !== scanHeight || (isPublic && (block.prev_block_height === undefined
                     || block.prev_block_hash === undefined))) throw new Error('invalid_neardata_block');
                 if (!Array.isArray(block.events)) throw new Error('invalid_d1_final_block');
-                if (block.events.length > MAX_FINAL_EVENTS_PER_BATCH) throw new Error('d1_final_block_event_limit_exceeded');
                 // ponytail: reserve the worst-case three queries per event; count exact costs if this wastes material capacity.
-                const blockQueries = 3 * block.events.length + 1;
+                const blockQueries = finalBlockQueryCost(block.events.length);
+                const dense = block.events.length > MAX_FINAL_EVENTS_PER_BATCH;
+                if (blockQueries > invocationQueries) {
+                    // Poison block: commit what precedes it, then stop at it with an alarm code; never split it.
+                    if (blocks.length) {
+                        budgetReached = true;
+                        break;
+                    }
+                    throw new Error('d1_final_block_query_budget_exceeded');
+                }
+                if (dense && blocks.length) {
+                    carried = block;
+                    break;
+                }
                 if (batchQueries + blockQueries > remainingQueries) {
                     budgetReached = true;
                     break;
                 }
                 blocks.push(block);
                 batchQueries += blockQueries;
+                if (dense) {
+                    scanHeight += 1;
+                    break;
+                }
             }
             scanHeight += 1;
         }

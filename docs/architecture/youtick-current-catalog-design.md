@@ -72,11 +72,12 @@ Yeni katalog kaydı ekonomik işlem geçmişi yerine geçmez.
 2. `block(finality=final)` ile yükseklik, hash ve kaynak zamanını alır. Yayın
    sayısı ve liste çağrıları aynı `block_id=hash` ile yapılır. Yanıtların hem
    hash hem yükseklik eşleşmesi denetlenir; farklı bloklardan cevaplar birleşmez.
-3. İlk pilot mevcut yardımcıdaki **48 yayın sınırını** korur. 49+ yayında
+3. Katalog tavanı **95 yayındır** (ilk pilot 48 idi; bkz. "Sayfalama ve
+   kapasite"). Liste aynı bloktan 48'lik sayfalarla okunur. Tavan aşılırsa
    sessiz kırpma veya rastgele ilk sayfa yoktur: aday reddedilir, son sağlam
-   katalog korunur ve kapasite uyarısı verilir. Bu bir pilot tavanıdır;
-   büyümede aynı bloktan sınırlı sayfalama eklenir. Boş katalog yalnız ilk
-   doğrulanmış sayının sıfır olmasıyla mümkündür.
+   katalog korunur ve `catalog_capacity_exceeded` kaydedilir; %80'de (76)
+   `catalog_capacity_warning` verilir. Boş katalog yalnız ilk doğrulanmış
+   sayının sıfır olmasıyla mümkündür.
 4. Tamlık, tekil kimlikler, alan biçimleri ve bütün durumlar doğrulanır.
    Sayı ile liste uzunluğu eşleşmeli; eksik veya yinelenen kayıt kabul edilmez.
    Aynı kimliğin üretici/yayın zamanı gibi değişmez alanlarında uyuşmazlık
@@ -337,6 +338,33 @@ yayın-aracı/belge dosyasını kapsar. Ana çalışma alanı, mevcut ekonomik v
 ve operasyon arşivleri korunur. Merge, migration ve deploy bu gate'in dışında.
 **Tek sonraki gate:** `YOUTICK_CURRENT_CATALOG_PR_CHECKS` — PR'ın tam commit'i
 üzerindeki CI sonuçlarını ve inceleme bulgularını doğrulamak.
+
+## Sayfalama ve kapasite — 29 Eylül 2026
+
+`YOUTICK_CURRENT_CATALOG_PAGINATION` kapsamında 48 tavanı yalnız current
+katalog için kaldırıldı; v1 bootstrap yazıcısı ve 48 sınırı aynen kalır (tek
+sayfa, `from_index: "0"`).
+
+- `get_publications` aynı `block_id=hash` ile 48'lik sayfalarla okunur
+  (kontrat sayfa başına en fazla 100 döndürür). Her yanıtta hash ve yükseklik
+  blok başlığıyla eşleşmelidir; kısa, yinelenen veya başka bloktan gelen sayfa
+  bütün adayı reddeder. RPC istek sınırı 2 + ⌈95/48⌉ = 4'tür.
+- Tavan, 995 sorguluk bütçenin katalog payı olan 100 sorgudan türetilir: ilk
+  snapshot her satırı yazar ve 5 sorgu sabittir (iki okuma, korumalı durum
+  satırı, belirsiz commit sonrası iki okumalık uzlaştırma). 100 − 5 = 95.
+  Önceki kontrol uzlaştırma okumalarını saymıyordu; artık sayılır.
+- Bütçe bölüşümü (100 katalog / 895 geçmiş / 5 kontrol) değiştirilmedi.
+  95'in üstü için bölüşümün değişmesi veya satır yazılarının birden çok
+  invocation'a yayılması gerekir; bu ayrı bir karardır.
+- Şemadaki `publication_count BETWEEN 0 AND 48` kısıtı `0009` ile 95'e
+  çıkarılır (tablo yeniden kurulur, satır değişmeden kopyalanır). Kod
+  migration'dan önce yayınlanırsa 49+ aday CHECK hatasıyla atomik olarak geri
+  alınır; son katalog korunur.
+- Web tarafında v2 503 için geri dönüş yoktur (`apps/web/lib/current-catalog.ts`);
+  bu gate'in kapsamı dışında bırakıldı.
+
+**Kanıt:** yalnız LOCAL_TEST (bellek içi SQLite, sahte RPC). `0009` uzak D1'e
+uygulanmadı; canlı katalog durumu bu çalışmada doğrulanmadı (UNPROVEN).
 
 ## Canlı gölge ve geçiş doğrulaması — 30 Eylül 2026
 

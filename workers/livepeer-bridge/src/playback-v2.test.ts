@@ -2,8 +2,11 @@ import { packCompactUpload, unpackCompactUpload } from '../../../protocol/paid-m
 import compactVectors from '../../../protocol/paid-media-livepeer-v1/compact-upload-vectors.json';
 import { KeyPair, KeyPairSigner, PublicKey, baseEncode, actions, buildDelegateAction, encodeSignedDelegate } from 'near-api-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import handler, { playbackAuthorizationCacheRecordCount, type Env } from './index';
+import handler, { playbackAuthorizationCacheRecordCount, type Env, resetPublicUploadPolicyCache } from './index';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
+
+// The public upload policy cache is per isolate; each test starts from a fresh read.
+beforeEach(() => resetPublicUploadPolicyCache());
 
 const ORIGIN = 'https://youtick.net';
 const RPC_URL = 'https://rpc.testnet.near.org';
@@ -468,7 +471,8 @@ describe('stateless playback v2', () => {
         const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
         expect((await handler.fetch(signed.request, env)).status).toBe(200);
         expect((await handler.fetch(await signed.renew(), env)).status).toBe(200);
-        expect(dependencies.rpc).toHaveBeenCalledTimes(5);
+        // The renewal reuses the isolate's verified policy (30s) instead of a second policy read.
+        expect(dependencies.rpc).toHaveBeenCalledTimes(4);
         const completed = info.mock.calls.map(([value]) => JSON.parse(String(value)))
             .filter((entry) => entry.event === 'stateless_playback_authorization_completed');
         expect(completed.map((entry) => entry.details.rpcCalls)).toEqual([4, 1]);

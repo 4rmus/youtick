@@ -7,6 +7,17 @@ export const MAX_FINAL_EVENTS_PER_BATCH = 16;
 export const MAX_FINAL_BLOCKS_PER_BATCH = 8;
 // Reserve five of 1,000 queries: Queue validation, cursor read/reset/reread and final advance or failure reset.
 export const MAX_FINAL_BATCH_QUERIES = 995;
+// Worst-case writer cost: chain event plus up to two projections per event, and one watermark per block.
+export const QUERIES_PER_FINAL_EVENT = 3;
+
+export function finalBlockQueryCost(eventCount) {
+    return QUERIES_PER_FINAL_EVENT * eventCount + 1;
+}
+
+// A block denser than the shared-batch cap is written alone; it must still fit the invocation's query share.
+export function maxDenseBlockEvents(queryBudget = MAX_FINAL_BATCH_QUERIES) {
+    return Math.floor((Math.min(queryBudget, MAX_FINAL_BATCH_QUERIES) - 1) / QUERIES_PER_FINAL_EVENT);
+}
 
 export async function applyFinalMarketEventBatch(db, rawRecords) {
     const records = normalizeFinalMarketEvents(rawRecords);
@@ -39,7 +50,14 @@ export async function applyFinalMarketBlockBatch(db, rawBlocks, queryBudget = MA
     if (!Array.isArray(rawBlocks) || rawBlocks.length < 1 || rawBlocks.length > MAX_FINAL_BLOCKS_PER_BATCH) {
         throw new Error('invalid_d1_block_batch_size');
     }
-    const blocks = rawBlocks.map(normalizeFinalMarketBlock);
+    const denseLimit = maxDenseBlockEvents(queryBudget);
+    const alone = rawBlocks.length === 1;
+    if (alone && Array.isArray(rawBlocks[0]?.events) && rawBlocks[0].events.length > MAX_FINAL_EVENTS_PER_BATCH
+        && rawBlocks[0].events.length > denseLimit) {
+        throw new Error('d1_final_block_query_budget_exceeded');
+    }
+    const blocks = rawBlocks.map((block) => normalizeFinalMarketBlock(block,
+        alone ? Math.max(MAX_FINAL_EVENTS_PER_BATCH, denseLimit) : MAX_FINAL_EVENTS_PER_BATCH));
     if (blocks.some((block, index) => block.network !== blocks[0].network
         || block.contract_id !== blocks[0].contract_id
         || (index > 0 && (block.prev_block_height === undefined
@@ -50,7 +68,8 @@ export async function applyFinalMarketBlockBatch(db, rawBlocks, queryBudget = MA
     }
     const statements = blocks.flatMap((block) => finalBlockStatements(db, block));
     if (statements.length > Math.min(queryBudget, MAX_FINAL_BATCH_QUERIES)) {
-        throw new Error('d1_block_batch_query_limit_exceeded');
+        throw new Error(alone && blocks[0].events.length > MAX_FINAL_EVENTS_PER_BATCH
+            ? 'd1_final_block_query_budget_exceeded' : 'd1_block_batch_query_limit_exceeded');
     }
     return db.batch(statements);
 }
@@ -103,9 +122,9 @@ function finalBlockStatements(db, block) {
     return statements;
 }
 
-function normalizeFinalMarketBlock(value) {
+function normalizeFinalMarketBlock(value, maxEvents = MAX_FINAL_EVENTS_PER_BATCH) {
     if (Array.isArray(value?.events)
-        && value.events.length > MAX_FINAL_EVENTS_PER_BATCH) {
+        && value.events.length > maxEvents) {
         throw new Error('d1_final_block_event_limit_exceeded');
     }
     if (!value || typeof value !== 'object' || Array.isArray(value)

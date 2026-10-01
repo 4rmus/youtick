@@ -457,3 +457,30 @@ test('public Market code update is manual, exact-target and isolated from Previe
     assert.match(ci, /subject-checksums: .*public-testnet-market-runtime\/SHA256SUMS/);
     assert.match(ci, /name: market-contract-\$\{\{ github.sha \}\}/);
 });
+
+test('public-testnet pilot alerts are scheduled, closed by default, least-privilege and read-only', async () => {
+    const workflow = await readFile(new URL('../.github/workflows/pilot-alerts.yml', import.meta.url), 'utf8');
+    const script = await readFile(new URL('./pilot-alerts.mjs', import.meta.url), 'utf8');
+
+    assert.match(workflow, /\n  schedule:\n    - cron: "\*\/5 \* \* \* \*"\n  workflow_dispatch:\n/);
+    assert.match(workflow, /\npermissions: \{\}\n/);
+    assert.match(workflow, /if: github\.ref == 'refs\/heads\/main' && vars\.PILOT_ALERTS_ENABLED == 'true'/);
+    assert.match(workflow, /name: public-testnet/);
+    assert.match(workflow, /    permissions:\n      contents: read\n/);
+    assert.match(workflow, /uses: actions\/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6\n        with:\n          persist-credentials: false/);
+    assert.deepEqual([...workflow.matchAll(/secrets\.([A-Z_]+)/g)].map(([, name]) => name).sort(), [
+        'OPS_ALERT_CHAT_WEBHOOK_URL', 'PUBLIC_TESTNET_CLOUDFLARE_ACCOUNT_ID', 'PUBLIC_TESTNET_CLOUDFLARE_MONITOR_TOKEN',
+    ]);
+    assert.equal((workflow.match(/^\s+-?\s*uses:/gm) ?? []).length, 1);
+    assert.doesNotMatch(workflow, /CLOUDFLARE_API_TOKEN|wrangler|gh api|set -x|printenv|echo .*(TOKEN|WEBHOOK)/);
+
+    // The evaluator reads Cloudflare and writes only to the Chat channel.
+    assert.deepEqual([...new Set(script.match(/https:\/\/[a-z0-9.-]+/g))], ['https://api.cloudflare.com']);
+    assert.ok(script.includes(String.raw`/^https:\/\/chat\.googleapis\.com\/v1\/spaces\/[A-Za-z0-9_-]+\/messages\?[^\s#]+$/`));
+    assert.deepEqual([...script.matchAll(/`\/accounts\/\$\{context\.accountId\}([^`?]*)/g)].map(([, path]) => path).sort(), [
+        '/queues', '/workers/observability/telemetry/query',
+    ]);
+    assert.doesNotMatch(script, /query: '\s*mutation|method: '(PUT|PATCH|DELETE)'/);
+    assert.match(script, /query: 'query DlqBacklog\(/);
+    assert.equal((script.match(/method: 'POST'/g) ?? []).length, 3);
+});
