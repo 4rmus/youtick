@@ -114,8 +114,11 @@ Vazgeçme onay sorusu ve kilit açılması yalnız owner gözlemiyle doğruland�
    süresi dolar, kayıp 0,60 test USDC).
 3. ~~İptal oturum anahtarına bağlı.~~ Kullanıcının asıl ihtiyacı (kilidi açmak) #227 "vazgeç" ile karşılandı.
    Bridge iptali hâlâ yalnız dar pencerede ve oturum anahtarıyla çalışır; bu davranış değişmedi.
-4. **Belge/kod uyumsuzluğu:** `near-auth-upload-safety.md`, kodda olmayan `allowUploadKeyReplacement`
-   bayrağından söz ediyor.
+4. ~~Belge/kod uyumsuzluğu.~~ `allowUploadKeyReplacement` ve `near-auth-*`/`NearAuth*` dosyaları #214 ile
+   girip cüzdanlı V1 adayı #215 (`ad84ba2`) ile `main`'den çıkarıldı; kod hatası değil.
+   [#230](https://github.com/4rmus/youtick/pull/230) `near-auth-upload-safety.md` başına bunu ve güncel cüzdan
+   davranışını anlatan tarihli not ekledi. NEAR Auth çalışması yalnız yerel
+   `codex/near-auth-preserve-20260927` dalındadır; uzak depoda yedeği yoktur.
 5. **Geçmiş tarayıcısı ~199 bin blok geride.** Yeni katalog etkilenmez; satış/geçmiş raporları etkilenir.
 6. **Copilot "AI findings" kontrolü** birden fazla PR'da "model not supported" ile başarısız oldu; zorunlu
    değil, repo ayarıdır.
@@ -129,5 +132,5 @@ iptal, takedown → provider `404`, mobil/Safari ve diğer
 tarayıcılar, provider hesabında asset sayısı okuması, yeni yayının katalogda ilk görünme gecikmesi
 (90 s hedefi) — **EXTERNAL_NOT_RUN**.
 
-**Tek sonraki gate:** `YOUTICK_UPLOAD_SAFETY_DOC_ALIGNMENT` — bulgu 4: `near-auth-upload-safety.md`
-belgesini mevcut anahtar değiştirme ve kurtarma/vazgeçme davranışıyla uzlaştırmak.
+**Tek sonraki gate:** `YOUTICK_NEAR_AUTH_PRESERVE_BACKUP` — yalnız yerel duran
+`codex/near-auth-preserve-20260927` dalını, `main`'e birleştirmeden uzak depoya yedeklemek (açık owner onayıyla).
