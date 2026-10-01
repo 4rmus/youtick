@@ -305,6 +305,21 @@ npm test -- --run __tests__/unit/current-catalog.test.ts __tests__/unit/catalog-
 npx tsc --noEmit
 ```
 
+### Targeted history scan (dry run)
+
+```bash
+node --test scripts/history-targeted-scan.test.mjs
+# Read-only against the live index and neardata; never writes D1:
+node scripts/history-targeted-scan.mjs --dry-run --network=testnet \
+  --contract=video-market-v1-260907.youtick-dev-v3.testnet --from=<D1 watermark>
+```
+
+Tests use mocked FastNEAR and neardata responses: index paging and the receipt
+lookback floor, market-only receipt blocks, deferral of transactions that finish
+beyond the target, fail-closed incomplete or foreign index data, and a dry run
+that reads only candidate blocks. The live dry run is evidence of the index and
+event counts only; it does not prove the writer or reconciliation.
+
 ### Pilot alerts
 
 ```bash
