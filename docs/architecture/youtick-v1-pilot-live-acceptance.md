@@ -105,6 +105,40 @@ tarafından onaylandı ve deploy sonrası tekrar `false` yapıldı. Katalog her 
 Ret yanıtındaki `reason`/`retry_at_ms` canlıda gözlenmedi (iki hesap da uygundu): **LOCAL_TEST + CI**.
 Vazgeçme onay sorusu ve kilit açılması yalnız owner gözlemiyle doğrulandı.
 
+## Pilot sertleştirmesi, katalog kapasitesi ve dış izleme — 1 Ekim 2026
+
+Gate'ler: `YOUTICK_PILOT_HARDENING_*`, `YOUTICK_CATALOG_CAPACITY_0009_MIGRATION`, `YOUTICK_OPS_RECORD` — **PASS**.
+
+**Sertleştirme deploy'u.** Owner'ın 29 Eylül tarihli yerel çalışması güncel `main`'e taşınıp
+[#232](https://github.com/4rmus/youtick/pull/232) (`6e8fd76`) ile birleştirildi ve
+[run 36900934344](https://github.com/4rmus/youtick/actions/runs/36900934344) ile 17:47 UTC'de yayınlandı
+(Web `06b55197`, Bridge `8a4ca7f1`, read-model `4bde92a3`). `DEPLOY_PUBLIC_TESTNET_ENABLED` owner tarafından
+açıldı, `public-testnet` ortamı owner tarafından onaylandı ve 17:47:56 UTC'de tekrar `false` yapıldı.
+
+| Canlı kontrol (PRODUCTION) | Sonuç |
+| --- | --- |
+| Güvenlik başlıkları (`/` ve `/api/*`) | HSTS `max-age=31536000`, `nosniff`, `strict-origin-when-cross-origin`, kısıtlayıcı `Permissions-Policy`; mevcut CSP korunur |
+| NEAR RPC proxy | Aynı origin 200; `Origin: https://evil.example` → 403 "Cross-origin NEAR RPC request rejected" |
+| Upload preflight | `{"available":true}`; upload akışı bozulmadı |
+| Bridge / read-model / Web | `ok` / `ok` / 200; katalog 22/22, 0 fark |
+
+İmzasız `creator_id` ile hesap kovası doldurma açığının kapandığı dışarıdan gözlenemez; kanıt kod, testler
+ve CI'dır. Oynatıcının yeni `Permissions-Policy` altında tam ekran/PiP/kopyalama davranışı tarayıcıda
+denenmedi.
+
+**D1 `0009`.** 17:52:54 UTC Time Travel bookmark
+`000000e6-0000094a-000050f7-124217711ab7007f3be94b5b9c2e4197` alındı; `wrangler d1 migrations apply --remote`
+yalnız `0009_current_catalog_capacity.sql` çalıştırdı (5 komut). Sonrası: `migrations list` boş, kayıt
+`id 9`; `current_catalog_state` `publication_count BETWEEN 0 AND 95`; satır korundu (22 yayın),
+`current_publications` dokunulmadı. Sonraki cron yeni tabloya yazdı (blok 271108378 → 271108952); bağımsız
+karşılaştırma 22/22, 0 fark; v2 `fresh`, 20 + 2 sayfa.
+
+**Dış izleme.** Owner'ın UptimeRobot hesabında (ücretsiz plan, 5 dakikalık kontrol, hesap e-postasına
+bildirim) dört monitör: Web HTTP (`public-testnet.youtick.net`), Bridge ve read-model `/__health` için
+`"status":"ok"` yoksa alarm, v2 katalog için `"freshness":"fresh"` yoksa alarm. Kurulumdan sonra dördü de
+Up. Geçmiş tarayıcısı gecikmesi, NEAR RPC hata oranı ve DLQ birikimi bu izlemenin kapsamı dışındadır;
+#232'deki `pilot-alerts` workflow'u `PILOT_ALERTS_ENABLED` ve secret'lar olmadan çalışmaz (açılmadı).
+
 ## Açık bulgular
 
 1. ~~Yenileme sonrası "Your upload" kartı görünmedi.~~ Yerel kayıt olmadan kart ve Resume yukarıdaki
@@ -118,8 +152,10 @@ Vazgeçme onay sorusu ve kilit açılması yalnız owner gözlemiyle doğruland�
    girip cüzdanlı V1 adayı #215 (`ad84ba2`) ile `main`'den çıkarıldı; kod hatası değil.
    [#230](https://github.com/4rmus/youtick/pull/230) `near-auth-upload-safety.md` başına bunu ve güncel cüzdan
    davranışını anlatan tarihli not ekledi. NEAR Auth çalışması yalnız yerel
-   `codex/near-auth-preserve-20260927` dalındadır; uzak depoda yedeği yoktur.
+   `codex/near-auth-preserve-20260927` dalındadır; 1 Ekim'de kalıp tabanlı sır taramasından sonra (bulgu yok)
+   `main`'e birleştirilmeden uzak depoya yedeklendi (`f4cccd9`).
 5. **Geçmiş tarayıcısı ~199 bin blok geride.** Yeni katalog etkilenmez; satış/geçmiş raporları etkilenir.
+   #232 yoğun blokta takılmak yerine açık hata verir; gecikmenin kapandığı doğrulanmadı.
 6. **Copilot "AI findings" kontrolü** birden fazla PR'da "model not supported" ile başarısız oldu; zorunlu
    değil, repo ayarıdır.
 7. **Vazgeçme Bridge'deki upload yerini boşaltmaz.** Vazgeçtikten sonra 30 dakikaya kadar yeni upload
@@ -132,5 +168,5 @@ iptal, takedown → provider `404`, mobil/Safari ve diğer
 tarayıcılar, provider hesabında asset sayısı okuması, yeni yayının katalogda ilk görünme gecikmesi
 (90 s hedefi) — **EXTERNAL_NOT_RUN**.
 
-**Tek sonraki gate:** `YOUTICK_NEAR_AUTH_PRESERVE_BACKUP` — yalnız yerel duran
-`codex/near-auth-preserve-20260927` dalını, `main`'e birleştirmeden uzak depoya yedeklemek (açık owner onayıyla).
+**Tek sonraki gate:** `YOUTICK_HISTORY_SCANNER_LAG` — bulgu 5: geçmiş tarayıcısının #232 sonrası ilerleme
+hızını salt-okunur ölçmek ve gecikmenin kapanma süresini tahmin etmek.
