@@ -88,6 +88,24 @@ provider değişikliği gerekiyorsa ayrı işlem onayı alınır; otomatik iade 
 | Contract storage reserve eşiği | Contract operations | `hold_release_and_read_storage_reserve`: release/aktivasyonu durdur; `get_storage_reserve_status` sonucunu ve withdrawal invariantını salt okunur doğrula. |
 | RPC finality lag | Platform/SRE | `hold_chain_mutations_and_verify_finality`: zincir mutasyonlarını kapalı tut; fallback'i yalnız read için kullan ve finality'yi bağımsız kaynaktan doğrula. |
 | Elevated playback error | Platform/SRE | `close_playback_issuance_and_preserve_upload_recovery`: `LIVEPEER_PLAYBACK_ISSUANCE_ENABLED=false` yap; exact version ve hata oranını doğrula, upload recovery ve canonical entitlement okumalarını değiştirme. |
+| Current katalog kapasitesi | Platform/SRE | `plan_catalog_capacity_before_ceiling`: `catalog_capacity_warning` (76/95) veya `catalog_capacity_exceeded` kaydını doğrula; son doğrulanmış katalog korunur. Tavan veya sorgu bütçesi değişikliğini ayrı onayla planla; kırpma veya elle satır silme yapma. |
+| Current katalog 503 | Platform/SRE | `verify_catalog_refresh_and_last_verified_block`: `current_catalog` route'unun 503 sayısını, son `current-catalog-refresh` hata kodunu ve `verified_block_height`/kaynak yaşını salt okunur incele. Web tarafında v2 için geri dönüş yoktur; bayrak değişikliği ayrı onay ister. |
+| Read-model ingestion durması | Platform/SRE | `hold_ingestion_and_inspect_stalled_block`: başarısız `read-model-ingestion` kodunu ve watermark'ı oku; takılan bloğu bölme veya kısmen yazma. Kapasite kararı sonrası aynı bloğu tekrar oynat. |
+
+Kritik alarmlar (current katalog kapasitesi ve 503, ingestion durması, NEAR RPC
+hataları, Livepeer events DLQ derinliği) `observability/slo-policy.json` içindeki
+tek `pilot_primary` kanal sözleşmesine bağlıdır: Google Chat gelen webhook'u,
+`youtick.pilot-alert.v1` zarfı, alarm ve UTC gün başına tek thread.
+`.github/workflows/pilot-alerts.yml` beş dakikada bir `scripts/pilot-alerts.mjs`
+ile son on dakikanın public-testnet Workers Logs sayılarını ve DLQ backlog'unu
+salt okunur sorgular. `PILOT_ALERTS_ENABLED` değişkeni `true` olmadan çalışmaz.
+Gerekenler: `OPS_ALERT_CHAT_WEBHOOK_URL` ve `PUBLIC_TESTNET_CLOUDFLARE_MONITOR_TOKEN`
+secret'ları (Account Analytics Read, Queues Read, Workers Observability sorgu
+izni). Sorgu hatası, tanınmayan yanıt ve read-model telemetrisinin susması da
+alarm üretir. RPC hataları ve DLQ derinliği yukarıdaki RPC finality lag ve Queue
+backlog ilk adımlarını kullanır. Web ve bridge release şablonlarında
+observability açık olmadığından web RPC sinyali loglarda görünmeyebilir;
+read-model RPC hatası yine sayılır. Teslimat ve alarm tatbikatı EXTERNAL_NOT_RUN'dır.
 
 İki domain kontrolü kaynakta ve guarded release paketinde varsayılan kapalıdır.
 `LIVEPEER_NEW_UPLOADS_ENABLED=false` yeni Job kaydı/intent'i reddeder; mevcut

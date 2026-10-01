@@ -56,24 +56,33 @@ with zero market events, binds every SQL value as a prepared parameter and
 submits event rows, projections and the watermark in one D1 `batch()`. The batch
 is capped at 16 events so the worst case stays within
 the [documented 50-query free-plan Worker invocation limit](https://developers.cloudflare.com/d1/platform/limits/).
-The 16-event block limit remains unchanged in every path. Paid Worker ingestion
+The single-block writer (`applyFinalMarketBlock`) and every multi-block batch keep
+that 16-event limit. Paid Worker ingestion
 also uses a 995-query invocation budget, reserving five of the
 paid plan's 1,000 queries for Queue validation, cursor read/reset/reread and
 final scan advancement or failure reset. It
 conservatively counts three queries per event plus one per complete block and
 stops before the next block would exceed the remaining budget. The next run
 resumes from the committed watermark. The writer also checks actual batch
-statements before writing. Raising the block event limit is a separate decision.
+statements before writing.
 Cloudflare documents `batch()` as a transaction that rolls back the sequence on
 failure. A conflicting event aborts the batch; an exact replay is idempotent.
-If one complete block contains more than 16 Market events, ingestion fails with
-`d1_final_block_event_limit_exceeded` before any write and leaves the watermark
-unchanged. The pilot must alert and stop at that block; it must not split or
-partially publish it. After an explicit capacity/schema change, the operator
-replays that exact block and normal contiguous processing resumes.
+A complete block with more than 16 Market events is no longer a permanent stop
+on the paid Worker path. Ingestion first commits the blocks already collected,
+then writes the dense block alone in its own `batch()` (the fetched block is
+carried, not fetched again). It must fit the invocation's history share:
+`floor((share - 1) / 3)` events, i.e. 298 when the current catalogue reserves
+100 of the 995 queries, 331 on the Queue path. If it does not fit the remaining
+budget of the current run, the next run starts with it. A block larger than the
+whole share fails with `d1_final_block_query_budget_exceeded` before any write
+and leaves the watermark on the preceding block; it is never split or partially
+published. That code is a critical `read_model_ingestion_stalled` alert; raising
+the share is a separate decision. No migration is involved. Locally, a
+95-publication first catalogue write plus a 298-event block measured 996 D1
+queries in one scheduled invocation.
 
 `scripts/bootstrap-market-read-model-d1.mjs` is the source-only v1 starting
-point for a fresh D1. It reads the publication count and at most 48 current
+point for a fresh D1. Its v1 limit is unchanged: it reads the publication count and at most 48 current
 publications from the same exact final NEAR block, then emits a bounded JSON
 snapshot without writing to D1:
 
@@ -220,9 +229,21 @@ accepted risk; the bounded ingestion failure codes still need active supervision
 ## Current-state catalogue (source only)
 
 The optional `READ_MODEL_CURRENT_CATALOG_ENABLED` flag is false by default.
-On public-testnet, with the existing read gate open, it reads at most 48
+On public-testnet, with the existing read gate open, it reads at most 95
 publications from one finalized NEAR block into `current_publications` and
-`current_catalog_state` (migration `0008_current_catalog.sql`). It never
+`current_catalog_state` (migrations `0008_current_catalog.sql` and
+`0009_current_catalog_capacity.sql`). `get_publications` is read in pages of 48,
+every page at the same `block_id=hash`; each response's hash and height must
+match the block header, and a short, duplicate or foreign-block page rejects the
+whole candidate. The ceiling is derived from the 100-query catalogue share: a
+first snapshot writes every row, and five queries are fixed (two reads, the
+guarded state row and a two-read reconcile after an ambiguous commit). At 76
+publications (80%) the refresh log carries `warning_code:
+"catalog_capacity_warning"`; above 95 the refresh fails with
+`catalog_capacity_exceeded` before any write, so the last verified catalogue is
+kept (and v2 still returns 503 once it is over 180s old). There is no silent
+truncation. Until `0009` is applied, the schema still caps storage at 48 and a
+larger snapshot aborts atomically on the CHECK constraint. It never
 bootstraps or advances historical tables. A publication cannot disappear or
 reopen after suspension/takedown. The database compare guard aborts stale
 concurrent batches; ambiguous commit responses are read back, never resent.

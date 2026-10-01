@@ -10,6 +10,23 @@
     "notification_delivery": "EXTERNAL_EVIDENCE_REQUIRED",
     "drill_evidence": "EXTERNAL_EVIDENCE_REQUIRED"
   },
+  "alert_channel": {
+    "id": "pilot_primary",
+    "status": "EXTERNAL_EVIDENCE_REQUIRED",
+    "transport": "google_chat_webhook",
+    "selection_owner": "USER",
+    "dispatcher": "scripts/pilot-alerts.mjs",
+    "schedule": ".github/workflows/pilot-alerts.yml",
+    "enable_variable": "PILOT_ALERTS_ENABLED",
+    "webhook_secret": "OPS_ALERT_CHAT_WEBHOOK_URL",
+    "monitor_token_secret": "PUBLIC_TESTNET_CLOUDFLARE_MONITOR_TOKEN",
+    "evaluation_window_minutes": 10,
+    "fail_closed_alerts": ["read_model_telemetry_missing", "pilot_alerts_query_failed", "pilot_alerts_query_invalid", "pilot_alerts_not_configured"],
+    "envelope_schema": "youtick.pilot-alert.v1",
+    "envelope_fields": ["alert_id", "severity", "channel", "source", "observed_value", "threshold", "first_action", "runbook", "observed_at"],
+    "delivery_evidence": "EXTERNAL_EVIDENCE_REQUIRED",
+    "drill_evidence": "EXTERNAL_NOT_RUN"
+  },
   "domain_controls": [
     {
       "id": "playback_issuance",
@@ -226,6 +243,81 @@
       "owner_role": "PLATFORM_SRE",
       "first_action": "close_playback_issuance_and_preserve_upload_recovery",
       "control": "LIVEPEER_PLAYBACK_ISSUANCE_ENABLED"
+    },
+    {
+      "id": "current_catalog_capacity",
+      "source_status": "SOURCE_READY",
+      "source_files": ["read-model/current-catalog.mjs"],
+      "source_codes": ["catalog_capacity_warning", "catalog_capacity_exceeded"],
+      "operator": ">=",
+      "threshold": 1,
+      "unit": "log_events",
+      "warning_publication_count": 76,
+      "severity": "critical",
+      "channel": "pilot_primary",
+      "missing": "alert_channel_selection_and_delivery",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "plan_catalog_capacity_before_ceiling"
+    },
+    {
+      "id": "current_catalog_unavailable",
+      "source_status": "SOURCE_READY",
+      "source_files": ["read-model/api.mjs"],
+      "source_event": "read_model_request_completed",
+      "filter": { "route": "current_catalog", "http_code": 503 },
+      "source_codes": ["catalog_unavailable"],
+      "operator": ">=",
+      "threshold": 1,
+      "unit": "log_events",
+      "severity": "critical",
+      "channel": "pilot_primary",
+      "missing": "alert_channel_selection_and_delivery",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "verify_catalog_refresh_and_last_verified_block"
+    },
+    {
+      "id": "read_model_ingestion_stalled",
+      "source_status": "SOURCE_READY",
+      "source_files": ["read-model/worker.mjs"],
+      "source_codes": ["d1_final_block_query_budget_exceeded", "d1_final_block_event_limit_exceeded", "read_model_ingestion_failed"],
+      "operator": ">=",
+      "threshold": 5,
+      "unit": "log_events",
+      "severity": "critical",
+      "channel": "pilot_primary",
+      "missing": "alert_channel_selection_and_delivery",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "hold_ingestion_and_inspect_stalled_block"
+    },
+    {
+      "id": "near_rpc_errors",
+      "source_status": "SOURCE_READY",
+      "source_files": ["apps/web/app/api/near-rpc/proxy.ts", "read-model/worker.mjs"],
+      "source_event": "near_rpc_upstream_completed",
+      "filter": { "outcome": ["network_error", "transient"] },
+      "source_codes": ["read_model_final_rpc_unavailable"],
+      "operator": ">=",
+      "threshold": 10,
+      "unit": "log_events",
+      "severity": "critical",
+      "channel": "pilot_primary",
+      "missing": "alert_channel_selection_and_delivery",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "hold_chain_mutations_and_verify_finality"
+    },
+    {
+      "id": "livepeer_events_dlq_depth",
+      "source_status": "SOURCE_READY",
+      "source_files": ["scripts/pilot-alerts.mjs"],
+      "source_codes": ["livepeer_events_dlq_depth"],
+      "operator": ">",
+      "threshold": 0,
+      "unit": "messages",
+      "severity": "critical",
+      "channel": "pilot_primary",
+      "missing": "alert_channel_selection_and_delivery",
+      "owner_role": "PLATFORM_SRE",
+      "first_action": "close_new_uploads_and_inspect_dlq"
     }
   ]
 }

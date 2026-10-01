@@ -1,8 +1,14 @@
-import { fetchFinalMarketPublications, MAX_BOOTSTRAP_PUBLICATIONS } from '../scripts/bootstrap-market-read-model-d1.mjs';
+import { fetchFinalMarketPublications, PUBLICATION_PAGE_SIZE } from '../scripts/bootstrap-market-read-model-d1.mjs';
 
 const FIELDS = ['publication_id', 'creator_id', 'title', 'generation', 'price_usdc', 'playback_id', 'availability', 'published_at_ms'];
 const STATES = ['ACTIVE', 'SALES_SUSPENDED', 'TAKEDOWN'];
 export const CURRENT_CATALOG_QUERY_BUDGET = 100;
+// Fixed D1 cost: two reads, the compare-guarded state row and a two-read reconcile after an ambiguous commit.
+const FIXED_CATALOG_QUERIES = 5;
+// A first snapshot writes every publication, so the whole catalogue must fit the reserved share of the 995 budget.
+export const MAX_CURRENT_CATALOG_PUBLICATIONS = CURRENT_CATALOG_QUERY_BUDGET - FIXED_CATALOG_QUERIES;
+export const CATALOG_CAPACITY_WARNING_COUNT = Math.ceil(MAX_CURRENT_CATALOG_PUBLICATIONS * 0.8);
+const MAX_CATALOG_RPC_REQUESTS = 2 + Math.ceil(MAX_CURRENT_CATALOG_PUBLICATIONS / PUBLICATION_PAGE_SIZE);
 
 export function currentCatalogEnabled(env) {
     return env.READ_MODEL_CURRENT_CATALOG_ENABLED === 'true' && env.READ_MODEL_ENABLED === 'true'
@@ -17,7 +23,7 @@ export async function fetchCurrentCatalog(input, fetchImpl = fetch, now = Date.n
     let requestCount = 0;
     const { block, snapshot } = await fetchFinalMarketPublications(input, async (url, init) => {
         signal.throwIfAborted();
-        if (++requestCount > 3) throw new Error('catalog_request_limit');
+        if (++requestCount > MAX_CATALOG_RPC_REQUESTS) throw new Error('catalog_request_limit');
         const response = await fetchImpl(url, { ...init, signal: AbortSignal.any([signal, init.signal]) });
         if (!response.ok || Number(response.headers.get('Content-Length')) > 512 * 1024) throw new Error('catalog_rpc_unavailable');
         const reader = response.body?.getReader();
@@ -45,6 +51,9 @@ export async function fetchCurrentCatalog(input, fetchImpl = fetch, now = Date.n
             throw new Error('catalog_block_mismatch');
         }
         return Response.json(value);
+    }, { maxPublications: MAX_CURRENT_CATALOG_PUBLICATIONS }).catch(error => {
+        // Over capacity: reject the whole candidate so the last verified catalogue stays in place.
+        throw error?.message === 'd1_bootstrap_publication_limit_exceeded' ? new Error('catalog_capacity_exceeded') : error;
     });
     signal.throwIfAborted();
     if (typeof block.timestamp_nanosec !== 'string' || !/^[1-9][0-9]{0,29}$/.test(block.timestamp_nanosec)) throw new Error('catalog_timestamp_invalid');
@@ -75,7 +84,7 @@ export async function applyCurrentCatalog(db, snapshot, checkedAt = Date.now(), 
         || (snapshot.block_height === head.verified_block_height
             && (snapshot.block_hash !== head.verified_block_hash || snapshot.content_revision !== head.content_revision
                 || snapshot.source_block_timestamp_ms !== head.source_block_timestamp_ms)))) throw new Error('catalog_snapshot_conflict');
-    if (snapshot.publications.length > MAX_BOOTSTRAP_PUBLICATIONS) throw new Error('catalog_capacity_exceeded');
+    if (snapshot.publications.length > MAX_CURRENT_CATALOG_PUBLICATIONS) throw new Error('catalog_capacity_exceeded');
     const candidate = new Map(snapshot.publications.map(row => [row.publication_id, row]));
     for (const old of previous.publications) {
         const row = candidate.get(old.publication_id);
@@ -106,7 +115,7 @@ export async function applyCurrentCatalog(db, snapshot, checkedAt = Date.now(), 
             ON CONFLICT (network, contract_id, publication_id) DO UPDATE SET
             ${FIELDS.slice(1).map(key => `${key}=excluded.${key}`).join(', ')}`).bind(...scope, ...FIELDS.map(key => row[key])));
     }
-    if (statements.length + 2 > CURRENT_CATALOG_QUERY_BUDGET) throw new Error('catalog_query_limit');
+    if (statements.length + 4 > CURRENT_CATALOG_QUERY_BUDGET) throw new Error('catalog_query_limit');
     let queryCount = 2 + statements.length;
     signal?.throwIfAborted();
     try { await db.batch(statements); }
@@ -129,6 +138,8 @@ export async function refreshCurrentCatalog(env, dependencies = {}) {
     const snapshot = await fetchCurrentCatalog({ network: env.READ_MODEL_NETWORK, contractId: env.READ_MODEL_CONTRACT_ID,
         rpcUrl: env.READ_MODEL_NEAR_RPC_URL }, dependencies.fetchImpl ?? fetch, now, signal);
     signal.throwIfAborted();
-    return { status: 'updated', rpc_request_count: snapshot.rpc_request_count,
-        ...await applyCurrentCatalog(env.MARKET_READ_MODEL, snapshot, now(), signal) };
+    const applied = await applyCurrentCatalog(env.MARKET_READ_MODEL, snapshot, now(), signal);
+    return { status: 'updated', rpc_request_count: snapshot.rpc_request_count, ...applied,
+        publication_capacity: MAX_CURRENT_CATALOG_PUBLICATIONS,
+        ...(applied.publication_count >= CATALOG_CAPACITY_WARNING_COUNT ? { warning_code: 'catalog_capacity_warning' } : {}) };
 }

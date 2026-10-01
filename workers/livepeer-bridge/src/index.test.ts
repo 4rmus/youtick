@@ -22,9 +22,13 @@ import handler, {
     jobObjectName,
     operatorObjectName,
     requirePublicUploadPolicy,
+    resetPublicUploadPolicyCache,
     type Env,
 } from './index';
 import { LivepeerTransport } from './livepeer-provider';
+
+// The public upload policy cache is per isolate; each test starts from a fresh read.
+beforeEach(() => resetPublicUploadPolicyCache());
 
 const base64Decode = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const ORIGIN = 'https://app.youtick.net';
@@ -97,6 +101,8 @@ function createState(): TestState {
 
 function createEnv(overrides?: Partial<Env>): Env {
     return {
+        // The object now enforces verified account limits itself; tests opt out explicitly.
+        PUBLIC_BETA_RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) } as RateLimit,
         CF_VERSION_METADATA: {
             id: 'worker-version-test',
             tag: 'test',
@@ -823,31 +829,57 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const env = createEnv({ VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_CREATOR_ALLOWLIST: '' });
         const backend = publicUploadBackend();
         vi.stubGlobal('fetch', backend);
-        await expect(requirePublicUploadPolicy(env)).resolves.toBe(profiles.legacy.hash);
+        await expect(requirePublicUploadPolicy(env, { fresh: true })).resolves.toBe(profiles.legacy.hash);
         for (const supported of [[profiles.adaptive, profiles.legacy], [profiles.fullHd, profiles.adaptive, profiles.legacy]]) {
             vi.stubGlobal('fetch', publicUploadBackend({}, { ...publicUploadPolicy(), profiles: supported.map(profile => ({ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: profile.hash })) }));
-            await expect(requirePublicUploadPolicy(env)).resolves.toBe(supported[0].hash);
+            await expect(requirePublicUploadPolicy(env, { fresh: true })).resolves.toBe(supported[0].hash);
         }
         for (const invalid of [[profiles.fullHd, profiles.legacy], [profiles.adaptive, profiles.fullHd, profiles.legacy]]) {
             vi.stubGlobal('fetch', publicUploadBackend({}, { ...publicUploadPolicy(), profiles: invalid.map(profile => ({ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: profile.hash })) }));
-            await expect(requirePublicUploadPolicy(env)).rejects.toThrow('deployment_binding_mismatch');
+            await expect(requirePublicUploadPolicy(env, { fresh: true })).rejects.toThrow('deployment_binding_mismatch');
         }
         vi.stubGlobal('fetch', backend);
         await expect(requirePublicUploadPolicy({ ...env, LIVEPEER_NEW_UPLOADS_ENABLED: 'false',
-            LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'false', LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'false' }))
+            LIVEPEER_PROVIDER_MUTATIONS_ENABLED: 'false', LIVEPEER_OPERATOR_MUTATIONS_ENABLED: 'false' }, { fresh: true }))
             .resolves.toBe(profiles.legacy.hash);
         for (const drift of [null, { ...publicUploadPolicy(), signed_quote_required: false },
             { ...publicUploadPolicy(), market_contract_id: 'other.testnet' },
             { ...publicUploadPolicy(), job_ttl_ms: '172800000' },
             { ...publicUploadPolicy(), max_source_bytes: '20000000000' }]) {
             vi.stubGlobal('fetch', publicUploadBackend({}, drift));
-            await expect(requirePublicUploadPolicy(env)).rejects.toThrow('deployment_binding_mismatch');
+            await expect(requirePublicUploadPolicy(env, { fresh: true })).rejects.toThrow('deployment_binding_mismatch');
         }
         backend.mockClear();
         vi.stubGlobal('fetch', backend);
         await expect(requirePublicUploadPolicy({ ...env, NEAR_NETWORK: 'mainnet' }))
             .rejects.toThrow('deployment_binding_mismatch');
         expect(backend).not.toHaveBeenCalled();
+    });
+
+    it('reuses a verified public upload policy for 30 seconds, never after a failure, and reads fresh on demand', async () => {
+        let clock = 1_785_589_300_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => clock);
+        const env = createEnv({ VIDEO_ENVIRONMENT: 'public-testnet', LIVEPEER_CREATOR_ALLOWLIST: '' });
+        const backend = publicUploadBackend();
+        vi.stubGlobal('fetch', backend);
+        await expect(requirePublicUploadPolicy(env)).resolves.toBe(profiles.legacy.hash);
+        const reads = backend.mock.calls.length;
+        await expect(requirePublicUploadPolicy(env)).resolves.toBe(profiles.legacy.hash);
+        expect(backend.mock.calls.length).toBe(reads);
+
+        const drifted = publicUploadBackend({}, { ...publicUploadPolicy(), signed_quote_required: false });
+        vi.stubGlobal('fetch', drifted);
+        await expect(requirePublicUploadPolicy(env, { fresh: true })).rejects.toThrow('deployment_binding_mismatch');
+        // The failed fresh read cleared the cache: the gate path now fails closed as well.
+        await expect(requirePublicUploadPolicy(env)).rejects.toThrow('deployment_binding_mismatch');
+
+        vi.stubGlobal('fetch', backend);
+        await expect(requirePublicUploadPolicy(env)).resolves.toBe(profiles.legacy.hash);
+        vi.stubGlobal('fetch', drifted);
+        clock += 30_001;
+        await expect(requirePublicUploadPolicy(env)).rejects.toThrow('deployment_binding_mismatch');
+        await expect(requirePublicUploadPolicy({ ...env, MARKET_CONTRACT_ID: 'other-market.testnet' }))
+            .rejects.toThrow('deployment_binding_mismatch');
     });
 
     it.each([profiles.legacy.hash, profiles.adaptive.hash, profiles.fullHd.hash])('admits a public creator with stored profile %s and preserves the paid deadline', async (profileHash) => {
@@ -1114,7 +1146,7 @@ describe('Livepeer bridge PR-3 upload intent', () => {
     });
 
     it('requires the native limiter for the combined public-beta packet', async () => {
-        const missing = publicBetaEnv();
+        const missing = publicBetaEnv({ PUBLIC_BETA_RATE_LIMITER: undefined });
         const health = await handler.fetch(new Request('https://bridge.youtick.net/__health'), missing);
         expect(await health.json()).toMatchObject({
             operatorMutationEnabled: true,
@@ -1124,18 +1156,25 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(unavailable.status).toBe(503);
         expect(await unavailable.json()).toEqual({ error: 'runtime_not_configured' });
 
+        const readyHealth = await handler.fetch(new Request('https://bridge.youtick.net/__health'), publicBetaEnv());
+        expect(await readyHealth.json()).toMatchObject({ publicBetaRateLimitReady: true });
+
         const limit = vi.fn().mockResolvedValue({ success: false });
         const limitedEnv = publicBetaEnv({
             PUBLIC_BETA_RATE_LIMITER: { limit } as RateLimit,
         });
-        const readyHealth = await handler.fetch(
-            new Request('https://bridge.youtick.net/__health'),
-            limitedEnv,
-        );
-        expect(await readyHealth.json()).toMatchObject({ publicBetaRateLimitReady: true });
+        const limitedHealth = await handler.fetch(new Request('https://bridge.youtick.net/__health', {
+            headers: { 'CF-Connecting-IP': '203.0.113.9' },
+        }), limitedEnv);
+        expect(limitedHealth.status).toBe(429);
+        expect(limit).toHaveBeenLastCalledWith({ key: '/__health:ip:203.0.113.9' });
         const limited = await handler.fetch(uploadPreflightRequest(), limitedEnv);
         expect(limited.status).toBe(429);
-        expect(limit).toHaveBeenCalledOnce();
+        expect(limit).toHaveBeenCalledTimes(2);
+        const unavailableHealth = await handler.fetch(new Request('https://bridge.youtick.net/__health'), publicBetaEnv({
+            PUBLIC_BETA_RATE_LIMITER: { limit: vi.fn().mockRejectedValue(new Error('binding unavailable')) } as RateLimit,
+        }));
+        expect(unavailableHealth.status).toBe(200);
 
         const failed = await handler.fetch(uploadPreflightRequest(), publicBetaEnv({
             PUBLIC_BETA_RATE_LIMITER: {
@@ -1149,7 +1188,9 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             PUBLIC_BETA_RATE_LIMITER: { limit: successLimit } as RateLimit,
         }));
         expect(accepted.status).toBe(200);
-        expect(successLimit).toHaveBeenCalledTimes(2);
+        // Preflight carries an unsigned creator_id, so only the IP bucket is consumed.
+        expect(successLimit).toHaveBeenCalledOnce();
+        expect(successLimit).toHaveBeenCalledWith({ key: expect.stringMatching(/^\/v1\/upload-preflight:ip:/) });
     });
 
     it('rejects a public-beta upload before provider create without the final chain marker', async () => {

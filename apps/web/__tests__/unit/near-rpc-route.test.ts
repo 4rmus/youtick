@@ -259,31 +259,90 @@ describe('/api/near-rpc route', () => {
         expect(response?.headers.get('Retry-After')).toBe('60');
     });
 
-    it('applies a bounded per-account read rate limit across IPs', async () => {
+    function marketRead(ip: string, index: number): Request {
+        return new Request('http://localhost:3001/api/near-rpc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': ip },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: index,
+                method: 'query',
+                params: {
+                    request_type: 'call_function',
+                    account_id: 'market.testnet',
+                    method_name: 'get_publications',
+                    args_base64: 'e30=',
+                    finality: 'final',
+                },
+            }),
+        });
+    }
+
+    it('keys reads by IP only, so one IP cannot lock other users out of a shared contract', async () => {
         vi.stubGlobal('fetch', vi.fn(async () => Response.json({ jsonrpc: '2.0', result: 'ok' })));
 
-        let response: Response | null = null;
+        let attacker: Response | null = null;
+        for (let index = 0; index <= 60; index += 1) attacker = await POST(marketRead('203.0.113.80', index));
+        expect(attacker?.status).toBe(429);
+
         for (let index = 0; index <= 60; index += 1) {
-            response = await POST(new Request('http://localhost:3001/api/near-rpc', {
+            expect((await POST(marketRead(`198.51.100.${index + 1}`, index))).status).toBe(200);
+        }
+    });
+
+    it('keeps the account bucket for broadcasts across IPs', async () => {
+        const fetchMock = vi.fn(async () => Response.json({ jsonrpc: '2.0', result: 'ok' }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        let response: Response | null = null;
+        for (let index = 0; index <= 10; index += 1) {
+            response = await BROADCAST(new Request('http://localhost:3001/api/near-rpc/broadcast', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'CF-Connecting-IP': `198.51.100.${index + 1}`,
-                },
+                headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': `192.0.2.${index + 1}` },
                 body: JSON.stringify({
                     jsonrpc: '2.0',
                     id: index,
-                    method: 'query',
-                    params: {
-                        request_type: 'view_account',
-                        account_id: 'rate-limit.testnet',
-                        finality: 'final',
-                    },
+                    method: 'send_tx',
+                    params: { signed_tx_base64: 'signed', wait_until: 'NONE', account_id: 'broadcaster.testnet' },
                 }),
             }));
         }
 
         expect(response?.status).toBe(429);
+        expect(fetchMock).toHaveBeenCalledTimes(10);
+    });
+
+    it.each([
+        ['a foreign Origin', { Origin: 'https://evil.example' }],
+        ['an opaque Origin', { Origin: 'null' }],
+        ['a cross-site fetch', { 'Sec-Fetch-Site': 'cross-site' }],
+    ])('rejects cross-origin POSTs with %s before reading or forwarding', async (_label, headers) => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
+        for (const handler of [POST, BROADCAST]) {
+            const response = await handler(new Request('http://localhost:3001/api/near-rpc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.90', ...headers },
+                body: JSON.stringify({ jsonrpc: '2.0', id: '1', method: 'status', params: [] }),
+            }));
+            expect(response.status).toBe(403);
+        }
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('accepts same-origin and Origin-less POSTs', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ jsonrpc: '2.0', result: 'ok' })));
+
+        const variants: Record<string, string>[] = [{ Origin: 'http://localhost:3001', 'Sec-Fetch-Site': 'same-origin' }, {}];
+        for (const headers of variants) {
+            const response = await POST(new Request('http://localhost:3001/api/near-rpc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.91', ...headers },
+                body: JSON.stringify({ jsonrpc: '2.0', id: '1', method: 'status', params: [] }),
+            }));
+            expect(response.status).toBe(200);
+        }
     });
 
     it('applies the lower broadcast rate limit', async () => {

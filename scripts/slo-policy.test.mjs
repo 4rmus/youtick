@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { CATALOG_CAPACITY_WARNING_COUNT } from '../read-model/current-catalog.mjs';
+import { SIGNALS, WINDOW_MS, envelope } from './pilot-alerts.mjs';
 
 const root = new URL('../', import.meta.url);
 
@@ -15,6 +17,7 @@ test('SLO policy locks report thresholds to emitted bounded events', async () =>
         'workers/livepeer-bridge/scripts/tus-resume-canary.mjs',
         'workers/livepeer-bridge/wrangler.toml',
         'workers/livepeer-bridge/src/durable-object-capacity.ts',
+        'apps/web/app/api/near-rpc/proxy.ts',
     ].map((path) => readFile(new URL(path, root), 'utf8')));
     const source = sources.join('\n');
     assert.equal(policy.schema, 'youtick.slo-policy.v1');
@@ -121,6 +124,11 @@ test('SLO policy locks report thresholds to emitted bounded events', async () =>
         'contract_storage_reserve_threshold',
         'rpc_finality_lag',
         'elevated_playback_error',
+        'current_catalog_capacity',
+        'current_catalog_unavailable',
+        'read_model_ingestion_stalled',
+        'near_rpc_errors',
+        'livepeer_events_dlq_depth',
     ]);
     const allowedOwnerRoles = new Set(['PLATFORM_SRE', 'SECURITY', 'CONTRACT_OPERATIONS']);
     for (const alert of policy.alerts) {
@@ -186,8 +194,70 @@ test('SLO policy locks report thresholds to emitted bounded events', async () =>
         },
     );
     assert.doesNotMatch(JSON.stringify(policy), /MISSING_SIGNAL|EXTERNAL_METRIC_REQUIRED/);
+    await assertCriticalAlertsBoundToOneChannel(policy);
     assert.doesNotMatch(
         JSON.stringify(policy),
         /private_key|authorization_header|provider_token|signed_transaction|tus_url/i,
     );
 });
+
+async function assertCriticalAlertsBoundToOneChannel(policy) {
+    // Delivery and the drill stay external evidence until a real Chat message is observed.
+    assert.deepEqual(policy.alert_channel, {
+        id: 'pilot_primary',
+        status: 'EXTERNAL_EVIDENCE_REQUIRED',
+        transport: 'google_chat_webhook',
+        selection_owner: 'USER',
+        dispatcher: 'scripts/pilot-alerts.mjs',
+        schedule: '.github/workflows/pilot-alerts.yml',
+        enable_variable: 'PILOT_ALERTS_ENABLED',
+        webhook_secret: 'OPS_ALERT_CHAT_WEBHOOK_URL',
+        monitor_token_secret: 'PUBLIC_TESTNET_CLOUDFLARE_MONITOR_TOKEN',
+        evaluation_window_minutes: 10,
+        fail_closed_alerts: ['read_model_telemetry_missing', 'pilot_alerts_query_failed', 'pilot_alerts_query_invalid',
+            'pilot_alerts_not_configured'],
+        envelope_schema: 'youtick.pilot-alert.v1',
+        envelope_fields: ['alert_id', 'severity', 'channel', 'source', 'observed_value', 'threshold',
+            'first_action', 'runbook', 'observed_at'],
+        delivery_evidence: 'EXTERNAL_EVIDENCE_REQUIRED',
+        drill_evidence: 'EXTERNAL_NOT_RUN',
+    });
+    assert.equal(WINDOW_MS, policy.alert_channel.evaluation_window_minutes * 60_000);
+    const critical = policy.alerts.filter(({ severity }) => severity === 'critical');
+    assert.deepEqual(critical.map(({ id }) => id), [
+        'current_catalog_capacity',
+        'current_catalog_unavailable',
+        'read_model_ingestion_stalled',
+        'near_rpc_errors',
+        'livepeer_events_dlq_depth',
+    ]);
+    for (const alert of critical) {
+        assert.equal(alert.channel, policy.alert_channel.id, `${alert.id}: channel`);
+        assert.equal(alert.missing, 'alert_channel_selection_and_delivery', `${alert.id}: missing`);
+        assert.ok(Array.isArray(alert.source_files) && alert.source_files.length > 0, `${alert.id}: source_files`);
+        const files = (await Promise.all(alert.source_files.map((path) => readFile(new URL(path, root), 'utf8')))).join('\n');
+        for (const code of alert.source_codes) {
+            assert.ok(files.includes(`'${code}'`) || files.includes(`"${code}"`), `${alert.id}: ${code}`);
+        }
+        if (alert.source_event) assert.ok(files.includes(`'${alert.source_event}'`), `${alert.id}: ${alert.source_event}`);
+    }
+    assert.equal(policy.alerts.find(({ id }) => id === 'current_catalog_capacity').warning_publication_count,
+        CATALOG_CAPACITY_WARNING_COUNT);
+    // The dispatcher enforces exactly the policy thresholds and first actions.
+    for (const signal of SIGNALS) {
+        const alert = critical.find(({ id }) => id === signal.alert_id);
+        assert.ok(alert, signal.alert_id);
+        assert.equal(alert.operator, '>=', signal.alert_id);
+        assert.equal(signal.threshold, alert.threshold, signal.alert_id);
+        assert.equal(signal.first_action, alert.first_action, signal.alert_id);
+    }
+    const dispatcher = await readFile(new URL(policy.alert_channel.dispatcher, root), 'utf8');
+    const sample = envelope('near_rpc_errors', 10, 10, 'hold_chain_mutations_and_verify_finality', 0, 'worker');
+    assert.deepEqual(Object.keys(sample), ['schema', ...policy.alert_channel.envelope_fields]);
+    assert.equal(sample.schema, policy.alert_channel.envelope_schema);
+    assert.equal(sample.channel, policy.alert_channel.id);
+    for (const code of policy.alert_channel.fail_closed_alerts) assert.ok(dispatcher.includes(`'${code}'`), code);
+    const schedule = await readFile(new URL(policy.alert_channel.schedule, root), 'utf8');
+    for (const name of [policy.alert_channel.enable_variable, policy.alert_channel.webhook_secret,
+        policy.alert_channel.monitor_token_secret]) assert.ok(schedule.includes(name), name);
+}

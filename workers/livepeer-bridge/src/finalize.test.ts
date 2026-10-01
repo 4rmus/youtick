@@ -1,6 +1,9 @@
 import { KeyPair } from 'near-api-js';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import handler, { LivepeerControl, type Env } from './index';
+import handler, { LivepeerControl, type Env, resetPublicUploadPolicyCache } from './index';
+
+// The public upload policy cache is per isolate; each test starts from a fresh read.
+beforeEach(() => resetPublicUploadPolicyCache());
 
 const RPC_URL = 'https://rpc.testnet.near.org';
 const CONTRACT_ID = 'paid-media-livepeer-v1.testnet';

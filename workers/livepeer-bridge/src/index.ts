@@ -580,6 +580,8 @@ const SPONSOR_RELAYER_LAST_NONCE_KEY = 'sponsor-relayer:last-nonce';
 const LIVEPEER_TUS_CHUNK_BYTES = 32 * 1024 * 1024;
 const MAX_PUBLICATION_COVER_BYTES = 2 * 1024 * 1024;
 const PUBLICATION_COVER_CACHE_SECONDS = 24 * 60 * 60;
+// Bounds how long a takedown can leave a cover visible: the edge visibility marker plus the browser max-age.
+const PUBLICATION_COVER_VISIBLE_SECONDS = 30;
 const CONTROL_MAX_FUTURE_MS = 5 * 60 * 1000;
 const WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000;
 const WEBHOOK_DEDUP_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -746,6 +748,11 @@ const bridgeWorker = {
     async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
         const url = new URL(request.url);
         if (request.method === 'GET' && url.pathname === '/__health') {
+            // Health stays observable without the binding; it reports publicBetaRateLimitReady itself.
+            if (env.PUBLIC_BETA_RATE_LIMITER && (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))) {
+                const limited = await publicBetaRateLimitResponse(request, env, '/__health');
+                if (limited?.status === 429) return limited;
+            }
             if (isPublicTestnetEnvironment(env)) {
                 try { await requirePublicUploadPolicy(env); }
                 catch { return json({ status: 'error', error: 'deployment_binding_mismatch' }, 503); }
@@ -1209,7 +1216,9 @@ export class LivepeerControl {
     async fetch(request: Request): Promise<Response> {
         const url = new URL(request.url);
         try {
-            if (isPublicTestnetEnvironment(this.env)) await requirePublicUploadPolicy(this.env);
+            if (isPublicTestnetEnvironment(this.env)) {
+                await requirePublicUploadPolicy(this.env, { fresh: url.pathname === '/internal/sponsored-upload-relay' });
+            }
             if (request.method === 'POST' && url.pathname === '/v1/upload-intents') {
                 if (!isPublicBetaPacket(this.env) && !isPublicTestnetEnvironment(this.env)) return await this.reserveUploadIntent(request);
                 const run = this.operatorTail.then(() => this.reserveUploadIntent(request));
@@ -1318,6 +1327,8 @@ export class LivepeerControl {
         await verifyControlSignature(request, input.envelope);
         const { job: chainJob } = await readFinalMediaJob(this.env, input.body.job_id);
         requireExactChainJob(input, chainJob);
+        // Only a signature by the job's registered upload key may consume the creator's bucket.
+        await enforcePublicBetaAccountRateLimit(this.env, '/v1/upload-intents', input.envelope.account_id);
         const [publicBetaJob, publicBetaState] = isPublicBetaPacket(this.env)
             ? await Promise.all([
                 readFinalPublicTestnetBetaJob(this.env, input.body.job_id),
@@ -1580,6 +1591,7 @@ export class LivepeerControl {
         await verifyControlSignature(request, input.envelope);
         const { job: chainJob } = await readFinalMediaJob(this.env, input.body.job_id);
         requireHeartbeatChainJob(input, chainJob);
+        await enforcePublicBetaAccountRateLimit(this.env, '/v1/upload-heartbeats', input.envelope.account_id);
         if (isPublicTestnetEnvironment(this.env)) publicUploadJobDeadline(chainJob);
         const [publicBetaJob, publicBetaState] = isPublicBetaPacket(this.env)
             ? await Promise.all([
@@ -3195,12 +3207,31 @@ function isPublicTestnetEnvironment(env: Env): boolean {
     return env.VIDEO_ENVIRONMENT === 'public-testnet';
 }
 
-export async function requirePublicUploadPolicy(env: Env): Promise<string> {
+const PUBLIC_UPLOAD_POLICY_CACHE_MS = 30_000;
+let publicUploadPolicyCache: { scope: string; profileHash: string; expiresAtMs: number } | null = null;
+
+export function resetPublicUploadPolicyCache(): void {
+    publicUploadPolicyCache = null;
+}
+
+// Gate checks may reuse a verified policy for 30s per isolate; quote and relay pass fresh to read final state.
+// Any failed read clears the cache, so a mismatch is never masked after it has been observed.
+export async function requirePublicUploadPolicy(env: Env, options: { fresh?: boolean } = {}): Promise<string> {
     if (!isPublicTestnetEnvironment(env) || env.NEAR_NETWORK !== 'testnet'
         || !ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
         || !env.MARKET_CONTRACT_ID?.endsWith('.testnet') || !isHttpsUrl(env.NEAR_RPC_URL)) {
         throw new Error('deployment_binding_mismatch');
     }
+    const scope = `${env.NEAR_NETWORK}:${env.MARKET_CONTRACT_ID}:${env.NEAR_RPC_URL}`;
+    const cached = publicUploadPolicyCache;
+    if (!options.fresh && cached?.scope === scope && cached.expiresAtMs > Date.now()) return cached.profileHash;
+    publicUploadPolicyCache = null;
+    const profileHash = await readPublicUploadPolicy(env);
+    publicUploadPolicyCache = { scope, profileHash, expiresAtMs: Date.now() + PUBLIC_UPLOAD_POLICY_CACHE_MS };
+    return profileHash;
+}
+
+async function readPublicUploadPolicy(env: Env): Promise<string> {
     const value = requireObject(await readFinalPublicTestnetBetaView(
         env, 'get_public_upload_policy', {},
     ), 'deployment_binding_mismatch');
@@ -3585,12 +3616,8 @@ export async function forwardUploadIntent(request: Request, env: Env): Promise<R
     try {
         if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
         const forwardingRequest = request.clone();
+        // The account limit runs in the object once the signature and on-chain key binding are verified.
         const input = await parseUploadIntentRequest(request, env);
-        await enforcePublicBetaAccountRateLimit(
-            env,
-            '/v1/upload-intents',
-            input.envelope.account_id,
-        );
         const objectName = jobObjectName(
             input.envelope.network,
             input.envelope.contract_id,
@@ -3612,12 +3639,8 @@ export async function forwardUploadHeartbeat(request: Request, env: Env): Promis
     try {
         if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
         const forwardingRequest = request.clone();
+        // The account limit runs in the object once the signature and on-chain key binding are verified.
         const input = await parseUploadHeartbeatRequest(request, env);
-        await enforcePublicBetaAccountRateLimit(
-            env,
-            '/v1/upload-heartbeats',
-            input.envelope.account_id,
-        );
         const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(jobObjectName(
             input.envelope.network,
             input.envelope.contract_id,
@@ -3641,12 +3664,8 @@ export async function forwardUploadPreflight(request: Request, env: Env): Promis
         if (!env.LIVEPEER_CONTROL || !validAdmissionConfig(env)) {
             throw new Error('runtime_not_configured');
         }
+        // creator_id is unsigned here, so only the route's IP limit applies; an account bucket would let anyone lock it.
         const input = parseUploadPreflightRequest(await readJsonObject(request));
-        await enforcePublicBetaAccountRateLimit(
-            env,
-            '/v1/upload-preflight',
-            input.creator_id,
-        );
         const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(admissionObjectName(
             env.NEAR_NETWORK!,
             env.MARKET_CONTRACT_ID!,
@@ -3720,12 +3739,8 @@ export async function forwardSponsoredUploadQuote(request: Request, env: Env): P
         if (!env.LIVEPEER_CONTROL || !validSponsoredUploadQuoteConfig(env)) {
             throw new Error('runtime_not_configured');
         }
+        // creator_id is unsigned here, so only the route's IP limit applies; an account bucket would let anyone lock it.
         const input = parseSponsoredUploadQuoteRequest(await readJsonObject(request.clone()));
-        await enforcePublicBetaAccountRateLimit(
-            env,
-            '/v1/sponsored-upload-quotes',
-            input.request.creator_id,
-        );
         if (isPublicBetaPacket(env)) {
             const [state, alreadyAdmittedToday] = await Promise.all([
                 readFinalPublicTestnetBetaState(env),
@@ -3746,7 +3761,7 @@ export async function forwardSponsoredUploadQuote(request: Request, env: Env): P
             }
         }
         if (isPublicTestnetEnvironment(env)) {
-            const currentProfile = await requirePublicUploadPolicy(env);
+            const currentProfile = await requirePublicUploadPolicy(env, { fresh: true });
             if (input.request.profile_config_sha256 !== currentProfile) throw new Error('admission_denied');
             if (BigInt(input.request.expected_source_bytes) > 5_000_000_000n) {
                 throw new Error('admission_denied');
@@ -3775,7 +3790,8 @@ async function issueSponsoredUploadQuote(
 ): Promise<Response> {
     try {
         const input = parseSponsoredUploadQuoteRequest(await readJsonObject(request));
-        const expectedProfile = isPublicTestnetEnvironment(env) ? await requirePublicUploadPolicy(env) : profiles.legacy.hash;
+        const expectedProfile = isPublicTestnetEnvironment(env)
+            ? await requirePublicUploadPolicy(env, { fresh: true }) : profiles.legacy.hash;
         if (input.request.profile_config_sha256 !== expectedProfile) throw new Error('admission_denied');
         await enforceCreatorFeeQuoteRateLimit(state);
         const block = await readFinalBlock(env);
@@ -4338,11 +4354,6 @@ async function relaySponsoredUpload(
     request: Request,
 ): Promise<Response> {
     const input = await parseSponsoredUploadRelayRequest(request, env);
-    await enforcePublicBetaAccountRateLimit(
-        env,
-        '/v1/sponsored-upload-relays',
-        input.request.creator_id,
-    );
     const existingJob = await readSponsoredMediaJob(env, input.request.job_id);
     if (existingJob) {
         requireExactSponsoredJob(existingJob, input);
@@ -4423,6 +4434,8 @@ async function relaySponsoredUpload(
     if (input.hasPlaybackSession && creatorAccessKey.permission !== 'FullAccess') {
         throw new Error(SPONSORED_RELAY_REJECTION_CODES.access_key);
     }
+    // The delegate signature alone proves only its own key; the creator's access key proves the account.
+    await enforcePublicBetaAccountRateLimit(env, '/v1/sponsored-upload-relays', input.request.creator_id);
     if (balance < BigInt(input.quote.total_fee_usdc)) {
         throw new Error('sponsor_balance_insufficient');
     }
@@ -6981,24 +6994,41 @@ async function publicationCover(
     generation: number,
 ): Promise<Response> {
     try {
+        const cacheKey = publicationCoverCacheKey(request, env, jobId, generation);
+        const visibleKey = new Request(`${cacheKey.url}/visible`);
+        const cachedCover = async (): Promise<Response | null> => {
+            const cached = await caches.default.match(cacheKey);
+            if (!cached) return null;
+            const cachedBytes = new Uint8Array(await cached.arrayBuffer());
+            const cachedContentType = publicationCoverContentType(cachedBytes);
+            return cachedBytes.byteLength <= MAX_PUBLICATION_COVER_BYTES && cachedContentType
+                ? publicCoverResponse(cachedBytes, cachedContentType) : null;
+        };
+        // Cache-first: a recent visibility check lets cached bytes skip the NEAR read and the rate limit.
+        if (await caches.default.match(visibleKey)) {
+            const hit = await cachedCover();
+            if (hit) return hit;
+        }
+        if (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env)) {
+            const limited = await publicBetaRateLimitResponse(request, env, '/v1/publication-covers');
+            if (limited) return limited;
+        }
+
         const publication = await readFinalPublicationById(env, jobId);
         if (publication?.publication_id !== jobId
             || publication.generation !== generation
             || !['ACTIVE', 'SALES_SUSPENDED'].includes(String(publication.availability))
             || typeof publication.playback_id !== 'string'
             || !PLAYBACK_ID_PATTERN.test(publication.playback_id)) {
+            await caches.default.delete(visibleKey).catch(() => false);
             return json({ error: 'not_found' }, 404);
         }
+        await caches.default.put(visibleKey, new Response(null, {
+            headers: { 'Cache-Control': `public, max-age=${PUBLICATION_COVER_VISIBLE_SECONDS}` },
+        })).catch(() => undefined);
 
-        const cacheKey = publicationCoverCacheKey(request, env, jobId, generation);
-        const cached = await caches.default.match(cacheKey);
-        if (cached) {
-            const cachedBytes = new Uint8Array(await cached.arrayBuffer());
-            const cachedContentType = publicationCoverContentType(cachedBytes);
-            if (cachedBytes.byteLength <= MAX_PUBLICATION_COVER_BYTES && cachedContentType) {
-                return publicCoverResponse(cachedBytes, cachedContentType);
-            }
-        }
+        const hit = await cachedCover();
+        if (hit) return hit;
 
         const playback = await livepeerProvider(env).readPlayback(publication.playback_id);
         if (playback.kind !== 'vod'
@@ -7156,7 +7186,7 @@ function publicCoverResponse(body: ArrayBuffer | Uint8Array, contentType: Public
     const byteLength = body.byteLength;
     return new Response(body, {
         headers: {
-            'Cache-Control': 'no-store',
+            'Cache-Control': `public, max-age=${PUBLICATION_COVER_VISIBLE_SECONDS}`,
             'Content-Length': String(byteLength),
             'Content-Type': contentType,
             'Cross-Origin-Resource-Policy': 'cross-origin',
@@ -7555,7 +7585,8 @@ async function queryTransactionForAccount(
 
 function classifyNearError(error: unknown): 'invalid_nonce' | 'failed' | 'unknown' {
     const value = JSON.stringify(error);
-    if (/InvalidNonce|EXPIRED_TRANSACTION|INVALID_TRANSACTION/i.test(value)) return 'invalid_nonce';
+    // INVALID_TRANSACTION is NEAR's generic class (signature, balance, action errors); only its InvalidNonce cause is a nonce race.
+    if (/InvalidNonce|EXPIRED_TRANSACTION/i.test(value)) return 'invalid_nonce';
     if (/UNKNOWN_TRANSACTION|TIMEOUT_ERROR|timeout/i.test(value)) return 'unknown';
     return 'failed';
 }
