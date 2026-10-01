@@ -3060,7 +3060,9 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const blocked = await handler.fetch(uploadPreflightRequest({ job_id: 'job-next' }), env);
 
         expect(blocked.status).toBe(409);
-        expect(await blocked.json()).toEqual({ error: 'admission_denied' });
+        const leaseEnd = (before as { reservations: Record<string, { expiresAtMs: number }> })
+            .reservations['job-active:1'].expiresAtMs;
+        expect(await blocked.json()).toEqual({ error: 'admission_denied', reason: 'active_upload', retry_at_ms: leaseEnd });
         expect(admissionState.values.get('admission:v1')).toEqual(before);
     });
 
@@ -3237,10 +3239,17 @@ describe('Livepeer bridge PR-3 upload intent', () => {
             state,
         }));
 
+        const preflight = async (jobId: string) => (await control.fetch(admissionRequest('preflight', {
+            jobId, generation: 1, creator, expectedSourceBytes: '1000',
+        }))).json();
+
         expect((await reserve('job-a')).status).toBe(200);
         const activeLimit = await reserve('job-b');
         expect(activeLimit.status).toBe(409);
         expect(await activeLimit.json()).toEqual({ error: 'admission_denied' });
+        expect(await preflight('job-b')).toEqual({
+            error: 'admission_denied', reason: 'active_upload', retry_at_ms: expect.any(Number),
+        });
         expect((await release('job-a', 'UPLOAD_EXPIRED')).status).toBe(200);
         expect((await release('job-a', 'UPLOAD_EXPIRED')).status).toBe(200);
         expect((await reserve('job-b')).status).toBe(200);
@@ -3249,6 +3258,11 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         const dailyLimit = await reserve('job-c');
         expect(dailyLimit.status).toBe(409);
         expect(await dailyLimit.json()).toEqual({ error: 'admission_denied' });
+        const nextUtcDay = new Date();
+        nextUtcDay.setUTCHours(24, 0, 0, 0);
+        expect(await preflight('job-c')).toEqual({
+            error: 'admission_denied', reason: 'daily_limit', retry_at_ms: nextUtcDay.getTime(),
+        });
     });
 
     it('admits two different creators concurrently and rejects a third', async () => {
@@ -3277,6 +3291,10 @@ describe('Livepeer bridge PR-3 upload intent', () => {
 
         expect(third.status).toBe(409);
         expect(await third.json()).toEqual({ error: 'admission_denied' });
+        // Capacity is shared, so the creator gets no timing derived from other creators' leases.
+        expect(await (await control.fetch(admissionRequest('preflight', {
+            jobId: 'job-concurrent-c', generation: 1, creator: creators[2], expectedSourceBytes: '1000',
+        }))).json()).toEqual({ error: 'admission_denied', reason: 'capacity' });
         expect(Object.keys((state.values.get('admission:v1') as {
             reservations: Record<string, unknown>;
         }).reservations)).toHaveLength(2);

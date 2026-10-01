@@ -82,6 +82,7 @@ import {
     findPendingLivepeerUpload,
     fingerprintLivepeerSource,
     heartbeatLivepeerUploadLease,
+    LivepeerAdmissionDeniedError,
     isLivepeerUploadJobAbandoned,
     parseLivepeerPriceUsdc,
     preflightLivepeerUpload,
@@ -905,6 +906,19 @@ describe('Livepeer browser upload', () => {
             }),
         );
         await expect(preflightLivepeerUpload(input)).rejects.toThrow('admission_closed');
+    });
+
+    it('keeps the admission_denied code and carries the Bridge reason and retry time', async () => {
+        const input = { accountId: 'creator.testnet', jobId: 'job-preflight', generation: 1, expectedSourceBytes: SOURCE_BYTES };
+        const deny = (body: Record<string, unknown>) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(body, { status: 409 })));
+        deny({ error: 'admission_denied', reason: 'active_upload', retry_at_ms: 1_790_841_127_708 });
+        const active = await preflightLivepeerUpload(input).catch((error: unknown) => error);
+        expect(active).toBeInstanceOf(LivepeerAdmissionDeniedError);
+        expect(active).toMatchObject({ message: 'admission_denied', reason: 'active_upload', retryAtMs: 1_790_841_127_708 });
+        deny({ error: 'admission_denied' });
+        await expect(preflightLivepeerUpload(input)).rejects.toMatchObject({ message: 'admission_denied', reason: null, retryAtMs: null });
+        deny({ error: 'admission_denied', reason: 'something_new', retry_at_ms: 'soon' });
+        await expect(preflightLivepeerUpload(input)).rejects.toMatchObject({ reason: null, retryAtMs: null });
     });
 
     it('accepts exact 20 GB and rejects one byte more before bridge use', async () => {

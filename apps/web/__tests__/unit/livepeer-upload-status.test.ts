@@ -154,6 +154,20 @@ describe('upload status after closing its tab', () => {
         expect(uploadErrorMessage(new Error('livepeer_abandon_unavailable'), false)).toContain('could not save your choice');
     });
 
+    it('explains why the Bridge denied a new upload and when to retry', async () => {
+        const { LivepeerAdmissionDeniedError } = await import('@/lib/livepeer-upload');
+        const at = Date.UTC(2026, 9, 1, 7, 52);
+        const active = uploadErrorMessage(new LivepeerAdmissionDeniedError('active_upload', at), false);
+        expect(active).toContain('previous paid upload still holds');
+        expect(active).toContain(new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('daily_limit', at), false)).toContain("used today's uploads");
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('capacity', null), false)).toContain('busy right now');
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('source_too_large', null), false)).toContain('5 GB');
+        // Without a known reason, or after authorization, the existing copy is kept.
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError(null, null), false)).toBe('Upload is not available for this account right now. No wallet approval was requested.');
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('active_upload', at), true)).toBe('Upload availability changed after authorization. Retry this same upload job.');
+    });
+
     it('opens a confirmed publication and explains deadline expiry', () => {
         state.query.data = { ...progress, publication: { publication_id: 'job-001' } };
         expect(render()).toContain('/watch?job=job-001');
