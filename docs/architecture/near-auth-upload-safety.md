@@ -3,6 +3,27 @@
 > Gate 2 kapanışının tarihsel kaydıdır. Sonraki gate'lerin güncel durumu:
 > [entegrasyon durumu](./near-auth-integration-status.md).
 
+> **1 Ekim 2026 — güncel `main` ile fark.** Bu belgedeki Google/NEAR Auth kodu
+> [#214](https://github.com/4rmus/youtick/pull/214) ile girdi ve cüzdanlı V1 adayı
+> [#215](https://github.com/4rmus/youtick/pull/215) (`ad84ba2`) ile `main`'den çıkarıldı. Aşağıda adı
+> geçen `allowUploadKeyReplacement` seçeneği ile `near-auth-*` ve `NearAuth*` dosyaları güncel `main`'de
+> **yoktur**; çalışma yalnız yerel `codex/near-auth-preserve-20260927` dalında korunur. Bu bölümler
+> o dönemin kaydı olarak değiştirilmedi.
+>
+> Güncel cüzdanlı upload davranışı (`apps/web/lib/livepeer-upload.ts`):
+>
+> - `prepareLivepeerUploadResume` yerel upload anahtarı yoksa, eşleşmiyorsa veya süresi geçmişse
+>   her zaman yeni anahtar üretip cüzdanla `replace_upload_key` ister; upload ücreti tekrar alınmaz,
+>   son tarih değişmez. Google lab'deki "anahtar değiştirmeden dur" seçeneği yoktur.
+> - Ödenmiş taslak başka bir job'un taslağıyla ezilmez; yerel kayıt yoksa bekleyen job Bridge'in
+>   `GET /v1/creators/:account/pending-upload` ipucuyla bulunur ve NEAR'da doğrulanır
+>   ([#221](https://github.com/4rmus/youtick/pull/221), [#223](https://github.com/4rmus/youtick/pull/223)).
+> - Üretici ödenmiş ama yayınlanmamış bir job'dan tarayıcıda vazgeçebilir; NEAR'daki job iadesiz kayıt
+>   olarak kalır ([#227](https://github.com/4rmus/youtick/pull/227)). Bridge ret nedeni ve tekrar deneme
+>   zamanı preflight'ta döner ([#228](https://github.com/4rmus/youtick/pull/228)).
+>
+> Canlı kanıt: [V1 canlı kabul kaydı](./youtick-v1-pilot-live-acceptance.md).
+
 Gate: `NEAR_AUTH_UPLOAD_SAFETY`. Tarih: 16 Eylül 2026.
 Sonuç: **COMPLETED_WITH_WARNINGS**. Yerel kaynak/test kabulü tamamlandı;
 sağlayıcı prompt düzeltmesi ve canlı upload/playback kabulü **UNPROVEN**.
