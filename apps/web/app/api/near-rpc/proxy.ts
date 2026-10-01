@@ -160,6 +160,18 @@ function clientIp(request: Request): string {
         || 'unknown';
 }
 
+// Browsers send Origin on every POST; a missing Origin is a non-browser client and still hits the IP limit.
+function isCrossOrigin(request: Request): boolean {
+    if (request.headers.get('sec-fetch-site') === 'cross-site') return true;
+    const origin = request.headers.get('origin');
+    if (origin === null) return false;
+    try {
+        return new URL(origin).host !== new URL(request.url).host;
+    } catch {
+        return true;
+    }
+}
+
 function payloadAccount(payload: JsonRpcPayload): string | null {
     if (!payload.params || typeof payload.params !== 'object' || Array.isArray(payload.params)) return null;
     const accountId = (payload.params as { account_id?: unknown }).account_id;
@@ -192,7 +204,9 @@ async function checkRateLimit(
     const now = Date.now();
     const limit = mode === 'read' ? READ_RATE_LIMIT : BROADCAST_RATE_LIMIT;
     const keys = [`${mode}:ip:${clientIp(request)}`];
-    const accountId = payloadAccount(payload);
+    // Reads name arbitrary accounts (including the shared market contract), so an account key would let one
+    // client exhaust every other client's reads. Only broadcasts keep the account bucket.
+    const accountId = mode === 'broadcast' ? payloadAccount(payload) : null;
     if (accountId) keys.push(`${mode}:account:${accountId}`);
 
     if (process.env.NODE_ENV !== 'test') {
@@ -322,6 +336,7 @@ async function boundedUpstreamResponse(upstream: Response, signal: AbortSignal):
 }
 
 export async function handleNearRpcRequest(request: Request, mode: RpcMode): Promise<Response> {
+    if (isCrossOrigin(request)) return errorResponse(403, 'Cross-origin NEAR RPC request rejected');
     const contentType = request.headers.get('content-type') || '';
     if (!contentType.toLowerCase().startsWith('application/json')) {
         return errorResponse(415, 'application/json required');

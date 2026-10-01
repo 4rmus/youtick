@@ -112,9 +112,12 @@ scan advancement or failure reset. It budgets
 three queries per event plus one per complete block; the writer also checks
 the actual statement count against the remaining budget before executing.
 Dense-block tests cover scheduled/public, legacy and Queue paths, exact resume
-without duplicate projections, and rollback on a late conflict. Every path
-retains the existing 16-event block limit; a 17-event block fails before writing.
-Raising that separate capacity limit is not part of the query-budget fix.
+without duplicate projections, and rollback on a late conflict. Multi-block
+batches and the single-block writer keep the 16-event limit. On the paid path
+17-, 64- and 298-event blocks are each written alone within a 895-query share,
+exactly once; a 299-event block commits its predecessors and then halts with
+`d1_final_block_query_budget_exceeded`. The catalogue regression measures a
+95-publication first write plus a 298-event block at no more than 1,000 queries.
 These are local SQLite tests with a modelled invocation limit,
 not evidence of hosted D1 throughput or a configured alert.
 
@@ -301,6 +304,18 @@ cd apps/web
 npm test -- --run __tests__/unit/current-catalog.test.ts __tests__/unit/catalog-refresh.test.ts __tests__/unit/useAllVideos.test.ts __tests__/unit/market-read-model.test.ts
 npx tsc --noEmit
 ```
+
+### Pilot alerts
+
+```bash
+node --test scripts/pilot-alerts.test.mjs scripts/slo-policy.test.mjs scripts/ci-security.test.mjs
+```
+
+The evaluator is tested with mocked Cloudflare and Google Chat responses only.
+It checks thresholds, one threaded envelope per breach, fail-closed alerts for
+query errors, unknown response shapes and missing read-model telemetry, and that
+every log needle is a substring of a line the source emits. The telemetry
+response shape, token permissions and Chat delivery are not proven locally.
 
 Migration `0008_current_catalog.sql` is additive. Neither local tests nor a
 successful packet build applies it remotely. The optional public-testnet

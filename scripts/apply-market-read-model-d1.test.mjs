@@ -288,11 +288,11 @@ test('block batches keep the 16-event cap, enforce remaining queries and roll ba
     const db = await database(true);
     t.after(() => db.sqlite.close());
     await applyFinalMarketBlock(db, emptyBlock(99));
-    await assert.rejects(() => applyFinalMarketBlockBatch(db, [purchaseBlock(100, 17)]), /d1_final_block_event_limit_exceeded/);
-    await assert.rejects(() => ingestMarketReadModelBatch(publicIngestionEnv(db), {
-        now: () => 0, sleepFn: async () => {}, fetchFinalHeight: async () => 100,
-        fetchBlock: async () => purchaseBlock(100, 17),
-    }), /d1_final_block_event_limit_exceeded/);
+    // A dense block is only ever written alone, and only within the given query share.
+    await assert.rejects(() => applyFinalMarketBlockBatch(db, [purchaseBlock(100, 16), purchaseBlock(101, 17)]),
+        /d1_final_block_event_limit_exceeded/);
+    await assert.rejects(() => applyFinalMarketBlockBatch(db, [purchaseBlock(100, 17)], 51), /d1_final_block_query_budget_exceeded/);
+    await assert.rejects(() => applyFinalMarketBlockBatch(db, [purchaseBlock(100, 299)], 895), /d1_final_block_query_budget_exceeded/);
     await assert.rejects(() => applyFinalMarketBlockBatch(db, [purchaseBlock(100, 16)], 48), /d1_block_batch_query_limit_exceeded/);
     assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM chain_events').get().n, 0);
     assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 99);
@@ -307,6 +307,89 @@ test('block batches keep the 16-event cap, enforce remaining queries and roll ba
         assert.equal(db.sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 16);
     }
     assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 100);
+});
+
+const DENSE_SEQUENCE = [[100, 16], [101, 17], [102, 5], [103, 64], [104, 298]];
+
+for (const mode of ['public', 'legacy', 'queue']) test(`${mode} ingestion writes 17, 64 and 298-event blocks alone within 895 queries, once`, async (t) => {
+    const db = await database(true);
+    t.after(() => db.sqlite.close());
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const sizes = new Map(DENSE_SEQUENCE);
+    let queries = 0, now = 0;
+    const prepare = db.prepare.bind(db), batch = db.batch.bind(db);
+    const batches = [];
+    db.prepare = (sql) => {
+        if (sql.includes('SELECT block_height, block_hash')) queries++;
+        return prepare(sql);
+    };
+    db.batch = (statements) => {
+        queries += statements.length;
+        const heights = [...new Set(statements.map(({ values }) => values[2]).filter(Number.isInteger))];
+        batches.push(heights);
+        assert(queries <= 900, `invocation exceeded the 895 history share plus control queries: ${queries}`);
+        return batch(statements);
+    };
+    const env = { ...publicIngestionEnv(db), ...(mode === 'legacy' ? { VIDEO_ENVIRONMENT: undefined } : {}),
+        READ_MODEL_BACKFILL_ENABLED: 'true', READ_MODEL_BACKFILL_CONTINUE_ENABLED: 'true',
+        READ_MODEL_BACKFILL_QUEUE: { send: async () => {} } };
+    const requested = [];
+    const dependencies = { now: () => now, sleepFn: async ms => { now += ms; }, queryBudget: 895,
+        fetchFinalHeight: async () => 104,
+        fetchBlock: async ({ blockHeight }) => { requested.push(blockHeight); return purchaseBlock(blockHeight, sizes.get(blockHeight)); },
+    };
+    let watermark = 99;
+    for (let run = 0; run < 6 && watermark < 104; run++) {
+        queries = 0;
+        const result = mode === 'queue'
+            ? await ingestMarketReadModelBackfill(env, { schema: 'youtick.read-model-backfill-message.v1',
+                next_block_height: watermark + 1 }, dependencies)
+            : await ingestMarketReadModelBatch(env, dependencies);
+        assert.ok(result.block_count > 0, `run ${run} made progress`);
+        watermark = db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height;
+    }
+    assert.equal(watermark, 104);
+    // Each dense block was its own batch; no block was fetched twice by a single run's carry.
+    for (const [height, count] of DENSE_SEQUENCE) {
+        if (count > 16) assert.ok(batches.some(heights => heights.length === 1 && heights[0] === height), `${height} alone`);
+    }
+    const total = DENSE_SEQUENCE.reduce((sum, [, count]) => sum + count, 0);
+    for (const table of ['chain_events', 'viewer_entitlements', 'sale_ledger']) {
+        assert.equal(db.sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, total, table);
+    }
+    assert.equal(db.sqlite.prepare('SELECT count(DISTINCT idempotency_key) AS n FROM chain_events').get().n, total);
+    assert.deepEqual([...new Set(requested)].sort(), [100, 101, 102, 103, 104]);
+});
+
+for (const mode of ['public', 'legacy']) test(`${mode} ingestion commits blocks before a 299-event block, then halts there with an alarm code`, async (t) => {
+    const db = await database(true);
+    t.after(() => db.sqlite.close());
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const env = { ...publicIngestionEnv(db), ...(mode === 'legacy' ? { VIDEO_ENVIRONMENT: undefined } : {}) };
+    let now = 0;
+    const dependencies = { now: () => now, sleepFn: async ms => { now += ms; }, queryBudget: 895,
+        fetchFinalHeight: async () => 102,
+        fetchBlock: async ({ blockHeight }) => purchaseBlock(blockHeight, blockHeight === 101 ? 299 : 3) };
+    if (mode === 'public') {
+        const first = await ingestMarketReadModelBatch(env, dependencies);
+        assert.equal(first.block_height, 100);
+    } else {
+        // One block per legacy batch: block 100 commits, then the same run halts at 101.
+        await assert.rejects(() => ingestMarketReadModelBatch(env, dependencies), /d1_final_block_query_budget_exceeded/);
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+        await assert.rejects(() => ingestMarketReadModelBatch(env, dependencies), /^Error: d1_final_block_query_budget_exceeded$/);
+    }
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 100);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM chain_events').get().n, 3);
+    const errors = [];
+    const waits = [];
+    marketReadModelWorker.scheduled({ cron: '*/1 * * * *' }, env,
+        { waitUntil: promise => waits.push(promise.catch(() => undefined)) },
+        { ...dependencies, logger: { log() {}, error: value => errors.push(JSON.parse(value)) } });
+    await Promise.all(waits);
+    assert.deepEqual(errors, [{ schema: 'youtick.read-model-ingestion.v1', status: 'failed',
+        error_code: 'd1_final_block_query_budget_exceeded' }]);
 });
 
 test('budget-limited Queue ingestion preserves a null gap and resumes the deferred real block', async (t) => {

@@ -6,8 +6,11 @@ vi.mock('@defuse-protocol/one-click-sdk-typescript', async (importOriginal) => (
     verifyQuoteSignature,
 }));
 
-import handler, { type Env } from './index';
+import handler, { type Env, resetPublicUploadPolicyCache } from './index';
 import { expirePaymentRateLimit, paymentRateLimit } from './payments';
+
+// The public upload policy cache is per isolate; each test starts from a fresh read.
+beforeEach(() => resetPublicUploadPolicyCache());
 
 const ORIGIN = 'https://app.youtick.net';
 const RPC_URL = 'https://rpc.mainnet.near.org';

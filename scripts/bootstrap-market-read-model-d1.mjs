@@ -9,12 +9,15 @@ const HASH_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 const DECIMAL_PATTERN = /^[1-9][0-9]{0,38}$/;
 
 export const MAX_BOOTSTRAP_PUBLICATIONS = 48;
+// One proven page per view call; the contract itself caps a page at 100.
+export const PUBLICATION_PAGE_SIZE = 48;
 
 export async function fetchMarketReadModelBootstrap(input, fetchImpl = fetch) {
     return (await fetchFinalMarketPublications(input, fetchImpl)).snapshot;
 }
 
-export async function fetchFinalMarketPublications(input, fetchImpl = fetch) {
+export async function fetchFinalMarketPublications(input, fetchImpl = fetch,
+    { maxPublications = MAX_BOOTSTRAP_PUBLICATIONS } = {}) {
     const request = normalizeRequest(input);
     const block = await nearRpc(request.rpcUrl, 'block', { finality: 'final' }, fetchImpl);
     const height = block?.header?.height;
@@ -28,18 +31,24 @@ export async function fetchFinalMarketPublications(input, fetchImpl = fetch) {
     if (!Number.isSafeInteger(count) || count < 0) {
         throw new Error('invalid_near_publication_count');
     }
-    if (count > MAX_BOOTSTRAP_PUBLICATIONS) {
+    if (count > maxPublications) {
         throw new Error('d1_bootstrap_publication_limit_exceeded');
     }
-    const publications = count === 0 ? [] : await nearView(
-        request,
-        hash,
-        'get_publications',
-        { from_index: '0', limit: count },
-        fetchImpl,
-    );
-    if (!Array.isArray(publications) || publications.length !== count) {
-        throw new Error('invalid_near_publication_page');
+    // Every page is read at the same exact block hash; nearView rejects any other block.
+    const publications = [];
+    for (let fromIndex = 0; fromIndex < count; fromIndex += PUBLICATION_PAGE_SIZE) {
+        const limit = Math.min(PUBLICATION_PAGE_SIZE, count - fromIndex);
+        const page = await nearView(
+            request,
+            hash,
+            'get_publications',
+            { from_index: String(fromIndex), limit },
+            fetchImpl,
+        );
+        if (!Array.isArray(page) || page.length !== limit) {
+            throw new Error('invalid_near_publication_page');
+        }
+        publications.push(...page);
     }
     return { block: block.header, snapshot: normalizeBootstrap({
         schema: 'youtick.market-read-model-bootstrap.v1',
@@ -49,7 +58,7 @@ export async function fetchFinalMarketPublications(input, fetchImpl = fetch) {
         block_height: height,
         block_hash: hash,
         publications,
-    }) };
+    }, maxPublications) };
 }
 
 export async function applyMarketReadModelBootstrap(db, rawSnapshot) {
@@ -104,7 +113,7 @@ export async function applyMarketReadModelBootstrap(db, rawSnapshot) {
     return db.batch(statements);
 }
 
-function normalizeBootstrap(value) {
+function normalizeBootstrap(value, maxPublications = MAX_BOOTSTRAP_PUBLICATIONS) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
         || value.schema !== 'youtick.market-read-model-bootstrap.v1'
         || !['testnet', 'mainnet'].includes(value.network)
@@ -113,7 +122,7 @@ function normalizeBootstrap(value) {
         || !Number.isSafeInteger(value.block_height) || value.block_height < 1
         || typeof value.block_hash !== 'string' || !HASH_PATTERN.test(value.block_hash)
         || !Array.isArray(value.publications)
-        || value.publications.length > MAX_BOOTSTRAP_PUBLICATIONS) {
+        || value.publications.length > maxPublications) {
         throw new Error('invalid_d1_bootstrap');
     }
     const publications = value.publications.map(normalizePublication);
