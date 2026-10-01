@@ -2569,7 +2569,15 @@ async function preflightAdmission(
             admissionStatus: record?.status || 'OPEN',
             activeReservations: Object.keys(record?.reservations || {}).length,
             dailyGlobalAttempts: record?.daily.utcDay === utcDay ? record.daily.globalAttempts : 0,
+            ...(error instanceof AdmissionDeniedError ? { reason: error.reason } : {}),
         }));
+        if (error instanceof AdmissionDeniedError) {
+            return json({
+                error: 'admission_denied',
+                reason: error.reason,
+                ...(error.retryAtMs ? { retry_at_ms: error.retryAtMs } : {}),
+            }, 409);
+        }
         throw error;
     }
     return json({ available: true });
@@ -2710,6 +2718,22 @@ function parseAdmissionCandidate(input: JsonObject, code: string): AdmissionCand
     };
 }
 
+type AdmissionDenialReason = 'active_upload' | 'daily_limit' | 'capacity' | 'source_too_large';
+
+// Still reported as `admission_denied`; the reason and retry time are shown only to the
+// creator asking for their own preflight. Capacity carries no time to avoid exposing others.
+class AdmissionDeniedError extends Error {
+    constructor(readonly reason: AdmissionDenialReason, readonly retryAtMs?: number) {
+        super('admission_denied');
+    }
+}
+
+function nextUtcDayMs(now: number): number {
+    const next = new Date(now);
+    next.setUTCHours(24, 0, 0, 0);
+    return next.getTime();
+}
+
 function planAdmission(
     stored: AdmissionRecord | undefined,
     candidate: AdmissionCandidate,
@@ -2726,7 +2750,7 @@ function planAdmission(
     monthly: AdmissionRecord['monthly'];
 } {
     if (isPublicTestnetEnvironment(env) && BigInt(candidate.expectedSourceBytes) > 5_000_000_000n) {
-        throw new Error('admission_denied');
+        throw new AdmissionDeniedError('source_too_large');
     }
     const utcDay = new Date(now).toISOString().slice(0, 10);
     const utcMonth = utcDay.slice(0, 7);
@@ -2778,10 +2802,15 @@ function planAdmission(
         ? record.monthly
         : { utcMonth, reservedBudgetUsdMicros: '0' };
     const active = Object.values(record.reservations);
-    if (active.length >= (isPublicTestnetEnvironment(env) ? 10 : ADMISSION_GLOBAL_CONCURRENCY)
-        || active.some((reservation) => reservation.creator === candidate.creator)
-        || (daily.creatorAttempts[candidate.creator] || 0) >= ADMISSION_CREATOR_DAILY_ATTEMPTS) {
-        throw new Error('admission_denied');
+    const creatorLeases = active.filter((reservation) => reservation.creator === candidate.creator);
+    if (creatorLeases.length > 0) {
+        throw new AdmissionDeniedError('active_upload', Math.max(...creatorLeases.map(leaseDeadline)));
+    }
+    if ((daily.creatorAttempts[candidate.creator] || 0) >= ADMISSION_CREATOR_DAILY_ATTEMPTS) {
+        throw new AdmissionDeniedError('daily_limit', nextUtcDayMs(now));
+    }
+    if (active.length >= (isPublicTestnetEnvironment(env) ? 10 : ADMISSION_GLOBAL_CONCURRENCY)) {
+        throw new AdmissionDeniedError('capacity');
     }
     if (monthlyBudgetUsdMicros !== null
         && BigInt(monthly.reservedBudgetUsdMicros) + jobReservationUsdMicros > monthlyBudgetUsdMicros) {

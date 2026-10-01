@@ -46,6 +46,7 @@ import {
     LIVEPEER_SOURCE_ACCEPT,
     heartbeatLivepeerUploadLease,
     livepeerUploadFeeUsdc,
+    LivepeerAdmissionDeniedError,
     matchPendingLivepeerUpload,
     parseLivepeerPriceUsdc,
     preflightLivepeerUpload,
@@ -394,6 +395,7 @@ export function LivepeerPaidUploadForm() {
             if (controller.signal.aborted) return;
             finishPreparation?.('failed');
             setFailedStep(0);
+            setStatus(null);
             setError(uploadErrorMessage(reason, false));
         } finally {
             if (operation.current === controller) { operation.current = null; setBusy(false); }
@@ -912,6 +914,22 @@ export function LivepeerUploadStatus({ accountId, jobId, onAbandon }: {
     );
 }
 
+function admissionDeniedMessage(reason: NonNullable<LivepeerAdmissionDeniedError['reason']>, retryAtMs: number | null): string {
+    const at = retryAtMs
+        ? ` after ${new Date(retryAtMs).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`
+        : ' later';
+    if (reason === 'active_upload') {
+        return `Your previous paid upload still holds this account's upload slot. Try again${at}. No wallet approval was requested.`;
+    }
+    if (reason === 'daily_limit') {
+        return `This account has used today's uploads. Try again${at} (00:00 UTC). No wallet approval was requested.`;
+    }
+    if (reason === 'capacity') {
+        return 'Uploads are busy right now. Try again in a few minutes. No wallet approval was requested.';
+    }
+    return 'This file is larger than the 5 GB upload limit. No wallet approval was requested.';
+}
+
 function formatBytes(bytes: number): string {
     return `${bytes.toLocaleString('en-US')} bytes`;
 }
@@ -959,6 +977,9 @@ export function uploadErrorMessage(reason: unknown, availabilityConfirmed: boole
     if (code === 'livepeer_upload_expired') return UPLOAD_EXPIRED_MESSAGE;
     if (code === 'livepeer_upload_status_unavailable') {
         return 'Publication status could not be confirmed. Recovery has not been started.';
+    }
+    if (reason instanceof LivepeerAdmissionDeniedError && !availabilityConfirmed && reason.reason) {
+        return admissionDeniedMessage(reason.reason, reason.retryAtMs);
     }
     if (code === 'admission_closed' || code === 'admission_denied') {
         return availabilityConfirmed

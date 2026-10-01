@@ -1431,6 +1431,17 @@ export async function cancelLivepeerUpload(input: {
     }
 }
 
+export type LivepeerAdmissionReason = 'active_upload' | 'daily_limit' | 'capacity' | 'source_too_large';
+
+// Keeps the `admission_denied` code for existing handling and adds the Bridge's reason.
+export class LivepeerAdmissionDeniedError extends Error {
+    constructor(readonly reason: LivepeerAdmissionReason | null, readonly retryAtMs: number | null) {
+        super('admission_denied');
+    }
+}
+
+const ADMISSION_REASONS: readonly LivepeerAdmissionReason[] = ['active_upload', 'daily_limit', 'capacity', 'source_too_large'];
+
 export async function preflightLivepeerUpload(input: {
     accountId: string;
     jobId: string;
@@ -1459,6 +1470,13 @@ export async function preflightLivepeerUpload(input: {
     });
     const value = await readJson(response);
     if (!response.ok) {
+        if (value.error === 'admission_denied') {
+            const reason = ADMISSION_REASONS.find((item) => item === value.reason) ?? null;
+            const retryAtMs = Number.isSafeInteger(value.retry_at_ms) && Number(value.retry_at_ms) > 0
+                ? Number(value.retry_at_ms)
+                : null;
+            throw new LivepeerAdmissionDeniedError(reason, retryAtMs);
+        }
         throw new Error(typeof value.error === 'string'
             ? value.error
             : `livepeer_control_http_${response.status}`);
