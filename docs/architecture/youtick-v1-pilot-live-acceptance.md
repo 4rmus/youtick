@@ -67,6 +67,44 @@ Bridge kaydı yayından sonra da job id'yi döndürür; Web yalnız `Authorized`
 Preview'ın revert deploy'u ilk denemede smoke'ta chunk 404 ile otomatik geri döndü, yeniden çalıştırmada
 geçti (Web `605c1a4e`). Public-testnet #224'ü hiç almadı.
 
+## Ödenmiş upload'dan vazgeçme ve ret nedeni — 1 Ekim 2026
+
+Gate'ler: `YOUTICK_UPLOAD_ABANDON_PAID_JOB_*`, `YOUTICK_UPLOAD_ADMISSION_REASON_*`,
+`YOUTICK_UPLOAD_ABANDON_AND_REASON_LIVE_RECORD` — **COMPLETED_WITH_WARNINGS**.
+
+**Neden:** #221 koruması, NEAR'da `Authorized` kalan ödenmiş job varken yeni upload'ı 24 saate kadar
+kilitliyordu; Bridge ise üreticinin aktif upload yerini 30 dakikada bırakır. Bridge iptali
+(`/v1/upload-cancellations`) bunu çözmez: yalnız upload intent sonrası ve provider oluşturulmadan önce
+(`AUTHORIZED`/`LEASED`) ve job'a bağlı anahtarla çalışır, NEAR'daki job iadesiz kayıt olarak `Authorized`
+kalır (`protocol/paid-media-livepeer-v1/README.md`).
+
+- [#227](https://github.com/4rmus/youtick/pull/227) (`2687ffb`): tarayıcıda hesap başına "vazgeçilen job"
+  listesi ve "Abandon this paid upload (no refund)" düğmesi (uyarı, Resume yanı ve kart; onay sorusuyla).
+  Vazgeçilen job yerel kayıttan ya da Bridge'den gelse de bekleyen sayılmaz; liste yazılamazsa kilit açılmaz.
+  [run 36781278673](https://github.com/4rmus/youtick/actions/runs/36781278673) ile 30 Eylül 21:49 UTC'de
+  yayınlandı (Web `fb305dad`, Bridge `737b4a86`, read-model `97692f17`).
+- [#228](https://github.com/4rmus/youtick/pull/228) (`aaca646`): Bridge public preflight reddine `reason`
+  (`active_upload` + üreticinin kendi upload yeri bitişi, `daily_limit` + sonraki 00:00 UTC, `capacity`
+  zaman bilgisi olmadan, `source_too_large`) ve `retry_at_ms` ekler; hata kodu, HTTP 409 ve iç
+  rezervasyon/relay yanıtları değişmez. Web nedeni yerel saatle gösterir ve hata çıkınca
+  "Checking payment options…" yazısını temizler.
+  [run 36841023208](https://github.com/4rmus/youtick/actions/runs/36841023208) ile 1 Ekim 09:15 UTC'de
+  yayınlandı (Web `8a3f9101`, Bridge `c7f2069f`, read-model `92a103cd`).
+
+Her iki deploy'da `DEPLOY_PUBLIC_TESTNET_ENABLED` owner tarafından açıldı, `public-testnet` ortamı owner
+tarafından onaylandı ve deploy sonrası tekrar `false` yapıldı. Katalog her seferinde 22/22, 0 fark.
+
+| Adım — `utick2.testnet`, "Test 4 Abandon" `lp-42c83a9d-56cd-4c6f-9294-ac17e1470d6e`, 17.070.370 bayt | Kanıt |
+| --- | --- |
+| Ödeme (07:22:05 UTC) | Tek sponsorlu `create_paid_job`, 0,60 USDC; Bridge kaydı bu job'u döndürdü |
+| Yenileme + vazgeç | Kart göründü; "Abandon" + onay sonrası kart kalktı, "Check payment options" yeniden tıklanabilir oldu (**OWNER_DECLARED**) |
+| Zincir | Job `Authorized` kaldı (son tarih 2 Ekim 07:22 UTC); ikinci ödeme yok, USDC 0'a indi, yayın sayısı 22 |
+| Yeni upload denemesi (~07:39 UTC, owner USDC ekledikten sonra) | `/v1/upload-preflight` 409 `admission_denied`; cüzdan onayı istenmedi. Neden: aynı relay'in 30 dakikalık upload yeri (07:52 UTC'ye kadar). Ekran "Upload is not available…" ve "Checking payment options…" yazısını birlikte gösterdi — #228'in nedeni |
+| #228 sonrası (09:16 UTC) | Public preflight `soteri.testnet` ve `utick2.testnet` için `{"available":true}`; yeni ret metinleri canlı paketteki `/upload` sayfasında |
+
+Ret yanıtındaki `reason`/`retry_at_ms` canlıda gözlenmedi (iki hesap da uygundu): **LOCAL_TEST + CI**.
+Vazgeçme onay sorusu ve kilit açılması yalnız owner gözlemiyle doğrulandı.
+
 ## Açık bulgular
 
 1. ~~Yenileme sonrası "Your upload" kartı görünmedi.~~ Yerel kayıt olmadan kart ve Resume yukarıdaki
@@ -74,19 +112,22 @@ geçti (Web `605c1a4e`). Public-testnet #224'ü hiç almadı.
 2. ~~Bekleyen job yalnız tarayıcının yerel kaydıyla bulunuyor.~~ #223 ile Bridge ipucu eklendi ve canlıda
    doğrulandı. Yalnız deploy sonrası relay'ler kayıtlıdır; `lp-524cbcdb-…` kapsam dışıdır (1 Ekim 14:37 UTC'de
    süresi dolar, kayıp 0,60 test USDC).
-3. **İptal oturum anahtarına bağlı.** "Cancel job (no refund)" yeni sekmede anahtar yoksa çalışmaz.
+3. ~~İptal oturum anahtarına bağlı.~~ Kullanıcının asıl ihtiyacı (kilidi açmak) #227 "vazgeç" ile karşılandı.
+   Bridge iptali hâlâ yalnız dar pencerede ve oturum anahtarıyla çalışır; bu davranış değişmedi.
 4. **Belge/kod uyumsuzluğu:** `near-auth-upload-safety.md`, kodda olmayan `allowUploadKeyReplacement`
    bayrağından söz ediyor.
 5. **Geçmiş tarayıcısı ~199 bin blok geride.** Yeni katalog etkilenmez; satış/geçmiş raporları etkilenir.
-6. **Copilot "AI findings" kontrolü** bir PR'da "model not supported" ile başarısız oldu; zorunlu değil,
-   repo ayarıdır.
+6. **Copilot "AI findings" kontrolü** birden fazla PR'da "model not supported" ile başarısız oldu; zorunlu
+   değil, repo ayarıdır.
+7. **Vazgeçme Bridge'deki upload yerini boşaltmaz.** Vazgeçtikten sonra 30 dakikaya kadar yeni upload
+   reddedilebilir; #228 ile kullanıcı artık nedeni ve tekrar deneme saatini görür.
 
 ## Çalıştırılmayanlar
 
-Başka tarayıcı/cihazda Resume (aynı sekmede yerel kayıt silinerek taklit edildi), iptal, takedown → provider `404`, mobil/Safari ve diğer
+Başka tarayıcı/cihazda Resume (aynı sekmede yerel kayıt silinerek taklit edildi), canlı ret nedeni metni,
+iptal, takedown → provider `404`, mobil/Safari ve diğer
 tarayıcılar, provider hesabında asset sayısı okuması, yeni yayının katalogda ilk görünme gecikmesi
 (90 s hedefi) — **EXTERNAL_NOT_RUN**.
 
-**Tek sonraki gate:** `YOUTICK_UPLOAD_CANCEL_WITHOUT_SESSION_KEY` — bulgu 3: oturum anahtarı olmadan
-bekleyen ödenmiş job'u iptal edebilmek (yalnız `replace_upload_key` sonrası mevcut kurtarma yolunu yeniden
-kullanarak).
+**Tek sonraki gate:** `YOUTICK_UPLOAD_SAFETY_DOC_ALIGNMENT` — bulgu 4: `near-auth-upload-safety.md`
+belgesini mevcut anahtar değiştirme ve kurtarma/vazgeçme davranışıyla uzlaştırmak.
