@@ -844,6 +844,7 @@ for (const mode of ['closed', 'acceptance', 'drain']) test(`public ${mode} check
         sponsoredUploadQuoteReady: accepting, sponsoredUploadRelayReady: accepting,
         webhookQueueReady: enabled, publicBetaRateLimitReady: true };
     let readVersion = 'read-current';
+    let readIngestion = enabled;
     const healthResponses = [];
     const delays = [];
     let healthRequests = 0;
@@ -852,7 +853,7 @@ for (const mode of ['closed', 'acceptance', 'drain']) test(`public ${mode} check
         const headers = new Headers(init.headers);
         if (url.hostname === 'read.test') return Response.json({ status: 'ok', versionId: readVersion,
             network: 'testnet', contractId: 'public-video.testnet', startBlockHeight: '100',
-            ingestionEnabled: enabled, backfillEnabled: false, stage: enabled ? 'ENABLED' : 'DISABLED' });
+            ingestionEnabled: readIngestion, backfillEnabled: false, stage: enabled ? 'ENABLED' : 'DISABLED' });
         if (url.pathname === '/__health') {
             healthRequests += 1;
             return Response.json(healthResponses.shift() || health);
@@ -878,6 +879,15 @@ for (const mode of ['closed', 'acceptance', 'drain']) test(`public ${mode} check
     readVersion = 'wrong-version';
     await assert.rejects(() => runReleaseSmoke(options), /release_smoke_read_model_mismatch/);
     readVersion = 'read-current';
+    if (enabled) {
+        // An open read model may run with the history scanner paused when Web serves the current catalogue.
+        readIngestion = false;
+        await assert.rejects(() => runReleaseSmoke(options), /release_smoke_read_model_mismatch/);
+        await runReleaseSmoke({ ...options, expectedReadModel: { ...options.expectedReadModel, ingestionEnabled: false } });
+        await assert.rejects(() => runReleaseSmoke({ ...options, expectedReadModel: { ...options.expectedReadModel, ingestionEnabled: true } }),
+            /release_smoke_read_model_mismatch/);
+        readIngestion = enabled;
+    }
     health.operatorMutationEnabled = !enabled;
     healthRequests = 0;
     await assert.rejects(() => runReleaseSmoke(options), /release_smoke_bridge_not_/);
