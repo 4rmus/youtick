@@ -337,7 +337,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const args = process.argv.slice(2);
 if (args[0] === '--version') {
-  process.stdout.write('4.90.0\n');
+  process.stdout.write('4.147.0\n');
   process.exit(0);
 }
 const statePath = process.env.FAKE_WRANGLER_STATE;
