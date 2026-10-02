@@ -574,6 +574,7 @@ jobs:
           scripts/market-event-catalog.test.mjs
           scripts/market-read-api.test.mjs
           scripts/current-catalog.test.mjs
+          scripts/history-targeted-scan.test.mjs
           scripts/check-rust-wasm-advisories.test.mjs
           scripts/generate-contract-spdx.test.mjs
           scripts/slo-policy.test.mjs
