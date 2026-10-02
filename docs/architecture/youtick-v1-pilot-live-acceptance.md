@@ -139,6 +139,30 @@ bildirim) dört monitör: Web HTTP (`public-testnet.youtick.net`), Bridge ve rea
 Up. Geçmiş tarayıcısı gecikmesi, NEAR RPC hata oranı ve DLQ birikimi bu izlemenin kapsamı dışındadır;
 #232'deki `pilot-alerts` workflow'u `PILOT_ALERTS_ENABLED` ve secret'lar olmadan çalışmaz (açılmadı).
 
+## Geçmiş tarayıcısının durdurulması — 1–2 Ekim 2026
+
+Gate'ler: `YOUTICK_HISTORY_SCANNER_LAG`, `YOUTICK_HISTORY_TARGETED_SCAN_*`, `YOUTICK_PAUSE_HISTORY_SCANNER_PR_AND_DEPLOY`,
+`YOUTICK_SMOKE_INGESTION_FIX_PR_AND_DEPLOY` — **PASS**.
+
+**Ölçüm (1 Ekim 20:05–20:08 UTC, PRODUCTION):** NEAR testnet ~102 blok/dk, ardışık tarayıcı ~64 blok/dk;
+gecikme ~250 bin blok ve günde ~55 bin blok artıyor. `catalog_mode=current` ile Keşfet/Profil yeni
+katalogu, bakiye ve bilet hakları NEAR'ı okur; tarayıcı tablolarını sunan API yoktur. Hedefli tarama tasarımı
+ve salt-okunur dry-run ([#233](https://github.com/4rmus/youtick/pull/233)) aynı aralık için 249.786 bloğu
+atlayıp 18 blok okumanın yeterli olduğunu, olay sayılarının canlı kabulle eşleştiğini gösterdi.
+
+**Owner kararı (1 Ekim):** Bugün geçmiş verisine ihtiyaç olmadığı için hedefli yazıcı ertelendi; ardışık
+tarayıcı durduruldu. Veri NEAR'da kalıcıdır; ihtiyaç doğarsa dry-run/yazıcı ile doldurulur.
+
+| Adım | Kanıt |
+| --- | --- |
+| [#234](https://github.com/4rmus/youtick/pull/234) (`3ee14be`) | Public-testnet read-model `READ_MODEL_INGESTION_ENABLED` = mod açık **ve** Web current katalogu okumuyor; `off`/`shadow` geri açar |
+| İlk deploy, [run 36926166783](https://github.com/4rmus/youtick/actions/runs/36926166783) | Smoke `release_smoke_read_model_mismatch` (smoke `ingestionEnabled`'ı hâlâ moda bağlıyordu) → otomatik geri dönüş, canlı sağlıklı kaldı |
+| [#235](https://github.com/4rmus/youtick/pull/235) (`b7687f3`) | Kural `publicReadModelIngestionEnabled()` ile hem pakete hem smoke beklentisine bağlandı; mutasyon testleri iki yönde kırılıyor |
+| Deploy, [run 36989630307](https://github.com/4rmus/youtick/actions/runs/36989630307) (2 Ekim 12:51 UTC) | Web `de3738ca`, Bridge `68489abd`, read-model `d60dc924`; smoke PASS; anahtar 12:52:06 UTC'de `false` |
+| Canlı sonrası | Read-model `ingestionEnabled: false`, `stage: ENABLED`; tarayıcı watermark 12:52→12:54 **270932067** sabit; katalog 271228276→271228497 yenileniyor, 22/22, 0 fark; Bridge/Web `ok`/200 |
+
+D1'deki geçmiş satırlar silinmedi. `catalog_mode=off`'a dönüşte v1 listesinin bayat olacağı runbook'a yazıldı.
+
 ## Açık bulgular
 
 1. ~~Yenileme sonrası "Your upload" kartı görünmedi.~~ Yerel kayıt olmadan kart ve Resume yukarıdaki
@@ -154,8 +178,9 @@ Up. Geçmiş tarayıcısı gecikmesi, NEAR RPC hata oranı ve DLQ birikimi bu iz
    davranışını anlatan tarihli not ekledi. NEAR Auth çalışması yalnız yerel
    `codex/near-auth-preserve-20260927` dalındadır; 1 Ekim'de kalıp tabanlı sır taramasından sonra (bulgu yok)
    `main`'e birleştirilmeden uzak depoya yedeklendi (`f4cccd9`).
-5. **Geçmiş tarayıcısı ~199 bin blok geride.** Yeni katalog etkilenmez; satış/geçmiş raporları etkilenir.
-   #232 yoğun blokta takılmak yerine açık hata verir; gecikmenin kapandığı doğrulanmadı.
+5. ~~Geçmiş tarayıcısı geride.~~ Tarayıcı yetişemeyecek şekilde tasarlanmıştı (~64 vs ~102 blok/dk) ve verisini
+   kullanan yoktu; owner kararıyla `catalog_mode=current` iken durduruldu (#234, #235). Geçmiş raporu gerekirse
+   hedefli tarama (#233) ile doldurulur.
 6. **Copilot "AI findings" kontrolü** birden fazla PR'da "model not supported" ile başarısız oldu; zorunlu
    değil, repo ayarıdır.
 7. **Vazgeçme Bridge'deki upload yerini boşaltmaz.** Vazgeçtikten sonra 30 dakikaya kadar yeni upload
@@ -168,5 +193,5 @@ iptal, takedown → provider `404`, mobil/Safari ve diğer
 tarayıcılar, provider hesabında asset sayısı okuması, yeni yayının katalogda ilk görünme gecikmesi
 (90 s hedefi) — **EXTERNAL_NOT_RUN**.
 
-**Tek sonraki gate:** `YOUTICK_HISTORY_SCANNER_LAG` — bulgu 5: geçmiş tarayıcısının #232 sonrası ilerleme
-hızını salt-okunur ölçmek ve gecikmenin kapanma süresini tahmin etmek.
+**Tek sonraki gate:** `YOUTICK_WORKTREE_CLEANUP_20261002` — bu oturumda birleşmiş worktree ve yerel dalları,
+salt-okunur listeleme ve owner onayıyla kaldırmak.
