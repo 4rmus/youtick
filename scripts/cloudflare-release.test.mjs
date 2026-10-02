@@ -447,7 +447,7 @@ if (args[0] === 'versions' && args[1] === 'upload') {
     if (config.vars.READ_MODEL_CONTRACT_ID !== 'public-video-market.testnet'
         || config.vars.MARKET_CONTRACT_ID !== config.vars.READ_MODEL_CONTRACT_ID
         || config.vars.READ_MODEL_START_BLOCK_HEIGHT !== '310000000'
-        || config.vars.READ_MODEL_INGESTION_ENABLED !== String(state.publicMode && state.publicMode !== 'closed' || false) || config.vars.READ_MODEL_ENABLED !== String(state.publicMode && state.publicMode !== 'closed' || false)
+        || config.vars.READ_MODEL_INGESTION_ENABLED !== (state.expectedIngestion ?? String(state.publicMode && state.publicMode !== 'closed' || false)) || config.vars.READ_MODEL_ENABLED !== String(state.publicMode && state.publicMode !== 'closed' || false)
         || config.triggers.crons.join() !== '* * * * *'
         || config.d1_databases[0].database_id !== 'a1111111-2222-3333-4444-555555555555'
         || text.includes('50b1e14f-2b06-444b-98cf-b828f11277ef') || config.workers_dev !== false) {
@@ -2266,6 +2266,7 @@ for (const mode of ['acceptance', 'drain', 'closed']) test(`public ${mode} keeps
     assert.equal(receipt.readModel.worker, PUBLIC_TESTNET_READ_MODEL.worker);
     assert.equal(smokeInputs.at(-1).publicTestnetMode, mode);
     assert.equal(smokeInputs.at(-1).expectedReadModel.enabled, mode !== 'closed');
+    assert.equal(smokeInputs.at(-1).expectedReadModel.ingestionEnabled, mode !== 'closed');
     assert.equal(smokeInputs.at(-1).expectedPublicBetaRateLimitReady, true);
     assert.equal(smokeInputs.at(-1).expectedUploadReady, mode === 'acceptance');
     assert.ok(calls(fake).every((args) => !args.includes(READ_MODEL_WORKER)));
@@ -2432,11 +2433,17 @@ for (const catalogMode of ['shadow', 'current']) test(`public ${catalogMode} cat
     writeFileSync(release.configPath, canonicalJson(config));
     release.manifest.configs['public-testnet'] = record(release.configPath);
     writeFileSync(join(release.artifactDir, 'manifest.json'), canonicalJson(release.manifest));
-    const fake = makeFakeWrangler(release, { publicMode: 'acceptance', expectedCurrentCatalog: 'true', workers: {
+    // Serving the current catalogue pauses the v1 history scanner; shadow still feeds the v1 reader.
+    const fake = makeFakeWrangler(release, { publicMode: 'acceptance', expectedCurrentCatalog: 'true',
+        expectedIngestion: String(catalogMode !== 'current'), workers: {
         [TARGETS['public-testnet'].web.worker]: { traffic: [{ version_id: 'web-old', percentage: 100 }] },
         [TARGETS['public-testnet'].bridge.worker]: { traffic: [{ version_id: 'bridge-old', percentage: 100 }] },
         [PUBLIC_TESTNET_READ_MODEL.worker]: { traffic: [{ version_id: 'read-model-old', percentage: 100 }] },
     } });
-    await deployFixture(release, fake, async () => ({ ok: true }), { target: 'public-testnet' });
+    const smokeInputs = [];
+    await deployFixture(release, fake, async (input) => { smokeInputs.push(input); return { ok: true }; }, { target: 'public-testnet' });
     assert.ok(calls(fake).some(args => args.includes(PUBLIC_TESTNET_READ_MODEL.worker)));
+    // The post-deploy smoke must expect the same scanner state as the deployed packet.
+    assert.equal(smokeInputs.at(-1).expectedReadModel.enabled, true);
+    assert.equal(smokeInputs.at(-1).expectedReadModel.ingestionEnabled, catalogMode !== 'current');
 });
