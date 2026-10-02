@@ -105,6 +105,64 @@ tarafından onaylandı ve deploy sonrası tekrar `false` yapıldı. Katalog her 
 Ret yanıtındaki `reason`/`retry_at_ms` canlıda gözlenmedi (iki hesap da uygundu): **LOCAL_TEST + CI**.
 Vazgeçme onay sorusu ve kilit açılması yalnız owner gözlemiyle doğrulandı.
 
+## Pilot sertleştirmesi, katalog kapasitesi ve dış izleme — 1 Ekim 2026
+
+Gate'ler: `YOUTICK_PILOT_HARDENING_*`, `YOUTICK_CATALOG_CAPACITY_0009_MIGRATION`, `YOUTICK_OPS_RECORD` — **PASS**.
+
+**Sertleştirme deploy'u.** Owner'ın 29 Eylül tarihli yerel çalışması güncel `main`'e taşınıp
+[#232](https://github.com/4rmus/youtick/pull/232) (`6e8fd76`) ile birleştirildi ve
+[run 36900934344](https://github.com/4rmus/youtick/actions/runs/36900934344) ile 17:47 UTC'de yayınlandı
+(Web `06b55197`, Bridge `8a4ca7f1`, read-model `4bde92a3`). `DEPLOY_PUBLIC_TESTNET_ENABLED` owner tarafından
+açıldı, `public-testnet` ortamı owner tarafından onaylandı ve 17:47:56 UTC'de tekrar `false` yapıldı.
+
+| Canlı kontrol (PRODUCTION) | Sonuç |
+| --- | --- |
+| Güvenlik başlıkları (`/` ve `/api/*`) | HSTS `max-age=31536000`, `nosniff`, `strict-origin-when-cross-origin`, kısıtlayıcı `Permissions-Policy`; mevcut CSP korunur |
+| NEAR RPC proxy | Aynı origin 200; `Origin: https://evil.example` → 403 "Cross-origin NEAR RPC request rejected" |
+| Upload preflight | `{"available":true}`; upload akışı bozulmadı |
+| Bridge / read-model / Web | `ok` / `ok` / 200; katalog 22/22, 0 fark |
+
+İmzasız `creator_id` ile hesap kovası doldurma açığının kapandığı dışarıdan gözlenemez; kanıt kod, testler
+ve CI'dır. Oynatıcının yeni `Permissions-Policy` altında tam ekran/PiP/kopyalama davranışı tarayıcıda
+denenmedi.
+
+**D1 `0009`.** 17:52:54 UTC Time Travel bookmark
+`000000e6-0000094a-000050f7-124217711ab7007f3be94b5b9c2e4197` alındı; `wrangler d1 migrations apply --remote`
+yalnız `0009_current_catalog_capacity.sql` çalıştırdı (5 komut). Sonrası: `migrations list` boş, kayıt
+`id 9`; `current_catalog_state` `publication_count BETWEEN 0 AND 95`; satır korundu (22 yayın),
+`current_publications` dokunulmadı. Sonraki cron yeni tabloya yazdı (blok 271108378 → 271108952); bağımsız
+karşılaştırma 22/22, 0 fark; v2 `fresh`, 20 + 2 sayfa.
+
+**Dış izleme.** Owner'ın UptimeRobot hesabında (ücretsiz plan, 5 dakikalık kontrol, hesap e-postasına
+bildirim) dört monitör: Web HTTP (`public-testnet.youtick.net`), Bridge ve read-model `/__health` için
+`"status":"ok"` yoksa alarm, v2 katalog için `"freshness":"fresh"` yoksa alarm. Kurulumdan sonra dördü de
+Up. Geçmiş tarayıcısı gecikmesi, NEAR RPC hata oranı ve DLQ birikimi bu izlemenin kapsamı dışındadır;
+#232'deki `pilot-alerts` workflow'u `PILOT_ALERTS_ENABLED` ve secret'lar olmadan çalışmaz (açılmadı).
+
+## Geçmiş tarayıcısının durdurulması — 1–2 Ekim 2026
+
+Gate'ler: `YOUTICK_HISTORY_SCANNER_LAG`, `YOUTICK_HISTORY_TARGETED_SCAN_*`, `YOUTICK_PAUSE_HISTORY_SCANNER_PR_AND_DEPLOY`,
+`YOUTICK_SMOKE_INGESTION_FIX_PR_AND_DEPLOY` — **PASS**.
+
+**Ölçüm (1 Ekim 20:05–20:08 UTC, PRODUCTION):** NEAR testnet ~102 blok/dk, ardışık tarayıcı ~64 blok/dk;
+gecikme ~250 bin blok ve günde ~55 bin blok artıyor. `catalog_mode=current` ile Keşfet/Profil yeni
+katalogu, bakiye ve bilet hakları NEAR'ı okur; tarayıcı tablolarını sunan API yoktur. Hedefli tarama tasarımı
+ve salt-okunur dry-run ([#233](https://github.com/4rmus/youtick/pull/233)) aynı aralık için 249.786 bloğu
+atlayıp 18 blok okumanın yeterli olduğunu, olay sayılarının canlı kabulle eşleştiğini gösterdi.
+
+**Owner kararı (1 Ekim):** Bugün geçmiş verisine ihtiyaç olmadığı için hedefli yazıcı ertelendi; ardışık
+tarayıcı durduruldu. Veri NEAR'da kalıcıdır; ihtiyaç doğarsa dry-run/yazıcı ile doldurulur.
+
+| Adım | Kanıt |
+| --- | --- |
+| [#234](https://github.com/4rmus/youtick/pull/234) (`3ee14be`) | Public-testnet read-model `READ_MODEL_INGESTION_ENABLED` = mod açık **ve** Web current katalogu okumuyor; `off`/`shadow` geri açar |
+| İlk deploy, [run 36926166783](https://github.com/4rmus/youtick/actions/runs/36926166783) | Smoke `release_smoke_read_model_mismatch` (smoke `ingestionEnabled`'ı hâlâ moda bağlıyordu) → otomatik geri dönüş, canlı sağlıklı kaldı |
+| [#235](https://github.com/4rmus/youtick/pull/235) (`b7687f3`) | Kural `publicReadModelIngestionEnabled()` ile hem pakete hem smoke beklentisine bağlandı; mutasyon testleri iki yönde kırılıyor |
+| Deploy, [run 36989630307](https://github.com/4rmus/youtick/actions/runs/36989630307) (2 Ekim 12:51 UTC) | Web `de3738ca`, Bridge `68489abd`, read-model `d60dc924`; smoke PASS; anahtar 12:52:06 UTC'de `false` |
+| Canlı sonrası | Read-model `ingestionEnabled: false`, `stage: ENABLED`; tarayıcı watermark 12:52→12:54 **270932067** sabit; katalog 271228276→271228497 yenileniyor, 22/22, 0 fark; Bridge/Web `ok`/200 |
+
+D1'deki geçmiş satırlar silinmedi. `catalog_mode=off`'a dönüşte v1 listesinin bayat olacağı runbook'a yazıldı.
+
 ## Açık bulgular
 
 1. ~~Yenileme sonrası "Your upload" kartı görünmedi.~~ Yerel kayıt olmadan kart ve Resume yukarıdaki
@@ -114,9 +172,15 @@ Vazgeçme onay sorusu ve kilit açılması yalnız owner gözlemiyle doğruland�
    süresi dolar, kayıp 0,60 test USDC).
 3. ~~İptal oturum anahtarına bağlı.~~ Kullanıcının asıl ihtiyacı (kilidi açmak) #227 "vazgeç" ile karşılandı.
    Bridge iptali hâlâ yalnız dar pencerede ve oturum anahtarıyla çalışır; bu davranış değişmedi.
-4. **Belge/kod uyumsuzluğu:** `near-auth-upload-safety.md`, kodda olmayan `allowUploadKeyReplacement`
-   bayrağından söz ediyor.
-5. **Geçmiş tarayıcısı ~199 bin blok geride.** Yeni katalog etkilenmez; satış/geçmiş raporları etkilenir.
+4. ~~Belge/kod uyumsuzluğu.~~ `allowUploadKeyReplacement` ve `near-auth-*`/`NearAuth*` dosyaları #214 ile
+   girip cüzdanlı V1 adayı #215 (`ad84ba2`) ile `main`'den çıkarıldı; kod hatası değil.
+   [#230](https://github.com/4rmus/youtick/pull/230) `near-auth-upload-safety.md` başına bunu ve güncel cüzdan
+   davranışını anlatan tarihli not ekledi. NEAR Auth çalışması yalnız yerel
+   `codex/near-auth-preserve-20260927` dalındadır; 1 Ekim'de kalıp tabanlı sır taramasından sonra (bulgu yok)
+   `main`'e birleştirilmeden uzak depoya yedeklendi (`f4cccd9`).
+5. ~~Geçmiş tarayıcısı geride.~~ Tarayıcı yetişemeyecek şekilde tasarlanmıştı (~64 vs ~102 blok/dk) ve verisini
+   kullanan yoktu; owner kararıyla `catalog_mode=current` iken durduruldu (#234, #235). Geçmiş raporu gerekirse
+   hedefli tarama (#233) ile doldurulur.
 6. **Copilot "AI findings" kontrolü** birden fazla PR'da "model not supported" ile başarısız oldu; zorunlu
    değil, repo ayarıdır.
 7. **Vazgeçme Bridge'deki upload yerini boşaltmaz.** Vazgeçtikten sonra 30 dakikaya kadar yeni upload
@@ -129,5 +193,5 @@ iptal, takedown → provider `404`, mobil/Safari ve diğer
 tarayıcılar, provider hesabında asset sayısı okuması, yeni yayının katalogda ilk görünme gecikmesi
 (90 s hedefi) — **EXTERNAL_NOT_RUN**.
 
-**Tek sonraki gate:** `YOUTICK_UPLOAD_SAFETY_DOC_ALIGNMENT` — bulgu 4: `near-auth-upload-safety.md`
-belgesini mevcut anahtar değiştirme ve kurtarma/vazgeçme davranışıyla uzlaştırmak.
+**Tek sonraki gate:** `YOUTICK_WORKTREE_CLEANUP_20261002` — bu oturumda birleşmiş worktree ve yerel dalları,
+salt-okunur listeleme ve owner onayıyla kaldırmak.
