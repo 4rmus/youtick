@@ -20,13 +20,13 @@
         "test:run": "vitest --run"
     },
     "devDependencies": {
-        "@cloudflare/workers-types": "4.20260510.1",
-        "@vitest/ui": "4.1.5",
-        "esbuild": "0.27.3",
+        "@cloudflare/workers-types": "5.20261001.1",
+        "@vitest/ui": "4.1.11",
+        "esbuild": "0.28.1",
         "tus-js-client": "4.3.1",
         "typescript": "5.9.3",
-        "vitest": "4.1.5",
-        "wrangler": "4.90.0"
+        "vitest": "4.1.11",
+        "wrangler": "4.147.0"
     },
     "dependencies": {
         "@defuse-protocol/one-click-sdk-typescript": "0.1.25",

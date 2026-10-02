@@ -22,7 +22,7 @@ import process from 'node:process';
 import { runReleaseSmoke } from './release-smoke.mjs';
 import { PUBLIC_TESTNET_TARGET, PUBLIC_TESTNET_BRIDGE_KEYS, PUBLIC_TESTNET_READ_MODEL, publicTestnetMode, validatePublicTestnetConfig } from './release-metadata.mjs';
 
-const WRANGLER_VERSION = '4.90.0';
+const WRANGLER_VERSION = '4.147.0';
 const GIT_SHA_RE = /^[a-f0-9]{40}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const VERSION_RE = /^[A-Za-z0-9-]+$/;

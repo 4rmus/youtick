@@ -221,7 +221,7 @@ jobs:
         working-directory: apps/web
       - name: Verify pinned Wrangler policy runtime
         run: |
-          [[ "$(apps/web/node_modules/.bin/wrangler --version)" == "4.90.0" ]]
+          [[ "$(apps/web/node_modules/.bin/wrangler --version)" == "4.147.0" ]]
       - name: Record unchanged root origin
         run: node scripts/release-smoke.mjs fingerprint https://youtick.net > "${RUNNER_TEMP}/root-before.json"
       - name: Upload, smoke, promote and rollback-test dark versions

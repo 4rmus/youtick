@@ -44,7 +44,7 @@
     "tailwindcss": "^4",
     "tweetnacl": "^1.0.3",
     "typescript": "^5",
-    "vitest": "^4.0.18",
-    "wrangler": "4.90.0"
+    "vitest": "^4.1.11",
+    "wrangler": "4.147.0"
   }
 }
