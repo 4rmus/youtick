@@ -80,6 +80,9 @@ updates:
     open-pull-requests-limit: 3
     commit-message:
       prefix: "ci"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       github-actions:
         patterns: ["*"]
