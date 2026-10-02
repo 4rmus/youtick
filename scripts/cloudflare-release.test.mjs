@@ -2266,6 +2266,7 @@ for (const mode of ['acceptance', 'drain', 'closed']) test(`public ${mode} keeps
     assert.equal(receipt.readModel.worker, PUBLIC_TESTNET_READ_MODEL.worker);
     assert.equal(smokeInputs.at(-1).publicTestnetMode, mode);
     assert.equal(smokeInputs.at(-1).expectedReadModel.enabled, mode !== 'closed');
+    assert.equal(smokeInputs.at(-1).expectedReadModel.ingestionEnabled, mode !== 'closed');
     assert.equal(smokeInputs.at(-1).expectedPublicBetaRateLimitReady, true);
     assert.equal(smokeInputs.at(-1).expectedUploadReady, mode === 'acceptance');
     assert.ok(calls(fake).every((args) => !args.includes(READ_MODEL_WORKER)));
@@ -2439,6 +2440,10 @@ for (const catalogMode of ['shadow', 'current']) test(`public ${catalogMode} cat
         [TARGETS['public-testnet'].bridge.worker]: { traffic: [{ version_id: 'bridge-old', percentage: 100 }] },
         [PUBLIC_TESTNET_READ_MODEL.worker]: { traffic: [{ version_id: 'read-model-old', percentage: 100 }] },
     } });
-    await deployFixture(release, fake, async () => ({ ok: true }), { target: 'public-testnet' });
+    const smokeInputs = [];
+    await deployFixture(release, fake, async (input) => { smokeInputs.push(input); return { ok: true }; }, { target: 'public-testnet' });
     assert.ok(calls(fake).some(args => args.includes(PUBLIC_TESTNET_READ_MODEL.worker)));
+    // The post-deploy smoke must expect the same scanner state as the deployed packet.
+    assert.equal(smokeInputs.at(-1).expectedReadModel.enabled, true);
+    assert.equal(smokeInputs.at(-1).expectedReadModel.ingestionEnabled, catalogMode !== 'current');
 });

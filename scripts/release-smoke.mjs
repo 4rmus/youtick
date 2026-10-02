@@ -367,7 +367,9 @@ export async function runReleaseSmoke({
         if (health.status !== 'ok' || health.versionId !== expectedReadModel.versionId
             || health.network !== 'testnet' || health.contractId !== expectedReadModel.contractId
             || health.startBlockHeight !== expectedReadModel.startBlockHeight
-            || (expectedReadModel.enabled !== null && health.ingestionEnabled !== expectedReadModel.enabled) || health.backfillEnabled !== false
+            || (expectedReadModel.enabled !== null
+                && health.ingestionEnabled !== (expectedReadModel.ingestionEnabled ?? expectedReadModel.enabled))
+            || health.backfillEnabled !== false
             || (expectedReadModel.enabled !== null && health.stage !== (expectedReadModel.enabled ? 'ENABLED' : 'DISABLED'))) throw new Error('release_smoke_read_model_mismatch');
     }
 
