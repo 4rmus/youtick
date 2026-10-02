@@ -42,11 +42,11 @@ jobs:
       attempt: ${{ steps.verify.outputs.attempt }}
       materials_sha256: ${{ steps.verify.outputs.materials_sha256 }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
       - name: Authorize current main, CI and unused policy
@@ -130,7 +130,7 @@ jobs:
             cat workers/livepeer-bridge/scripts/public-testnet-bootstrap-policy.json
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: public-testnet-bootstrap-materials-${{ github.run_id }}
           path: ${{ runner.temp }}/materials/
@@ -150,14 +150,14 @@ jobs:
       CI_ATTEMPT: ${{ needs.authorize.outputs.attempt }}
       POLICY_SHA: ${{ inputs.policy_sha256 }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: public-testnet-bootstrap-materials-${{ github.run_id }}
           path: ${{ runner.temp }}/materials
@@ -196,7 +196,7 @@ jobs:
           echo "plan_sha256=$(sha256sum "$RUNNER_TEMP/near-bootstrap/public-plan.json" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - id: record
         name: Persist public transaction hashes before any broadcast
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: public-testnet-bootstrap-plan-${{ inputs.policy_sha256 }}
           path: ${{ runner.temp }}/near-bootstrap/public-plan.json
@@ -213,7 +213,7 @@ jobs:
           [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$SOURCE_SHA" ]]
           node workers/livepeer-bridge/scripts/public-testnet-bootstrap.mjs execute "$RUNNER_TEMP/materials" "$SOURCE_SHA" "$CI_RUN_ID" "$CI_ATTEMPT" "$POLICY_SHA" \
             "$RUNNER_TEMP/near-bootstrap" "$PLAN_SHA"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: public-testnet-bootstrap-receipt-${{ github.run_id }}
