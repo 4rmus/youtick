@@ -145,5 +145,10 @@ Sayılar, aynı dönemde canlı kabulde gözlenen işlemlerle birebir eşleşir 
 3 bilet, 2 çekim, 1 Resume anahtar değişimi). Ardışık tarayıcı bu aralığı ~2,7 günde okuyamazken
 hedefli yol 18 blok okur.
 
-**Tek sonraki gate:** `YOUTICK_HISTORY_TARGETED_SCAN_WRITER` — `0010_targeted_scan_ranges`, hedefli
-yazıcı ve uzlaştırma; yerel testlerle (canlı D1 yazımı ayrı onaylı gate).
+## Owner kararı — 1 Ekim 2026
+
+Bugün tarayıcı tablolarını okuyan bir API veya ekran yoktur; veri NEAR'da kalıcıdır. Bu nedenle hedefli
+yazıcı **ertelendi** ve ardışık tarayıcı `catalog_mode=current` iken yayın paketinde durduruldu
+([#234](https://github.com/4rmus/youtick/pull/234), [#235](https://github.com/4rmus/youtick/pull/235); canlı
+2 Ekim). Bu belge ve dry-run, satış/çekim geçmişi raporu gerektiğinde başlangıç noktasıdır; o zaman sıradaki
+adım `YOUTICK_HISTORY_TARGETED_SCAN_WRITER` (`0010`, hedefli yazıcı, uzlaştırma; canlı yazım ayrı onaylı) olur.
