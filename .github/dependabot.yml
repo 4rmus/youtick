@@ -1,12 +1,16 @@
 # Weekly, grouped dependency updates. Every PR still needs CI and review.
 # Toolchain- and protocol-coupled packages are excluded on purpose and are
 # upgraded by hand in their own gate:
-# - wrangler / @cloudflare/workers-types: pinned in scripts/cloudflare-release.mjs
-#   and promote-production.yml; require a Preview deploy check.
+# - wrangler / @cloudflare/workers-types / @opennextjs/cloudflare: pinned in
+#   scripts/cloudflare-release.mjs and promote-production.yml or produce the
+#   deployed Worker; require a Preview deploy check.
 # - NEAR SDKs (near-api-js, @near-js/*, wallet, 1Click, borsh): payment and
 #   signing paths; reviewed with the project NEAR skills.
-# - near-sdk / near-sys / near-workspaces: change contract WASM and are tied to
-#   the pinned Rust 1.86.0 toolchain.
+# - Contract crates: Cargo.lock keeps one version per crate, so bumping a crate
+#   that also reaches the wasm32 graph (borsh, serde, serde_json, near-*)
+#   changes contract WASM under the pinned Rust 1.86.0. Cargo updates are
+#   therefore an allowlist of crates verified absent from the wasm32 graph
+#   (`cargo tree -e normal,build --target wasm32-unknown-unknown -i <crate>`).
 version: 2
 updates:
   - package-ecosystem: npm
@@ -28,6 +32,7 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: wrangler
       - dependency-name: "@cloudflare/workers-types"
+      - dependency-name: "@opennextjs/cloudflare"
       - dependency-name: near-api-js
       - dependency-name: "@near-js/*"
       - dependency-name: "@hot-labs/near-connect"
@@ -55,12 +60,12 @@ updates:
     versioning-strategy: lockfile-only
     commit-message:
       prefix: "chore(contracts)"
+    allow:
+      - dependency-name: tokio
+      - dependency-name: anyhow
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-      - dependency-name: near-sdk
-      - dependency-name: near-sys
-      - dependency-name: near-workspaces
     groups:
       cargo-lockfile:
         patterns: ["*"]
@@ -75,6 +80,9 @@ updates:
     open-pull-requests-limit: 3
     commit-message:
       prefix: "ci"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       github-actions:
         patterns: ["*"]
