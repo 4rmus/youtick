@@ -65,7 +65,7 @@ yayımlanmış politikadır. Bu sınır "Yetki haritası" sayfasında açıkça 
 | Kontrat rolü | Hesap | Nasıl çalışır | Gecikme |
 |---|---|---|---|
 | Kod güncellemesi | Yönetim multisig'i | Kontrat hesabında FullAccess anahtar kalmaz; güncelleme kontratın timelock'lu self-upgrade metoduyla yapılır | 48 saat |
-| `admin` | Yönetim multisig'i | Unfreeze, satışları açma, bridge rotasyonu, politika | 24–48 saat |
+| `admin` | Yönetim multisig'i | Unfreeze, satışları açma, bridge ve rol rotasyonu, politika | Rol rotasyonu 48 saat; diğerleri 24–48 saat |
 | `guardian` | Ayrı guardian hesabı | FullAccess anahtar soğukta. Sahip ve GK'de, yalnız market kontratına ve `pause_new_purchases`, `freeze_bridge`, `cancel_bridge_rotation` metotlarına sınırlı birer FunctionCall anahtarı | Anında, yalnız azaltır |
 | `platform_account` | Yönetim multisig'i | Platform çekimi hazineye (multisig) iner; günlük gider için ayrı sıcak hesaba aktarılır | Multisig onayı |
 | Quote anahtar rotasyonu | `platform_account` üzerinden | Multisig önerisi | Multisig onayı |
@@ -135,7 +135,9 @@ Token çıkarılması bu brief'in kapsamı dışındadır. Hukuki risk (SPK/MiCA
 ## Mainnet öncesi uygulama gate'leri (her biri ayrı onay)
 
 1. `MARKET_ROLE_ROTATION`: admin/guardian/platform/takedown hesaplarını
-   timelock'lu değiştirme fonksiyonları. Bugün bu roller değiştirilemiyor.
+   timelock'lu değiştirme fonksiyonları. **Kaynakta (LOCAL_TEST):** öneri ve
+   uygulama admin, iptal admin veya guardian; bekleme mainnet'te 48 saat,
+   testnet'te 0 (owner kararı, 3 Ekim 2026). Deploy edilmedi.
 2. `MARKET_ADMIN_TIMELOCK`: yetki genişleten admin işlemleri için kontrat seviyesinde
    timelock. `execute_bridge_rotation` bugün `bridge_rotation_proposed_at_ms`
    değerini kontrol etmiyor. Multisig oylaması timelock yerine geçmez.
@@ -144,7 +146,8 @@ Token çıkarılması bu brief'in kapsamı dışındadır. Hukuki risk (SPK/MiCA
 4. `ACCESS_CONTROL_INSTANT_PAUSE`: pause'u timelock'tan çıkarıp guardian'a vermek,
    unpause'u timelock'ta tutmak. Bugün `pause_contract` 24 saat bekliyor.
 5. `CREATOR_EXIT_INVARIANT_TEST`: pause ve freeze altında üretici çekiminin
-   çalıştığını sabitleyen test.
+   çalıştığını sabitleyen test. **Tamamlandı (CI):** birim ve sandbox testleri,
+   PR #254.
 6. `GOVERNANCE_MULTISIG_SELECTION`: multisig aracı ve sürümü, denetim durumu,
    FunctionCall anahtar politikası. Kurulum yapılmaz, yalnız araştırma.
 7. `PUBLIC_AUTHORITY_MAP`: kamuya açık yetki haritası sayfası ve governance
@@ -177,6 +180,9 @@ değerlendirme tamamlanmadan belirlenmez.
   bağımsız bir üçüncü imzacıya (örneğin muhasebeci veya denetçi) devredilir.
 - **Aşama 2 tetikleyicisi:** Üretici bakiyesi veya satış yapan üretici eşiği; her
   durumda açılıştan en geç 12 ay sonra.
+- **Rol rotasyonu:** Mainnet'te öneriden sonra 48 saat bekleme (kod
+  güncellemesiyle aynı); testnet'te
+  bekleme yok. Değişikliği mevcut admin uygular; yeni hesabın kabulü istenmez.
 
 ## Owner kararı bekleyenler
 

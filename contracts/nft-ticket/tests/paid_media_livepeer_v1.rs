@@ -2,8 +2,8 @@ use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::test_utils::{get_logs, VMContextBuilder};
 use near_sdk::{testing_env, AccountId, PromiseOrValue};
 use youtick_nft::{
-    Contract, CreatorFeeQuote, FeeAsset, LivepeerPublicationSubmission, MarketInitConfig,
-    PaidJobRequest, PublicationAvailability, SponsoredUploadQuote,
+    Contract, CreatorFeeQuote, FeeAsset, GovernanceRole, LivepeerPublicationSubmission,
+    MarketInitConfig, PaidJobRequest, PublicationAvailability, SponsoredUploadQuote,
 };
 
 const PROFILE: &str = "paid-media-livepeer-v1";
@@ -2492,4 +2492,197 @@ fn creator_withdrawal_runs_and_restores_while_purchases_paused_and_bridge_frozen
     let governance = contract.get_governance_state();
     assert!(governance.new_purchases_paused);
     assert!(governance.bridge_frozen);
+}
+
+const ROLE_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
+const START_MS: u64 = 1_785_589_300_000;
+
+fn mainnet_context(predecessor: &str, timestamp_ms: u64) -> VMContextBuilder {
+    let mut builder = context(predecessor);
+    builder.current_account_id(account("market.near"));
+    builder.block_timestamp(timestamp_ms * 1_000_000);
+    builder
+}
+
+fn mainnet_contract() -> Contract {
+    testing_env!(mainnet_context("market.near", START_MS).build());
+    Contract::new(MarketInitConfig {
+        platform_account_id: account("platform.near"),
+        bridge_account_id: account("bridge.near"),
+        takedown_authority_id: account("governance.near"),
+        admin_account_id: account("admin.near"),
+        guardian_account_id: account("guardian.near"),
+        quote_public_key: Base64VecU8(QUOTE_PUBLIC_KEY.to_vec()),
+        quote_key_version: 1,
+        near_operational_reserve: U128(1_000_000_000_000_000_000_000_000),
+    })
+}
+
+#[test]
+fn testnet_role_rotation_executes_without_delay_and_moves_authority() {
+    let mut contract = contract();
+    testing_env!(context("admin.testnet").build());
+    let pending =
+        contract.propose_role_rotation(GovernanceRole::Platform, account("treasury.testnet"));
+    assert_eq!(pending.current_account_id, account("platform.testnet"));
+    assert_eq!(pending.proposed_at_ms, pending.executable_at_ms);
+    let proposed = governance_event();
+    assert_eq!(proposed["event"], "role_rotation_proposed");
+    assert_eq!(proposed["data"][0]["role"], "PLATFORM");
+    assert_eq!(proposed["data"][0]["next_account_id"], "treasury.testnet");
+    assert_eq!(
+        contract.get_pending_role_rotation(GovernanceRole::Platform),
+        Some(pending)
+    );
+
+    contract.execute_role_rotation(GovernanceRole::Platform);
+    let rotated = governance_event();
+    assert_eq!(rotated["event"], "role_rotated");
+    assert_eq!(
+        rotated["data"][0]["previous_account_id"],
+        "platform.testnet"
+    );
+    assert_eq!(rotated["data"][0]["active_account_id"], "treasury.testnet");
+    assert!(contract
+        .get_pending_role_rotation(GovernanceRole::Platform)
+        .is_none());
+    must_fail(|| contract.execute_role_rotation(GovernanceRole::Platform));
+
+    create_job(&mut contract, "job-rotation", "creator.testnet");
+    testing_env!(context("platform.testnet").build());
+    must_fail(|| {
+        let _ = contract.withdraw_platform_balance();
+    });
+    testing_env!(context("treasury.testnet").build());
+    let _ = contract.withdraw_platform_balance();
+    assert_eq!(contract.get_platform_balance(), U128(0));
+}
+
+#[test]
+fn mainnet_role_rotation_waits_forty_eight_hours() {
+    let mut contract = mainnet_contract();
+    testing_env!(mainnet_context("admin.near", START_MS).build());
+    let pending = contract.propose_role_rotation(GovernanceRole::Admin, account("admin-2.near"));
+    assert_eq!(pending.executable_at_ms, U64(START_MS + ROLE_DELAY_MS));
+
+    testing_env!(mainnet_context("admin.near", START_MS + ROLE_DELAY_MS - 1).build());
+    must_fail(|| contract.execute_role_rotation(GovernanceRole::Admin));
+    assert_eq!(
+        contract.get_governance_state().admin_account_id,
+        account("admin.near")
+    );
+
+    testing_env!(mainnet_context("admin.near", START_MS + ROLE_DELAY_MS).build());
+    contract.execute_role_rotation(GovernanceRole::Admin);
+    assert_eq!(
+        contract.get_governance_state().admin_account_id,
+        account("admin-2.near")
+    );
+
+    testing_env!(mainnet_context("guardian.near", START_MS + ROLE_DELAY_MS).build());
+    contract.pause_new_purchases();
+    testing_env!(mainnet_context("admin.near", START_MS + ROLE_DELAY_MS).build());
+    must_fail(|| contract.unpause_new_purchases());
+    testing_env!(mainnet_context("admin-2.near", START_MS + ROLE_DELAY_MS).build());
+    contract.unpause_new_purchases();
+    assert!(!contract.get_governance_state().new_purchases_paused);
+}
+
+#[test]
+fn role_rotation_is_admin_proposed_and_admin_or_guardian_cancelled() {
+    let mut contract = mainnet_contract();
+    for caller in ["guardian.near", "platform.near", "attacker.near"] {
+        testing_env!(mainnet_context(caller, START_MS).build());
+        must_fail(|| {
+            contract.propose_role_rotation(GovernanceRole::Guardian, account("guardian-2.near"));
+        });
+    }
+    testing_env!(mainnet_context("admin.near", START_MS).build());
+    must_fail(|| contract.execute_role_rotation(GovernanceRole::Guardian));
+    let pending =
+        contract.propose_role_rotation(GovernanceRole::Guardian, account("guardian-2.near"));
+    assert_eq!(
+        contract.propose_role_rotation(GovernanceRole::Guardian, account("guardian-2.near")),
+        pending
+    );
+    must_fail(|| {
+        contract.propose_role_rotation(GovernanceRole::Guardian, account("guardian-3.near"));
+    });
+
+    testing_env!(mainnet_context("attacker.near", START_MS + ROLE_DELAY_MS).build());
+    must_fail(|| contract.cancel_role_rotation(GovernanceRole::Guardian));
+    must_fail(|| contract.execute_role_rotation(GovernanceRole::Guardian));
+
+    testing_env!(mainnet_context("guardian.near", START_MS + ROLE_DELAY_MS).build());
+    contract.cancel_role_rotation(GovernanceRole::Guardian);
+    let cancelled = governance_event();
+    assert_eq!(cancelled["event"], "role_rotation_cancelled");
+    assert_eq!(cancelled["data"][0]["role"], "GUARDIAN");
+    assert!(contract
+        .get_pending_role_rotation(GovernanceRole::Guardian)
+        .is_none());
+    testing_env!(mainnet_context("guardian.near", START_MS + ROLE_DELAY_MS).build());
+    contract.cancel_role_rotation(GovernanceRole::Guardian);
+    assert!(get_logs().is_empty());
+
+    testing_env!(mainnet_context("admin.near", START_MS + ROLE_DELAY_MS).build());
+    must_fail(|| contract.execute_role_rotation(GovernanceRole::Guardian));
+    assert_eq!(
+        contract.get_governance_state().guardian_account_id,
+        account("guardian.near")
+    );
+}
+
+#[test]
+fn role_rotation_preserves_authority_separation() {
+    let mut contract = contract();
+    testing_env!(context("admin.testnet").build());
+    for (role, next) in [
+        (GovernanceRole::Admin, "admin.testnet"),
+        (GovernanceRole::Admin, "guardian.testnet"),
+        (GovernanceRole::Guardian, "admin.testnet"),
+        (GovernanceRole::Admin, "bridge.testnet"),
+        (GovernanceRole::Guardian, "bridge.testnet"),
+        (GovernanceRole::Platform, "bridge.testnet"),
+        (GovernanceRole::TakedownAuthority, "bridge.testnet"),
+        (GovernanceRole::TakedownAuthority, "platform.testnet"),
+        (GovernanceRole::Platform, "governance.testnet"),
+    ] {
+        must_fail(|| {
+            contract.propose_role_rotation(role, account(next));
+        });
+    }
+    contract.propose_bridge(account("bridge-2.testnet"));
+    must_fail(|| {
+        contract.propose_role_rotation(GovernanceRole::Admin, account("bridge-2.testnet"));
+    });
+    contract.cancel_bridge_rotation();
+
+    contract.propose_role_rotation(GovernanceRole::Guardian, account("shared.testnet"));
+    contract.propose_role_rotation(GovernanceRole::Admin, account("shared.testnet"));
+    contract.execute_role_rotation(GovernanceRole::Admin);
+    testing_env!(context("shared.testnet").build());
+    must_fail(|| contract.execute_role_rotation(GovernanceRole::Guardian));
+    let governance = contract.get_governance_state();
+    assert_eq!(governance.admin_account_id, account("shared.testnet"));
+    assert_eq!(governance.guardian_account_id, account("guardian.testnet"));
+}
+
+#[test]
+fn role_rotation_rejects_a_proposal_made_stale_by_another_rotation() {
+    let mut contract = mainnet_contract();
+    testing_env!(mainnet_context("admin.near", START_MS).build());
+    contract.propose_role_rotation(GovernanceRole::Admin, account("admin-2.near"));
+    contract.propose_role_rotation(GovernanceRole::Guardian, account("guardian-2.near"));
+    testing_env!(mainnet_context("admin.near", START_MS + ROLE_DELAY_MS).build());
+    contract.execute_role_rotation(GovernanceRole::Admin);
+
+    testing_env!(mainnet_context("admin.near", START_MS + ROLE_DELAY_MS).build());
+    must_fail(|| contract.execute_role_rotation(GovernanceRole::Guardian));
+    testing_env!(mainnet_context("admin-2.near", START_MS + ROLE_DELAY_MS).build());
+    contract.execute_role_rotation(GovernanceRole::Guardian);
+    assert_eq!(
+        contract.get_governance_state().guardian_account_id,
+        account("guardian-2.near")
+    );
 }
