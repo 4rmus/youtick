@@ -59,6 +59,7 @@ The local source catalog includes:
 - `bridge_frozen`, `bridge_rotation_proposed`, `bridge_rotation_cancelled`,
   `bridge_rotated`, `bridge_unfrozen`
 - `new_purchases_paused`, `new_purchases_unpaused`
+- `role_rotation_proposed`, `role_rotation_cancelled`, `role_rotated`
 - `quote_key_rotated`
 
 `publication_finalized` also carries the public `title`, `playback_id` and

@@ -27,6 +27,9 @@ const EVENT_CATALOG = new Set([
     'public_testnet_beta_started',
     'public_testnet_beta_closed',
     'quote_key_rotated',
+    'role_rotation_proposed',
+    'role_rotation_cancelled',
+    'role_rotated',
     'contract_migrated',
 ]);
 const LEGACY_GOVERNANCE_EVENTS = new Set([

@@ -28,6 +28,11 @@ const PUBLIC_BETA_EXTENSIONS = [
     'public_testnet_beta_started',
     'public_testnet_beta_closed',
 ];
+const ROLE_ROTATION_EXTENSIONS = [
+    'role_rotation_proposed',
+    'role_rotation_cancelled',
+    'role_rotated',
+];
 const NOT_APPLICABLE_TO_FRESH_ID = ['contract_migrated'];
 
 function sorted(values) {
@@ -58,7 +63,11 @@ test('Market producer, consumers and testnet evidence share the EVENT-001 catalo
             import.meta.url), 'utf8'),
     ]);
     const historicalEmitted = sorted([...REQUIRED_EVENTS, ...PILOT_EXTENSIONS]);
-    const expectedEmitted = sorted([...historicalEmitted, ...PUBLIC_BETA_EXTENSIONS]);
+    const expectedEmitted = sorted([
+        ...historicalEmitted,
+        ...PUBLIC_BETA_EXTENSIONS,
+        ...ROLE_ROTATION_EXTENSIONS,
+    ]);
     const expectedAccepted = sorted([
         ...expectedEmitted,
         ...NOT_APPLICABLE_TO_FRESH_ID,

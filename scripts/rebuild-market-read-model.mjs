@@ -24,6 +24,9 @@ const CATALOG = new Set([
     'public_testnet_beta_started',
     'public_testnet_beta_closed',
     'quote_key_rotated',
+    'role_rotation_proposed',
+    'role_rotation_cancelled',
+    'role_rotated',
     'contract_migrated',
 ]);
 const GOVERNANCE_EVENTS = new Set([
@@ -37,6 +40,9 @@ const GOVERNANCE_EVENTS = new Set([
     'public_testnet_beta_started',
     'public_testnet_beta_closed',
     'quote_key_rotated',
+    'role_rotation_proposed',
+    'role_rotation_cancelled',
+    'role_rotated',
     'contract_migrated',
 ]);
 const ACCOUNT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
