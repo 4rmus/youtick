@@ -148,6 +148,11 @@ Token çıkarılması bu brief'in kapsamı dışındadır. Hukuki risk (SPK/MiCA
    migrate yolu. Mainnet kontrat hesabından FullAccess anahtarın kaldırılması.
 4. `ACCESS_CONTROL_INSTANT_PAUSE`: pause'u timelock'tan çıkarıp guardian'a vermek,
    unpause'u timelock'ta tutmak. Bugün `pause_contract` 24 saat bekliyor.
+   **Kaynakta (LOCAL_TEST):** access-control'e guardian rolü eklendi (kurulumda
+   isteğe bağlı, değişikliği timelock'lu). `pause_contract` ve `pause_scope`
+   guardian veya owner tarafından anında; açma ve diğer işlemler timelock'ta.
+   Timelock mainnet'te 24 saat, testnet'te 0 (owner kararı, 3 Ekim 2026).
+   Deploy edilmedi.
 5. `CREATOR_EXIT_INVARIANT_TEST`: pause ve freeze altında üretici çekiminin
    çalıştığını sabitleyen test. **Tamamlandı (CI):** birim ve sandbox testleri,
    PR #254.
