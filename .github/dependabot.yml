@@ -6,6 +6,8 @@
 #   deployed Worker; require a Preview deploy check.
 # - NEAR SDKs (near-api-js, @near-js/*, wallet, 1Click, borsh): payment and
 #   signing paths; reviewed with the project NEAR skills.
+# - Media stack (hls.js, tus-js-client, @livepeer/react): exact-pinned player
+#   and resumable-upload clients; need player/upload checks on Preview.
 # - Contract crates: Cargo.lock keeps one version per crate, so bumping a crate
 #   that also reaches the wasm32 graph (borsh, serde, serde_json, near-*)
 #   changes contract WASM under the pinned Rust 1.86.0. Cargo updates are
@@ -38,6 +40,9 @@ updates:
       - dependency-name: "@hot-labs/near-connect"
       - dependency-name: "@defuse-protocol/*"
       - dependency-name: borsh
+      - dependency-name: hls.js
+      - dependency-name: tus-js-client
+      - dependency-name: "@livepeer/react"
     groups:
       npm-development:
         dependency-type: development
