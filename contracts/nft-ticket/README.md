@@ -47,6 +47,13 @@ layout. The accepted technical-pilot governance has no multisig or timelock;
 `propose_bridge` and `execute_bridge_rotation` are both admin-only. Multisig and
 timelock remain mandatory before mainnet general access.
 
+Admin, guardian, platform and takedown roles rotate through
+`propose_role_rotation` → `execute_role_rotation` (both admin-only);
+`cancel_role_rotation` is admin or guardian. The delay is 48 hours on a `.near`
+account and zero on `.testnet`. Execution re-checks that the role is unchanged
+and that the role-separation rules of `new` still hold. Pending rotations use
+namespaced storage keys, so the Borsh layout is unchanged.
+
 The event catalog is source-complete except `contract_migrated`, which cannot be
 truthfully emitted by this fresh-ID/no-migration design. Receipt ID and event
 index are attached by the final-block indexer; the contract emits contract ID,

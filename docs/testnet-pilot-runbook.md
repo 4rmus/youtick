@@ -270,8 +270,8 @@ Pilot sonundan 90 gün sonra aktif audit hold yoksa D1 için ayrı, reviewed cle
 işlemi uygulanır.
 
 Multisig ve timelock bu testnet/internal pilotta yoktur. Mainnet için 2-of-3
-multisig ve unfreeze/yetki genişletme/rotation üzerinde 24 saat timelock
-zorunludur; guardian pause/freeze anlık ve yalnız yetki azaltıcı kalır. Mainnet
+multisig, unfreeze/yetki genişletme üzerinde 24 saat, rol rotasyonu ve kod
+güncellemesi üzerinde 48 saat timelock zorunludur (DEC-011, 3 Ekim 2026); guardian pause/freeze anlık ve yalnız yetki azaltıcı kalır. Mainnet
 fresh contract ID ile, bağımsız denetimli snapshot/import ve invariant
 doğrulamasından sonra açılabilir. Bunların implementation, custody, denetim,
 tatbikat ve governance onayı tamamlanmadan genel açılış yapılamaz.
@@ -799,7 +799,8 @@ hazırlığı → korumalı kapalı dağıtım → küçük gerçek değerli uç
 Gerçek para için public upload maliyet/kota sınırları, içerik kaldırma,
 destek/iade politikası, bağımsız güvenlik incelemesi ve kapatma/geri alma
 kanıtları yayın öncesinde tamamlanır. Mevcut mainnet şartları korunur: ayrı
-admin/guardian, 2-of-3 multisig, yetki genişletmede 24 saat timelock, taze
+admin/guardian, 2-of-3 multisig, yetki genişletmede 24 saat ve rol rotasyonu ile
+kod güncellemesinde 48 saat timelock, taze
 contract kimlikleri ve bağımsız denetimli snapshot/import ile invariant
 doğrulaması. Bunlar testnet veya CI başarısıyla tamamlanmış sayılmaz.
 

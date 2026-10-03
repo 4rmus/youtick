@@ -43,6 +43,10 @@ const PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES: u128 = 25_000;
 const PUBLIC_UPLOAD_POLICY_KEY: &[u8] = b"youtick:market:public-upload-policy:v1";
 const PUBLIC_UPLOAD_CREATOR_PREFIX: &[u8] = b"youtick:market:public-upload-creator:v1:";
 const PUBLIC_UPLOAD_MAX_SOURCE_BYTES: u128 = 5_000_000_000;
+// Pending role rotations live outside Contract for the same Borsh-layout reason.
+const ROLE_ROTATION_PREFIX: &[u8] = b"youtick:market:role-rotation:v1:";
+const MAINNET_ROLE_ROTATION_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
+const TESTNET_ROLE_ROTATION_DELAY_MS: u64 = 0;
 const LEGACY_UPLOAD_PROFILE_HASH: &str =
     "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77";
 
@@ -180,6 +184,26 @@ pub struct GovernanceState {
     pub bridge_frozen: bool,
     pub new_purchases_paused: bool,
     pub bridge_rotation_proposed_at_ms: Option<U64>,
+}
+
+#[near(serializers = [borsh, json])]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GovernanceRole {
+    Admin,
+    Guardian,
+    Platform,
+    TakedownAuthority,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingRoleRotation {
+    pub role: GovernanceRole,
+    pub current_account_id: AccountId,
+    pub next_account_id: AccountId,
+    pub proposed_at_ms: U64,
+    pub executable_at_ms: U64,
 }
 
 #[near(serializers = [json])]
@@ -689,6 +713,105 @@ impl Contract {
                 "active_bridge_account_id": self.active_bridge_account_id,
             }),
         );
+    }
+
+    pub fn propose_role_rotation(
+        &mut self,
+        role: GovernanceRole,
+        next_account_id: AccountId,
+    ) -> PendingRoleRotation {
+        self.assert_admin();
+        if let Some(pending) = read_raw::<PendingRoleRotation>(&role_rotation_key(role)) {
+            require!(
+                pending.next_account_id == next_account_id,
+                "Role rotation already pending"
+            );
+            return pending;
+        }
+        self.assert_valid_role_assignment(role, &next_account_id);
+        let proposed_at_ms = env::block_timestamp_ms();
+        let pending = PendingRoleRotation {
+            role,
+            current_account_id: self.role_account_id(role).clone(),
+            next_account_id,
+            proposed_at_ms: U64(proposed_at_ms),
+            executable_at_ms: U64(proposed_at_ms
+                .checked_add(self.role_rotation_delay_ms())
+                .expect("Role rotation delay overflow")),
+        };
+        write_raw(&role_rotation_key(role), &pending);
+        emit_governance_event(
+            "role_rotation_proposed",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "role": role,
+                "current_account_id": pending.current_account_id,
+                "next_account_id": pending.next_account_id,
+                "proposed_at_ms": pending.proposed_at_ms,
+                "executable_at_ms": pending.executable_at_ms,
+            }),
+        );
+        pending
+    }
+
+    pub fn cancel_role_rotation(&mut self, role: GovernanceRole) {
+        self.assert_admin_or_guardian();
+        let Some(pending) = read_raw::<PendingRoleRotation>(&role_rotation_key(role)) else {
+            return;
+        };
+        env::storage_remove(&role_rotation_key(role));
+        emit_governance_event(
+            "role_rotation_cancelled",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "role": role,
+                "current_account_id": pending.current_account_id,
+                "next_account_id": pending.next_account_id,
+            }),
+        );
+    }
+
+    pub fn execute_role_rotation(&mut self, role: GovernanceRole) {
+        self.assert_admin();
+        let pending = read_raw::<PendingRoleRotation>(&role_rotation_key(role))
+            .expect("Role rotation is not pending");
+        require!(
+            env::block_timestamp_ms() >= pending.executable_at_ms.0,
+            "Role rotation timelock has not elapsed"
+        );
+        require!(
+            self.role_account_id(role) == &pending.current_account_id,
+            "Role changed since rotation was proposed"
+        );
+        // Other roles may have rotated meanwhile; re-check separation now.
+        self.assert_valid_role_assignment(role, &pending.next_account_id);
+        env::storage_remove(&role_rotation_key(role));
+        let next_account_id = pending.next_account_id.clone();
+        let previous_account_id = match role {
+            GovernanceRole::Admin => std::mem::replace(&mut self.admin_account_id, next_account_id),
+            GovernanceRole::Guardian => {
+                std::mem::replace(&mut self.guardian_account_id, next_account_id)
+            }
+            GovernanceRole::Platform => {
+                std::mem::replace(&mut self.platform_account_id, next_account_id)
+            }
+            GovernanceRole::TakedownAuthority => {
+                std::mem::replace(&mut self.takedown_authority_id, next_account_id)
+            }
+        };
+        emit_governance_event(
+            "role_rotated",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "role": role,
+                "previous_account_id": previous_account_id,
+                "active_account_id": pending.next_account_id,
+            }),
+        );
+    }
+
+    pub fn get_pending_role_rotation(&self, role: GovernanceRole) -> Option<PendingRoleRotation> {
+        read_raw(&role_rotation_key(role))
     }
 
     pub fn create_paid_job(&mut self, request: PaidJobRequest) -> MediaJob {
@@ -2222,6 +2345,62 @@ impl Contract {
         );
     }
 
+    fn role_account_id(&self, role: GovernanceRole) -> &AccountId {
+        match role {
+            GovernanceRole::Admin => &self.admin_account_id,
+            GovernanceRole::Guardian => &self.guardian_account_id,
+            GovernanceRole::Platform => &self.platform_account_id,
+            GovernanceRole::TakedownAuthority => &self.takedown_authority_id,
+        }
+    }
+
+    fn role_rotation_delay_ms(&self) -> u64 {
+        if self.network_id() == "testnet" {
+            TESTNET_ROLE_ROTATION_DELAY_MS
+        } else {
+            MAINNET_ROLE_ROTATION_DELAY_MS
+        }
+    }
+
+    // Applies the same separation rules as `new` to the post-rotation roles.
+    fn assert_valid_role_assignment(&self, role: GovernanceRole, next_account_id: &AccountId) {
+        require!(
+            next_account_id != self.role_account_id(role),
+            "Role already uses this account"
+        );
+        let pick = |candidate: GovernanceRole| {
+            if candidate == role {
+                next_account_id
+            } else {
+                self.role_account_id(candidate)
+            }
+        };
+        let admin = pick(GovernanceRole::Admin);
+        let guardian = pick(GovernanceRole::Guardian);
+        let platform = pick(GovernanceRole::Platform);
+        let takedown = pick(GovernanceRole::TakedownAuthority);
+        let bridge = &self.active_bridge_account_id;
+        require!(
+            platform != bridge,
+            "Platform and bridge accounts must differ"
+        );
+        require!(admin != guardian, "Admin and guardian accounts must differ");
+        require!(
+            admin != bridge && guardian != bridge,
+            "Admin, guardian and bridge accounts must differ"
+        );
+        require!(
+            takedown != bridge && takedown != platform,
+            "Takedown authority must be separate"
+        );
+        if let Some(pending_bridge) = &self.pending_bridge_account_id {
+            require!(
+                next_account_id != pending_bridge,
+                "Role account must differ from the pending bridge"
+            );
+        }
+    }
+
     fn assert_takedown_authority(&self) {
         require!(
             env::predecessor_account_id() == self.takedown_authority_id,
@@ -2336,6 +2515,16 @@ fn assert_playback_session(session: &PlaybackSessionAuthorization) {
 
 fn playback_devices_key(account_id: &AccountId) -> Vec<u8> {
     [PLAYBACK_DEVICE_PREFIX, account_id.as_bytes()].concat()
+}
+
+fn role_rotation_key(role: GovernanceRole) -> Vec<u8> {
+    let tag: &[u8] = match role {
+        GovernanceRole::Admin => b"admin",
+        GovernanceRole::Guardian => b"guardian",
+        GovernanceRole::Platform => b"platform",
+        GovernanceRole::TakedownAuthority => b"takedown-authority",
+    };
+    [ROLE_ROTATION_PREFIX, tag].concat()
 }
 
 fn write_raw<T: BorshSerialize>(key: &[u8], value: &T) {
