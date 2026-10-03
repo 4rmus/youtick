@@ -52,6 +52,9 @@ const NEW_PURCHASES_UNPAUSE_REQUEST_KEY: &[u8] =
 const MAINNET_ROLE_ROTATION_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
 const MAINNET_BRIDGE_ROTATION_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
 const MAINNET_REOPEN_DELAY_MS: u64 = 24 * 60 * 60 * 1_000;
+const MAINNET_CODE_UPGRADE_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
+const CODE_UPGRADE_KEY: &[u8] = b"youtick:market:control:code-upgrade:v1";
+const CODE_UPGRADE_MIGRATE_GAS: Gas = Gas::from_tgas(50);
 const LEGACY_UPLOAD_PROFILE_HASH: &str =
     "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77";
 
@@ -191,12 +194,21 @@ pub struct GovernanceState {
     pub bridge_rotation_proposed_at_ms: Option<U64>,
 }
 
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingCodeUpgrade {
+    pub code_sha256: String,
+    pub proposed_at_ms: U64,
+    pub executable_at_ms: U64,
+}
+
 #[near(serializers = [json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GovernanceTimelocks {
     pub role_rotation_delay_ms: U64,
     pub bridge_rotation_delay_ms: U64,
     pub reopen_delay_ms: U64,
+    pub code_upgrade_delay_ms: U64,
     pub bridge_rotation_executable_at_ms: Option<U64>,
     pub bridge_unfreeze_requested_at_ms: Option<U64>,
     pub bridge_unfreeze_executable_at_ms: Option<U64>,
@@ -910,6 +922,105 @@ impl Contract {
         );
     }
 
+    pub fn propose_code_upgrade(&mut self, code_sha256: String) -> PendingCodeUpgrade {
+        self.assert_admin();
+        assert_sha256("code_sha256", &code_sha256);
+        if let Some(pending) = read_raw::<PendingCodeUpgrade>(CODE_UPGRADE_KEY) {
+            require!(
+                pending.code_sha256 == code_sha256,
+                "Code upgrade already pending"
+            );
+            return pending;
+        }
+        let proposed_at_ms = env::block_timestamp_ms();
+        let pending = PendingCodeUpgrade {
+            code_sha256,
+            proposed_at_ms: U64(proposed_at_ms),
+            executable_at_ms: U64(proposed_at_ms
+                .checked_add(self.governance_delay_ms(MAINNET_CODE_UPGRADE_DELAY_MS))
+                .expect("Code upgrade delay overflow")),
+        };
+        write_raw(CODE_UPGRADE_KEY, &pending);
+        emit_governance_event(
+            "code_upgrade_proposed",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "code_sha256": pending.code_sha256,
+                "proposed_at_ms": pending.proposed_at_ms,
+                "executable_at_ms": pending.executable_at_ms,
+            }),
+        );
+        pending
+    }
+
+    pub fn cancel_code_upgrade(&mut self) {
+        self.assert_admin_or_guardian();
+        let Some(pending) = read_raw::<PendingCodeUpgrade>(CODE_UPGRADE_KEY) else {
+            return;
+        };
+        env::storage_remove(CODE_UPGRADE_KEY);
+        emit_governance_event(
+            "code_upgrade_cancelled",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "code_sha256": pending.code_sha256,
+            }),
+        );
+    }
+
+    /// Permissionless: the hash and timelock fix what and when. The raw
+    /// WASM is the call input, not JSON. Deploy and `migrate` form one
+    /// batch, so a failing migrate leaves the current code in place.
+    pub fn execute_code_upgrade(&mut self) -> Promise {
+        let pending =
+            read_raw::<PendingCodeUpgrade>(CODE_UPGRADE_KEY).expect("Code upgrade is not pending");
+        require!(
+            env::block_timestamp_ms() >= pending.executable_at_ms.0,
+            "Code upgrade timelock has not elapsed"
+        );
+        let code = env::input().expect("Code upgrade requires WASM input");
+        require!(
+            hex_sha256(&code) == pending.code_sha256,
+            "Code does not match the proposed SHA-256"
+        );
+        Promise::new(env::current_account_id())
+            .deploy_contract(code)
+            .function_call(
+                "migrate".to_string(),
+                Vec::new(),
+                NearToken::from_yoctonear(0),
+                CODE_UPGRADE_MIGRATE_GAS,
+            )
+    }
+
+    /// Runs in the new code. Same-layout upgrades only clear the pending
+    /// record; a layout change must read its previous struct here.
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        let contract: Contract = env::state_read().expect("Market state is missing");
+        require!(
+            contract.state_version == MARKET_STATE_VERSION,
+            "Unsupported Market state version"
+        );
+        let pending =
+            read_raw::<PendingCodeUpgrade>(CODE_UPGRADE_KEY).expect("Code upgrade is not pending");
+        env::storage_remove(CODE_UPGRADE_KEY);
+        emit_market_event(
+            "code_upgraded",
+            &format!("governance:code_upgraded:{}", pending.code_sha256),
+            near_sdk::serde_json::json!({
+                "code_sha256": pending.code_sha256,
+                "state_version": contract.state_version,
+            }),
+        );
+        contract
+    }
+
+    pub fn get_pending_code_upgrade(&self) -> Option<PendingCodeUpgrade> {
+        read_raw(CODE_UPGRADE_KEY)
+    }
+
     pub fn get_governance_timelocks(&self) -> GovernanceTimelocks {
         let unfreeze = read_raw::<u64>(BRIDGE_UNFREEZE_REQUEST_KEY);
         let unpause = read_raw::<u64>(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
@@ -919,6 +1030,7 @@ impl Contract {
                 self.governance_delay_ms(MAINNET_BRIDGE_ROTATION_DELAY_MS)
             ),
             reopen_delay_ms: U64(self.governance_delay_ms(MAINNET_REOPEN_DELAY_MS)),
+            code_upgrade_delay_ms: U64(self.governance_delay_ms(MAINNET_CODE_UPGRADE_DELAY_MS)),
             bridge_rotation_executable_at_ms: self
                 .bridge_rotation_proposed_at_ms
                 .map(|at| U64(self.bridge_rotation_executable_at_ms(at))),

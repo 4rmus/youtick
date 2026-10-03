@@ -2859,3 +2859,108 @@ fn testnet_governance_timelocks_are_zero() {
     assert_eq!(timelocks.bridge_rotation_delay_ms, U64(0));
     assert_eq!(timelocks.reopen_delay_ms, U64(0));
 }
+
+const UPGRADE_CODE: &[u8] = b"\0asm upgrade fixture";
+
+fn upgrade_sha256() -> String {
+    near_sdk::env::sha256(UPGRADE_CODE)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn with_input(builder: VMContextBuilder, input: &[u8]) -> near_sdk::VMContext {
+    let mut context = builder.build();
+    context.input = input.to_vec();
+    context
+}
+
+#[test]
+fn mainnet_code_upgrade_is_hash_locked_and_waits_forty_eight_hours() {
+    let mut contract = mainnet_contract();
+    for caller in ["guardian.near", "attacker.near"] {
+        testing_env!(mainnet_context(caller, START_MS).build());
+        must_fail(|| {
+            contract.propose_code_upgrade(upgrade_sha256());
+        });
+    }
+    testing_env!(mainnet_context("admin.near", START_MS).build());
+    must_fail(|| {
+        contract.propose_code_upgrade("ABC".to_string());
+    });
+    let pending = contract.propose_code_upgrade(upgrade_sha256());
+    assert_eq!(pending.executable_at_ms, U64(START_MS + ROLE_DELAY_MS));
+    let proposed = governance_event();
+    assert_eq!(proposed["event"], "code_upgrade_proposed");
+    assert_eq!(proposed["data"][0]["code_sha256"], upgrade_sha256());
+    assert_eq!(contract.propose_code_upgrade(upgrade_sha256()), pending);
+    must_fail(|| {
+        contract.propose_code_upgrade("0".repeat(64));
+    });
+    assert_eq!(contract.get_pending_code_upgrade(), Some(pending));
+    assert_eq!(
+        contract.get_governance_timelocks().code_upgrade_delay_ms,
+        U64(ROLE_DELAY_MS)
+    );
+
+    testing_env!(with_input(
+        mainnet_context("anyone.near", START_MS + ROLE_DELAY_MS - 1),
+        UPGRADE_CODE
+    ));
+    must_fail(|| {
+        let _ = contract.execute_code_upgrade();
+    });
+    testing_env!(with_input(
+        mainnet_context("anyone.near", START_MS + ROLE_DELAY_MS),
+        b"\0asm different code"
+    ));
+    must_fail(|| {
+        let _ = contract.execute_code_upgrade();
+    });
+    testing_env!(with_input(
+        mainnet_context("anyone.near", START_MS + ROLE_DELAY_MS),
+        UPGRADE_CODE
+    ));
+    let _ = contract.execute_code_upgrade();
+    assert!(
+        contract.get_pending_code_upgrade().is_some(),
+        "the pending record is cleared by migrate in the new code"
+    );
+}
+
+#[test]
+fn code_upgrade_can_be_cancelled_by_admin_or_guardian_only() {
+    let mut contract = mainnet_contract();
+    testing_env!(mainnet_context("admin.near", START_MS).build());
+    contract.propose_code_upgrade(upgrade_sha256());
+
+    testing_env!(mainnet_context("attacker.near", START_MS).build());
+    must_fail(|| contract.cancel_code_upgrade());
+    testing_env!(mainnet_context("guardian.near", START_MS).build());
+    contract.cancel_code_upgrade();
+    let cancelled = governance_event();
+    assert_eq!(cancelled["event"], "code_upgrade_cancelled");
+    assert_eq!(cancelled["data"][0]["code_sha256"], upgrade_sha256());
+    assert!(contract.get_pending_code_upgrade().is_none());
+    testing_env!(mainnet_context("guardian.near", START_MS).build());
+    contract.cancel_code_upgrade();
+    assert!(get_logs().is_empty());
+
+    testing_env!(with_input(
+        mainnet_context("anyone.near", START_MS + ROLE_DELAY_MS),
+        UPGRADE_CODE
+    ));
+    must_fail(|| {
+        let _ = contract.execute_code_upgrade();
+    });
+}
+
+#[test]
+fn testnet_code_upgrade_has_no_delay() {
+    let mut contract = contract();
+    testing_env!(context("admin.testnet").build());
+    let pending = contract.propose_code_upgrade(upgrade_sha256());
+    assert_eq!(pending.proposed_at_ms, pending.executable_at_ms);
+    testing_env!(with_input(context("anyone.testnet"), UPGRADE_CODE));
+    let _ = contract.execute_code_upgrade();
+}

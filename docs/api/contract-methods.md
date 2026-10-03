@@ -79,7 +79,10 @@ second contract lookup.
 Exact successful replays do not emit a second economic event. Upload public
 keys are represented only by SHA-256 in replacement audit events; private keys,
 provider credentials and TUS capabilities are never logged. `contract_migrated`
-is intentionally absent because fresh Market v2 has no migration entrypoint.
+is intentionally absent because fresh Market v2 imports no prior state. A
+timelocked self-upgrade (`propose_code_upgrade`, `cancel_code_upgrade`,
+`execute_code_upgrade`, `get_pending_code_upgrade`) emits
+`code_upgrade_proposed`, `code_upgrade_cancelled` and `code_upgraded`.
 
 All 18 applicable events have exact final testnet block/hash, receipt and event
 index evidence in
