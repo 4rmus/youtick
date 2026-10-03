@@ -1,5 +1,12 @@
 # Current state
 
+> 3 Ekim 2026 — **Bilet komisyonu canlıda doğrulandı / PROVIDER (testnet, salt-okunur)**.
+> Public-testnet Market `video-market-v1-260907.youtick-dev-v3.testnet` (code hash
+> `9FvV8rRn1FQg15jHG4fNZPXjskdMTr6jZBVgNFZyb731`, final blok `271380193`) %5 / %95 ile çalışır.
+> 16–23 Eylül arasındaki beş `entitlement_purchased` olayının her birinde 2 USDC →
+> üretici 1,90 / platform 0,10 USDC. Kod 15 Eylül akşamı (yaklaşık 20:29 UTC) güncellenmiş görünüyor;
+> deploy action ayrıntısı açılmadı. Yeni ödeme yapılmadı. Aşağıdaki NOT_DEPLOYED ifadesi eskidir.
+
 > 15 Eylül 2026 — **Bilet komisyonu kaynak güncellemesi / LOCAL_STATIC + LOCAL_TEST / NOT_DEPLOYED**.
 > Sözleşme ve landing hesaplayıcısı yeni satışlarda **%5 platform / %95 üretici**
 > paylaşımını kullanır. Platform payı her bilette tam micro-USDC'ye aşağı yuvarlanır;
