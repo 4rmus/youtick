@@ -124,7 +124,7 @@ değildir.
 | Domain | Kontrol | Kaynak durumu |
 |---|---|---|
 | Playback issuance | `LIVEPEER_PLAYBACK_ISSUANCE_ENABLED=false` | v1 ve v2 token route'ları kapalı; entitlement read değişmez. |
-| New purchases | guardian `pause_new_purchases`; admin `unpause_new_purchases` | Yeni ticket ve yeni ücretli creator upload job transferi iade edilerek durur. Mevcut entitlement/playback ve aynı mevcut job'un uzlaştırılması ayrı kontrollerle sürer; yeni ödeme yetkisi oluşmaz. İki geçiş governance event'i üretir. |
+| New purchases | guardian `pause_new_purchases`; admin `request_new_purchases_unpause` → (mainnet 24 saat) `unpause_new_purchases`; admin veya guardian `cancel_new_purchases_unpause` | Yeni ticket ve yeni ücretli creator upload job transferi iade edilerek durur. Mevcut entitlement/playback ve aynı mevcut job'un uzlaştırılması ayrı kontrollerle sürer; yeni ödeme yetkisi oluşmaz. İki geçiş governance event'i üretir. |
 | New uploads | `LIVEPEER_NEW_UPLOADS_ENABLED=false` | Yeni Job/intent kapalı; kayıtlı intent, heartbeat ve TUS recovery açık. |
 | Provider mutation | `LIVEPEER_PROVIDER_MUTATIONS_ENABLED=false` | Yeni provider create kapalı; kayıtlı TUS recovery ve provider read/reconcile açık. |
 | Multi-asset quote | `MULTI_ASSET_PAYMENTS_MODE=off` | Yeni quote kapalı; mevcut status recovery açık. |
@@ -133,8 +133,10 @@ değildir.
 Provider exposure olayında önce playback issuance kapatılır; geniş etkide
 guardian `pause_new_purchases` uygular. Gerekli onaylı sales suspension/takedown
 tamamlandıktan sonra operator mutation kapatılır veya guardian freeze uygulanır.
-Yeniden satış açma yalnız admin `unpause_new_purchases` işlemi ve on-chain event
-kanıtıyla yapılır.
+Yeniden satış açma yalnız admin `request_new_purchases_unpause` isteği, mainnet'te
+24 saatlik bekleme ve `unpause_new_purchases` işlemiyle, on-chain event kanıtıyla
+yapılır. Bridge'i yeniden açma aynı düzende `request_bridge_unfreeze` ve
+`unfreeze_bridge` ile yapılır. Testnet'te bekleme yoktur ama iki adım korunur.
 
 ## Aktivasyon sırası
 

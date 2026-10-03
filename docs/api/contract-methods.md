@@ -23,8 +23,16 @@ Publication and purchase flow:
 Global purchase control:
 
 - guardian-only `pause_new_purchases`
-- admin-only `unpause_new_purchases`
+- admin-only `request_new_purchases_unpause`, then `unpause_new_purchases`
+  once the reopen delay has elapsed; admin or guardian
+  `cancel_new_purchases_unpause`
 - `get_governance_state.new_purchases_paused`
+- `get_governance_timelocks` (delays and pending reopen/rotation times)
+
+Reopen delay is 24 hours on mainnet and zero on testnet. The same request,
+cancel and delayed execute flow applies to `request_bridge_unfreeze`,
+`cancel_bridge_unfreeze` and `unfreeze_bridge`; `execute_bridge_rotation`
+waits 48 hours after `propose_bridge` on mainnet.
 
 The pause refunds every new ticket transfer without changing balances or
 entitlements. Existing entitlements and creator upload/job creation remain
@@ -60,6 +68,8 @@ The local source catalog includes:
   `bridge_rotated`, `bridge_unfrozen`
 - `new_purchases_paused`, `new_purchases_unpaused`
 - `role_rotation_proposed`, `role_rotation_cancelled`, `role_rotated`
+- `bridge_unfreeze_requested`, `bridge_unfreeze_cancelled`,
+  `new_purchases_unpause_requested`, `new_purchases_unpause_cancelled`
 - `quote_key_rotated`
 
 `publication_finalized` also carries the public `title`, `playback_id` and

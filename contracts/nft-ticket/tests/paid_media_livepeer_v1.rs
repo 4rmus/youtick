@@ -62,6 +62,7 @@ fn start_public_beta(contract: &mut Contract) {
     contract.pause_new_purchases();
     testing_env!(context("admin.testnet").build());
     contract.start_public_testnet_beta();
+    contract.request_new_purchases_unpause();
     contract.unpause_new_purchases();
 }
 
@@ -116,6 +117,7 @@ fn public_upload_starts_closed_and_accepts_only_an_exact_signed_five_gb_job() {
     ));
     assert!(contract.get_media_job(request.job_id.clone()).is_none());
     testing_env!(context("admin.testnet").build());
+    contract.request_new_purchases_unpause();
     contract.unpause_new_purchases();
     testing_env!(context(TESTNET_USDC).build());
     let mut unsigned: serde_json::Value = serde_json::from_str(&sponsored_message_with_signature(
@@ -168,6 +170,7 @@ fn public_upload_starts_closed_and_accepts_only_an_exact_signed_five_gb_job() {
         .get_public_testnet_beta_job(request.job_id.clone())
         .is_none());
     testing_env!(context("admin.testnet").build());
+    contract.request_bridge_unfreeze();
     contract.unfreeze_bridge();
     testing_env!(context("bridge.testnet").build());
     let mut publication = submission(
@@ -191,7 +194,9 @@ fn public_upload_starts_closed_and_accepts_only_an_exact_signed_five_gb_job() {
 fn public_upload_key_and_finalize_cannot_extend_the_original_deadline() {
     let (mut contract, request, quote, signature) = public_upload_contract();
     testing_env!(context("admin.testnet").build());
+    contract.request_new_purchases_unpause();
     contract.unpause_new_purchases();
+    contract.request_bridge_unfreeze();
     contract.unfreeze_bridge();
     testing_env!(context(TESTNET_USDC).build());
     contract.ft_on_transfer(
@@ -475,6 +480,7 @@ fn public_beta_uses_raw_state_and_requires_exact_sponsored_job() {
         near_sdk::borsh::to_vec(&contract).unwrap(),
         serialized_before
     );
+    contract.request_new_purchases_unpause();
     contract.unpause_new_purchases();
 
     testing_env!(context(TESTNET_USDC).build());
@@ -1182,6 +1188,7 @@ fn guardian_freeze_blocks_bridge_and_admin_alone_unfreezes() {
     must_fail(|| contract.unfreeze_bridge());
 
     testing_env!(context("admin.testnet").build());
+    contract.request_bridge_unfreeze();
     contract.unfreeze_bridge();
     assert!(!contract.get_governance_state().bridge_frozen);
     let unfrozen = governance_event();
@@ -1270,6 +1277,7 @@ fn guardian_pauses_new_purchases_and_admin_alone_unpauses() {
     must_fail(|| contract.unpause_new_purchases());
     let serialized_state_before_unpause = near_sdk::borsh::to_vec(&contract).unwrap();
     testing_env!(context("admin.testnet").build());
+    contract.request_new_purchases_unpause();
     contract.unpause_new_purchases();
     assert!(!contract.get_governance_state().new_purchases_paused);
     let unpaused = governance_event();
@@ -1376,6 +1384,7 @@ fn purchase_pause_blocks_new_paid_jobs_and_preserves_exact_replays() {
     });
 
     testing_env!(context("admin.testnet").build());
+    contract.request_new_purchases_unpause();
     contract.unpause_new_purchases();
     assert!(matches!(
         create_job_with(
@@ -2103,6 +2112,7 @@ fn explicit_device_activation_rejects_wrong_authority_deposit_or_certificate() {
         .get_playback_device(account("buyer.testnet"), device_key(2))
         .is_none());
     testing_env!(context("admin.testnet").build());
+    market.request_bridge_unfreeze();
     market.unfreeze_bridge();
     testing_env!(context("governance.testnet").build());
     market.takedown_livepeer_publication(
@@ -2178,6 +2188,7 @@ fn full_hd_switch_requires_admin_and_both_maintenance_controls() {
         assert_eq!(market.get_public_upload_policy(), before);
     }
     testing_env!(context("admin.testnet").build());
+    market.request_bridge_unfreeze();
     market.unfreeze_bridge();
     must_fail(|| {
         market.set_public_upload_full_hd(true);
@@ -2185,6 +2196,7 @@ fn full_hd_switch_requires_admin_and_both_maintenance_controls() {
     testing_env!(context("guardian.testnet").build());
     market.freeze_bridge();
     testing_env!(context("admin.testnet").build());
+    market.request_new_purchases_unpause();
     market.unpause_new_purchases();
     must_fail(|| {
         market.set_public_upload_full_hd(true);
@@ -2270,6 +2282,7 @@ fn malformed_playback_authorization_does_not_charge_or_grant_access() {
 fn sponsored_upload_authorizes_creator_device_without_using_relayer_key() {
     let (mut market, request, quote, signature) = public_upload_contract();
     testing_env!(context("admin.testnet").build());
+    market.request_new_purchases_unpause();
     market.unpause_new_purchases();
     let mut message: serde_json::Value = serde_json::from_str(&sponsored_message_with_signature(
         &request,
@@ -2329,6 +2342,7 @@ fn compact_upload_cross_language_vectors_preserve_payment_and_device() {
             near_operational_reserve: U128(1_000_000_000_000_000_000_000_000),
         });
         testing_env!(context("admin.testnet").build());
+        market.request_new_purchases_unpause();
         market.unpause_new_purchases();
         let request: PaidJobRequest = serde_json::from_value(vector["request"].clone()).unwrap();
         let quote: SponsoredUploadQuote = serde_json::from_value(vector["quote"].clone()).unwrap();
@@ -2495,6 +2509,7 @@ fn creator_withdrawal_runs_and_restores_while_purchases_paused_and_bridge_frozen
 }
 
 const ROLE_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
+const REOPEN_DELAY_MS: u64 = 24 * 60 * 60 * 1_000;
 const START_MS: u64 = 1_785_589_300_000;
 
 fn mainnet_context(predecessor: &str, timestamp_ms: u64) -> VMContextBuilder {
@@ -2582,8 +2597,14 @@ fn mainnet_role_rotation_waits_forty_eight_hours() {
     testing_env!(mainnet_context("guardian.near", START_MS + ROLE_DELAY_MS).build());
     contract.pause_new_purchases();
     testing_env!(mainnet_context("admin.near", START_MS + ROLE_DELAY_MS).build());
-    must_fail(|| contract.unpause_new_purchases());
+    must_fail(|| {
+        contract.request_new_purchases_unpause();
+    });
     testing_env!(mainnet_context("admin-2.near", START_MS + ROLE_DELAY_MS).build());
+    contract.request_new_purchases_unpause();
+    testing_env!(
+        mainnet_context("admin-2.near", START_MS + ROLE_DELAY_MS + REOPEN_DELAY_MS).build()
+    );
     contract.unpause_new_purchases();
     assert!(!contract.get_governance_state().new_purchases_paused);
 }
@@ -2685,4 +2706,156 @@ fn role_rotation_rejects_a_proposal_made_stale_by_another_rotation() {
         contract.get_governance_state().guardian_account_id,
         account("guardian-2.near")
     );
+}
+
+#[test]
+fn mainnet_bridge_rotation_waits_forty_eight_hours() {
+    let mut contract = mainnet_contract();
+    testing_env!(mainnet_context("admin.near", START_MS).build());
+    must_fail(|| contract.execute_bridge_rotation());
+    contract.propose_bridge(account("bridge-2.near"));
+    let proposed = governance_event();
+    assert_eq!(proposed["event"], "bridge_rotation_proposed");
+    assert_eq!(
+        proposed["data"][0]["executable_at_ms"],
+        (START_MS + ROLE_DELAY_MS).to_string()
+    );
+    assert_eq!(
+        contract
+            .get_governance_timelocks()
+            .bridge_rotation_executable_at_ms,
+        Some(U64(START_MS + ROLE_DELAY_MS))
+    );
+
+    testing_env!(mainnet_context("admin.near", START_MS + ROLE_DELAY_MS - 1).build());
+    must_fail(|| contract.execute_bridge_rotation());
+    assert_eq!(
+        contract.get_governance_state().active_bridge_account_id,
+        account("bridge.near")
+    );
+
+    testing_env!(mainnet_context("admin.near", START_MS + ROLE_DELAY_MS).build());
+    contract.execute_bridge_rotation();
+    let state = contract.get_governance_state();
+    assert_eq!(state.active_bridge_account_id, account("bridge-2.near"));
+    assert!(state.pending_bridge_account_id.is_none());
+    assert!(contract
+        .get_governance_timelocks()
+        .bridge_rotation_executable_at_ms
+        .is_none());
+}
+
+#[test]
+fn mainnet_bridge_unfreeze_requires_a_twenty_four_hour_request() {
+    let mut contract = mainnet_contract();
+    testing_env!(mainnet_context("admin.near", START_MS).build());
+    must_fail(|| {
+        contract.request_bridge_unfreeze();
+    });
+    testing_env!(mainnet_context("guardian.near", START_MS).build());
+    contract.freeze_bridge();
+    must_fail(|| {
+        contract.request_bridge_unfreeze();
+    });
+
+    testing_env!(mainnet_context("admin.near", START_MS).build());
+    must_fail(|| contract.unfreeze_bridge());
+    assert_eq!(contract.request_bridge_unfreeze(), U64(START_MS));
+    let requested = governance_event();
+    assert_eq!(requested["event"], "bridge_unfreeze_requested");
+    assert_eq!(
+        requested["data"][0]["executable_at_ms"],
+        (START_MS + REOPEN_DELAY_MS).to_string()
+    );
+    testing_env!(mainnet_context("admin.near", START_MS + 1).build());
+    assert_eq!(contract.request_bridge_unfreeze(), U64(START_MS));
+    assert!(get_logs().is_empty());
+
+    testing_env!(mainnet_context("admin.near", START_MS + REOPEN_DELAY_MS - 1).build());
+    must_fail(|| contract.unfreeze_bridge());
+    assert!(contract.get_governance_state().bridge_frozen);
+
+    testing_env!(mainnet_context("attacker.near", START_MS + REOPEN_DELAY_MS).build());
+    must_fail(|| contract.cancel_bridge_unfreeze());
+    testing_env!(mainnet_context("guardian.near", START_MS + REOPEN_DELAY_MS).build());
+    contract.cancel_bridge_unfreeze();
+    assert_eq!(governance_event()["event"], "bridge_unfreeze_cancelled");
+    testing_env!(mainnet_context("admin.near", START_MS + REOPEN_DELAY_MS).build());
+    must_fail(|| contract.unfreeze_bridge());
+
+    let second_request_ms = START_MS + REOPEN_DELAY_MS;
+    contract.request_bridge_unfreeze();
+    let timelocks = contract.get_governance_timelocks();
+    assert_eq!(
+        timelocks.bridge_unfreeze_requested_at_ms,
+        Some(U64(second_request_ms))
+    );
+    assert_eq!(
+        timelocks.bridge_unfreeze_executable_at_ms,
+        Some(U64(second_request_ms + REOPEN_DELAY_MS))
+    );
+    testing_env!(mainnet_context("admin.near", second_request_ms + REOPEN_DELAY_MS).build());
+    contract.unfreeze_bridge();
+    assert_eq!(governance_event()["event"], "bridge_unfrozen");
+    assert!(!contract.get_governance_state().bridge_frozen);
+    assert!(contract
+        .get_governance_timelocks()
+        .bridge_unfreeze_requested_at_ms
+        .is_none());
+}
+
+#[test]
+fn mainnet_purchase_unpause_requires_a_twenty_four_hour_request() {
+    let mut contract = mainnet_contract();
+    testing_env!(mainnet_context("guardian.near", START_MS).build());
+    contract.pause_new_purchases();
+    must_fail(|| {
+        contract.request_new_purchases_unpause();
+    });
+
+    testing_env!(mainnet_context("admin.near", START_MS).build());
+    must_fail(|| contract.unpause_new_purchases());
+    contract.request_new_purchases_unpause();
+    let requested = governance_event();
+    assert_eq!(requested["event"], "new_purchases_unpause_requested");
+    assert_eq!(
+        requested["data"][0]["executable_at_ms"],
+        (START_MS + REOPEN_DELAY_MS).to_string()
+    );
+
+    testing_env!(mainnet_context("admin.near", START_MS + REOPEN_DELAY_MS - 1).build());
+    must_fail(|| contract.unpause_new_purchases());
+    assert!(contract.get_governance_state().new_purchases_paused);
+
+    testing_env!(mainnet_context("guardian.near", START_MS + REOPEN_DELAY_MS).build());
+    contract.cancel_new_purchases_unpause();
+    assert_eq!(
+        governance_event()["event"],
+        "new_purchases_unpause_cancelled"
+    );
+    testing_env!(mainnet_context("guardian.near", START_MS + REOPEN_DELAY_MS).build());
+    contract.cancel_new_purchases_unpause();
+    assert!(get_logs().is_empty());
+    testing_env!(mainnet_context("admin.near", START_MS + REOPEN_DELAY_MS).build());
+    must_fail(|| contract.unpause_new_purchases());
+
+    contract.request_new_purchases_unpause();
+    testing_env!(mainnet_context("admin.near", START_MS + 2 * REOPEN_DELAY_MS).build());
+    contract.unpause_new_purchases();
+    assert_eq!(governance_event()["event"], "new_purchases_unpaused");
+    assert!(!contract.get_governance_state().new_purchases_paused);
+    let timelocks = contract.get_governance_timelocks();
+    assert!(timelocks.new_purchases_unpause_requested_at_ms.is_none());
+    assert_eq!(timelocks.reopen_delay_ms, U64(REOPEN_DELAY_MS));
+    assert_eq!(timelocks.bridge_rotation_delay_ms, U64(ROLE_DELAY_MS));
+    assert_eq!(timelocks.role_rotation_delay_ms, U64(ROLE_DELAY_MS));
+}
+
+#[test]
+fn testnet_governance_timelocks_are_zero() {
+    let contract = contract();
+    let timelocks = contract.get_governance_timelocks();
+    assert_eq!(timelocks.role_rotation_delay_ms, U64(0));
+    assert_eq!(timelocks.bridge_rotation_delay_ms, U64(0));
+    assert_eq!(timelocks.reopen_delay_ms, U64(0));
 }

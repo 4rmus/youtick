@@ -33,6 +33,12 @@ const ROLE_ROTATION_EXTENSIONS = [
     'role_rotation_cancelled',
     'role_rotated',
 ];
+const ADMIN_TIMELOCK_EXTENSIONS = [
+    'bridge_unfreeze_requested',
+    'bridge_unfreeze_cancelled',
+    'new_purchases_unpause_requested',
+    'new_purchases_unpause_cancelled',
+];
 const NOT_APPLICABLE_TO_FRESH_ID = ['contract_migrated'];
 
 function sorted(values) {
@@ -67,6 +73,7 @@ test('Market producer, consumers and testnet evidence share the EVENT-001 catalo
         ...historicalEmitted,
         ...PUBLIC_BETA_EXTENSIONS,
         ...ROLE_ROTATION_EXTENSIONS,
+        ...ADMIN_TIMELOCK_EXTENSIONS,
     ]);
     const expectedAccepted = sorted([
         ...expectedEmitted,
