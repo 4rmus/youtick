@@ -30,6 +30,10 @@ const EVENT_CATALOG = new Set([
     'role_rotation_proposed',
     'role_rotation_cancelled',
     'role_rotated',
+    'bridge_unfreeze_requested',
+    'bridge_unfreeze_cancelled',
+    'new_purchases_unpause_requested',
+    'new_purchases_unpause_cancelled',
     'contract_migrated',
 ]);
 const LEGACY_GOVERNANCE_EVENTS = new Set([

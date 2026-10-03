@@ -54,6 +54,13 @@ account and zero on `.testnet`. Execution re-checks that the role is unchanged
 and that the role-separation rules of `new` still hold. Pending rotations use
 namespaced storage keys, so the Borsh layout is unchanged.
 
+Reopening is also delayed. `unfreeze_bridge` and `unpause_new_purchases`
+require a prior `request_bridge_unfreeze` / `request_new_purchases_unpause`
+that is at least 24 hours old on mainnet; admin or guardian can cancel the
+request. `execute_bridge_rotation` waits 48 hours after `propose_bridge` on
+mainnet. All testnet delays are zero; `get_governance_timelocks` reports the
+delays and pending times. Guardian pause and freeze remain immediate.
+
 The event catalog is source-complete except `contract_migrated`, which cannot be
 truthfully emitted by this fresh-ID/no-migration design. Receipt ID and event
 index are attached by the final-block indexer; the contract emits contract ID,

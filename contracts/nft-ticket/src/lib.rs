@@ -45,8 +45,13 @@ const PUBLIC_UPLOAD_CREATOR_PREFIX: &[u8] = b"youtick:market:public-upload-creat
 const PUBLIC_UPLOAD_MAX_SOURCE_BYTES: u128 = 5_000_000_000;
 // Pending role rotations live outside Contract for the same Borsh-layout reason.
 const ROLE_ROTATION_PREFIX: &[u8] = b"youtick:market:role-rotation:v1:";
+const BRIDGE_UNFREEZE_REQUEST_KEY: &[u8] = b"youtick:market:control:bridge-unfreeze-request:v1";
+const NEW_PURCHASES_UNPAUSE_REQUEST_KEY: &[u8] =
+    b"youtick:market:control:new-purchases-unpause-request:v1";
+// Mainnet delays; every `.testnet` deployment uses zero (owner decision 2026-10-03).
 const MAINNET_ROLE_ROTATION_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
-const TESTNET_ROLE_ROTATION_DELAY_MS: u64 = 0;
+const MAINNET_BRIDGE_ROTATION_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
+const MAINNET_REOPEN_DELAY_MS: u64 = 24 * 60 * 60 * 1_000;
 const LEGACY_UPLOAD_PROFILE_HASH: &str =
     "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77";
 
@@ -184,6 +189,19 @@ pub struct GovernanceState {
     pub bridge_frozen: bool,
     pub new_purchases_paused: bool,
     pub bridge_rotation_proposed_at_ms: Option<U64>,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GovernanceTimelocks {
+    pub role_rotation_delay_ms: U64,
+    pub bridge_rotation_delay_ms: U64,
+    pub reopen_delay_ms: U64,
+    pub bridge_rotation_executable_at_ms: Option<U64>,
+    pub bridge_unfreeze_requested_at_ms: Option<U64>,
+    pub bridge_unfreeze_executable_at_ms: Option<U64>,
+    pub new_purchases_unpause_requested_at_ms: Option<U64>,
+    pub new_purchases_unpause_executable_at_ms: Option<U64>,
 }
 
 #[near(serializers = [borsh, json])]
@@ -549,11 +567,49 @@ impl Contract {
         );
     }
 
+    pub fn request_bridge_unfreeze(&mut self) -> U64 {
+        self.assert_admin();
+        require!(self.bridge_frozen, "Livepeer bridge is not frozen");
+        if let Some(requested_at_ms) = read_raw::<u64>(BRIDGE_UNFREEZE_REQUEST_KEY) {
+            return U64(requested_at_ms);
+        }
+        let requested_at_ms = env::block_timestamp_ms();
+        write_raw(BRIDGE_UNFREEZE_REQUEST_KEY, &requested_at_ms);
+        emit_governance_event(
+            "bridge_unfreeze_requested",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+                "requested_at_ms": requested_at_ms.to_string(),
+                "executable_at_ms": self.reopen_executable_at_ms(requested_at_ms).to_string(),
+            }),
+        );
+        U64(requested_at_ms)
+    }
+
+    pub fn cancel_bridge_unfreeze(&mut self) {
+        self.assert_admin_or_guardian();
+        if read_raw::<u64>(BRIDGE_UNFREEZE_REQUEST_KEY).is_none() {
+            return;
+        }
+        env::storage_remove(BRIDGE_UNFREEZE_REQUEST_KEY);
+        emit_governance_event(
+            "bridge_unfreeze_cancelled",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+            }),
+        );
+    }
+
     pub fn unfreeze_bridge(&mut self) {
         self.assert_admin();
         if !self.bridge_frozen {
+            env::storage_remove(BRIDGE_UNFREEZE_REQUEST_KEY);
             return;
         }
+        self.assert_reopen_elapsed(BRIDGE_UNFREEZE_REQUEST_KEY);
+        env::storage_remove(BRIDGE_UNFREEZE_REQUEST_KEY);
         self.bridge_frozen = false;
         emit_governance_event(
             "bridge_unfrozen",
@@ -578,11 +634,47 @@ impl Contract {
         );
     }
 
+    pub fn request_new_purchases_unpause(&mut self) -> U64 {
+        self.assert_admin();
+        require!(self.new_purchases_paused(), "New purchases are not paused");
+        if let Some(requested_at_ms) = read_raw::<u64>(NEW_PURCHASES_UNPAUSE_REQUEST_KEY) {
+            return U64(requested_at_ms);
+        }
+        let requested_at_ms = env::block_timestamp_ms();
+        write_raw(NEW_PURCHASES_UNPAUSE_REQUEST_KEY, &requested_at_ms);
+        emit_governance_event(
+            "new_purchases_unpause_requested",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "requested_at_ms": requested_at_ms.to_string(),
+                "executable_at_ms": self.reopen_executable_at_ms(requested_at_ms).to_string(),
+            }),
+        );
+        U64(requested_at_ms)
+    }
+
+    pub fn cancel_new_purchases_unpause(&mut self) {
+        self.assert_admin_or_guardian();
+        if read_raw::<u64>(NEW_PURCHASES_UNPAUSE_REQUEST_KEY).is_none() {
+            return;
+        }
+        env::storage_remove(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
+        emit_governance_event(
+            "new_purchases_unpause_cancelled",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+            }),
+        );
+    }
+
     pub fn unpause_new_purchases(&mut self) {
         self.assert_admin();
         if !self.new_purchases_paused() {
+            env::storage_remove(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
             return;
         }
+        self.assert_reopen_elapsed(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
+        env::storage_remove(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
         env::storage_remove(NEW_PURCHASES_PAUSED_KEY);
         emit_governance_event(
             "new_purchases_unpaused",
@@ -676,6 +768,7 @@ impl Contract {
                 "active_bridge_account_id": self.active_bridge_account_id,
                 "pending_bridge_account_id": next_bridge_account_id,
                 "proposed_at_ms": proposed_at_ms.to_string(),
+                "executable_at_ms": self.bridge_rotation_executable_at_ms(proposed_at_ms).to_string(),
             }),
         );
     }
@@ -698,6 +791,13 @@ impl Contract {
 
     pub fn execute_bridge_rotation(&mut self) {
         self.assert_admin();
+        let proposed_at_ms = self
+            .bridge_rotation_proposed_at_ms
+            .expect("Bridge rotation is not pending");
+        require!(
+            env::block_timestamp_ms() >= self.bridge_rotation_executable_at_ms(proposed_at_ms),
+            "Bridge rotation timelock has not elapsed"
+        );
         let next_bridge_account_id = self
             .pending_bridge_account_id
             .take()
@@ -808,6 +908,27 @@ impl Contract {
                 "active_account_id": pending.next_account_id,
             }),
         );
+    }
+
+    pub fn get_governance_timelocks(&self) -> GovernanceTimelocks {
+        let unfreeze = read_raw::<u64>(BRIDGE_UNFREEZE_REQUEST_KEY);
+        let unpause = read_raw::<u64>(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
+        GovernanceTimelocks {
+            role_rotation_delay_ms: U64(self.governance_delay_ms(MAINNET_ROLE_ROTATION_DELAY_MS)),
+            bridge_rotation_delay_ms: U64(
+                self.governance_delay_ms(MAINNET_BRIDGE_ROTATION_DELAY_MS)
+            ),
+            reopen_delay_ms: U64(self.governance_delay_ms(MAINNET_REOPEN_DELAY_MS)),
+            bridge_rotation_executable_at_ms: self
+                .bridge_rotation_proposed_at_ms
+                .map(|at| U64(self.bridge_rotation_executable_at_ms(at))),
+            bridge_unfreeze_requested_at_ms: unfreeze.map(U64),
+            bridge_unfreeze_executable_at_ms: unfreeze
+                .map(|at| U64(self.reopen_executable_at_ms(at))),
+            new_purchases_unpause_requested_at_ms: unpause.map(U64),
+            new_purchases_unpause_executable_at_ms: unpause
+                .map(|at| U64(self.reopen_executable_at_ms(at))),
+        }
     }
 
     pub fn get_pending_role_rotation(&self, role: GovernanceRole) -> Option<PendingRoleRotation> {
@@ -2354,12 +2475,36 @@ impl Contract {
         }
     }
 
-    fn role_rotation_delay_ms(&self) -> u64 {
+    fn governance_delay_ms(&self, mainnet_delay_ms: u64) -> u64 {
         if self.network_id() == "testnet" {
-            TESTNET_ROLE_ROTATION_DELAY_MS
+            0
         } else {
-            MAINNET_ROLE_ROTATION_DELAY_MS
+            mainnet_delay_ms
         }
+    }
+
+    fn role_rotation_delay_ms(&self) -> u64 {
+        self.governance_delay_ms(MAINNET_ROLE_ROTATION_DELAY_MS)
+    }
+
+    fn bridge_rotation_executable_at_ms(&self, proposed_at_ms: u64) -> u64 {
+        proposed_at_ms
+            .checked_add(self.governance_delay_ms(MAINNET_BRIDGE_ROTATION_DELAY_MS))
+            .expect("Bridge rotation delay overflow")
+    }
+
+    fn reopen_executable_at_ms(&self, requested_at_ms: u64) -> u64 {
+        requested_at_ms
+            .checked_add(self.governance_delay_ms(MAINNET_REOPEN_DELAY_MS))
+            .expect("Reopen delay overflow")
+    }
+
+    fn assert_reopen_elapsed(&self, request_key: &[u8]) {
+        let requested_at_ms = read_raw::<u64>(request_key).expect("Reopen has not been requested");
+        require!(
+            env::block_timestamp_ms() >= self.reopen_executable_at_ms(requested_at_ms),
+            "Reopen timelock has not elapsed"
+        );
     }
 
     // Applies the same separation rules as `new` to the post-rotation roles.

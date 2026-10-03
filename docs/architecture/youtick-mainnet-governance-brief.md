@@ -141,6 +141,9 @@ Token çıkarılması bu brief'in kapsamı dışındadır. Hukuki risk (SPK/MiCA
 2. `MARKET_ADMIN_TIMELOCK`: yetki genişleten admin işlemleri için kontrat seviyesinde
    timelock. `execute_bridge_rotation` bugün `bridge_rotation_proposed_at_ms`
    değerini kontrol etmiyor. Multisig oylaması timelock yerine geçmez.
+   **Kaynakta (LOCAL_TEST):** bridge rotasyonu 48 saat; bridge'i ve satışları
+   yeniden açma istek + 24 saat, admin veya guardian iptal edebilir; testnet'te
+   0 (owner kararı, 3 Ekim 2026). Deploy edilmedi.
 3. `MARKET_SELF_UPGRADE`: admin + 48 saat timelock'lu self-upgrade ve
    migrate yolu. Mainnet kontrat hesabından FullAccess anahtarın kaldırılması.
 4. `ACCESS_CONTROL_INSTANT_PAUSE`: pause'u timelock'tan çıkarıp guardian'a vermek,
@@ -183,6 +186,9 @@ değerlendirme tamamlanmadan belirlenmez.
 - **Rol rotasyonu:** Mainnet'te öneriden sonra 48 saat bekleme (kod
   güncellemesiyle aynı); testnet'te
   bekleme yok. Değişikliği mevcut admin uygular; yeni hesabın kabulü istenmez.
+- **Admin timelock'ları:** Bridge rotasyonu 48 saat. Bridge'i ve satışları yeniden
+  açma önce istenir, 24 saat sonra uygulanır; admin veya guardian isteği iptal
+  edebilir. Testnet'te bekleme yok. Guardian durdurma ve dondurma anında kalır.
 
 ## Owner kararı bekleyenler
 
