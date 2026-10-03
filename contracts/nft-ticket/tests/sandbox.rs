@@ -300,3 +300,146 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
     assert_eq!(first["publication_id"], "job-1");
     Ok(())
 }
+
+async fn ft_balance(
+    usdc: &Contract,
+    account_id: &near_workspaces::AccountId,
+) -> anyhow::Result<String> {
+    Ok(usdc
+        .view("ft_balance_of")
+        .args_json(json!({ "account_id": account_id }))
+        .await?
+        .json()?)
+}
+
+#[tokio::test]
+async fn creator_withdrawal_settles_while_purchases_paused_and_bridge_frozen() -> anyhow::Result<()>
+{
+    let (contract, bridge, guardian, creator, usdc) = init().await?;
+    let buyer = creator
+        .create_subaccount("buyer")
+        .initial_balance(NearToken::from_near(5))
+        .transact()
+        .await?
+        .into_result()?;
+    let storage_bounds: serde_json::Value = usdc.view("storage_balance_bounds").await?.json()?;
+    let storage_min: u128 = storage_bounds["min"]
+        .as_str()
+        .expect("storage min must be a decimal string")
+        .parse()?;
+    for account_id in [contract.id(), buyer.id()] {
+        creator
+            .call(usdc.id(), "storage_deposit")
+            .args_json(json!({ "account_id": account_id, "registration_only": true }))
+            .deposit(NearToken::from_yoctonear(storage_min))
+            .transact()
+            .await?
+            .into_result()?;
+    }
+    creator
+        .call(usdc.id(), "ft_transfer")
+        .args_json(json!({ "receiver_id": buyer.id(), "amount": "2000000" }))
+        .deposit(NearToken::from_yoctonear(1))
+        .transact()
+        .await?
+        .into_result()?;
+
+    creator
+        .call(usdc.id(), "ft_transfer_call")
+        .args_json(json!({
+            "receiver_id": contract.id(),
+            "amount": "500000",
+            "msg": json!({
+                "action": "create_paid_job",
+                "job_id": "job-exit",
+                "title": "Exit video",
+                "price_usdc": "2000000",
+                "expected_source_bytes": "1000000",
+                "profile_id": "paid-media-livepeer-v1",
+                "profile_config_sha256": PROFILE_HASH,
+                "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
+                "upload_key_expires_at_ms": "9999999999999",
+            })
+            .to_string(),
+        }))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+    bridge
+        .call(contract.id(), "finalize_livepeer_publication")
+        .args_json(json!({
+            "submission": {
+                "job_id": "job-exit",
+                "generation": 1,
+                "creator_id": creator.id(),
+                "expected_source_bytes": "1000000",
+                "profile_id": "paid-media-livepeer-v1",
+                "profile_config_sha256": PROFILE_HASH,
+                "asset_id_hash": ASSET_HASH,
+                "playback_id": "playback_exit",
+                "project_id_hash": PROJECT_HASH,
+                "verified_source_bytes": "1000000",
+                "provider_source_fingerprint": null,
+                "ready_at_ms": "1785589200000",
+                "availability": "ACTIVE",
+            },
+        }))
+        .transact()
+        .await?
+        .into_result()?;
+    buyer
+        .call(usdc.id(), "ft_transfer_call")
+        .args_json(json!({
+            "receiver_id": contract.id(),
+            "amount": "2000000",
+            "msg": json!({ "publication_id": "job-exit" }).to_string(),
+        }))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+    let creator_balance: String = contract
+        .view("get_creator_balance")
+        .args_json(json!({ "creator_id": creator.id() }))
+        .await?
+        .json()?;
+    assert_eq!(creator_balance, "1900000");
+
+    for method in ["pause_new_purchases", "freeze_bridge"] {
+        guardian
+            .call(contract.id(), method)
+            .transact()
+            .await?
+            .into_result()?;
+    }
+    let governance: serde_json::Value = contract.view("get_governance_state").await?.json()?;
+    assert_eq!(governance["new_purchases_paused"], true);
+    assert_eq!(governance["bridge_frozen"], true);
+
+    let creator_wallet_before: u128 = ft_balance(&usdc, creator.id()).await?.parse()?;
+    let market_before: u128 = ft_balance(&usdc, contract.id()).await?.parse()?;
+    creator
+        .call(contract.id(), "withdraw_creator_balance")
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let creator_wallet_after: u128 = ft_balance(&usdc, creator.id()).await?.parse()?;
+    let market_after: u128 = ft_balance(&usdc, contract.id()).await?.parse()?;
+    assert_eq!(creator_wallet_after - creator_wallet_before, 1_900_000);
+    assert_eq!(market_before - market_after, 1_900_000);
+    let creator_balance: String = contract
+        .view("get_creator_balance")
+        .args_json(json!({ "creator_id": creator.id() }))
+        .await?
+        .json()?;
+    assert_eq!(creator_balance, "0");
+    let governance: serde_json::Value = contract.view("get_governance_state").await?.json()?;
+    assert_eq!(governance["new_purchases_paused"], true);
+    assert_eq!(governance["bridge_frozen"], true);
+    Ok(())
+}

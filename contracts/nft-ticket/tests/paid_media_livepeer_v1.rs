@@ -2392,3 +2392,104 @@ fn compact_upload_cross_language_vectors_preserve_payment_and_device() {
         );
     }
 }
+
+fn withdraw_callback_env(result: near_sdk::PromiseResult) {
+    testing_env!(
+        context("market.testnet").build(),
+        near_sdk::test_vm_config(),
+        near_sdk::RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![result],
+    );
+}
+
+#[test]
+fn creator_withdrawal_runs_and_restores_while_purchases_paused_and_bridge_frozen() {
+    let mut contract = contract();
+    create_job(&mut contract, "job-exit", "creator.testnet");
+    finalize(
+        &mut contract,
+        "job-exit",
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        "playback_exit",
+    );
+    testing_env!(context(TESTNET_USDC).build());
+    assert!(matches!(
+        contract.ft_on_transfer(
+            account("buyer.testnet"),
+            U128(2_000_000),
+            r#"{"publication_id":"job-exit"}"#.to_string(),
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+    assert_eq!(
+        contract.get_creator_balance(account("creator.testnet")),
+        U128(1_900_000)
+    );
+
+    testing_env!(context("guardian.testnet").build());
+    contract.pause_new_purchases();
+    contract.freeze_bridge();
+    let governance = contract.get_governance_state();
+    assert!(governance.new_purchases_paused);
+    assert!(governance.bridge_frozen);
+    let platform_before = contract.get_platform_balance();
+
+    testing_env!(context("creator.testnet").build());
+    let _ = contract.withdraw_creator_balance();
+    let started = governance_event();
+    assert_eq!(started["event"], "creator_balance_withdrawal_started");
+    assert_eq!(started["data"][0]["account_id"], "creator.testnet");
+    assert_eq!(started["data"][0]["amount"], "1900000");
+    assert_eq!(
+        contract.get_creator_balance(account("creator.testnet")),
+        U128(0)
+    );
+    must_fail(|| {
+        let _ = contract.withdraw_creator_balance();
+    });
+    let withdrawal_id = started["data"][0]["withdrawal_id"]
+        .as_str()
+        .expect("withdrawal id must be a string")
+        .to_string();
+
+    withdraw_callback_env(near_sdk::PromiseResult::Failed);
+    assert!(!contract.on_creator_withdraw(
+        account("creator.testnet"),
+        U128(1_900_000),
+        withdrawal_id.clone(),
+    ));
+    let failed = governance_event();
+    assert_eq!(failed["event"], "creator_balance_withdrawal_failed");
+    assert_eq!(
+        contract.get_creator_balance(account("creator.testnet")),
+        U128(1_900_000)
+    );
+
+    testing_env!(context("creator.testnet").build());
+    let _ = contract.withdraw_creator_balance();
+    assert_eq!(
+        contract.get_creator_balance(account("creator.testnet")),
+        U128(0)
+    );
+    withdraw_callback_env(near_sdk::PromiseResult::Successful(Vec::new()));
+    assert!(contract.on_creator_withdraw(
+        account("creator.testnet"),
+        U128(1_900_000),
+        withdrawal_id,
+    ));
+    assert_eq!(
+        governance_event()["event"],
+        "creator_balance_withdrawal_succeeded"
+    );
+    assert_eq!(
+        contract.get_creator_balance(account("creator.testnet")),
+        U128(0)
+    );
+    assert_eq!(contract.get_platform_balance(), platform_before);
+    let governance = contract.get_governance_state();
+    assert!(governance.new_purchases_paused);
+    assert!(governance.bridge_frozen);
+}
