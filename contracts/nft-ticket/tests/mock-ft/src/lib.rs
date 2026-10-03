@@ -76,6 +76,14 @@ impl MockFt {
     }
 
     #[payable]
+    pub fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>) {
+        assert_eq!(env::attached_deposit(), NearToken::from_yoctonear(1));
+        let sender_id = env::predecessor_account_id();
+        self.transfer(&sender_id, &receiver_id, amount.0);
+        let _ = memo;
+    }
+
+    #[payable]
     pub fn ft_transfer_call(
         &mut self,
         receiver_id: AccountId,
