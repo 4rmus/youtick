@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CKD NEAR Auth Spike</title>
+<style>
+  :root { --bg: #f7f7f5; --fg: #1d1d1b; --muted: #6b6b66; --line: #dcdcd6; --ok: #1f7a3d; --err: #a3261b; --btn: #1d1d1b; --btn-fg: #fff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ececea; --muted: #9a9a94; --line: #34342f; --ok: #5cc285; --err: #f0877c; --btn: #ececea; --btn-fg: #161615; } }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 24px 16px; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.note { color: var(--muted); margin: 0 0 20px; }
+  ol { padding-left: 20px; }
+  li { margin: 10px 0; }
+  button { background: var(--btn); color: var(--btn-fg); border: 0; border-radius: 6px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  button:disabled { opacity: .35; cursor: default; }
+  pre { background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 12.5px; white-space: pre-wrap; word-break: break-all; }
+  .ok { color: var(--ok); } .err { color: var(--err); }
+</style>
+</head>
+<body>
+<main>
+  <h1>CKD over NEAR Auth (testnet, option A)</h1>
+  <p class="note">Google login, implicit account, <code>request_app_private_key</code> delegate action, Google approval, fast-auth signature, relayer, then decryption and verification.</p>
+  <ol>
+    <li><button id="login">1. Log in with Google</button></li>
+    <li><button id="fund" disabled>2. Let the sponsor create the account if missing (0.02 testnet NEAR)</button></li>
+    <li><button id="prepare" disabled>3. Prepare the CKD request</button></li>
+    <li><button id="approve" disabled>4. Approve in the Google window and send</button></li>
+  </ol>
+  <p id="msg"></p>
+  <pre id="out">—</pre>
+</main>
+<script src="/auth0.js"></script>
+<script>
+  const auth = new auth0.Auth0Client({ domain: 'login.testnet.fast-auth.com', clientId: 'np8paqIpMWmNbzT4xAvOOapZBjsOpptl', cacheLocation: 'memory' });
+  const $ = (id) => document.getElementById(id);
+  let prepared = null;
+  const show = (obj) => { $('out').textContent = JSON.stringify(obj, null, 2); };
+  const msg = (text, cls = '') => { $('msg').textContent = text; $('msg').className = cls; };
+  async function api(path, body) {
+    const r = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) { show(j); throw new Error(j.error || r.status); }
+    return j;
+  }
+  function apply(s) {
+    show(s);
+    $('fund').disabled = !s.loggedIn || s.exists;
+    $('prepare').disabled = !s.loggedIn || !s.exists;
+  }
+  async function step(fn, busy) {
+    msg(busy);
+    try { await fn(); } catch (e) { msg(`Error: ${e.message}`, 'err'); }
+  }
+  $('login').onclick = () => step(async () => {
+    await auth.loginWithPopup({ authorizationParams: { prompt: 'login' } });
+    const claims = await auth.getIdTokenClaims();
+    apply(await api('/api/account', { idToken: claims.__raw }));
+    msg('Logged in.', 'ok');
+  }, 'Waiting for Google login…');
+  $('fund').onclick = () => step(async () => { apply(await api('/api/fund', {})); msg('Account ready.', 'ok'); }, 'Sponsor is creating the account…');
+  $('prepare').onclick = () => step(async () => {
+    prepared = await api('/api/prepare', {});
+    show({ delegateBytes: prepared.size, maxBlockHeight: prepared.maxBlockHeight });
+    $('approve').disabled = false;
+    msg('Ready. Open the Google approval window with step 4.', 'ok');
+  }, 'Preparing…');
+  $('approve').onclick = () => step(async () => {
+    $('approve').disabled = true;
+    const token = await auth.getTokenWithPopup({ authorizationParams: { audience: 'auth0.jwt.fast-auth.testnet', scope: 'transaction:sign', delegateAction: prepared.delegateAction, prompt: 'login' } });
+    msg('Approved. Waiting for the fast-auth signature and the relayer (about 20 s)…');
+    const run = await api('/api/execute', { token });
+    show(run);
+    msg(run.verified ? `CKD verified. Fingerprint ${run.fingerprint}` : 'Verification failed', run.verified ? 'ok' : 'err');
+    apply(await api('/api/status'));
+  }, 'Waiting for the Google approval window…');
+  api('/api/status').then(apply).catch(() => {});
+</script>
+</body>
+</html>

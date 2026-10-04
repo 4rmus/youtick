@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CKD Gate Spike</title>
+<style>
+  :root { --bg: #f7f7f5; --fg: #1d1d1b; --muted: #6b6b66; --line: #dcdcd6; --ok: #1f7a3d; --err: #a3261b; --btn: #1d1d1b; --btn-fg: #fff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ececea; --muted: #9a9a94; --line: #34342f; --ok: #5cc285; --err: #f0877c; --btn: #ececea; --btn-fg: #161615; } }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 24px 16px; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.note { color: var(--muted); margin: 0 0 20px; }
+  button { background: var(--btn); color: var(--btn-fg); border: 0; border-radius: 6px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  button:disabled { opacity: .35; cursor: default; }
+  pre { border: 1px solid var(--line); border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 12.5px; white-space: pre-wrap; word-break: break-all; }
+  .ok { color: var(--ok); } .err { color: var(--err); }
+</style>
+</head>
+<body>
+<main>
+  <h1>CKD Gate (option C, testnet)</h1>
+  <p class="note">Google login only, no approval screen. The login token's <code>nonce</code> is bound to the device's ephemeral key; the on-chain <code>ckd-gate</code> contract verifies the token and requests the key from MPC.</p>
+  <button id="go">Log in with Google and derive the key</button>
+  <p id="msg"></p>
+  <pre id="out">—</pre>
+</main>
+<script>
+  const V2 = new URLSearchParams(location.search).get('v') === '2';
+  const BASE = V2 ? '/api/gate2' : '/api/gate';
+  if (V2) document.querySelector('h1').textContent = 'CKD Gate v2 (option C2, testnet): path = NEAR account';
+  const $ = (id) => document.getElementById(id);
+  const msg = (t, c = '') => { $('msg').textContent = t; $('msg').className = c; };
+  const show = (o) => { $('out').textContent = JSON.stringify(o, null, 2); };
+  const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const rand = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
+  async function api(path, body) {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) });
+    const j = await r.json();
+    if (!r.ok) { show(j); throw new Error(j.error || r.status); }
+    return j;
+  }
+
+  // OIDC authorization code + PKCE, response_mode=web_message (the auth0-spa-js popup method) with our own nonce.
+  async function loginWithNonce(popup, { issuer, clientId, nonce }) {
+    const state = rand(), verifier = rand();
+    const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+    const redirectUri = window.location.origin;
+    const url = new URL('authorize', issuer);
+    Object.entries({ client_id: clientId, response_type: 'code', response_mode: 'web_message', redirect_uri: redirectUri,
+        scope: 'openid profile', state, nonce, code_challenge: challenge, code_challenge_method: 'S256', prompt: 'login' })
+      .forEach(([k, v]) => url.searchParams.set(k, v));
+    popup.location.href = url.href;
+    const code = await new Promise((resolve, reject) => {
+      const timer = setInterval(() => { if (popup.closed) { cleanup(); reject(new Error('popup closed')); } }, 500);
+      function cleanup() { clearInterval(timer); window.removeEventListener('message', onMessage); }
+      function onMessage(e) {
+        if (e.origin !== new URL(issuer).origin || e.data?.type !== 'authorization_response') return;
+        cleanup(); popup.close();
+        const r = e.data.response;
+        if (r.error) return reject(new Error(`${r.error}: ${r.error_description ?? ''}`));
+        if (r.state !== state) return reject(new Error('state mismatch'));
+        resolve(r.code);
+      }
+      window.addEventListener('message', onMessage);
+    });
+    const tokenRes = await fetch(new URL('oauth/token', issuer), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'authorization_code', client_id: clientId, code, code_verifier: verifier, redirect_uri: redirectUri }) });
+    const tokens = await tokenRes.json();
+    if (!tokenRes.ok || !tokens.id_token) throw new Error(`token exchange failed: ${tokens.error ?? tokenRes.status}`);
+    return tokens.id_token;
+  }
+
+  $('go').onclick = async () => {
+    // Open the popup synchronously with the click; the URL is set after preparation.
+    const popup = window.open('about:blank', 'ckd-gate-login', 'width=480,height=720');
+    if (!popup) return msg('Popup blocked; allow popups for localhost.', 'err');
+    $('go').disabled = true;
+    try {
+      msg('Preparing the ephemeral key…');
+      const prep = await api(`${BASE}/prepare`);
+      msg('Waiting for Google login…');
+      const idToken = await loginWithNonce(popup, prep);
+      msg(V2 ? 'Logged in. Running eight on-chain steps (about 1-2 minutes)…' : 'Logged in. Calling the ckd-gate contract…');
+      const run = await api(`${BASE}/execute`, { idToken });
+      show(run);
+      if (V2) msg(run.allPassed ? `All steps passed. Account ${run.accountFromRuleA.slice(0, 8)}…, fingerprint ${run.fingerprintA}` : 'Some steps did not match the expected result; see details below.', run.allPassed ? 'ok' : 'err');
+      else msg(`CKD verified. Fingerprint ${run.fingerprint}`, 'ok');
+    } catch (e) {
+      if (!popup.closed) popup.close();
+      msg(`Error: ${e.message}`, 'err');
+    } finally { $('go').disabled = false; }
+  };
+</script>
+</body>
+</html>
