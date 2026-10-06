@@ -14,7 +14,7 @@ export const metadata: Metadata = {
         url: '/tr',
         locale: 'tr_TR',
         alternateLocale: ['en_US'],
-        title: 'YouTick — Biletli dijital gösterimler',
+        title: 'youtick — Biletli dijital gösterimler',
         description: 'Eseri yükle, bilet fiyatını belirle ve kendi izleyicine doğrudan sat.',
         images: [{ url: '/hero-concert.webp', width: 1024, height: 1024, alt: 'Canlı izleyiciye bakan bir konser sahnesi' }],
     },
