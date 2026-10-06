@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ArrowRightLeft, LogOut, Menu, User, X } from 'lucide-react';
+import { BrandWordmark } from '@/components/BrandWordmark';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
 import { getLandingCtas, landingCopy, type LandingLocale } from '@/components/landing/landing-copy';
@@ -30,7 +31,7 @@ export function Navbar() {
         return (
             <nav className="sticky top-0 z-40 border-b border-white/10 bg-black/90 backdrop-blur">
                 <div className="container mx-auto flex min-h-16 flex-wrap items-center justify-between gap-4 px-4 py-2">
-                    <Link href={landingHome} className="font-bold tracking-tight">YouTick</Link>
+                    <Link href={landingHome} className="text-lg"><BrandWordmark /></Link>
                     <div className="hidden items-center gap-5 lg:flex">
                         <Link href={`${landingHome}#audience`} className="text-sm text-zinc-400 hover:text-white">{copy.nav.audience}</Link>
                         <Link href={`${landingHome}#how-it-works`} className="text-sm text-zinc-400 hover:text-white">{copy.nav.howItWorks}</Link>
@@ -51,7 +52,7 @@ export function Navbar() {
     return (
         <nav className="sticky top-0 z-50 w-full border-b border-white/10 bg-black/95 backdrop-blur-md">
             <div className="container relative mx-auto flex h-16 items-center justify-between px-4">
-                <Link href="/" className="text-xl font-black tracking-tight text-white">YouTick</Link>
+                <Link href="/" className="text-xl text-white"><BrandWordmark /></Link>
 
                 <div className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-8 md:flex">
                     {appLinks.map((link) => (

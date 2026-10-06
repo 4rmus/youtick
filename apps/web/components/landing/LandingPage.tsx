@@ -17,6 +17,7 @@ import {
     Upload,
     WalletCards,
 } from 'lucide-react';
+import { BrandWordmark } from '@/components/BrandWordmark';
 import { Button } from '@/components/ui/button';
 import { ROICalculator } from './ROICalculator';
 import { getLandingCtas, landingCopy, type LandingCtas, type LandingLocale } from './landing-copy';
@@ -225,7 +226,7 @@ export function LandingPage({ locale, enabled }: Props) {
             <footer className="border-t border-white/10 bg-black py-14">
                 <div className="container mx-auto flex flex-col gap-10 px-4 md:flex-row md:items-end md:justify-between">
                     <div>
-                        <Link href={locale === 'tr' ? '/tr' : '/'} className="text-2xl font-black tracking-tight">YouTick</Link>
+                        <Link href={locale === 'tr' ? '/tr' : '/'} className="text-2xl"><BrandWordmark /></Link>
                         <p className="mt-3 max-w-sm text-sm leading-relaxed text-zinc-500">{copy.footer.description}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-5 gap-y-3 text-sm text-zinc-500">
