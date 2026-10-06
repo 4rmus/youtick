@@ -7,7 +7,7 @@ description: "Use for near-api-js v7 TypeScript/JavaScript RPC, transaction enco
 
 Read root `AGENTS.md` first. Check `apps/web/package.json`, its lockfile and the installed exports/types before using an example; a v7 label alone does not establish compatibility with another SDK.
 
-Trace the caller, encoded bytes, signer output and consuming provider. Keep login, NEP-413 message proof, transaction signature and finalized receipts distinct. Use existing `apps/web/lib/near.ts` and wallet adapters before adding helpers. For Google/MPC integration, also use [youtick-near-auth](../youtick-near-auth/SKILL.md).
+Trace the caller, encoded bytes, signer output and consuming provider. Keep login, NEP-413 message proof, transaction signature and finalized receipts distinct. Use existing `apps/web/lib/near.ts` and wallet adapters before adding helpers. For wallet connection and session UI use [near-dapp](../near-dapp/SKILL.md).
 
 Read only the reference relevant to the change:
 
