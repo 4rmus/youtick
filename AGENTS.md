@@ -10,8 +10,9 @@ Bu dosya Codex ve Claude Code için ortak proje sözleşmesidir. Kök dizine `CL
 
 ## Gate ve kapsam
 
-- Her görevde yalnız bir aktif gate seç. Başlamadan amaç, değiştirilebilecek dosyalar, yasak dosyalar, kabul kriterleri ve hedef doğrulamaları yaz.
-- Gate tamamlanınca raporla ve dur; sonraki gate'e otomatik geçme.
+- İşi gate'lere böl; her gate'in başında amaç, değiştirilebilecek dosyalar, yasak dosyalar, kabul kriterleri ve hedef doğrulamaları yaz.
+- Varsayılan otonomdur: gate'leri sırayla sürdür, sonunda tek rapor ver. Yalnız onay gerektiren bir işlemde, çıktıyı değiştirecek bir belirsizlikte veya teşhis edilemeyen bir hatada dur. Kullanıcı "adım adım" derse her gate sonunda dur.
+- Bir görev, bir dal, bir PR. PR açıldığında squash auto-merge'ü etkinleştir; CI'ı oturumdan yoklama, başarısız kontrol bildirimi gelince düzelt.
 
 ## Sorumluluk ve katılımcılar
 
@@ -29,7 +30,7 @@ Bu dosya Codex ve Claude Code için ortak proje sözleşmesidir. Kök dizine `CL
 ## Güvenli çalışma
 
 - Dirty çalışma alanını ve mevcut kullanıcı değişikliklerini koru; broad reset/restore/clean/stash ve geniş staging kullanma. Yalnız explicit-path değişiklik yap.
-- Commit, push, PR, merge, CI tekrar çalıştırma, deploy; provider, secret/config, NEAR işlemi, D1 ve canlı veri işlemleri açık kullanıcı onayı ister. Onay yalnız o işlem için geçerlidir.
+- Onay gerektirenler: deploy ve release, NEAR işlemi veya imza, provider ve canlı veri yazımı (D1 dahil), secret/credential, lockfile dışına çıkan bağımlılık veya toolchain yükseltmesi, CI tekrar çalıştırma, main'e doğrudan yazma. Commit, feature dalına push, PR açma ve auto-merge onay istemez; kilitler (deploy, force push, main'e push, secret okuma) talimattan bağımsız kapalıdır.
 - `.env*`, `.dev.vars`, `~/.near-credentials` ve anahtar dosyalarını okuma veya yazma; JWT, cookie, özel anahtar loglama.
 
 ## Mimari sınırlar
