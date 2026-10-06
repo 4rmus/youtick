@@ -1,9 +1,9 @@
 {
   "repository": "https://github.com/near/agent-skills",
-  "revision": "378a55c6bff84d15750eff2cd9950a5736ee9589",
+  "revision": "cb32b6af195e636c1e9c2efe2ea75a6d85b6b67b",
   "files": {
     "near-api-js": {
-      "SKILL.md": "65e9aa33f529de88089a741b112069eafede988bc2dd8ff4385240293800f7f7",
+      "SKILL.md": "e8b4a2cc69c8702453ee9cdb5192c47094dc8bb90b6914168f588b9ed40a3b07",
       "references/api_patterns.md": "53fdf1b1a9fb83467b4a41435d7bbfc563fc0e95e552f1d876188a0bd74d3518",
       "references/contracts.md": "983153ae28903c48895828beb9f0d73ebdec5d067e76653f2015101d1f3d9f82",
       "references/key_management.md": "0525a60e2fff5c1307e4f40dc04249dbc3572089c309d2e811dafa093b159906",
@@ -12,28 +12,53 @@
       "references/tokens_guide.md": "225367ff8c568f0246e308989593caac1772d9293ca70493a3ec331521aa9858"
     },
     "near-dapp": {
-      "SKILL.md": "480a521624fe113c0411071235bf682e1b9f878d93c1b50d8b697c431e5e9334",
+      "SKILL.md": "9d648813efd8949557fff9c076b23f0bb8046619747b788f9353850fbfdd768b",
       "references/create-near-app.md": "4fea6019b68e2203ac5f49625c39243e8eaf6ca59bf9b10325936fe762a18373",
       "references/near-connect-hooks.md": "1f8532aa1ef0e4f3c5e2f21b6779f7b8acf75856ac26f8c9d138662ecceb3d8d",
       "references/near-connect.md": "0e71be0bfe7b58b74c19e183cb1c0d3f4f0e29a6f10e0386dcb708e2d86e0299"
     },
     "near-smart-contracts": {
-      "SKILL.md": "0adb99ffb47b629ce5a859d7c2460d679411383a7c7ca1c99d85f62a857e0eab",
-      "rules/best-contract-tools.md": "efbf431e389643a48247aed87e390aed061e41fa9110ddd15f86d82655d2777d",
+      "SKILL.md": "114e61bd30d4dfd3130e6e9517c92018478215c4765636ee182541fd3589aa4e",
+      "rules/best-contract-tools.md": "2f74fc0fbcdb4198d56c885ca3628bad5dcb9bb4564f077e11059c671529b1f3",
       "rules/chain-signatures.md": "f02bbf24203ec98dcadf83442e4b4ad7a210e37e2e64cf89855f0cc4834980f7",
-      "rules/security-storage-checks.md": "6ecf632b4996968f8e0cad8cf9b1e1f6c929d07da2a6c98ab41c297d3622d881",
-      "rules/state-collections.md": "392a11e42a3cbbcb473cc86095f279a53dc68a5eecdd14c994e89facb3440c99",
+      "rules/security-storage-checks.md": "f3b3b3a770ffbba4636c68315beec660b3b00fd5b7c5447b6337f92364d59d95",
+      "rules/state-collections.md": "ac61093d81bfba09917737128dbeddbcc3742a73d54334e17f16e4d41d6115ff",
       "rules/structure-near-bindgen.md": "f5c00c3d0ae320d53e4a4e43d0616e321e32a882467f717eb94fe7bf77fe676f",
       "rules/testing-integration-tests.md": "fedb87996c60f5af7d04d1d141fa4451a5d921d0452b84b2fd66f7c641b2cd33",
       "rules/upgrade-migration.md": "2fb7f8ffc44eb5d816a863a094687b954eace055e27beffeba4d25acdbe10c5d",
       "rules/xcc-promise-chaining.md": "6c9b4367add354029ac0107fed4eb0cfbba76ac40374ab13d85f15ffda5fe1da",
-      "rules/yield-resume.md": "58ce224421e20ef47de5cc51d1657e806b14017c27166b553522668d7d6d4a93"
+      "rules/yield-resume.md": "1d1c3bc6d306fab39925472b697a7f82d3b167d50add1d1f3caf4140a8daa48d"
     },
     "near-contract-audit": {
       "SKILL.md": "1755fa10e5125b43af7c9772644530564e15d6ac1a36fd3065d806eb41ef44aa",
       "references/high-severity.md": "c3c37c9430a12e96342c5d484dd6e57d87a4624e5453d30a033ec6504670f739",
       "references/low-severity.md": "8b775c8206c2c14134514f37d21645ada1d16bde150c0761d0218bdbae44ffe6",
       "references/medium-severity.md": "5d1b2aa9acd3beb1c2a2fea04ecbc493597b79059d427c4ed972d610ae317890"
+    },
+    "near-intents": {
+      "SKILL.md": "bdbe378b966e873962a6975be5271a1dfe8ec98222ed6624827cd0d43758883a",
+      "references/concepts.md": "5a7266da9331b4ef05e9dc72654a580e484b0681c97396cd369cd3ed1190fda8",
+      "rules/api-any-input-withdrawals.md": "c97ccba032829e9800ad858b436257bdd324edd8bd1dafcb2536fe1d93909b30",
+      "rules/api-confidential-swaps.md": "2d97de36f652285c577344fadc7addec75d0732a9294caccf13914830bdf20a1",
+      "rules/api-deposit-submit.md": "9fd890bf7741ba2fcc86e8d8387078d3d20c1333d4cfcdc10f8e588444119480",
+      "rules/api-hyperliquid.md": "10945bc4afaf05bd5da84bfb4265fdbcd51211a307d5f50a8d58b96fb8023e35",
+      "rules/api-orders.md": "317599b41fe6d7cd1c7139f78287a6c58c2335096abd5ed9670934ec9c0a079f",
+      "rules/api-quote.md": "c36e911dcb240abd3192f9d74648a0d81a80831deb852ecac3db2618ce00bd7c",
+      "rules/api-status.md": "44f44e922dc1e67b10c23dd72a9b00bcad354f7552ac6e3779941d82b1e4cbab",
+      "rules/api-tokens.md": "89013c15e0a656f51147fc579ae4d378574d8daf45d39854924be84994d435e9",
+      "rules/api-user-auth.md": "d941edb7b42f6750710295eee6c0d4a8e90f80507472ef6f41e222ea6302971d",
+      "rules/deposit-evm.md": "5ccb134520fa7c8250c87f54220c1e96141ce95fab557a59f9eee63714c610e8",
+      "rules/deposit-near.md": "d9638b5d7fb1c00ed9ac177747f5ebe112658be9398eda852ea3d6daf3a0add8",
+      "rules/deposit-solana.md": "6904999a07d4e3a6b1edd6704e82a62a90385b11528568855c08f03bbbb00af7",
+      "rules/deposit-stellar.md": "b0f39500af6fd92f8118aca153594a2ae9a19551464b07fae9adde8c6f814902",
+      "rules/deposit-ton.md": "ffa7cc977b70bebed97fef29fced6c1903589ecc2ba0e2708cb583d33948e9ae",
+      "rules/deposit-tron.md": "b5a3cb15e49cb2877b20701012dfd3b505bfb6f02ecc3cd288a7f9fa3d7e19a7",
+      "rules/intents-balance.md": "7457cc95b551441f21f48438aa564a16fb218b388c0a0ba1ee8bbd929236f4ff",
+      "rules/passive-deposit.md": "aca724d5d1ccc95de71cc62f1883a809789d8d5ae8d39d7c66e336c8d70e40cc",
+      "rules/react-hooks.md": "56c4a986300e85cf46103e8321921bb111d3bda1af94a985bd972f0ba7c72204",
+      "rules/react-swap-widget.md": "3fecdcd23d525b983d89fade50b21f103676bff5f86978122c022bca16b4ff76",
+      "rules/sdk.md": "3a1ca5b2aed3a7eea942c6220892eaf50a4288461ace06edf98399a0252bae55",
+      "rules/server-example.md": "c12528430581de41723853a92959727b8a089fe31bc8025b41ac40a2bc68f6ca"
     }
   }
 }
