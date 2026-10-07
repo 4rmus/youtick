@@ -27,6 +27,10 @@ IDENTITY_DAILY_CKD_LIMIT = "20"
 # 100 USDC of invite credit per day.
 DAILY_INVITE_USDC_MICRO_LIMIT = "100000000"
 INVITE_AMOUNTS_USDC_MICRO = "5000000,10000000"
+# Purchases: the relayer sponsors only USDC ft_transfer_call to this Market with buy_ticket_v2.
+MARKET_V2_CONTRACT_ID = "<replace-with-market-v2-contract-id>"
+DAILY_PURCHASE_LIMIT = "500"
+IDENTITY_DAILY_PURCHASE_LIMIT = "20"
 INVITE_TTL_DAYS = "30"
 ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
 # Secrets (wrangler secret put): RELAYER_PRIVATE_KEY, RELAYER_ADMIN_TOKEN.

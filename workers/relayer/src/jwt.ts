@@ -6,6 +6,13 @@ export interface VerifiedIdentity {
     sub: string;
     exp: number;
     nonce: string | null;
+    /** fast-auth's approved payload: the exact bytes the user saw on the NEAR Auth approval screen. */
+    fatxn: Uint8Array | null;
+}
+
+export interface VerifyOptions {
+    /** Defaults to the client ID (id_tokens). Signing access tokens use the fast-auth guard audience. */
+    audience?: string;
 }
 
 export interface JwtVerifierConfig {
@@ -62,7 +69,8 @@ export function createJwtVerifier(config: JwtVerifierConfig) {
         return keys;
     }
 
-    return async function verify(token: unknown): Promise<VerifiedIdentity> {
+    return async function verify(token: unknown, options: VerifyOptions = {}): Promise<VerifiedIdentity> {
+        const audience = options.audience ?? config.clientId;
         if (typeof token !== 'string' || new TextEncoder().encode(token).length > MAX_TOKEN_BYTES) throw new Error('invalid_token');
         const parts = token.split('.');
         if (parts.length !== 3) throw new Error('invalid_token');
@@ -91,8 +99,9 @@ export function createJwtVerifier(config: JwtVerifierConfig) {
         const audiences = typeof aud === 'string' ? [aud] : Array.isArray(aud) ? aud : [];
         const sub = claims.sub;
         if (claims.iss !== config.issuer
-            || !audiences.includes(config.clientId)
-            || (audiences.length > 1 && claims.azp !== config.clientId)
+            || !audiences.includes(audience)
+            // Access tokens name the guard as audience, so the client must be proven by `azp`.
+            || ((audiences.length > 1 || audience !== config.clientId) && claims.azp !== config.clientId)
             || (claims.azp !== undefined && claims.azp !== config.clientId)
             || typeof sub !== 'string' || !sub || sub.includes('#')
             || new TextEncoder().encode(sub).length > MAX_SUBJECT_BYTES
@@ -102,7 +111,14 @@ export function createJwtVerifier(config: JwtVerifierConfig) {
             || (claims.nonce !== undefined && typeof claims.nonce !== 'string')) {
             throw new Error('invalid_token');
         }
-        return { iss: config.issuer, sub, exp: claims.exp, nonce: (claims.nonce as string | undefined) ?? null };
+        let fatxn: Uint8Array | null = null;
+        if (claims.fatxn !== undefined) {
+            const value = claims.fatxn;
+            if (!Array.isArray(value) || value.length === 0 || value.length > 4096
+                || !value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) throw new Error('invalid_token');
+            fatxn = Uint8Array.from(value as number[]);
+        }
+        return { iss: config.issuer, sub, exp: claims.exp, nonce: (claims.nonce as string | undefined) ?? null, fatxn };
     };
 }
 

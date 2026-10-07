@@ -35,7 +35,7 @@ describe('id_token verification', () => {
         let now = NOW;
         const fetcher = vi.fn(async () => Response.json({ keys }));
         const verify = createJwtVerifier({ issuer: ISSUER, clientId: CLIENT, fetch: fetcher as unknown as typeof fetch, now: () => now });
-        await expect(verify(await sign(first, claims()))).resolves.toEqual({ iss: ISSUER, sub: 'google-oauth2|42', exp: NOW / 1000 + 600, nonce: 'n' });
+        await expect(verify(await sign(first, claims()))).resolves.toEqual({ iss: ISSUER, sub: 'google-oauth2|42', exp: NOW / 1000 + 600, nonce: 'n', fatxn: null });
         expect(String(fetcher.mock.calls[0]![0 as never])).toBe(`${ISSUER}.well-known/jwks.json`);
         keys = [first.jwk, second.jwk];
         now += 61_000;
