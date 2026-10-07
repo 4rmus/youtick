@@ -1,6 +1,12 @@
+use std::task::Poll;
+use std::time::{Duration, Instant};
+
 use near_sdk::{Gas, NearToken};
-use near_workspaces::types::{KeyType, SecretKey};
-use near_workspaces::{AccessKey, Account, AccountDetailsPatch, Contract};
+use near_workspaces::network::Sandbox;
+use near_workspaces::operations::CallTransaction;
+use near_workspaces::result::ExecutionFinalResult;
+use near_workspaces::types::{Finality, KeyType, SecretKey};
+use near_workspaces::{AccessKey, Account, AccountDetailsPatch, Contract, CryptoHash, Worker};
 use serde_json::json;
 use tokio::sync::OnceCell;
 
@@ -39,6 +45,19 @@ async fn init() -> anyhow::Result<(Contract, Account, Account, Account, Contract
 
 async fn init_with_admin(
 ) -> anyhow::Result<(Contract, Account, Account, Account, Contract, Account)> {
+    let (_worker, contract, bridge, guardian, creator, usdc, admin) = init_with_worker().await?;
+    Ok((contract, bridge, guardian, creator, usdc, admin))
+}
+
+async fn init_with_worker() -> anyhow::Result<(
+    Worker<Sandbox>,
+    Contract,
+    Account,
+    Account,
+    Account,
+    Contract,
+    Account,
+)> {
     let worker = near_workspaces::sandbox().await?;
     let wasm = load_contract_wasm().await?;
     let mock_ft_wasm = load_mock_ft_wasm().await?;
@@ -97,12 +116,74 @@ async fn init_with_admin(
         .transact()
         .await?
         .into_result()?;
-    Ok((contract, bridge, guardian, creator, usdc, admin))
+    Ok((worker, contract, bridge, guardian, creator, usdc, admin))
+}
+
+/// Sends `call` and returns its outcome once every block that executed it is final and
+/// canonical. `transact()` waits only for optimistic execution: a loaded sandbox can
+/// abandon that block and re-execute the receipt in the next one, so the optimistic
+/// return value may disagree with state (e.g. a different `block_timestamp_ms`).
+async fn transact_final(
+    worker: &Worker<Sandbox>,
+    call: CallTransaction,
+) -> anyhow::Result<ExecutionFinalResult> {
+    let pending = call.transact_async().await?;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        match pending.status().await {
+            Ok(Poll::Ready(outcome)) => {
+                if executed_in_final_blocks(worker, &outcome).await? {
+                    return Ok(outcome);
+                }
+            }
+            Ok(Poll::Pending) => {}
+            // The node may briefly fail to resolve an outcome whose block was abandoned.
+            Err(error) => anyhow::ensure!(Instant::now() < deadline, error),
+        }
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "transaction {} did not reach a final canonical outcome",
+            pending.hash()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn executed_in_final_blocks(
+    worker: &Worker<Sandbox>,
+    outcome: &ExecutionFinalResult,
+) -> anyhow::Result<bool> {
+    let head = worker.view_block().await?;
+    let final_height = worker
+        .view_block()
+        .block_hash(*head.header().last_final_block())
+        .await?
+        .height();
+    for executed in outcome.outcomes() {
+        if !is_final_canonical(worker, executed.block_hash, final_height).await {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+async fn is_final_canonical(worker: &Worker<Sandbox>, hash: CryptoHash, final_height: u64) -> bool {
+    let Ok(block) = worker.view_block().block_hash(hash).await else {
+        return false;
+    };
+    if block.height() > final_height {
+        return false;
+    }
+    // An abandoned block is still served by hash, but not at its height.
+    matches!(
+        worker.view_block().block_height(block.height()).await,
+        Ok(canonical) if *canonical.hash() == hash
+    )
 }
 
 #[tokio::test]
 async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
-    let (contract, bridge, guardian, creator, usdc) = init().await?;
+    let (worker, contract, bridge, guardian, creator, usdc, _admin) = init_with_worker().await?;
     let storage_before: Option<serde_json::Value> = usdc
         .view("storage_balance_of")
         .args_json(json!({ "account_id": contract.id() }))
@@ -280,30 +361,54 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
             "availability": "ACTIVE",
         },
     });
-    let first: serde_json::Value = bridge
-        .call(contract.id(), "finalize_livepeer_publication")
-        .args_json(args.clone())
-        .transact()
-        .await?
-        .json()?;
+    let first_outcome = transact_final(
+        &worker,
+        bridge
+            .call(contract.id(), "finalize_livepeer_publication")
+            .args_json(args.clone()),
+    )
+    .await?;
+    let publish_receipt = first_outcome
+        .receipt_outcomes()
+        .iter()
+        .find(|outcome| &outcome.executor_id == contract.id())
+        .expect("finalize must execute on the market");
+    let publish_block = worker
+        .view_block()
+        .block_hash(publish_receipt.block_hash)
+        .await?;
+    let first: serde_json::Value = first_outcome.json()?;
     let stored_after_first: serde_json::Value = contract
         .view("get_publication")
         .args_json(json!({ "publication_id": "job-1" }))
+        .finality(Finality::Final)
         .await?
         .json()?;
-    let second: serde_json::Value = bridge
-        .call(contract.id(), "finalize_livepeer_publication")
-        .args_json(args)
-        .transact()
-        .await?
-        .json()?;
+    let second: serde_json::Value = transact_final(
+        &worker,
+        bridge
+            .call(contract.id(), "finalize_livepeer_publication")
+            .args_json(args),
+    )
+    .await?
+    .json()?;
     let stored_after_replay: serde_json::Value = contract
         .view("get_publication")
         .args_json(json!({ "publication_id": "job-1" }))
+        .finality(Finality::Final)
         .await?
         .json()?;
-    let publication_count: u64 = contract.view("get_publications_count").await?.json()?;
+    let publication_count: u64 = contract
+        .view("get_publications_count")
+        .finality(Finality::Final)
+        .await?
+        .json()?;
     assert_eq!(publication_count, 1);
+    assert_eq!(
+        first["published_at_ms"],
+        publish_block.timestamp() / 1_000_000,
+        "publication must carry the timestamp of the canonical block that executed it"
+    );
     assert_eq!(first, stored_after_first);
     assert_eq!(first, second);
     assert_eq!(first, stored_after_replay);
