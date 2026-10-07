@@ -307,9 +307,13 @@ npm --prefix docs audit --omit=dev --audit-level=high
 ```
 
 The workflow regression requires every tracked third-party GitHub Action to use
-a full commit SHA. CI requires the three runtime npm audits above. The reusable
-CodeQL workflow is an explicit `CI Gate` dependency for pull requests and
-pushes, while retaining its weekly/manual entrypoints. Local source inspection
+a full commit SHA. CI requires the runtime npm audits above. The reusable
+CodeQL workflow is an explicit `CI Gate` dependency for pushes to `main`, while
+retaining its weekly/manual entrypoints; pull requests do not run it.
+On pull requests the npm audit runs only when a `package.json` or
+`package-lock.json` changes, and the WASM audit only when a contract
+`Cargo.toml`/`Cargo.lock` or its audit scripts change; pushes to `main` always
+run both. Draft pull requests run no CI jobs; marking one ready for review does. Local source inspection
 does not prove an analysis run; report it as `UNPROVEN` until GitHub executes
 the exact revision. CI downloads checksum-pinned cargo-audit 0.22.2 and fails
 when a RustSec vulnerability is reachable from either contract's normal WASM
