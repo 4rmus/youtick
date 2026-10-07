@@ -83,6 +83,9 @@ Copy `.env.example` to `.env.local` for development. Market and access IDs are r
 V2 NEAR Auth sign-in (`lib/near-auth/`) stays off unless `NEXT_PUBLIC_ENABLE_NEAR_AUTH_V2=true`
 and `NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID` is set; only testnet has a pinned provider, and no
 `ckd-gate` is trusted until one is added to `CKD_TRUST_ROOTS` in `lib/ticket-keys/ckd.ts`.
+The V2 pages `/tickets` and `/invite` also need `NEXT_PUBLIC_MARKET_V2_CONTRACT_ID`,
+`NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID`, `NEXT_PUBLIC_RELAYER_URL` (HTTPS origin) and
+`NEXT_PUBLIC_LIVEPEER_BRIDGE_URL`; otherwise they return 404.
 Multi-asset payments also default to `off`. `preview` is dry-quote only; `live`
 requires the Bridge to use the same mode and a positive
 `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`.
