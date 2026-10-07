@@ -150,7 +150,7 @@ could be reversed.
 | `platform_revoke_device` (platform role) | `{ ticket_id, session_public_key }` |
 | `refund_unwatched` | `{ ticket_id, refund_to, expires_at_ms, signature }` |
 | `mark_watched` (Bridge role) | `{ ticket_id }` |
-| `release_expired` (anyone) | `{ ticket_ids: [1..50] }` |
+| `release_expired` (anyone) | `{ ticket_ids: [1..25] }`; NEAR caps one call's logs at 16,384 bytes |
 
 ## Contract rules this protocol relies on
 
@@ -175,8 +175,15 @@ could be reversed.
 8. **Tickets are never deleted.** Refunded, voided and released tickets stay as tombstones, so
    the recovery scan and `ticket_id` uniqueness keep working.
 9. **Watched before playback.** The Bridge finalizes `mark_watched` before it issues the first
-   playback token for a ticket. A ticket that is no longer `purchased` (for example, refunded)
-   gets no token. This closes the race between playing and refunding.
+   playback token for a ticket.
+   - `mark_watched` succeeds for `purchased` tickets (settles) and for `watched` or `released`
+     tickets (no payment). Those tickets may play.
+   - It fails for `refunded` or `voided` tickets and for taken-down publications. Those get no
+     token.
+   - This closes the race between playing and refunding.
+10. **Refund window.** `refund_unwatched` is allowed while a crypto ticket is `purchased` and
+    younger than 30 days. After a takedown it stays open with no time limit; there is no other
+    exit for that escrow.
 
 ## Playback request
 
@@ -205,6 +212,7 @@ The envelope is `{ "standard": "youtick_market", "version": "2.0.0", "event", "d
 | `ticket_watched`, `ticket_released` | the settled VAT, platform and creator amounts |
 | `ticket_refunded` | `refunded_usdc_micro` |
 | `card_ticket_voided` | `reason` |
+| `creator_payout_credited` | the creator share credited to the creator balance after a failed push on `mark_watched` |
 
 No event carries a buyer account. Field lists are in `schema.json`. The contract gate (E3) may
 add payout-outcome events. It must not remove fields listed here without a protocol version

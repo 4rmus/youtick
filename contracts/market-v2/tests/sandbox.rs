@@ -475,12 +475,28 @@ fn sign_lines(key: &ed25519_dalek::SigningKey, lines: &[&str]) -> String {
 
 /// A `buy_ticket_v2` message signed for the sandbox clock (signatures expire within an hour).
 fn purchase_message(market: &str, publication_id: &str, gross: u128) -> (String, String) {
+    purchase_message_for(market, publication_id, gross, "sandbox-ticket")
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+
+fn purchase_message_for(
+    market: &str,
+    publication_id: &str,
+    gross: u128,
+    label: &str,
+) -> (String, String) {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
     let expires = (now_ms + 1_800_000).to_string();
-    let ticket = test_key("sandbox-ticket");
+    let ticket = test_key(label);
     let session = near_key(&test_key("sandbox-session"));
     let ticket_id = sha256_hex(&ticket.verifying_key().to_bytes());
     let certificate = "e".repeat(64);
@@ -636,5 +652,191 @@ async fn self_upgrade_reverts_a_failed_migrate_then_deploys_the_proposed_code() 
         contract.view("get_governance_state").await?.json()?;
     assert_eq!(governance_after, governance_before);
     assert_eq!(governance_after["new_purchases_paused"], true);
+    Ok(())
+}
+
+#[tokio::test]
+async fn watched_ticket_pays_the_creator_and_refund_returns_gross_on_chain() -> anyhow::Result<()> {
+    let (contract, bridge, _guardian, creator, usdc) = init().await?;
+    let buyer = creator
+        .create_subaccount("buyer")
+        .initial_balance(NearToken::from_near(5))
+        .transact()
+        .await?
+        .into_result()?;
+    let storage_bounds: serde_json::Value = usdc.view("storage_balance_bounds").await?.json()?;
+    let storage_min: u128 = storage_bounds["min"].as_str().expect("decimal").parse()?;
+    for account_id in [contract.id(), buyer.id()] {
+        creator
+            .call(usdc.id(), "storage_deposit")
+            .args_json(json!({ "account_id": account_id, "registration_only": true }))
+            .deposit(NearToken::from_yoctonear(storage_min))
+            .transact()
+            .await?
+            .into_result()?;
+    }
+    creator
+        .call(usdc.id(), "ft_transfer")
+        .args_json(json!({ "receiver_id": buyer.id(), "amount": "10000000" }))
+        .deposit(NearToken::from_yoctonear(1))
+        .transact()
+        .await?
+        .into_result()?;
+    creator
+        .call(usdc.id(), "ft_transfer_call")
+        .args_json(json!({
+            "receiver_id": contract.id(),
+            "amount": "500000",
+            "msg": json!({
+                "action": "create_paid_job",
+                "job_id": "job-settle",
+                "title": "Settle video",
+                "price_usdc": "5000000",
+                "expected_source_bytes": "1000000",
+                "profile_id": "paid-media-livepeer-v1",
+                "profile_config_sha256": PROFILE_HASH,
+                "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
+                "upload_key_expires_at_ms": "9999999999999",
+            })
+            .to_string(),
+        }))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+    bridge
+        .call(contract.id(), "finalize_livepeer_publication")
+        .args_json(json!({
+            "submission": {
+                "job_id": "job-settle",
+                "generation": 1,
+                "creator_id": creator.id(),
+                "expected_source_bytes": "1000000",
+                "profile_id": "paid-media-livepeer-v1",
+                "profile_config_sha256": PROFILE_HASH,
+                "asset_id_hash": ASSET_HASH,
+                "playback_id": "playback_settle",
+                "project_id_hash": PROJECT_HASH,
+                "verified_source_bytes": "1000000",
+                "provider_source_fingerprint": null,
+                "ready_at_ms": "1785589200000",
+                "availability": "ACTIVE",
+            },
+        }))
+        .transact()
+        .await?
+        .into_result()?;
+    let mut tickets = Vec::new();
+    for label in ["sandbox-watch", "sandbox-refund"] {
+        let (msg, ticket_id) =
+            purchase_message_for(contract.id().as_str(), "job-settle", 5_000_000, label);
+        buyer
+            .call(usdc.id(), "ft_transfer_call")
+            .args_json(json!({ "receiver_id": contract.id(), "amount": "5000000", "msg": msg }))
+            .deposit(NearToken::from_yoctonear(1))
+            .gas(Gas::from_tgas(100))
+            .transact()
+            .await?
+            .into_result()?;
+        tickets.push(ticket_id);
+    }
+
+    // Watch: the creator receives 3,958,334 (5 USDC, 833,333 VAT, 5% of net to the platform).
+    let creator_before: u128 = ft_balance(&usdc, creator.id()).await?.parse()?;
+    bridge
+        .call(contract.id(), "mark_watched")
+        .args_json(json!({ "ticket_id": tickets[0] }))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+    let creator_after: u128 = ft_balance(&usdc, creator.id()).await?.parse()?;
+    assert_eq!(creator_after - creator_before, 3_958_334);
+    let tax: String = contract.view("get_tax_balance").await?.json()?;
+    assert_eq!(tax, "833333");
+    let escrow: String = contract.view("get_escrow_balance").await?.json()?;
+    assert_eq!(escrow, "5000000");
+
+    // A refund to an account without USDC storage fails in the token and is restored.
+    let unregistered = creator
+        .create_subaccount("unregistered")
+        .initial_balance(NearToken::from_near(1))
+        .transact()
+        .await?
+        .into_result()?;
+    let expires = (now_ms() + 1_800_000).to_string();
+    let failed_signature = sign_lines(
+        &test_key("sandbox-refund"),
+        &[
+            "youtick.market-v2.ticket-sig.v1",
+            "testnet",
+            contract.id().as_str(),
+            "refund_unwatched",
+            &tickets[1],
+            &expires,
+            unregistered.id().as_str(),
+        ],
+    );
+    let failed = creator
+        .call(contract.id(), "refund_unwatched")
+        .args_json(json!({
+            "ticket_id": tickets[1],
+            "refund_to": unregistered.id(),
+            "expires_at_ms": expires,
+            "signature": failed_signature,
+        }))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?;
+    for outcome in failed.outcomes() {
+        assert!(outcome.gas_burnt.as_gas() < 300_000_000_000_000);
+    }
+    let restored: serde_json::Value = contract
+        .view("get_ticket")
+        .args_json(json!({ "ticket_id": tickets[1] }))
+        .await?
+        .json()?;
+    assert_eq!(restored["status"], "purchased");
+    let escrow: String = contract.view("get_escrow_balance").await?.json()?;
+    assert_eq!(escrow, "5000000");
+
+    // Refund: the ticket key sends the whole gross amount back to the buyer.
+    let buyer_before: u128 = ft_balance(&usdc, buyer.id()).await?.parse()?;
+    let signature = sign_lines(
+        &test_key("sandbox-refund"),
+        &[
+            "youtick.market-v2.ticket-sig.v1",
+            "testnet",
+            contract.id().as_str(),
+            "refund_unwatched",
+            &tickets[1],
+            &expires,
+            buyer.id().as_str(),
+        ],
+    );
+    creator
+        .call(contract.id(), "refund_unwatched")
+        .args_json(json!({
+            "ticket_id": tickets[1],
+            "refund_to": buyer.id(),
+            "expires_at_ms": expires,
+            "signature": signature,
+        }))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+    let buyer_after: u128 = ft_balance(&usdc, buyer.id()).await?.parse()?;
+    assert_eq!(buyer_after - buyer_before, 5_000_000);
+    let refunded: serde_json::Value = contract
+        .view("get_ticket")
+        .args_json(json!({ "ticket_id": tickets[1] }))
+        .await?
+        .json()?;
+    assert_eq!(refunded["status"], "refunded");
+    assert_eq!(refunded["devices"], json!([]));
+    let escrow: String = contract.view("get_escrow_balance").await?.json()?;
+    assert_eq!(escrow, "0");
     Ok(())
 }

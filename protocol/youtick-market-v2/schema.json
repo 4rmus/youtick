@@ -249,7 +249,7 @@
         "ticket_ids": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 50,
+          "maxItems": 25,
           "items": {
             "$ref": "#/$defs/ticket_id"
           }
@@ -281,7 +281,8 @@
             "ticket_refunded",
             "ticket_released",
             "card_ticket_voided",
-            "device_revoked"
+            "device_revoked",
+            "creator_payout_credited"
           ]
         },
         "data": {
@@ -586,6 +587,26 @@
         },
         "session_public_key": {
           "$ref": "#/$defs/ed25519_public_key"
+        }
+      }
+    },
+    "event_creator_payout_credited": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "creator_id",
+        "creator_usdc_micro"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "creator_id": {
+          "$ref": "#/$defs/account_id"
+        },
+        "creator_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
         }
       }
     }
