@@ -57,7 +57,7 @@ jobs:
         run: |
           mkdir -p "${RUNNER_TEMP}/contract-sboms"
           created="$(git show -s --format=%cI "${GITHUB_SHA}")"
-          for contract in nft-ticket access-control; do
+          for contract in nft-ticket market-v2 access-control; do
             audit_json="${RUNNER_TEMP}/${contract}-audit.json"
             metadata="${RUNNER_TEMP}/${contract}-metadata.json"
             packages="${RUNNER_TEMP}/${contract}-wasm-packages.txt"
@@ -290,6 +290,13 @@ jobs:
           cargo test --lib
           cargo test --test paid_media_livepeer_v1
           cargo test --test sandbox
+      - name: Test market v2
+        if: matrix.task == 'tests'
+        working-directory: contracts/market-v2
+        run: |
+          cargo test --lib
+          cargo test --test market_v2
+          cargo test --test sandbox
       - name: Test access control
         if: matrix.task == 'tests'
         working-directory: contracts/access-control
@@ -298,11 +305,13 @@ jobs:
         if: matrix.task == 'quality'
         run: |
           (cd contracts/nft-ticket && cargo fmt --all --check)
+          (cd contracts/market-v2 && cargo fmt --all --check)
           (cd contracts/access-control && cargo fmt --all --check)
       - name: Lint contracts
         if: matrix.task == 'quality'
         run: |
           (cd contracts/nft-ticket && cargo clippy --all-targets -- -D warnings)
+          (cd contracts/market-v2 && cargo clippy --all-targets -- -D warnings)
           (cd contracts/access-control && cargo clippy --all-targets)
       - name: Install Wasm target for ABI builds
         if: matrix.task == 'quality'
@@ -325,6 +334,7 @@ jobs:
         if: matrix.task == 'quality'
         run: |
           (cd contracts/nft-ticket && cargo near build non-reproducible-wasm)
+          (cd contracts/market-v2 && cargo near build non-reproducible-wasm)
           (cd contracts/access-control && cargo near build non-reproducible-wasm)
       - name: Check exact ABI
         if: matrix.task == 'quality'
