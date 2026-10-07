@@ -742,6 +742,45 @@ async fn watched_ticket_pays_the_creator_and_refund_returns_gross_on_chain() -> 
         tickets.push(ticket_id);
     }
 
+    // Any account (here the creator, standing in for the relayer) submits a ticket-key-signed
+    // add_device; the viewer sends no transaction.
+    let expires = (now_ms() + 1_800_000).to_string();
+    let session = near_key(&test_key("sandbox-second-device"));
+    let certificate = "e".repeat(64);
+    let signature = sign_lines(
+        &test_key("sandbox-watch"),
+        &[
+            "youtick.market-v2.ticket-sig.v1",
+            "testnet",
+            contract.id().as_str(),
+            "add_device",
+            &tickets[0],
+            &expires,
+            &session,
+            &certificate,
+            "0",
+        ],
+    );
+    creator
+        .call(contract.id(), "add_device")
+        .args_json(json!({
+            "ticket_id": tickets[0],
+            "session_public_key": session,
+            "certificate_sha256": certificate,
+            "device_epoch": "0",
+            "expires_at_ms": expires,
+            "signature": signature,
+        }))
+        .transact()
+        .await?
+        .into_result()?;
+    let with_device: serde_json::Value = contract
+        .view("get_ticket")
+        .args_json(json!({ "ticket_id": tickets[0] }))
+        .await?
+        .json()?;
+    assert_eq!(with_device["devices"].as_array().unwrap().len(), 2);
+
     // Watch: the creator receives 3,958,334 (5 USDC, 833,333 VAT, 5% of net to the platform).
     let creator_before: u128 = ft_balance(&usdc, creator.id()).await?.parse()?;
     bridge

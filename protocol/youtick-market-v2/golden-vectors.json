@@ -260,7 +260,7 @@
       "data": [
         {
           "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
-          "session_public_key": "ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9",
+          "session_public_key": "ed25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3",
           "device_epoch": "0",
           "expires_at_ms": "1793952000000"
         }
