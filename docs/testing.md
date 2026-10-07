@@ -114,6 +114,7 @@ node --test scripts/apply-market-read-model-d1.test.mjs \
   scripts/fastnear-dev.test.mjs \
   scripts/fetch-neardata-market-block.test.mjs \
   scripts/market-event-catalog.test.mjs \
+  scripts/market-v2-read-model.test.mjs \
   scripts/market-read-api.test.mjs \
   scripts/current-catalog.test.mjs \
   scripts/rebuild-market-read-model.test.mjs

@@ -586,6 +586,7 @@ jobs:
           scripts/fetch-neardata-market-block.test.mjs
           scripts/rebuild-market-read-model.test.mjs
           scripts/market-event-catalog.test.mjs
+          scripts/market-v2-read-model.test.mjs
           scripts/market-read-api.test.mjs
           scripts/current-catalog.test.mjs
           scripts/history-targeted-scan.test.mjs

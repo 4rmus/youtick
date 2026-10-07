@@ -59,6 +59,27 @@ const GOVERNANCE_EVENTS = new Set([
     'code_upgraded',
     'contract_migrated',
 ]);
+// V2 Market ticket events (envelope 2.0.0) and V2-only events kept on the 1.0.0 envelope.
+const MARKET_V2_CATALOG = new Set([
+    'ticket_purchased',
+    'card_ticket_issued',
+    'device_added',
+    'device_revoked',
+    'ticket_watched',
+    'ticket_refunded',
+    'ticket_released',
+    'card_ticket_voided',
+    'creator_payout_credited',
+]);
+const MARKET_V2_V1_ENVELOPE_EVENTS = new Set([
+    'vat_key_revoked',
+]);
+const TICKET_STATUS_EVENTS = {
+    ticket_watched: 'watched',
+    ticket_released: 'released',
+    ticket_refunded: 'refunded',
+    card_ticket_voided: 'voided',
+};
 const ACCOUNT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
@@ -75,6 +96,7 @@ export function rebuildMarketReadModel(rawRecords) {
     const sales = new Map();
     const withdrawals = new Map();
     const governance = new Map();
+    const tickets = new Map();
     const watermarks = new Map();
 
     for (const record of records) {
@@ -99,7 +121,7 @@ export function rebuildMarketReadModel(rawRecords) {
         }
         physicalEvents.set(physicalKey, encoded);
         businessEvents.set(businessKey, encoded);
-        applyProjection(record, data, { jobs, publications, entitlements, sales, withdrawals, governance });
+        applyProjection(record, data, { jobs, publications, entitlements, sales, withdrawals, governance, tickets });
 
         const watermarkKey = `${record.network}:${data.contract_id}`;
         watermarks.set(watermarkKey, {
@@ -120,6 +142,7 @@ export function rebuildMarketReadModel(rawRecords) {
         sale_ledger: sortedValues(sales),
         withdrawal_history: sortedValues(withdrawals),
         governance_audit: sortedValues(governance),
+        ...(tickets.size ? { market_v2_tickets: sortedValues(tickets) } : {}),
     };
 }
 
@@ -223,8 +246,74 @@ function applyProjection(record, data, stores) {
             reason_code: data.reason_code || null,
         });
         break;
+    case 'ticket_purchased':
+        if (stores.tickets.has(key(requiredTicketId(data.ticket_id)))) break;
+        stores.tickets.set(key(data.ticket_id), {
+            ...base,
+            ticket_id: requiredTicketId(data.ticket_id),
+            publication_id: requiredId(data.publication_id),
+            creator_id: requiredAccount(data.creator_id),
+            rail: 'crypto',
+            status: 'purchased',
+            gross_amount: requiredDecimal(data.gross_usdc_micro),
+            currency: 'USDC',
+            vat_usdc_micro: requiredDecimal(data.vat_usdc_micro),
+            platform_usdc_micro: requiredDecimal(data.platform_usdc_micro),
+            creator_usdc_micro: requiredDecimal(data.creator_usdc_micro),
+            purchased_at_ms: Number(requiredDecimal(data.block_timestamp_ms)),
+            settled_at_ms: null,
+            payout_credited_to_balance: 0,
+        });
+        break;
+    case 'card_ticket_issued':
+        if (stores.tickets.has(key(requiredTicketId(data.ticket_id)))) break;
+        stores.tickets.set(key(data.ticket_id), {
+            ...base,
+            ticket_id: requiredTicketId(data.ticket_id),
+            publication_id: requiredId(data.publication_id),
+            creator_id: requiredAccount(data.creator_id),
+            rail: 'card',
+            status: 'purchased',
+            gross_amount: requiredDecimal(data.gross_minor),
+            currency: requiredCurrency(data.currency),
+            vat_usdc_micro: '0',
+            platform_usdc_micro: '0',
+            creator_usdc_micro: '0',
+            purchased_at_ms: Number(requiredDecimal(data.block_timestamp_ms)),
+            settled_at_ms: null,
+            payout_credited_to_balance: 0,
+        });
+        break;
+    case 'ticket_watched':
+    case 'ticket_released':
+    case 'ticket_refunded':
+    case 'card_ticket_voided': {
+        const ticket = stores.tickets.get(key(requiredTicketId(data.ticket_id)));
+        // Same as D1: a ticket purchased before indexing started is skipped.
+        if (!ticket) break;
+        const status = TICKET_STATUS_EVENTS[record.event.event];
+        stores.tickets.set(key(data.ticket_id), {
+            ...ticket,
+            status,
+            settled_at_ms: ['watched', 'released'].includes(status)
+                ? Number(requiredDecimal(data.block_timestamp_ms)) : ticket.settled_at_ms,
+            source_block_height: record.block_height,
+        });
+        break;
+    }
+    case 'creator_payout_credited': {
+        const ticket = stores.tickets.get(key(requiredTicketId(data.ticket_id)));
+        if (!ticket) break;
+        stores.tickets.set(key(data.ticket_id), { ...ticket, payout_credited_to_balance: 1, source_block_height: record.block_height });
+        break;
+    }
+    case 'device_added':
+    case 'device_revoked':
+        // Devices are authoritative only through get_ticket; the raw event stays in chain_events.
+        requiredTicketId(data.ticket_id);
+        break;
     default:
-        if (GOVERNANCE_EVENTS.has(record.event.event)) {
+        if (GOVERNANCE_EVENTS.has(record.event.event) || MARKET_V2_V1_ENVELOPE_EVENTS.has(record.event.event)) {
             stores.governance.set(key(`${record.event.event}:${data.idempotency_key}`), {
                 ...base,
                 event_name: record.event.event,
@@ -248,9 +337,13 @@ function parseRecord(value) {
         throw new Error('invalid_final_event_envelope');
     }
     const event = value.event;
+    const marketV2 = event?.version === '2.0.0';
     if (!event || typeof event !== 'object' || Array.isArray(event)
-        || event.standard !== 'youtick_market' || event.version !== '1.0.0'
-        || !CATALOG.has(event.event) || !Array.isArray(event.data) || event.data.length !== 1
+        || event.standard !== 'youtick_market'
+        || !(marketV2
+            ? MARKET_V2_CATALOG.has(event.event)
+            : event.version === '1.0.0' && (CATALOG.has(event.event) || MARKET_V2_V1_ENVELOPE_EVENTS.has(event.event)))
+        || !Array.isArray(event.data) || event.data.length !== 1
         || !event.data[0] || typeof event.data[0] !== 'object' || Array.isArray(event.data[0])) {
         throw new Error('invalid_market_event');
     }
@@ -289,6 +382,16 @@ function requiredDecimal(value) {
     const text = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value;
     if (typeof text !== 'string' || !DECIMAL_PATTERN.test(text)) throw new Error('invalid_event_data');
     return text;
+}
+
+function requiredTicketId(value) {
+    if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) throw new Error('invalid_event_data');
+    return value;
+}
+
+function requiredCurrency(value) {
+    if (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value)) throw new Error('invalid_event_data');
+    return value;
 }
 
 function requiredPositiveInteger(value) {
