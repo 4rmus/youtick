@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { listPaymentAssets, multiAssetPaymentMode, readPaymentStatus, type PaymentQuoteResponse } from '@/lib/multi-asset-payments';
 import { fundingStep, quoteTicketFunding, type FundingStep } from '@/lib/v2/funding';
+import type { FunnelStep } from '@/lib/v2/funnel';
 
 const STATUS_POLL_MS = 5_000;
 
@@ -24,11 +25,12 @@ const STEP_LABELS: Record<FundingStep, string> = {
  * through 1Click. Nothing is stored: if the page is reloaded, the converted USDC still arrives in
  * the account and the balance shows it.
  */
-export function FundBalance({ accountId, publicationId, balanceCoversPrice, refreshBalance }: {
+export function FundBalance({ accountId, publicationId, balanceCoversPrice, refreshBalance, onStep }: {
     accountId: string;
     publicationId: string;
     balanceCoversPrice: boolean;
     refreshBalance: () => void;
+    onStep?: (step: FunnelStep) => void;
 }) {
     const assets = useQuery({ queryKey: ['v2PaymentAssets'], queryFn: listPaymentAssets, staleTime: 60_000 });
     const [assetId, setAssetId] = useState('');
@@ -66,6 +68,7 @@ export function FundBalance({ accountId, publicationId, balanceCoversPrice, refr
             const next = await quoteTicketFunding({ accountId, publicationId, originAssetId: assetId, refundAddress, dry });
             if (dry) setPreview(next);
             else setDeposit(next);
+            onStep?.(dry ? 'funding_quote' : 'funding_deposit');
         } catch (failure) {
             setError(paymentErrorMessage(failure instanceof Error ? failure.message : ''));
         } finally {

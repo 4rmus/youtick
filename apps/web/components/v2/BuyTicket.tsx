@@ -11,6 +11,7 @@ import { NEAR_CONFIG } from '@/lib/constants';
 import { formatUsdc } from '@/lib/livepeer-publication';
 import { loadDeviceKey, type DeviceKey } from '@/lib/v2/device-key';
 import { cryptoRailEnabled, fundingAvailable } from '@/lib/v2/funding';
+import { trackFunnelStep, type FunnelStep } from '@/lib/v2/funnel';
 import { readAccessKey } from '@/lib/v2/near-reads';
 import { buyTicket, CheckoutError } from '@/lib/v2/purchase';
 import { findOwnedTickets } from '@/lib/v2/tickets';
@@ -81,6 +82,25 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     const refetchBalance = balance.refetch;
     const refreshBalance = useCallback(() => { void refetchBalance(); }, [refetchBalance]);
 
+    // Each view step is counted once per page load; nothing identifies the user or the screening.
+    const counted = useRef(new Set<FunnelStep>());
+    const track = useCallback((step: FunnelStep, code?: string) => {
+        if (step !== 'purchase_failed' && step !== 'approval_started' && step !== 'ticket_confirmed') {
+            if (counted.current.has(step)) return;
+            counted.current.add(step);
+        }
+        trackFunnelStep(config.paymentServiceUrl, step, code);
+    }, [config.paymentServiceUrl]);
+    const onSale = publication.data?.availability === 'ACTIVE' && cryptoRail === true;
+    const balanceLow = signedIn && publication.data != null && balance.data !== undefined
+        && BigInt(balance.data) < BigInt(publication.data.price_usdc);
+    useEffect(() => {
+        if (!onSale) return;
+        track('checkout_view');
+        if (!signedIn) track('sign_in_prompt');
+        if (balanceLow) track('balance_low');
+    }, [onSale, signedIn, balanceLow, track]);
+
     if (!valid) return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Screening not found" />;
     if (!config.paymentServiceUrl) return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Ticket sales are not open yet" />;
     if (cryptoRail === null) return <p className="text-center text-white/70" role="status">Loading…</p>;
@@ -106,12 +126,14 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
         // Opened in the click handler so the browser does not block the approval window.
         const popup = window.open('about:blank', 'youtick-near-auth', 'width=480,height=720');
         if (!popup) {
+            track('purchase_failed', 'popup_blocked');
             setState('error');
             setError('Your browser blocked the approval window. Allow pop-ups for this site and try again.');
             return;
         }
         setState('buying');
         setError('');
+        track('approval_started');
         try {
             const scan = await findOwnedTickets(view, config.marketContractId, session.ckdKey);
             let index = scan.nextIndex;
@@ -123,11 +145,13 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
                 publicationId: item.publication_id, ticketIndex: index, device, popup, redirectUri: window.location.origin,
                 deps: { view, accessKey: readAccessKey },
             });
+            track('ticket_confirmed');
             setState('done');
             void balance.refetch();
         } catch (failure) {
             setState('error');
             const code = failure instanceof CheckoutError || failure instanceof Error ? failure.message : '';
+            track('purchase_failed', ERRORS[code] ? code : 'other');
             setError(ERRORS[code] ?? 'The purchase did not complete. No ticket was issued; please try again.');
         }
     }
@@ -146,7 +170,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
             Your youtick balance: {balance.data === undefined ? '…' : `${formatUsdc(balance.data)} USDC`}
         </p>
         {!enough && balance.data !== undefined && (fundingAvailable()
-            ? <FundBalance accountId={session.accountId} publicationId={item.publication_id} balanceCoversPrice={enough} refreshBalance={refreshBalance} />
+            ? <FundBalance accountId={session.accountId} publicationId={item.publication_id} balanceCoversPrice={enough} refreshBalance={refreshBalance} onStep={track} />
             : <p className="text-sm text-amber-200">
                 Your balance is too low for this ticket. On testnet, send test USDC to your account <code className="break-all">{session.accountId}</code>.
             </p>)}
