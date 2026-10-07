@@ -16,6 +16,8 @@ export interface Env {
     VAT_SIGNER_PRIVATE_KEY?: string;
     ALLOWED_ORIGINS?: string;
     PAYMENT_RATE_LIMITER?: RateLimit;
+    /** Checkout funnel counts; without the binding `/v1/funnel` accepts and drops events. */
+    FUNNEL?: AnalyticsEngineDataset;
 }
 
 export interface PaymentConfig {

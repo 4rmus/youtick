@@ -1,6 +1,8 @@
-// youtick payment service (roadmap E7; E8 adds the card path). For now it only issues VAT
-// attestations for V2 crypto purchases. It never moves money and stores nothing.
+// youtick payment service (roadmap E7; E8 adds the card path). For now it issues VAT attestations
+// for V2 crypto purchases and counts checkout funnel steps. It never moves money and stores no
+// personal data.
 import { paymentConfig, type Env, type PaymentConfig } from './env';
+import { parseFunnelEvent, recordFunnelEvent } from './funnel';
 import { readPurchasablePublication, rpcView, type View } from './market';
 import { attestVat } from './vat';
 
@@ -34,7 +36,7 @@ export async function handle(request: Request, env: Env, deps: PaymentDeps = {})
     const config = paymentConfig(env);
     if (!config) return json({ error: 'payment_service_disabled' }, 503);
     const url = new URL(request.url);
-    if (url.pathname !== '/v1/vat-attestations') return json({ error: 'not_found' }, 404);
+    if (url.pathname !== '/v1/vat-attestations' && url.pathname !== '/v1/funnel') return json({ error: 'not_found' }, 404);
     const origin = request.headers.get('origin') ?? '';
     if (!config.allowedOrigins.includes(origin)) return json({ error: 'origin_denied' }, 403);
     const cors = {
@@ -45,7 +47,9 @@ export async function handle(request: Request, env: Env, deps: PaymentDeps = {})
     if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, cors);
     if (env.PAYMENT_RATE_LIMITER) {
         const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
-        if (!(await env.PAYMENT_RATE_LIMITER.limit({ key: `vat:ip:${ip}` })).success) return json({ error: 'rate_limited' }, 429, cors);
+        // The IP is only a limiter key here; it is never written anywhere.
+        const scope = url.pathname === '/v1/funnel' ? 'funnel' : 'vat';
+        if (!(await env.PAYMENT_RATE_LIMITER.limit({ key: `${scope}:ip:${ip}` })).success) return json({ error: 'rate_limited' }, 429, cors);
     }
 
     let body: Record<string, unknown>;
@@ -56,6 +60,15 @@ export async function handle(request: Request, env: Env, deps: PaymentDeps = {})
         body = JSON.parse(text) as Record<string, unknown>;
     } catch {
         return json({ error: 'invalid_request' }, 400, cors);
+    }
+    if (url.pathname === '/v1/funnel') {
+        try {
+            const event = parseFunnelEvent(body);
+            if (env.FUNNEL) recordFunnelEvent(env.FUNNEL, event);
+        } catch {
+            return json({ error: 'invalid_request' }, 400, cors);
+        }
+        return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store', ...cors } });
     }
     // No buyer location or identity is accepted: the testnet policy is one fixed rate (X3 pending).
     const keys = body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body).sort() : [];

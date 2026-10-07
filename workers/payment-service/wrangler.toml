@@ -24,3 +24,8 @@ ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
 name = "PAYMENT_RATE_LIMITER"
 namespace_id = "3201"
 simple = { limit = 20, period = 60 }
+
+# Checkout funnel counts: step, rail and a fixed failure code only (src/funnel.ts).
+[[analytics_engine_datasets]]
+binding = "FUNNEL"
+dataset = "youtick_checkout_funnel"
