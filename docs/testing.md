@@ -104,6 +104,13 @@ node scripts/check-paid-media-livepeer-v1-abi.mjs
 node scripts/check-paid-media-livepeer-v1.mjs
 ```
 
+In CI the `Contracts (tests)` job restores the contract `target` directories
+from a cache keyed on the Rust version and every `contracts/**/Cargo.lock`;
+cargo still rebuilds the workspace crates. `Contracts (quality)` builds from a
+clean target because it packages the runtime artifacts. A pull request that
+only changes `.claude/`, `.agents/`, `claudedocs/`, `AGENTS.md` or the root
+prose files runs no component jobs; `CI Gate` still runs.
+
 ## Market v2 protocol
 
 The V2 byte formats in `protocol/youtick-market-v2` have no runtime consumer yet. The checker
