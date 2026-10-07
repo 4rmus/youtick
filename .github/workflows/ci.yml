@@ -64,7 +64,7 @@ jobs:
         run: |
           mkdir -p "${RUNNER_TEMP}/contract-sboms"
           created="$(git show -s --format=%cI "${GITHUB_SHA}")"
-          for contract in nft-ticket market-v2 access-control; do
+          for contract in nft-ticket market-v2 ckd-gate access-control; do
             audit_json="${RUNNER_TEMP}/${contract}-audit.json"
             metadata="${RUNNER_TEMP}/${contract}-metadata.json"
             packages="${RUNNER_TEMP}/${contract}-wasm-packages.txt"
@@ -387,6 +387,10 @@ jobs:
           cargo test --lib
           cargo test --test market_v2
           cargo test --test sandbox
+      - name: Test ckd-gate
+        if: matrix.task == 'tests'
+        working-directory: contracts/ckd-gate
+        run: cargo test --locked
       - name: Test access control
         if: matrix.task == 'tests'
         working-directory: contracts/access-control
@@ -396,12 +400,14 @@ jobs:
         run: |
           (cd contracts/nft-ticket && cargo fmt --all --check)
           (cd contracts/market-v2 && cargo fmt --all --check)
+          (cd contracts/ckd-gate && cargo fmt --all --check)
           (cd contracts/access-control && cargo fmt --all --check)
       - name: Lint contracts
         if: matrix.task == 'quality'
         run: |
           (cd contracts/nft-ticket && cargo clippy --all-targets -- -D warnings)
           (cd contracts/market-v2 && cargo clippy --all-targets -- -D warnings)
+          (cd contracts/ckd-gate && cargo clippy --locked --all-targets -- -D warnings)
           (cd contracts/access-control && cargo clippy --all-targets)
       - name: Install Wasm target for ABI builds
         if: matrix.task == 'quality'
@@ -425,6 +431,7 @@ jobs:
         run: |
           (cd contracts/nft-ticket && cargo near build non-reproducible-wasm)
           (cd contracts/market-v2 && cargo near build non-reproducible-wasm)
+          (cd contracts/ckd-gate && cargo near build non-reproducible-wasm --locked)
           (cd contracts/access-control && cargo near build non-reproducible-wasm)
       - name: Check exact ABI
         if: matrix.task == 'quality'
