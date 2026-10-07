@@ -1,6 +1,6 @@
 # youtick Market v2 contract
 
-Status: `E3C_LOCAL / NOT_DEPLOYED / RUNTIME_DISABLED`
+Status: `E3D_LOCAL / NOT_DEPLOYED / RUNTIME_DISABLED`
 
 This crate is the V2 Market. It is forked from `contracts/nft-ticket` at the merged self-upgrade
 gate (#257) and goes to mainnet under a new contract ID with empty state. Nothing is migrated
@@ -91,13 +91,39 @@ self-upgrade path are unchanged from V1.
 - **Limit.** A platform revocation stops one device. The ticket-key holder can sign a new device.
   Blocking a leaking ticket entirely is a Bridge policy, not a contract rule.
 
+## Card tickets (gate E3d)
+
+- **Payment operator.** `payment_operator_id` is set at init and must differ from the Bridge,
+  platform, admin, guardian and takedown accounts and from the tax account. It rotates like the other roles
+  (`GovernanceRole::PaymentOperator`, timelocked on mainnet).
+- **`issue_card_ticket(ticket_public_key, publication_id, device, payment_reference_hmac, gross_minor, currency)`**
+  — payment operator only, after a verified provider purchase event. No tokens move.
+  - The ticket key's `card_purchase` signature binds the device, the payment reference, the
+    amount and the currency. The operator cannot change what the buyer signed, and a crypto
+    signature does not work here.
+  - Each `payment_reference_hmac` and each `ticket_id` can be used only once.
+  - It follows the purchase pause and needs an `ACTIVE` publication. If it fails, the payment
+    service must refund the card payment.
+  - The operator attaches NEAR for the ticket's storage, and any excess is returned. A
+    compromised operator therefore cannot exhaust the contract's own storage balance.
+- **`void_card_ticket(ticket_id, reason)`** — payment operator only; the reason is `refund` or
+  `chargeback`.
+  - The ticket becomes `voided` and its devices are cleared.
+  - The record and its reference stay.
+  - Card tickets are never refunded or released on chain.
+  - The guardian's purchase pause also stops voids, so a compromised operator cannot revoke
+    paid tickets while its replacement waits out the rotation timelock.
+- **Watching.** `mark_watched` on a card ticket records the watch and moves no money.
+
 ## Not yet implemented
 
 | Gate | Adds |
 |---|---|
-| E3d | Card tickets: the payment operator role, `issue_card_ticket`, `void_card_ticket` |
-| E3e | Brake for new creators; invite-phase upload fee waiver |
 | Later | Timelocked addition of VAT keys |
+
+There will be no brake for new creators and no upload-fee waiver (owner decision, 2026-10-07).
+Invited creators receive a single-use invite link with USDC credit for upload fees. That is
+handled in onboarding, outside the contract.
 
 ## Checks
 
