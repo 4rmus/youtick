@@ -64,7 +64,7 @@ it('aborts a stalled initial request after 2500 ms and uses the same NEAR fallba
 
 it('shows public limits and self-service token guidance without the legacy campaign', async () => {
     const { PublicTestnetBetaBanner } = await import('@/components/PublicTestnetBetaBanner');
-    const { default: Terms } = await import('@/app/terms/page');
+    const { default: Terms } = await import('@/app/(site)/terms/page');
     const client = new QueryClient();
     const banner = renderToStaticMarkup(React.createElement(QueryClientProvider, { client }, React.createElement(PublicTestnetBetaBanner)));
     const terms = renderToStaticMarkup(React.createElement(Terms));

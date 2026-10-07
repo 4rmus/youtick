@@ -2,8 +2,8 @@ import { access, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import TermsPage from '@/app/terms/page';
-import PrivacyPage from '@/app/privacy/page';
+import TermsPage from '@/app/(site)/terms/page';
+import PrivacyPage from '@/app/(site)/privacy/page';
 import { describe, expect, it } from 'vitest';
 import { getLandingCtas, landingCopy } from '@/components/landing/landing-copy';
 import { calculateTicketSplit, formatMicroUsdc } from '@/components/landing/roi';
@@ -111,8 +111,8 @@ describe('bilingual landing', () => {
 
     it('ships the Turkish static route, locale alternates, and both optimized images', async () => {
         const [englishPage, turkishPage, sitemap] = await Promise.all([
-            readFile('app/page.tsx', 'utf8'),
-            readFile('app/tr/page.tsx', 'utf8'),
+            readFile('app/(site)/page.tsx', 'utf8'),
+            readFile('app/(tr)/tr/page.tsx', 'utf8'),
             readFile('app/sitemap.ts', 'utf8'),
         ]);
 

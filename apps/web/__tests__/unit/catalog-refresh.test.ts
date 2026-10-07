@@ -21,7 +21,7 @@ vi.mock('@tanstack/react-query', async importOriginal => ({
     useInfiniteQuery: state.infinite, useQuery: state.query, useQueryClient: () => ({}),
 }));
 import { useAllVideos } from '@/hooks/useAllVideos';
-import ProfilePage from '@/app/profile/page';
+import ProfilePage from '@/app/(site)/profile/page';
 import { DiscoverView } from '@/components/discover/DiscoverView';
 
 let client: QueryClient;

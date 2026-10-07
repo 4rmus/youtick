@@ -8,28 +8,30 @@ async function exists(path: string): Promise<boolean> {
 
 describe('Livepeer-only routes', () => {
     it('keeps the Turkish dark-release smoke route available', async () => {
-        await expect(exists('app/tr/page.tsx')).resolves.toBe(true);
+        await expect(exists('app/(tr)/tr/page.tsx')).resolves.toBe(true);
     });
 
     it('removes claim, trial and onboarding endpoints so Next returns 404', async () => {
         await expect(Promise.all([
             exists('app/claim/page.tsx'),
             exists('app/trial/page.tsx'),
+            exists('app/(site)/claim/page.tsx'),
+            exists('app/(site)/trial/page.tsx'),
             exists('app/api/onboarding-key/route.ts'),
             exists('app/api/trial/sponsored/route.ts'),
-        ])).resolves.toEqual([false, false, false, false]);
+        ])).resolves.toEqual([false, false, false, false, false, false]);
     });
 
     it('accepts only the job query on the watch route', async () => {
-        const source = await readFile('app/watch/page.tsx', 'utf8');
+        const source = await readFile('app/(site)/watch/page.tsx', 'utf8');
         expect(source).toContain("get('job')");
         expect(source).not.toContain("get('cid')");
     });
 
     it('opens publication reads without opening paid media actions', async () => {
         const [discover, profile, card] = await Promise.all([
-            readFile('app/discover/page.tsx', 'utf8'),
-            readFile('app/profile/page.tsx', 'utf8'),
+            readFile('app/(site)/discover/page.tsx', 'utf8'),
+            readFile('app/(site)/profile/page.tsx', 'utf8'),
             readFile('components/VideoCard.tsx', 'utf8'),
         ]);
 

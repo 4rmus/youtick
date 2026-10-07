@@ -2,11 +2,14 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 const ACTIVE_UI_FILES = [
-    'app/layout.tsx',
-    'app/page.tsx',
-    'app/profile/page.tsx',
-    'app/tr/page.tsx',
-    'app/watch/page.tsx',
+    'app/(site)/layout.tsx',
+    'app/(tr)/layout.tsx',
+    'app/(site)/page.tsx',
+    'app/(site)/profile/page.tsx',
+    'app/(tr)/tr/page.tsx',
+    'app/(site)/watch/page.tsx',
+    'components/RootShell.tsx',
+    'lib/site-metadata.ts',
     'components/Navbar.tsx',
     'components/RuntimeClosed.tsx',
     'components/LivepeerPlayer.tsx',
@@ -42,8 +45,8 @@ describe('active UI copy', () => {
     it('keeps the public testnet warning, limits, noindex and abuse route visible', async () => {
         const [banner, terms, layout, robots] = await Promise.all([
             readFile('components/PublicTestnetBetaBanner.tsx', 'utf8'),
-            readFile('app/terms/page.tsx', 'utf8'),
-            readFile('app/layout.tsx', 'utf8'),
+            readFile('app/(site)/terms/page.tsx', 'utf8'),
+            readFile('lib/site-metadata.ts', 'utf8'),
             readFile('app/robots.ts', 'utf8'),
         ]);
         for (const value of ['Testnet Beta', 'no real value', '1 GB/file', '1 upload/UTC day',
