@@ -17,7 +17,8 @@ describe('root layouts', () => {
         await expect(access('app/(tr)/tr/page.tsx')).resolves.toBeUndefined();
     });
 
-    it('has no top-level root layout that would put every page under one language', async () => {
+    it('has no top-level root layout, and sends unmatched URLs to the English root layout', async () => {
         await expect(access('app/layout.tsx')).rejects.toThrow();
+        expect(await readFile('app/(site)/[...missing]/page.tsx', 'utf8')).toContain('notFound()');
     });
 });
