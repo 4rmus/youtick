@@ -19,6 +19,10 @@ const RESEND_AFTER_MS = 30 * 1000;
 const LANDING_WINDOW_MS = 3 * 60 * 1000;
 /** CKD records hold the id_token inside the signed transaction; it is stripped after this. */
 const CKD_RECORD_TTL_MS = 10 * 60 * 1000;
+/** A purchase still waiting for its fast-auth signature after this needs a new approval. */
+const SIGN_TIMEOUT_MS = 10 * 60 * 1000;
+/** Finished purchases stay readable on the status route for this long. */
+const PURCHASE_RECORD_TTL_MS = 24 * 60 * 60 * 1000;
 const POLL_DELAYS_MS = [1_000, 2_000, 3_000, 4_000];
 
 type TxState = 'BROADCAST' | 'SUCCESS' | 'FAILED' | 'STUCK';
@@ -35,6 +39,26 @@ interface TxRecord {
     value?: string | null;
     createdAtMs: number;
     broadcastAtMs: number;
+}
+
+/**
+ * One NEAR Auth purchase, keyed by the SHA-256 of its delegate bytes. `signing` holds the approval
+ * token until fast-auth has signed; `relaying` holds the MPC signature instead. `retryable` marks
+ * a failure before anything was relayed, so a new approval of the same bytes may start again.
+ */
+interface PurchaseRecord {
+    state: 'signing' | 'relaying' | 'submitted' | 'failed';
+    identityHash: string;
+    accountId: string;
+    userPublicKey: string;
+    fields: PurchaseFields;
+    token?: string;
+    signature?: string;
+    txHash?: string | null;
+    error?: string;
+    retryable?: boolean;
+    createdAtMs: number;
+    updatedAtMs: number;
 }
 
 interface IdentityRecord {
@@ -116,6 +140,7 @@ export class RelayerControl {
                 case '/invite/redeem': return await this.redeemInvite(config, body);
                 case '/invite/status': return await this.inviteStatus(body);
                 case '/purchase': return await this.relayPurchase(config, body);
+                case '/purchase/status': return await this.advancePurchase(config, requireHex64(body.purchaseId));
                 default: return json({ error: 'not_found' }, 404);
             }
         } catch (error) {
@@ -124,34 +149,34 @@ export class RelayerControl {
                 daily_limit_reached: 429, identity_limit_reached: 429, identity_conflict: 409, account_required: 409,
                 invite_unavailable: 409, invite_already_used: 409, ckd_already_requested: 409, tx_failed: 502,
                 tx_needs_review: 503, mutations_disabled: 503, relayer_key_invalid: 503, rpc_unavailable: 503,
-                payload_conflict: 409, invalid_request: 400, purchase_already_submitted: 409, mpc_signature_invalid: 502,
+                payload_conflict: 409, invalid_request: 400, purchase_not_found: 404, approval_rejected: 409,
+                approval_expired: 409, relay_failed: 502,
             };
             if (known[code]) return json({ error: code }, known[code]);
+            // The object only reads the relayer's own access key.
+            if (code === 'access_key_missing') return json({ error: 'relayer_key_invalid' }, 503);
             console.error(JSON.stringify({ event: 'relayer_internal_error', path }));
             return json({ error: 'internal_error' }, 500);
         }
     }
 
-    /** Strips tokens from CKD and fast-auth sign records that outlived their TTL and drops settled ones. */
+    /**
+     * Strips id_tokens from stale CKD records and drops settled ones, finishes purchases whose
+     * client stopped asking, and removes finished purchase records after their TTL.
+     */
     async alarm(): Promise<void> {
         const config = relayerConfig(this.env);
-        const records = new Map([
-            ...await this.state.storage.list<TxRecord>({ prefix: 'tx:ckd:' }),
-            ...await this.state.storage.list<TxRecord>({ prefix: 'tx:sign:' }),
-        ]);
         let pending = false;
-        for (const [key, record] of records) {
-            const finish = key.startsWith('tx:ckd:')
-                ? () => this.finishCkd(key.slice('tx:ckd:'.length), record)
-                : () => this.finishSign(key.slice('tx:sign:'.length), record);
+        for (const [key, record] of await this.state.storage.list<TxRecord>({ prefix: 'tx:ckd:' })) {
+            const nonce = key.slice('tx:ckd:'.length);
             if (record.state !== 'BROADCAST') {
-                await finish();
+                await this.finishCkd(nonce, record);
                 continue;
             }
             if (config) {
                 const outcome = await this.near.txStatus(record.txHash, config.accountId);
                 if (outcome.kind === 'success' || outcome.kind === 'failed') {
-                    await finish();
+                    await this.finishCkd(nonce, record);
                     continue;
                 }
             }
@@ -161,7 +186,34 @@ export class RelayerControl {
             }
             pending = true;
         }
+        for (const [key, record] of await this.state.storage.list<PurchaseRecord>({ prefix: 'purchase:' })) {
+            const id = key.slice('purchase:'.length);
+            if (record.state === 'submitted' || record.state === 'failed') {
+                if (this.now() - record.updatedAtMs > PURCHASE_RECORD_TTL_MS) {
+                    await this.state.storage.delete([key, `tx:relay:${id}`]);
+                } else {
+                    pending = true;
+                }
+                continue;
+            }
+            pending = true;
+            if (!config) continue;
+            try {
+                await this.advancePurchase(config, id);
+            } catch {
+                // Recorded on the purchase; the status route reports it.
+            }
+            const current = await this.state.storage.get<PurchaseRecord>(key);
+            if (current?.state === 'signing' && this.now() - current.createdAtMs > SIGN_TIMEOUT_MS) {
+                await this.failPurchase(id, 'approval_expired', true).catch(() => undefined);
+            }
+        }
         if (pending) await this.state.storage.setAlarm(this.now() + CKD_RECORD_TTL_MS);
+    }
+
+    /** Keeps the earliest scheduled alarm instead of pushing it back on every request. */
+    private async ensureAlarm(): Promise<void> {
+        if (await this.state.storage.getAlarm() === null) await this.state.storage.setAlarm(this.now() + CKD_RECORD_TTL_MS);
     }
 
     // --- Operations -------------------------------------------------------------------------
@@ -224,7 +276,7 @@ export class RelayerControl {
             await this.consumeDaily(txn, 'ckd', 1n, BigInt(config.dailyCkdLimit));
             await txn.put(identityKey, String(used + 1n));
         });
-        await this.state.storage.setAlarm(this.now() + CKD_RECORD_TTL_MS);
+        await this.ensureAlarm();
         let result: { done: true; value: string | null } | { done: false };
         try {
             result = await this.submit(config, key, gate, `ckd|${gate}|${JSON.stringify(args)}`,
@@ -256,6 +308,7 @@ export class RelayerControl {
      * A NEAR Auth purchase: fast-auth `sign` turns the user's approval token into an MPC signature
      * over the delegate the user approved; the relayer then submits it as a signed delegate. The
      * delegate's own nonce means the purchase can execute at most once, whatever the relayer retries.
+     * The record is written with the limit charge, so one purchase is charged once.
      */
     private async relayPurchase(config: RelayerConfig, body: Record<string, unknown>): Promise<Response> {
         const identity = requireHex64(body.identityHash);
@@ -266,41 +319,109 @@ export class RelayerControl {
         if (typeof userPublicKey !== 'string' || typeof token !== 'string' || !fields || typeof body.bytes !== 'string') {
             throw new Error('invalid_request');
         }
-        const { delegateAction, bytes } = purchaseDelegate({ senderId: accountId, publicKey: userPublicKey, usdcContractId: config.usdcContractId, fields });
+        const { bytes } = purchaseDelegate({ senderId: accountId, publicKey: userPublicKey, usdcContractId: config.usdcContractId, fields });
         if (!sameBytes(bytes, Uint8Array.from(atob(body.bytes), (char) => char.charCodeAt(0)))) throw new Error('invalid_request');
         const id = await sha256Hex(bytesToBase64(bytes));
         await this.state.storage.transaction(async (txn) => {
-            if (await txn.get(`tx:sign:${id}`) || await txn.get(`purchase-sig:${id}`)) return;
-            if (await txn.get(`purchase-done:${id}`)) throw new Error('purchase_already_submitted');
+            const existing = await txn.get<PurchaseRecord>(`purchase:${id}`);
+            if (existing && !(existing.state === 'failed' && existing.retryable)) return;
             const identityKey = `count:${this.day()}:purchase:${identity}`;
             const used = BigInt(await txn.get<string>(identityKey) ?? '0');
             if (used >= BigInt(config.identityDailyPurchaseLimit)) throw new Error('identity_limit_reached');
             await this.consumeDaily(txn, 'purchases', 1n, BigInt(config.dailyPurchaseLimit));
             await txn.put(identityKey, String(used + 1n));
+            const record: PurchaseRecord = {
+                state: 'signing', identityHash: identity, accountId, userPublicKey, fields, token,
+                createdAtMs: this.now(), updatedAtMs: this.now(),
+            };
+            await txn.put(`purchase:${id}`, record);
+        });
+        await this.ensureAlarm();
+        return this.advancePurchase(config, id);
+    }
+
+    /**
+     * Moves a purchase on from its stored record, so the status route and the alarm need no token:
+     * sign, verify and keep the MPC signature, relay, record the relay. Each step is idempotent.
+     */
+    private async advancePurchase(config: RelayerConfig, id: string): Promise<Response> {
+        let record = await this.state.storage.get<PurchaseRecord>(`purchase:${id}`);
+        if (!record) throw new Error('purchase_not_found');
+        if (record.state === 'failed') throw new Error(record.error ?? 'relay_failed');
+        if (record.state === 'submitted') return json({ purchaseId: id, state: 'submitted', txHash: record.txHash ?? null });
+        const { delegateAction, bytes } = purchaseDelegate({
+            senderId: record.accountId, publicKey: record.userPublicKey, usdcContractId: config.usdcContractId, fields: record.fields,
         });
 
-        let signatureB64 = await this.state.storage.get<string>(`purchase-sig:${id}`);
-        if (!signatureB64) {
-            await this.state.storage.setAlarm(this.now() + CKD_RECORD_TTL_MS);
-            const sign = await this.submit(config, `tx:sign:${id}`, config.provider.fastAuthContractId, `sign|${id}`,
-                () => [actions.functionCall('sign', {
-                    guard_id: `jwt#${config.provider.issuer}`, verify_payload: token, sign_payload: Array.from(bytes), algorithm: 'eddsa',
-                }, FAST_AUTH_SIGN_GAS, ONE_YOCTO)], { recovery: 'resign' });
-            if (!sign.done) return json({ pending: true }, 202);
-            signatureB64 = bytesToBase64(await this.verifiedMpcSignature(sign.value, bytes, userPublicKey));
-            // The signature is public once relayed; the token-bearing sign record is not kept.
-            await this.state.storage.put(`purchase-sig:${id}`, signatureB64);
-            await this.finishSign(id);
+        if (record.state === 'signing') {
+            const token = record.token ?? '';
+            let sign: { done: true; value: string | null } | { done: false };
+            try {
+                sign = await this.submit(config, `tx:sign:${id}`, config.provider.fastAuthContractId, `sign|${id}`,
+                    () => [actions.functionCall('sign', {
+                        guard_id: `jwt#${config.provider.issuer}`, verify_payload: token, sign_payload: Array.from(bytes), algorithm: 'eddsa',
+                    }, FAST_AUTH_SIGN_GAS, ONE_YOCTO)], { recovery: 'resign' });
+            } catch (error) {
+                if (error instanceof Error && error.message === 'tx_failed') return this.failPurchase(id, 'approval_rejected', true);
+                throw error;
+            }
+            if (!sign.done) return json({ purchaseId: id, state: 'signing', txHash: null }, 202);
+            let signature: Uint8Array;
+            try {
+                // A guard that rejects the token still lets `sign` succeed, with no signature in the value.
+                signature = await this.verifiedMpcSignature(sign.value, bytes, record.userPublicKey);
+            } catch {
+                return this.failPurchase(id, 'approval_rejected', true);
+            }
+            // The signature is public once relayed; the token and the token-bearing sign record are not kept.
+            record = await this.state.storage.transaction(async (txn) => {
+                const current = await txn.get<PurchaseRecord>(`purchase:${id}`);
+                if (!current || current.state !== 'signing') return current;
+                const { token: _drop, ...rest } = current;
+                const next: PurchaseRecord = { ...rest, state: 'relaying', signature: bytesToBase64(signature), updatedAtMs: this.now() };
+                await txn.put(`purchase:${id}`, next);
+                await txn.delete(`tx:sign:${id}`);
+                return next;
+            });
+            if (!record) throw new Error('purchase_not_found');
+            if (record.state !== 'relaying') return this.advancePurchase(config, id);
         }
-        const signature = Uint8Array.from(atob(signatureB64), (char) => char.charCodeAt(0));
-        const done = await this.submit(config, `tx:relay:${id}`, accountId, `relay|${id}`,
-            () => [actions.signedDelegate({ delegateAction, signature: new Signature({ keyType: 0, data: signature }) })],
-            { recovery: 'resign' });
+
+        const signature = Uint8Array.from(atob(record.signature ?? ''), (char) => char.charCodeAt(0));
+        let done: { done: boolean };
+        try {
+            done = await this.submit(config, `tx:relay:${id}`, record.accountId, `relay|${id}`,
+                () => [actions.signedDelegate({ delegateAction, signature: new Signature({ keyType: 0, data: signature }) })],
+                { recovery: 'resign' });
+        } catch (error) {
+            // A final failure of the relay transaction itself: the delegate expired or its nonce was used.
+            if (error instanceof Error && error.message === 'tx_failed') return this.failPurchase(id, 'relay_failed', false);
+            throw error;
+        }
         const relay = await this.state.storage.get<TxRecord>(`tx:relay:${id}`);
-        if (!done.done) return json({ pending: true, txHash: relay?.txHash ?? null }, 202);
-        await this.state.storage.put(`purchase-done:${id}`, { atMs: this.now(), txHash: relay?.txHash ?? null });
+        if (!done.done) return json({ purchaseId: id, state: 'relaying', txHash: relay?.txHash ?? null }, 202);
+        await this.state.storage.transaction(async (txn) => {
+            const current = await txn.get<PurchaseRecord>(`purchase:${id}`);
+            if (current?.state !== 'relaying') return;
+            await txn.put(`purchase:${id}`, { ...current, state: 'submitted', txHash: relay?.txHash ?? null, updatedAtMs: this.now() });
+        });
         // The relay landed; whether the Market accepted or refunded is read from `get_ticket` by the client.
-        return json({ submitted: true, txHash: relay?.txHash ?? null });
+        return json({ purchaseId: id, state: 'submitted', txHash: relay?.txHash ?? null });
+    }
+
+    /** Ends a purchase that is not done yet, keeping neither its token nor its sign record. */
+    private async failPurchase(id: string, error: string, retryable: boolean): Promise<Response> {
+        await this.state.storage.transaction(async (txn) => {
+            const current = await txn.get<PurchaseRecord>(`purchase:${id}`);
+            if (!current || current.state === 'submitted' || current.state === 'failed') return;
+            const { token: _drop, ...rest } = current;
+            await txn.put(`purchase:${id}`, { ...rest, state: 'failed', error, retryable, updatedAtMs: this.now() });
+            await txn.delete(`tx:sign:${id}`);
+        });
+        const current = await this.state.storage.get<PurchaseRecord>(`purchase:${id}`);
+        // Another request may have finished it meanwhile.
+        if (current?.state === 'submitted') return json({ purchaseId: id, state: 'submitted', txHash: current.txHash ?? null });
+        throw new Error(current?.error ?? error);
     }
 
     private async verifiedMpcSignature(value: string | null, bytes: Uint8Array, userPublicKey: string): Promise<Uint8Array> {
@@ -317,16 +438,6 @@ export class RelayerControl {
         const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource));
         if (!await crypto.subtle.verify('Ed25519', key, signature as BufferSource, digest)) throw new Error('mpc_signature_invalid');
         return signature;
-    }
-
-    /** The fast-auth sign record carries the approval token; keep only its hash once it is used. */
-    private async finishSign(id: string, record?: TxRecord): Promise<void> {
-        await this.state.storage.transaction(async (txn) => {
-            const current = await txn.get<TxRecord>(`tx:sign:${id}`);
-            if (record && current && current.txHash !== record.txHash) return;
-            await txn.put(`sign-done:${id}`, { atMs: this.now(), txHash: current?.txHash ?? null });
-            await txn.delete(`tx:sign:${id}`);
-        });
     }
 
     private async createInvite(config: RelayerConfig, body: Record<string, unknown>): Promise<Response> {

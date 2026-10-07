@@ -4,7 +4,7 @@ import { RelayerControl } from './control';
 import type { Env } from './env';
 import { handle } from './index';
 import { ckdGateNonce, identityHash, type VerifiedIdentity } from './jwt';
-import type { NearClient, TxOutcome } from './near';
+import { createNearClient, type NearClient, type TxOutcome } from './near';
 
 const ORIGIN = 'https://preview.youtick.net';
 const RELAYER = 'relayer.youtick.testnet';
@@ -17,6 +17,8 @@ const PK1 = `bls12381g1:${'2'.repeat(66)}`;
 const PK2 = `bls12381g2:${'3'.repeat(132)}`;
 const DAY = 86_400_000;
 const MARKET = 'v2-market.youtick.testnet';
+/** Market V2's VAT signer for key version 1. */
+const VAT_KEY = KeyPair.fromRandom('ed25519');
 /** Buyers with a real key, so the fake fast-auth `sign` can produce a verifiable MPC signature. */
 const buyers = new Map<string, KeyPair>();
 const buyer = (sub: string) => { if (!buyers.has(sub)) buyers.set(sub, KeyPair.fromRandom('ed25519')); return buyers.get(sub)!; };
@@ -26,20 +28,25 @@ function createState() {
     let tail = Promise.resolve();
     const get = async <T>(key: string) => structuredClone(values.get(key)) as T | undefined;
     const put = async (key: string, value: unknown) => { values.set(key, structuredClone(value)); };
-    const del = async (key: string) => values.delete(key);
+    const del = async (key: string | string[]) => (Array.isArray(key) ? key : [key]).filter((one) => values.delete(one)).length;
     const list = async <T>(options?: { prefix?: string }) => new Map(
         [...values.entries()].filter(([key]) => !options?.prefix || key.startsWith(options.prefix)).map(([key, value]) => [key, structuredClone(value) as T]),
     );
     const alarms: number[] = [];
+    let scheduled: number | null = null;
     const storage = {
-        get, put, list, delete: del, setAlarm: async (at: number) => { alarms.push(at); },
+        get, put, list, delete: del,
+        setAlarm: async (at: number) => { alarms.push(at); scheduled = at; },
+        getAlarm: async () => scheduled,
         transaction: async <T>(callback: (txn: { get: typeof get; put: typeof put; delete: typeof del }) => Promise<T>) => {
             const run = tail.then(() => callback({ get, put, delete: del }));
             tail = run.then(() => undefined, () => undefined);
             return run;
         },
     };
-    return { state: { storage } as unknown as DurableObjectState, values, alarms };
+    /** The runtime clears the scheduled alarm before it runs `alarm()`. */
+    const fireAlarm = () => { scheduled = null; };
+    return { state: { storage } as unknown as DurableObjectState, values, alarms, fireAlarm };
 }
 
 interface SentTx { hash: string; nonce: bigint; receiverId: string; action: Record<string, unknown> }
@@ -69,6 +76,10 @@ function createChain() {
         /** fast-auth replies with a signature from the wrong key. */
         forgeMpc: false,
         relayed: [] as Record<string, unknown>[],
+        publications: new Map<string, { publication_id: string; price_usdc: string; availability: string }>([
+            ['job-001', { publication_id: 'job-001', price_usdc: '5000000', availability: 'ACTIVE' }],
+        ]),
+        tickets: new Set<string>(),
     };
     const near: NearClient = {
         async view<T>(contractId: string, method: string, args: Record<string, unknown>): Promise<T> {
@@ -86,10 +97,14 @@ function createChain() {
             }
             if (contractId === USDC && method === 'storage_balance_bounds') return { min: '1250000000000000000000', max: null } as T;
             if (contractId === USDC && method === 'ft_balance_of') return chain.usdcBalance as T;
+            if (contractId === MARKET && method === 'get_publication') return (chain.publications.get(String(args.publication_id)) ?? null) as T;
+            if (contractId === MARKET && method === 'get_ticket') return (chain.tickets.has(String(args.ticket_id)) ? { ticket_id: args.ticket_id } : null) as T;
+            if (contractId === MARKET && method === 'get_vat_public_key') return (args.key_version === 1 ? VAT_KEY.getPublicKey().toString() : null) as T;
             throw new Error(`unexpected view ${contractId}.${method}`);
         },
         async accountExists(accountId) { return accounts.has(accountId); },
         async accessKey(accountId) {
+            if (accountId !== RELAYER && (chain as { userKeyMissing?: boolean }).userKeyMissing) throw new Error('access_key_missing');
             if (accountId !== RELAYER) return { nonce: chain.userKeyNonce, blockHash: BLOCK_HASH, blockHeight: 1_000, fullAccess: true };
             return { nonce: chain.keyNonce, blockHash: BLOCK_HASH, fullAccess: true };
         },
@@ -146,7 +161,7 @@ function createChain() {
 let clock = Date.UTC(2026, 9, 7, 12);
 
 function setup(overrides: Partial<Env> = {}) {
-    const { state, values, alarms } = createState();
+    const { state, values, alarms, fireAlarm } = createState();
     const { chain, near } = createChain();
     const env: Env = {
         RELAYER_ENABLED: 'true', RELAYER_MUTATIONS_ENABLED: 'true', NEAR_NETWORK: 'testnet', NEAR_RPC_URL: 'https://rpc.test',
@@ -179,14 +194,15 @@ function setup(overrides: Partial<Env> = {}) {
     const call = async (path: string, body: unknown, headers: Record<string, string> = {}) => {
         const response = await handle(new Request(`https://relayer.test${path}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN, ...headers }, body: JSON.stringify(body),
-        }), env, { verify, near });
+        }), env, { verify, near, now: () => clock });
         return { status: response.status, body: await response.json() as Record<string, unknown> };
     };
     const admin = (path: string, body?: unknown, method = 'POST') => handle(new Request(`https://relayer.test${path}`, {
         method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN}` },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }), env, { verify, near }).then(async (response) => ({ status: response.status, body: await response.json() as Record<string, unknown> }));
-    return { env, chain, values, alarms, control, call, admin, verify };
+    const alarm = () => { fireAlarm(); return control.alarm(); };
+    return { env, chain, values, alarms, control, alarm, call, admin, verify };
 }
 
 async function accountOf(sub: string): Promise<string> {
@@ -349,9 +365,39 @@ describe('invites', () => {
 });
 
 describe('NEAR Auth purchases', () => {
-    async function purchase(sub: string, overrides: { amount?: string; receiver?: string; action?: string; nonce?: string; tamper?: boolean; audience?: string } = {}) {
-        const msg = JSON.stringify({ action: overrides.action ?? 'buy_ticket_v2', publication_id: 'job-001', ticket_public_key: 'ed25519:x' });
-        const fields = { args: { receiver_id: overrides.receiver ?? MARKET, amount: overrides.amount ?? '5000000', msg }, nonce: overrides.nonce ?? '8', max_block_height: '1100' };
+    const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64');
+    const hex = async (bytes: Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), (b) => b.toString(16).padStart(2, '0')).join('');
+
+    /** A `buy_ticket_v2` message Market V2 would accept, signed like apps/web and the payment service do. */
+    async function purchaseMessage(overrides: { publication?: string; gross?: string; ticket?: KeyPair; vatSigner?: KeyPair; expiresAtMs?: number } = {}) {
+        const ticket = overrides.ticket ?? KeyPair.fromRandom('ed25519');
+        const ticketId = await hex(ticket.getPublicKey().data);
+        const publication = overrides.publication ?? 'job-001';
+        const gross = overrides.gross ?? '5000000';
+        const expires = String(overrides.expiresAtMs ?? clock + 10 * 60_000);
+        const session = KeyPair.fromRandom('ed25519').getPublicKey().toString();
+        const certificate = 'ab'.repeat(32);
+        const lines = (fields: string[]) => new TextEncoder().encode(fields.join('\n'));
+        const device = ticket.sign(lines(['youtick.market-v2.ticket-sig.v1', 'testnet', MARKET, 'purchase_device', ticketId, expires, publication, session, certificate]));
+        const vat = (overrides.vatSigner ?? VAT_KEY).sign(lines(['youtick.market-v2.vat.v1', 'testnet', MARKET, ticketId, publication, gross, '833334', expires, '1']));
+        return {
+            ticketId,
+            msg: JSON.stringify({
+                action: 'buy_ticket_v2', publication_id: publication, ticket_public_key: ticket.getPublicKey().toString(),
+                device: { session_public_key: session, certificate_sha256: certificate, expires_at_ms: expires, signature: b64(device.signature) },
+                vat: { vat_usdc_micro: '833334', expires_at_ms: expires, key_version: '1', signature: b64(vat.signature) },
+            }),
+        };
+    }
+
+    async function purchase(sub: string, overrides: {
+        amount?: string; receiver?: string; msg?: string; nonce?: string; maxBlockHeight?: string; tamper?: boolean; audience?: string;
+    } = {}) {
+        const msg = overrides.msg ?? (await purchaseMessage({ gross: overrides.amount })).msg;
+        const fields = {
+            args: { receiver_id: overrides.receiver ?? MARKET, amount: overrides.amount ?? '5000000', msg },
+            nonce: overrides.nonce ?? '8', max_block_height: overrides.maxBlockHeight ?? '1100',
+        };
         const { purchaseDelegate } = await import('./purchase');
         const accountId = Array.from(buyer(sub).getPublicKey().data, (b) => b.toString(16).padStart(2, '0')).join('');
         const { bytes } = purchaseDelegate({ senderId: accountId, publicKey: buyer(sub).getPublicKey().toString(), usdcContractId: USDC, fields });
@@ -363,7 +409,8 @@ describe('NEAR Auth purchases', () => {
     it('signs through fast-auth, verifies the MPC signature and relays exactly the approved delegate', async () => {
         const { call, chain, values } = setup();
         const request = await purchase('buyer-1');
-        expect(await call('/v1/purchases', request.body)).toMatchObject({ status: 200, body: { submitted: true } });
+        const first = await call('/v1/purchases', request.body);
+        expect(first).toMatchObject({ status: 200, body: { state: 'submitted' } });
         const sign = chain.sent.find((tx) => (tx.action.functionCall as Record<string, unknown> | undefined)?.methodName === 'sign')!;
         expect(sign.receiverId).toBe('fast-auth.testnet');
         const signArgs = JSON.parse(new TextDecoder().decode(Uint8Array.from((sign.action.functionCall as { args: ArrayLike<number> }).args)));
@@ -373,10 +420,12 @@ describe('NEAR Auth purchases', () => {
         expect(Array.from(encodeDelegateAction(chain.relayed[0].delegateAction as never))).toEqual(Array.from(request.bytes));
         // The approval token does not stay in storage once the signature exists.
         expect([...values.keys()].some((key) => key.startsWith('tx:sign:'))).toBe(false);
-        // A retry of the same approval is idempotent: same relay, no new transaction.
+        expect(JSON.stringify([...values.values()])).not.toContain('fatxn');
+        // A retry of the same approval and the status route are idempotent: same relay, no new transaction.
         const sentBefore = chain.sent.length;
-        const again = await call('/v1/purchases', request.body);
-        expect(again).toEqual({ status: 200, body: { submitted: true, txHash: relay.hash } });
+        const expected = { status: 200, body: { purchaseId: first.body.purchaseId, state: 'submitted', txHash: relay.hash } };
+        expect(await call('/v1/purchases', request.body)).toEqual(expected);
+        expect(await call('/v1/purchases/status', { purchase_id: first.body.purchaseId })).toEqual(expected);
         expect(chain.sent).toHaveLength(sentBefore);
     });
 
@@ -384,10 +433,11 @@ describe('NEAR Auth purchases', () => {
         const { call, chain } = setup();
         const cases: [Parameters<typeof purchase>[1], number, string][] = [
             [{ receiver: 'other-market.testnet' }, 400, 'invalid_request'],
-            [{ action: 'withdraw' }, 400, 'invalid_request'],
+            [{ msg: JSON.stringify({ action: 'withdraw', publication_id: 'job-001' }) }, 400, 'invalid_request'],
             [{ tamper: true }, 400, 'approval_mismatch'],
             [{ audience: 'wrong' }, 401, 'invalid_token'],
             [{ nonce: '7' }, 409, 'delegate_stale'],
+            [{ maxBlockHeight: '2201' }, 409, 'delegate_stale'],
             [{ amount: '200000000' }, 409, 'insufficient_balance'],
         ];
         for (const [overrides, status, error] of cases) {
@@ -398,16 +448,133 @@ describe('NEAR Auth purchases', () => {
         expect(login.status).toBe(400);
     });
 
+    it('bounds the delegate nonce before anything is signed', async () => {
+        const { call, chain } = setup();
+        // NEAR rejects a delegate nonce at or above block_height * 1e6 (the fake key is read at height 1,000).
+        expect(await call('/v1/purchases', (await purchase('buyer-5', { nonce: '1000000000' })).body))
+            .toEqual({ status: 409, body: { error: 'delegate_stale' } });
+        expect(await call('/v1/purchases', (await purchase('buyer-5', { nonce: '999999999' })).body)).toMatchObject({ status: 200 });
+        // Above u64 the delegate cannot even be encoded.
+        const tooLarge = (await purchase('buyer-5')).body;
+        expect(await call('/v1/purchases', { ...tooLarge, nonce: String(1n << 64n) })).toEqual({ status: 400, body: { error: 'invalid_request' } });
+        expect(chain.relayed).toHaveLength(1);
+    });
+
+    it('refuses before signing a purchase Market V2 would refund', async () => {
+        const { call, chain } = setup();
+        const used = KeyPair.fromRandom('ed25519');
+        chain.tickets.add((await purchaseMessage({ ticket: used })).ticketId);
+        chain.publications.set('job-paused', { publication_id: 'job-paused', price_usdc: '5000000', availability: 'PAUSED' });
+        const cases: [string, number, string][] = [
+            [(await purchaseMessage({ publication: 'job-paused' })).msg, 409, 'publication_unavailable'],
+            [(await purchaseMessage({ publication: 'job-missing' })).msg, 409, 'publication_unavailable'],
+            [(await purchaseMessage({ ticket: used })).msg, 409, 'ticket_exists'],
+            [(await purchaseMessage({ expiresAtMs: clock + 30_000 })).msg, 409, 'signature_expired'],
+            [(await purchaseMessage({ expiresAtMs: clock + 2 * 3_600_000 })).msg, 400, 'purchase_invalid'],
+            [(await purchaseMessage({ vatSigner: KeyPair.fromRandom('ed25519') })).msg, 400, 'purchase_invalid'],
+            [JSON.stringify({ ...JSON.parse((await purchaseMessage()).msg), extra: 1 }), 400, 'purchase_invalid'],
+        ];
+        for (const [msg, status, error] of cases) {
+            expect(await call('/v1/purchases', (await purchase('buyer-6', { msg })).body)).toEqual({ status, body: { error } });
+        }
+        // The amount must be the publication price, signed into the VAT attestation.
+        chain.publications.set('job-001', { publication_id: 'job-001', price_usdc: '6000000', availability: 'ACTIVE' });
+        expect(await call('/v1/purchases', (await purchase('buyer-6')).body)).toEqual({ status: 409, body: { error: 'price_mismatch' } });
+        expect(chain.sent).toEqual([]);
+    });
+
+    it('finishes a pending purchase from the status route, with no token and after the nonce moved', async () => {
+        const { call, chain, verify } = setup();
+        chain.statusUnavailable = true;
+        const pending = await call('/v1/purchases', (await purchase('buyer-7')).body);
+        expect(pending).toMatchObject({ status: 202, body: { state: 'signing' } });
+        const id = pending.body.purchaseId as string;
+        expect(id).toMatch(/^[0-9a-f]{64}$/);
+        chain.statusUnavailable = false;
+        // The signing token has expired and the user's key nonce reached the delegate's: neither matters here.
+        chain.userKeyNonce = 8n;
+        verify.mockClear();
+        expect(await call('/v1/purchases/status', { purchase_id: id })).toMatchObject({ status: 200, body: { purchaseId: id, state: 'submitted' } });
+        expect(verify).not.toHaveBeenCalled();
+        expect(chain.relayed).toHaveLength(1);
+        expect(await call('/v1/purchases/status', { purchase_id: 'f'.repeat(64) })).toEqual({ status: 404, body: { error: 'purchase_not_found' } });
+        expect(await call('/v1/purchases/status', { purchase_id: id, access_token: 'x' })).toEqual({ status: 400, body: { error: 'invalid_request' } });
+    });
+
+    it('relays an approved purchase from the alarm when the client stops asking, and drops it after a day', async () => {
+        const { call, chain, values, alarm, alarms } = setup();
+        chain.statusUnavailable = true;
+        const pending = await call('/v1/purchases', (await purchase('buyer-8')).body);
+        expect(pending.status).toBe(202);
+        // A second purchase keeps the earliest alarm instead of moving it later.
+        clock += 60_000;
+        expect((await call('/v1/purchases', (await purchase('buyer-8', { nonce: '9' })).body)).status).toBe(202);
+        expect(alarms).toHaveLength(1);
+        chain.statusUnavailable = false;
+        await alarm();
+        const id = pending.body.purchaseId as string;
+        expect(values.get(`purchase:${id}`)).toMatchObject({ state: 'submitted' });
+        expect(chain.relayed).toHaveLength(2);
+        clock += 25 * 60 * 60_000;
+        await alarm();
+        expect([...values.keys()].filter((key) => key.startsWith('purchase:') || key.startsWith('tx:relay:'))).toEqual([]);
+    });
+
+    it('expires a purchase whose signature never arrives and lets a new approval of the same bytes start again', async () => {
+        const { call, chain, values, alarm } = setup();
+        chain.statusUnavailable = true;
+        const request = await purchase('buyer-9', { msg: (await purchaseMessage({ expiresAtMs: clock + 50 * 60_000 })).msg });
+        const pending = await call('/v1/purchases', request.body);
+        const id = pending.body.purchaseId as string;
+        clock += 11 * 60_000;
+        await alarm();
+        expect(values.get(`purchase:${id}`)).toMatchObject({ state: 'failed', error: 'approval_expired', retryable: true });
+        expect(JSON.stringify([...values.entries()])).not.toContain('fatxn');
+        expect(await call('/v1/purchases/status', { purchase_id: id })).toEqual({ status: 409, body: { error: 'approval_expired' } });
+        chain.statusUnavailable = false;
+        expect(await call('/v1/purchases', request.body)).toMatchObject({ status: 200, body: { state: 'submitted' } });
+    });
+
+    it('charges the limits once for concurrent requests of one purchase', async () => {
+        const { call, values } = setup();
+        const request = await purchase('buyer-10');
+        const results = await Promise.all([call('/v1/purchases', request.body), call('/v1/purchases', request.body)]);
+        expect(results.map((result) => result.status)).toEqual([200, 200]);
+        const day = new Date(clock).toISOString().slice(0, 10);
+        expect(values.get(`count:${day}:purchases`)).toBe('1');
+    });
+
     it('refuses an MPC signature that does not verify against the buyer key, and limits purchases per identity', async () => {
         const forged = setup();
         forged.chain.forgeMpc = true;
-        expect(await forged.call('/v1/purchases', (await purchase('buyer-3')).body)).toEqual({ status: 502, body: { error: 'mpc_signature_invalid' } });
+        const request = await purchase('buyer-3');
+        expect(await forged.call('/v1/purchases', request.body)).toEqual({ status: 409, body: { error: 'approval_rejected' } });
         expect(forged.chain.relayed).toEqual([]);
+        expect([...forged.values.keys()].some((key) => key.startsWith('tx:sign:'))).toBe(false);
+        // The status route reports the same final answer instead of signing again.
+        const sent = forged.chain.sent.length;
+        const id = [...forged.values.keys()].find((key) => key.startsWith('purchase:'))!.slice('purchase:'.length);
+        expect(await forged.call('/v1/purchases/status', { purchase_id: id })).toEqual({ status: 409, body: { error: 'approval_rejected' } });
+        expect(forged.chain.sent).toHaveLength(sent);
 
         const limited = setup();
         for (const nonce of ['8', '9']) expect((await limited.call('/v1/purchases', (await purchase('buyer-4', { nonce })).body)).status).toBe(200);
         expect(await limited.call('/v1/purchases', (await purchase('buyer-4', { nonce: '10' })).body))
             .toEqual({ status: 429, body: { error: 'identity_limit_reached' } });
+    });
+
+    it('tells a missing access key apart from an unavailable RPC', async () => {
+        const reply = (body: unknown) => createNearClient('https://rpc.test', async () => Response.json(body));
+        const missing = { jsonrpc: '2.0', id: 1, error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCESS_KEY' } } };
+        await expect(reply(missing).accessKey('a.testnet', 'ed25519:x')).rejects.toThrow('access_key_missing');
+        await expect(reply({ jsonrpc: '2.0', id: 1, error: { name: 'INTERNAL_ERROR' } }).accessKey('a.testnet', 'ed25519:x')).rejects.toThrow('rpc_unavailable');
+    });
+
+    it('reports a missing NEAR Auth access key as an account that is not ready', async () => {
+        const { call, chain } = setup();
+        const near = chain as unknown as { userKeyMissing?: boolean };
+        near.userKeyMissing = true;
+        expect(await call('/v1/purchases', (await purchase('buyer-11')).body)).toEqual({ status: 409, body: { error: 'account_not_ready' } });
     });
 });
 

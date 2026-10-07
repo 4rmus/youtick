@@ -75,10 +75,11 @@ export function createNearClient(rpcUrl: string, fetcher: typeof fetch = (...arg
         return body;
     }
 
-    async function query(params: Record<string, unknown>, allowUnknownAccount = false) {
+    /** `missing` names the "does not exist" errors that are an answer rather than a failure. */
+    async function query(params: Record<string, unknown>, missing?: RegExp) {
         const body = await rpc('query', { ...params, finality: 'final' });
         const cause = JSON.stringify(body.error ?? (body.result as { error?: unknown } | undefined)?.error ?? '');
-        if (allowUnknownAccount && /UNKNOWN_ACCOUNT|does not exist while viewing/.test(cause)) return null;
+        if (missing?.test(cause)) return null;
         if (body.error || !body.result || typeof body.result !== 'object' || 'error' in body.result) throw new Error('rpc_unavailable');
         return body.result as Record<string, unknown>;
     }
@@ -97,11 +98,13 @@ export function createNearClient(rpcUrl: string, fetcher: typeof fetch = (...arg
             return JSON.parse(new TextDecoder().decode(Uint8Array.from(bytes as number[]))) as T;
         },
         async accountExists(accountId) {
-            return (await query({ request_type: 'view_account', account_id: accountId }, true)) !== null;
+            return (await query({ request_type: 'view_account', account_id: accountId }, /UNKNOWN_ACCOUNT|does not exist while viewing/)) !== null;
         },
         async accessKey(accountId, publicKey) {
-            const result = await query({ request_type: 'view_access_key', account_id: accountId, public_key: publicKey });
-            if (!result || typeof result.nonce !== 'number' || !Number.isSafeInteger(result.nonce)
+            const result = await query({ request_type: 'view_access_key', account_id: accountId, public_key: publicKey },
+                /UNKNOWN_ACCESS_KEY|UNKNOWN_ACCOUNT|does not exist while viewing/);
+            if (result === null) throw new Error('access_key_missing');
+            if (typeof result.nonce !== 'number' || !Number.isSafeInteger(result.nonce)
                 || typeof result.block_hash !== 'string') {
                 throw new Error('rpc_unavailable');
             }

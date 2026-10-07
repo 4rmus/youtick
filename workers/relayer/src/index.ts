@@ -1,12 +1,14 @@
 // youtick relayer (roadmap E5c, decision D7): a separate Worker with its own NEAR key that
 // - opens a NEAR Auth user's implicit account once per identity and registers it with USDC,
 // - submits ckd-gate `request_key` (rule a) and returns the encrypted CKD response,
-// - pays invite credits (single-use codes, one per identity) and records invited creators.
+// - pays invite credits (single-use codes, one per identity) and records invited creators,
+// - relays NEAR Auth ticket purchases signed through fast-auth (roadmap E7b).
 // It never sees ticket keys or CKD secrets; the CKD response is encrypted to the browser's key.
 import { relayerConfig, type Env, type RelayerConfig } from './env';
 import { ckdGateNonce, createJwtVerifier, identityHash, type VerifiedIdentity } from './jwt';
 import { createNearClient, fastAuthAccount, fastAuthKey, type NearClient } from './near';
-import { MAX_DELEGATE_TTL_BLOCKS, parsePurchaseFields, purchaseDelegate, sameBytes } from './purchase';
+import { checkPurchaseMessage } from './market';
+import { MAX_DELEGATE_TTL_BLOCKS, NONCE_RANGE_MULTIPLIER, parsePurchaseFields, purchaseDelegate, sameBytes } from './purchase';
 
 export { RelayerControl } from './control';
 export type { Env } from './env';
@@ -14,10 +16,15 @@ export type { Env } from './env';
 const MAX_BODY_BYTES = 16 * 1024;
 const BLS_G1 = /^bls12381g1:[1-9A-HJ-NP-Za-km-z]{60,70}$/;
 const BLS_G2 = /^bls12381g2:[1-9A-HJ-NP-Za-km-z]{120,135}$/;
+/** Purchase errors the client can act on; each means "Market V2 would refund this now". */
+const PURCHASE_REJECTIONS: Record<string, number> = {
+    purchase_invalid: 400, publication_unavailable: 409, price_mismatch: 409, ticket_exists: 409, signature_expired: 409,
+};
 
 export interface RelayerDeps {
     verify?: (token: unknown, options?: { audience?: string }) => Promise<VerifiedIdentity>;
     near?: NearClient;
+    now?: () => number;
 }
 
 let cachedVerifier: { key: string; verify: (token: unknown) => Promise<VerifiedIdentity> } | null = null;
@@ -177,7 +184,9 @@ export async function handle(request: Request, env: Env, deps: RelayerDeps = {})
             // Checks that save gas: the chain would reject these after fast-auth already signed.
             const accessKey = await near.accessKey(key.accountId, key.publicKey);
             const maxHeight = BigInt(fields.max_block_height);
-            if (BigInt(fields.nonce) <= accessKey.nonce || accessKey.blockHeight === undefined
+            const nonce = BigInt(fields.nonce);
+            if (nonce <= accessKey.nonce || accessKey.blockHeight === undefined
+                || nonce >= BigInt(accessKey.blockHeight) * NONCE_RANGE_MULTIPLIER
                 || maxHeight <= BigInt(accessKey.blockHeight) || maxHeight > BigInt(accessKey.blockHeight) + MAX_DELEGATE_TTL_BLOCKS) {
                 return json({ error: 'delegate_stale' }, 409, cors);
             }
@@ -185,12 +194,23 @@ export async function handle(request: Request, env: Env, deps: RelayerDeps = {})
             if (typeof balance !== 'string' || !/^[0-9]{1,39}$/.test(balance) || BigInt(balance) < BigInt(fields.args.amount)) {
                 return json({ error: 'insufficient_balance' }, 409, cors);
             }
+            await checkPurchaseMessage(near, {
+                marketContractId: config.marketContractId, amount: fields.args.amount, msg: fields.args.msg, nowMs: (deps.now ?? Date.now)(),
+            });
             let binary = '';
             for (const byte of bytes) binary += String.fromCharCode(byte);
             return forward(env, '/purchase', {
                 identityHash: await identityHash(identity), accountId: key.accountId, userPublicKey: key.publicKey,
                 accessToken, fields: { args: fields.args, nonce: fields.nonce, max_block_height: fields.max_block_height }, bytes: btoa(binary),
             }, cors);
+        }
+        if (url.pathname === '/v1/purchases/status') {
+            // No token: the id (SHA-256 of the approved delegate) only lets the caller finish or read
+            // a purchase the user already approved, which signing tokens outliving it would not allow.
+            if (!exactKeys(body, ['purchase_id']) || typeof body.purchase_id !== 'string' || !/^[0-9a-f]{64}$/.test(body.purchase_id)) {
+                return json({ error: 'invalid_request' }, 400, cors);
+            }
+            return forward(env, '/purchase/status', { purchaseId: body.purchase_id }, cors);
         }
         if (url.pathname === '/v1/invites/redeem') {
             if (!exactKeys(body, ['id_token', 'code']) || typeof body.code !== 'string' || !/^yt_[A-Za-z0-9_-]{24}$/.test(body.code)) {
@@ -206,6 +226,8 @@ export async function handle(request: Request, env: Env, deps: RelayerDeps = {})
         const code = error instanceof Error ? error.message : '';
         if (code === 'invalid_token') return json({ error: 'invalid_token' }, 401, cors);
         if (code === 'invalid_request') return json({ error: 'invalid_request' }, 400, cors);
+        if (PURCHASE_REJECTIONS[code]) return json({ error: code }, PURCHASE_REJECTIONS[code], cors);
+        if (code === 'access_key_missing') return json({ error: 'account_not_ready' }, 409, cors);
         if (['jwks_unavailable', 'rpc_unavailable', 'provider_configuration_changed'].includes(code)) {
             return json({ error: 'dependency_unavailable' }, 503, cors);
         }

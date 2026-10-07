@@ -9,6 +9,8 @@ export const PURCHASE_GAS = 300_000_000_000_000n;
 export const PURCHASE_DEPOSIT = 1n;
 /** A delegate must expire within this many blocks of the current final height. */
 export const MAX_DELEGATE_TTL_BLOCKS = 1_200n;
+/** NEAR rejects a delegate nonce at or above `block_height * 1e6` (DelegateActionNonceTooLarge). */
+export const NONCE_RANGE_MULTIPLIER = 1_000_000n;
 
 export interface PurchaseArgs {
     receiver_id: string;
@@ -23,6 +25,8 @@ export interface PurchaseFields {
 }
 
 const DECIMAL = /^[1-9][0-9]{0,38}$/;
+const U64_MAX = (1n << 64n) - 1n;
+const u64 = (value: unknown) => typeof value === 'string' && DECIMAL.test(value) && BigInt(value) <= U64_MAX;
 
 export function parsePurchaseFields(value: unknown, marketContractId: string): PurchaseFields & { publicationId: string } {
     const body = value as Record<string, unknown> | null;
@@ -31,8 +35,7 @@ export function parsePurchaseFields(value: unknown, marketContractId: string): P
         || !args || Object.keys(args).join(',') !== 'receiver_id,amount,msg'
         || args.receiver_id !== marketContractId || typeof args.amount !== 'string' || !DECIMAL.test(args.amount)
         || typeof args.msg !== 'string' || args.msg.length > 2_048
-        || typeof body.nonce !== 'string' || !DECIMAL.test(body.nonce)
-        || typeof body.max_block_height !== 'string' || !DECIMAL.test(body.max_block_height)) {
+        || !u64(body.nonce) || !u64(body.max_block_height)) {
         throw new Error('invalid_request');
     }
     let msg: Record<string, unknown>;
@@ -48,7 +51,7 @@ export function parsePurchaseFields(value: unknown, marketContractId: string): P
     }
     return {
         args: { receiver_id: args.receiver_id, amount: args.amount, msg: args.msg },
-        nonce: body.nonce, max_block_height: body.max_block_height, publicationId: msg.publication_id,
+        nonce: body.nonce as string, max_block_height: body.max_block_height as string, publicationId: msg.publication_id,
     };
 }
 
