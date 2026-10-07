@@ -59,7 +59,7 @@ describe('bilingual landing', () => {
     it('keeps disabled calls to action on the landing and opens product routes only when enabled', () => {
         expect(getLandingCtas('en', false)).toEqual({
             primary: { label: 'See how it works', href: '#how-it-works' },
-            secondary: { label: 'Why YouTick', href: '#trust' },
+            secondary: { label: 'Why youtick', href: '#trust' },
             status: 'Pilot publishing is currently closed',
         });
         expect(getLandingCtas('tr', true)).toEqual({

@@ -50,8 +50,9 @@ tarafından tek başına, mevcut korumalı workflow'larla yapılır; multisig ge
 | K2 | GK (avukat) | GK'nin kendi donanım cüzdanı |
 | K3 | Sahip, soğuk kurtarma | Mühürlü, K1'den farklı fiziksel konumda; kullanımı kamuya duyurulur |
 
-**Yönetim multisig'i** (Sputnik DAO tabanlı veya eşdeğeri, seçimi ayrı gate):
-2-of-3 (K1, K2, K3).
+**Yönetim multisig'i:** Trezu üzerinden kurulan Sputnik DAO v2, 2-of-3 (K1, K2, K3),
+her öneri türünde `Weight(2)`. Seçim ve gerekçe:
+[multisig seçimi](./youtick-governance-multisig-selection.md).
 
 Politika: Kod güncellemesi ve rol değişikliği **K1 + K2** ile imzalanır. K3 yalnız
 K1 ya da K2 kaybolduğunda kullanılır ve kullanımı kamuya açıklanır.
@@ -66,7 +67,7 @@ yayımlanmış politikadır. Bu sınır "Yetki haritası" sayfasında açıkça 
 |---|---|---|---|
 | Kod güncellemesi | Yönetim multisig'i | Kontrat hesabında FullAccess anahtar kalmaz; güncelleme kontratın timelock'lu self-upgrade metoduyla yapılır | 48 saat |
 | `admin` | Yönetim multisig'i | Unfreeze, satışları açma, bridge ve rol rotasyonu, politika | Rol rotasyonu 48 saat; diğerleri 24–48 saat |
-| `guardian` | Ayrı guardian hesabı | FullAccess anahtar soğukta. Sahip ve GK'de, yalnız market kontratına ve `pause_new_purchases`, `freeze_bridge`, `cancel_bridge_rotation` metotlarına sınırlı birer FunctionCall anahtarı | Anında, yalnız azaltır |
+| `guardian` | Ayrı guardian hesabı | FullAccess anahtar soğukta. Sahip ve GK'de kişi başı iki FunctionCall anahtarı: Market'ta durdurma/dondurma ve yedi guardian yöntemi, access-control'de `pause_contract`/`pause_scope`; hiçbir açma yöntemi yok | Anında, yalnız azaltır |
 | `platform_account` | Yönetim multisig'i | Platform çekimi hazineye (multisig) iner; günlük gider için ayrı sıcak hesaba aktarılır | Multisig onayı |
 | Quote anahtar rotasyonu | `platform_account` üzerinden | Multisig önerisi | Multisig onayı |
 | `takedown_authority` | YOUTICK LTD operasyon hesabı | Sahip ve GK'de sınırlı FunctionCall anahtarları; reason code ve kanıt hash'i on-chain | Anında (hukuki zorunluluk) |
@@ -158,6 +159,8 @@ Token çıkarılması bu brief'in kapsamı dışındadır. Hukuki risk (SPK/MiCA
    PR #254.
 6. `GOVERNANCE_MULTISIG_SELECTION`: multisig aracı ve sürümü, denetim durumu,
    FunctionCall anahtar politikası. Kurulum yapılmaz, yalnız araştırma.
+   **Tamamlandı (araştırma, 4 Ekim 2026):** Trezu üzerinden Sputnik DAO v2;
+   ayrıntılar [multisig seçimi](./youtick-governance-multisig-selection.md).
 7. `PUBLIC_AUTHORITY_MAP`: kamuya açık yetki haritası sayfası ve governance
    event gösterimi.
 8. `MAINNET_KEY_CEREMONY`: K1–K3 ve guardian anahtarlarının üretimi ve kayıt. Canlı
@@ -209,5 +212,5 @@ değerlendirme tamamlanmadan belirlenmez.
   `contracts/access-control/src/lib.rs`, `docs/testnet-pilot-runbook.md`
   (mainnet 2-of-3 ve 24 saat şartı).
 - [Companies House — YOUTICK LTD 17290900](https://find-and-update.company-information.service.gov.uk/company/17290900)
-- [Trezu](https://github.com/olskik/trezu),
+- [Trezu](https://github.com/NEAR-DevHub/trezu),
   [Progressive De/Centralization](https://kydo.substack.com/p/progressive-decentralization-a-playbook)
