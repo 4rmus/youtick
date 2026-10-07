@@ -33,6 +33,12 @@ async fn load_mock_ft_wasm() -> anyhow::Result<&'static Vec<u8>> {
 }
 
 async fn init() -> anyhow::Result<(Contract, Account, Account, Account, Contract)> {
+    let (contract, bridge, guardian, creator, usdc, _admin) = init_with_admin().await?;
+    Ok((contract, bridge, guardian, creator, usdc))
+}
+
+async fn init_with_admin(
+) -> anyhow::Result<(Contract, Account, Account, Account, Contract, Account)> {
     let worker = near_workspaces::sandbox().await?;
     let wasm = load_contract_wasm().await?;
     let mock_ft_wasm = load_mock_ft_wasm().await?;
@@ -87,7 +93,7 @@ async fn init() -> anyhow::Result<(Contract, Account, Account, Account, Contract
         .transact()
         .await?
         .into_result()?;
-    Ok((contract, bridge, guardian, creator, usdc))
+    Ok((contract, bridge, guardian, creator, usdc, admin))
 }
 
 #[tokio::test]
@@ -441,5 +447,114 @@ async fn creator_withdrawal_settles_while_purchases_paused_and_bridge_frozen() -
     let governance: serde_json::Value = contract.view("get_governance_state").await?.json()?;
     assert_eq!(governance["new_purchases_paused"], true);
     assert_eq!(governance["bridge_frozen"], true);
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    near_sdk::env::sha256(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+// Appends a WASM custom section so the module stays valid but hashes differently.
+fn with_custom_section(wasm: &[u8], payload: &[u8]) -> Vec<u8> {
+    fn leb128(mut value: usize, out: &mut Vec<u8>) {
+        loop {
+            let byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value == 0 {
+                out.push(byte);
+                return;
+            }
+            out.push(byte | 0x80);
+        }
+    }
+    let name = b"youtick-upgrade-fixture";
+    let mut body = Vec::new();
+    leb128(name.len(), &mut body);
+    body.extend_from_slice(name);
+    body.extend_from_slice(payload);
+    let mut out = wasm.to_vec();
+    out.push(0);
+    leb128(body.len(), &mut out);
+    out.extend_from_slice(&body);
+    out
+}
+
+#[tokio::test]
+async fn self_upgrade_reverts_a_failed_migrate_then_deploys_the_proposed_code() -> anyhow::Result<()>
+{
+    let (contract, _bridge, guardian, creator, _usdc, admin) = init_with_admin().await?;
+    guardian
+        .call(contract.id(), "pause_new_purchases")
+        .transact()
+        .await?
+        .into_result()?;
+    let governance_before: serde_json::Value =
+        contract.view("get_governance_state").await?.json()?;
+    let v1 = contract.view_code().await?;
+    assert_eq!(&v1, load_contract_wasm().await?);
+
+    // Code without `migrate`: the deploy+migrate batch must revert as a whole.
+    let no_migrate = load_mock_ft_wasm().await?.clone();
+    admin
+        .call(contract.id(), "propose_code_upgrade")
+        .args_json(json!({ "code_sha256": sha256_hex(&no_migrate) }))
+        .transact()
+        .await?
+        .into_result()?;
+    let reverted = creator
+        .call(contract.id(), "execute_code_upgrade")
+        .args(no_migrate)
+        .gas(Gas::from_tgas(300))
+        .transact()
+        .await?;
+    assert!(reverted.is_failure());
+    assert_eq!(contract.view_code().await?, v1);
+    let pending: Option<serde_json::Value> =
+        contract.view("get_pending_code_upgrade").await?.json()?;
+    assert!(pending.is_some());
+    guardian
+        .call(contract.id(), "cancel_code_upgrade")
+        .transact()
+        .await?
+        .into_result()?;
+
+    let v2 = with_custom_section(&v1, b"v2");
+    assert_ne!(sha256_hex(&v1), sha256_hex(&v2));
+    admin
+        .call(contract.id(), "propose_code_upgrade")
+        .args_json(json!({ "code_sha256": sha256_hex(&v2) }))
+        .transact()
+        .await?
+        .into_result()?;
+    let wrong = creator
+        .call(contract.id(), "execute_code_upgrade")
+        .args(with_custom_section(&v1, b"other"))
+        .gas(Gas::from_tgas(300))
+        .transact()
+        .await?;
+    assert!(wrong.is_failure());
+    assert_eq!(contract.view_code().await?, v1);
+
+    let upgraded = creator
+        .call(contract.id(), "execute_code_upgrade")
+        .args(v2.clone())
+        .gas(Gas::from_tgas(300))
+        .transact()
+        .await?;
+    assert!(upgraded.is_success(), "{:?}", upgraded.failures());
+    assert!(upgraded.logs().iter().any(|log| {
+        log.contains("\"event\":\"code_upgraded\"") && log.contains(&sha256_hex(&v2))
+    }));
+    assert_eq!(contract.view_code().await?, v2);
+    let pending: Option<serde_json::Value> =
+        contract.view("get_pending_code_upgrade").await?.json()?;
+    assert!(pending.is_none());
+    let governance_after: serde_json::Value =
+        contract.view("get_governance_state").await?.json()?;
+    assert_eq!(governance_after, governance_before);
+    assert_eq!(governance_after["new_purchases_paused"], true);
     Ok(())
 }
