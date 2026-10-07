@@ -277,6 +277,37 @@ test('required CI Gate waits for the reusable CodeQL workflow', async () => {
     assert.match(codeql, /\n  schedule:\n/);
 });
 
+test('pull request CI skips drafts, CodeQL and unchanged dependency audits, while main runs all', async () => {
+    const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const job = (name, next) => ci.slice(ci.indexOf(`  ${name}:`), ci.indexOf(`  ${next}:`));
+
+    assert.match(ci, /\n  pull_request:\n    types: \[opened, synchronize, reopened, ready_for_review\]\n/);
+    assert.match(job('detect-changes', 'web'), /if: github\.event_name != 'pull_request' \|\| !github\.event\.pull_request\.draft/);
+    assert.match(job('ci-gate', 'never'), /if: always\(\) && \(github\.event_name != 'pull_request' \|\| !github\.event\.pull_request\.draft\)/);
+    assert.match(job('codeql', 'ci-gate'), /if: github\.event_name != 'pull_request'/);
+    assert.match(job('dependency-audit', 'rust-wasm-audit'), /if: needs\.detect-changes\.outputs\.npm_deps == 'true'/);
+    assert.match(job('rust-wasm-audit', 'detect-changes'), /if: needs\.detect-changes\.outputs\.rust_deps == 'true'/);
+
+    const mapping = ci.slice(ci.indexOf('name: Map changed paths to CI jobs'));
+    const start = mapping.indexOf('case "${path}" in', mapping.indexOf('esac'));
+    const end = mapping.indexOf('esac', start);
+    const force = mapping.slice(mapping.indexOf('if [[ "${GITHUB_EVENT_NAME}"'), mapping.indexOf('fi', mapping.indexOf('if [[ "${GITHUB_EVENT_NAME}"')) + 2);
+    const shell = `npm_deps=false; rust_deps=false
+${mapping.slice(start, end + 4)}
+${force}
+printf '%s %s' "$npm_deps" "$rust_deps"`;
+    for (const [path, event, expected] of [
+        ['apps/web/package-lock.json', 'pull_request', 'true false'],
+        ['contracts/market-v2/Cargo.lock', 'pull_request', 'false true'],
+        ['apps/web/components/Foo.tsx', 'pull_request', 'false false'],
+        ['apps/web/components/Foo.tsx', 'push', 'true true'],
+    ]) {
+        assert.equal(execFileSync('bash', ['-euo', 'pipefail', '-c', shell], {
+            env: { ...process.env, path, GITHUB_EVENT_NAME: event }, encoding: 'utf8',
+        }), expected, `${event} ${path}`);
+    }
+});
+
 test('testnet read model binding stays dark with only the finality probe cron', async () => {
     const source = await readFile(new URL('../read-model/wrangler.toml', import.meta.url), 'utf8');
 
