@@ -1,43 +1,45 @@
-# YouTick LP Codex Sözleşmesi
+# YouTick Agent Sözleşmesi
+
+Bu dosya Codex ve Claude Code için ortak proje sözleşmesidir. Kök dizine `CLAUDE.md` ekleme: Claude Code o durumda bu dosyayı okumayı keser. Claude'a özel, yola bağlı kurallar `.claude/rules/` altındadır; Codex onları okumaz, bu yüzden sınırlar burada özet olarak kalır.
+
+## Yerleşim ve komutlar
+
+- `apps/web` Next.js uygulaması · `contracts/nft-ticket`, `contracts/access-control` Rust NEAR kontratları · `workers/livepeer-bridge` Cloudflare Worker · `read-model` D1 şeması · `protocol/paid-media-livepeer-v1` şema ve golden vektörler · `docs` VitePress.
+- Test ve kontrol komutlarının tek kaynağı `docs/testing.md`; dokunulan yola göre oradan seç. Kontratlar `cargo +1.86.0` ve `cargo-near 0.17.0` ile çalışır; `near-sdk =5.5.0` (`legacy`) sabittir.
+- Sürüm ve release: `docs/release-runbook.md`, `docs/cloudflare-release.md`. Gerçek deploy yalnız korumalı GitHub workflow'larından yürür.
 
 ## Gate ve kapsam
 
-- Her görevde yalnız bir aktif gate seç.
-- Başlamadan amaç, değiştirilebilecek dosyalar, yasak dosyalar, kabul kriterleri ve hedef doğrulamalar yaz.
-- Gate tamamlanınca raporla ve dur; sonraki gate'e otomatik geçme.
+- İşi gate'lere böl; her gate'in başında amaç, değiştirilebilecek dosyalar, yasak dosyalar, kabul kriterleri ve hedef doğrulamaları yaz.
+- Varsayılan otonomdur: gate'leri sırayla sürdür, sonunda tek rapor ver. Yalnız onay gerektiren bir işlemde, çıktıyı değiştirecek bir belirsizlikte veya teşhis edilemeyen bir hatada dur. Kullanıcı "adım adım" derse her gate sonunda dur.
+- Bir görev, bir dal, bir PR. PR açıldığında squash auto-merge'ü etkinleştir; CI'ı oturumdan yoklama, başarısız kontrol bildirimi gelince düzelt.
 
 ## Sorumluluk ve katılımcılar
 
-- Main agent scope, entegrasyon, conflict resolution ve final doğrulamadan sorumludur.
-- Aynı gate'te yalnız bir write-capable katılımcı olabilir.
-- Aynı gate'te toplam en fazla üç subagent kullanılabilir; bunlardan biri write-capable ise en fazla iki salt-okunur subagent daha kullanılabilir.
-- Bu sayı üst sınırdır, hedef değildir; çalışma ortamının daha düşük sınırı varsa onu kullan. Basit işi ana ajan tamamlar. Delegasyon yetkisi varsa yalnız bağımsız ve somut alt işleri devret; aynı araştırmayı birden fazla ajana yaptırma.
-- Görev ayrımı: ana ajan uygulama ve entegrasyonu yürütür; araştırmacı ilgili kaynak/sürüm farkını salt-okunur inceler; inceleyici değişiklikteki hata ve güvenlik etkisini salt-okunur değerlendirir. Alt göreve dosya kapsamı, beklenen çıktı ve yasak işlemleri ver. Yazmayı devredersen ana ajan aynı anda dosya düzenlemez.
+- Ana ajan kapsam, entegrasyon, çakışma çözümü ve final doğrulamadan sorumludur.
+- Aynı gate'te yalnız bir write-capable katılımcı olabilir; toplam en fazla üç subagent, bunlardan biri write-capable ise en fazla iki salt-okunur. Bu üst sınırdır, hedef değil; basit işi ana ajan kendisi yapar.
+- Roller: araştırmacı kaynak ve sürüm farkını salt-okunur inceler; inceleyici değişiklikteki hata ve güvenlik etkisini salt-okunur değerlendirir (Claude Code'da `contract-reviewer` subagent'ı). Alt göreve dosya kapsamı, beklenen çıktı ve yasak işlemleri ver. Yazmayı devredersen ana ajan aynı anda dosya düzenlemez.
 
 ## Skill seçimi
 
-- Proje skill'leri `.agents/skills/` altındadır. Yalnız ilgili skill ve gerektiği referansı oku; tüm kataloğu her görevde yükleme. Kullanıcı genelindeki skill veya agent ayarlarını bu repo görevi kapsamında değiştirme.
-- NEAR JS/RPC/işlem biçimi: `near-api-js`; mevcut cüzdan arayüzü: `near-dapp`; Rust uygulaması: `near-smart-contracts`; güvenlik incelemesi: `near-contract-audit`.
-- Google/Auth0/MPC ve oturum: `youtick-near-auth`; kontrat/ABI ve tüketici tutarlılığı: `youtick-contract-review`; USDC/1Click, iade ve ödeme uzlaştırması: `youtick-payment-flow`. Genel NEAR skill'ini yalnız gereken protokol ayrıntısı için ekle.
-- Önce ilgili manifest, lockfile, kurulu API ve çağıran kodu karşılaştır. Resmî skill örnekleri mevcut SDK sürümünü, ağ seçimini veya mimariyi değiştirme yetkisi vermez. Mevcut uygulamayı yeniden iskeletleme; örneğe uymak için paket/toolchain yükseltme, cüzdan katmanı ekleme veya state migration yapma.
-- `UPSTREAM.md` ve referanslar isteğe bağlı kaynaklardır; projeye uyarlanmış `SKILL.md` girişlerini kullan. Kaynak sürümü ve güncelleme yöntemi `.agents/skills/SOURCES.md` içindedir. Skill kurulumu bir API örneğinin çalıştığı, bağımsız güvenlik denetimi yapıldığı veya canlı kabul alındığı anlamına gelmez.
+- Proje skill'leri `.agents/skills/` altındadır; Claude Code aynı dizini `.claude/skills` symlink'i üzerinden görür. Yalnız ilgili skill'i ve gerektiği referansı oku; kataloğun tamamını yükleme.
+- NEAR JS/RPC/işlem biçimi: `near-api-js` · mevcut cüzdan bağlantısı ve oturum arayüzü: `near-dapp` · Rust kontrat uygulaması: `near-smart-contracts` · güvenlik incelemesi: `near-contract-audit` · kontrat/ABI ve tüketici tutarlılığı: `youtick-contract-review` · USDC, iade ve ödeme uzlaştırması: `youtick-payment-flow` · 1Click/NEAR Intents API ayrıntısı: `near-intents`. V1 cüzdan-only'dir; sosyal giriş/MPC skill'i yoktur.
+- Önce ilgili manifest, lockfile, kurulu API ve çağıran kodu karşılaştır. Skill örnekleri mevcut SDK sürümünü, ağ seçimini veya mimariyi değiştirme yetkisi vermez: paket/toolchain yükseltme, ikinci cüzdan katmanı, state migration veya yeniden iskeletleme yapma.
+- Kaynak sürümü ve güncelleme yöntemi `.agents/skills/SOURCES.md` içindedir. Kullanıcı genelindeki skill veya agent ayarlarını bu repo görevi kapsamında değiştirme.
 
 ## Güvenli çalışma
 
-- Dirty çalışma alanını ve mevcut kullanıcı değişikliklerini koru; broad reset/restore/clean/stash ve geniş staging kullanma.
-- Yalnız explicit-path değişiklik yap.
-- Commit, push, PR, merge, CI tekrar çalıştırma ve deploy; ayrıca provider, secret/config, NEAR, D1 ve canlı veri işlemleri açık kullanıcı onayı ister.
-- Gerçek deploy yalnız korumalı GitHub workflow'larından yürür.
-- Touched-path testlerini `docs/testing.md` içindeki mevcut komutlardan seç.
+- Dirty çalışma alanını ve mevcut kullanıcı değişikliklerini koru; broad reset/restore/clean/stash ve geniş staging kullanma. Yalnız explicit-path değişiklik yap.
+- Onay gerektirenler: deploy ve release, NEAR işlemi veya imza, provider ve canlı veri yazımı (D1 dahil), secret/credential, lockfile dışına çıkan bağımlılık veya toolchain yükseltmesi, CI tekrar çalıştırma, main'e doğrudan yazma. Commit, feature dalına push, PR açma ve auto-merge onay istemez; kilitler (deploy, force push, main'e push, secret okuma) talimattan bağımsız kapalıdır.
+- `.env*`, `.dev.vars`, `~/.near-credentials` ve anahtar dosyalarını okuma veya yazma; JWT, cookie, özel anahtar loglama.
 
-## Mimari ve kanıt
+## Mimari sınırlar
 
-- NEAR ekonomik/entitlement otoritesidir; Livepeer medya katmanıdır; Bridge kontrol katmanıdır. Bu sınırları bozma.
-- Feature flag'lerin kapalı varsayımını değiştirme.
-- Yerel test, CI, Preview ve Production kanıtlarını birbirine karıştırma; local/mock/CI sonucu provider, Preview, Production veya canlı runtime kanıtı sayma.
-- Kanıt sınıfları: LOCAL_STATIC, LOCAL_TEST, CI, PROVIDER, PREVIEW, PRODUCTION, EXTERNAL_NOT_RUN, UNPROVEN.
+- NEAR ekonomik ve entitlement otoritesidir; Livepeer medya katmanıdır; Bridge yalnız kontrol katmanıdır; D1 türetilmiş read model'dir. Bu sınırları bozma.
+- Feature flag'lerin kapalı varsayımını değiştirme; kaynakta bulunması canlı aktivasyon kanıtı değildir.
+- Kontratlarda storage prefix'leri, serileştirilmiş layout, ABI ve mevcut event'leri kapsam dışıysa koru; spekülatif migration ekleme.
 
-## Sonuç
+## Kanıt ve sonuç
 
-- Final sonuç: PASS / COMPLETED_WITH_WARNINGS / BLOCKED / FAILED.
-- Finalde değişen dosyalar, doğrulananlar, çalıştırılmayanlar, blocker ve tek sonraki gate verilir.
+- Kanıt sınıfları: LOCAL_STATIC, LOCAL_TEST, CI, PROVIDER, PREVIEW, PRODUCTION, EXTERNAL_NOT_RUN, UNPROVEN. Yerel/mock/CI sonucunu provider, Preview, Production veya canlı runtime kanıtı sayma.
+- Final sonuç: PASS / COMPLETED_WITH_WARNINGS / BLOCKED / FAILED; değişen dosyalar, doğrulananlar, çalıştırılmayanlar, blocker ve tek sonraki gate.

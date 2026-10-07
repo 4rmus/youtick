@@ -122,7 +122,7 @@ export const landingCopy = {
         howItWorks: {
             eyebrow: 'One simple flow',
             title: 'From upload to playback in four steps.',
-            description: 'YouTick handles the release and ticket flow while Livepeer prepares the video for reliable playback.',
+            description: 'youtick handles the release and ticket flow while Livepeer prepares the video for reliable playback.',
             steps: [
                 { title: 'Prepare the screening', description: 'Name the work, set a ticket price of at least 2 test USDC, and confirm your publishing rights.' },
                 { title: 'Check fees and upload', description: 'Review the separate upload fee and any sponsor fee before wallet approval. Pilot source-file limit: 5 GB.' },
@@ -153,7 +153,7 @@ export const landingCopy = {
         roi: {
             eyebrow: 'Fee model',
             title: 'Explore the test-token ticket split.',
-            description: 'This simulation uses the illustrative pilot split: 95% creator balance and 5% YouTick fee. It is not a promise of earnings.',
+            description: 'This simulation uses the illustrative pilot split: 95% creator balance and 5% youtick fee. It is not a promise of earnings.',
             presets: [
                 { label: 'Short film', price: '6', sales: 250 },
                 { label: 'Concert recording', price: '12', sales: 800 },
@@ -168,17 +168,17 @@ export const landingCopy = {
             platformFee: '5% illustrative pilot fee',
             creatorShareDescription: 'Test-token balance after the illustrative pilot fee; not a bank payout.',
             estimateNote: 'Simulation only; test tokens have no real value. Actual earnings, tax, seller and refund responsibilities are not established. Upload, sponsor and network fees are separate.',
-            uploadFeeTitle: 'YouTick upload fee',
+            uploadFeeTitle: 'youtick upload fee',
             uploadFeeDescription: 'The separate upload quote depends on source size. Any sponsor fee is shown before approval; network fees may also apply.',
         },
         trust: {
-            eyebrow: 'Why YouTick',
+            eyebrow: 'Why youtick',
             title: 'Release, tickets, and viewing in one place.',
-            description: 'YouTick keeps the audience experience simple while Livepeer handles video processing and streaming, and NEAR records publication, payment, and access.',
+            description: 'youtick keeps the audience experience simple while Livepeer handles video processing and streaming, and NEAR records publication, payment, and access.',
             items: [
                 { title: 'One release flow', description: 'Create the screening, set the ticket price, and publish without piecing together separate tools.' },
                 { title: 'Direct audience sales', description: 'Bring viewers to your own ticketed screening instead of another generic video page.' },
-                { title: 'Ticket-checked viewing', description: 'YouTick confirms the connected account’s ticket before issuing short-lived playback access.' },
+                { title: 'Ticket-checked viewing', description: 'youtick confirms the connected account’s ticket before issuing short-lived playback access.' },
                 { title: 'Visible test fee model', description: 'See the test-USDC price and illustrative pilot split; no earnings or bank payout promise.' },
             ],
             technologyLabel: 'Built with Livepeer, NEAR, and USDC',
@@ -201,7 +201,7 @@ export const landingCopy = {
             },
             disabled: {
                 primary: 'See how it works',
-                secondary: 'Why YouTick',
+                secondary: 'Why youtick',
                 status: 'Pilot publishing is currently closed',
             },
         },
@@ -249,7 +249,7 @@ export const landingCopy = {
         howItWorks: {
             eyebrow: 'Tek sade akış',
             title: 'Yüklemeden izlemeye dört adım.',
-            description: 'YouTick yayın ve bilet akışını yönetirken Livepeer videoyu güvenilir izleme için hazırlar.',
+            description: 'youtick yayın ve bilet akışını yönetirken Livepeer videoyu güvenilir izleme için hazırlar.',
             steps: [
                 { title: 'Gösterimi hazırla', description: 'Esere ad ver, en az 2 test USDC bilet fiyatı seç ve yayın için gereken haklarını onayla.' },
                 { title: 'Ücreti kontrol et ve yükle', description: 'Cüzdan onayından önce ayrı yükleme ücretini ve varsa sponsor ücretini kontrol et. Pilot kaynak dosya sınırı: 5 GB.' },
@@ -280,7 +280,7 @@ export const landingCopy = {
         roi: {
             eyebrow: 'Ücret modeli',
             title: 'Test tokenlarıyla bilet paylaşımını hesapla.',
-            description: 'Bu simülasyon örnek pilot paylaşımını kullanır: %95 üretici bakiyesi, %5 YouTick ücreti. Kazanç vaadi değildir.',
+            description: 'Bu simülasyon örnek pilot paylaşımını kullanır: %95 üretici bakiyesi, %5 youtick ücreti. Kazanç vaadi değildir.',
             presets: [
                 { label: 'Kısa film', price: '6', sales: 250 },
                 { label: 'Konser kaydı', price: '12', sales: 800 },
@@ -295,17 +295,17 @@ export const landingCopy = {
             platformFee: '%5 örnek pilot ücreti',
             creatorShareDescription: 'Örnek pilot ücretinden sonraki test tokenı bakiyesi; banka ödemesi değildir.',
             estimateNote: 'Yalnızca simülasyondur; test tokenlarının gerçek değeri yoktur. Kazanç, vergi, satıcı ve iade sorumlulukları kesinleşmemiştir. Yükleme, sponsor ve ağ ücretleri ayrıdır.',
-            uploadFeeTitle: 'YouTick yükleme ücreti',
+            uploadFeeTitle: 'youtick yükleme ücreti',
             uploadFeeDescription: 'Ayrı yükleme teklifi dosya boyutuna bağlıdır. Varsa sponsor ücreti onaydan önce gösterilir; ağ ücreti de uygulanabilir.',
         },
         trust: {
-            eyebrow: 'Neden YouTick',
+            eyebrow: 'Neden youtick',
             title: 'Yayın, bilet ve izleme tek yerde.',
-            description: 'YouTick izleyici deneyimini sade tutar; Livepeer video işleme ve aktarımını yönetirken NEAR yayın, ödeme ve erişimi kaydeder.',
+            description: 'youtick izleyici deneyimini sade tutar; Livepeer video işleme ve aktarımını yönetirken NEAR yayın, ödeme ve erişimi kaydeder.',
             items: [
                 { title: 'Tek yayın akışı', description: 'Gösterimi oluştur, bilet fiyatını belirle ve ayrı araçları birleştirmeden yayınla.' },
                 { title: 'Doğrudan izleyiciye satış', description: 'İzleyicini genel bir video sayfası yerine kendi biletli gösterimine getir.' },
-                { title: 'Bilet kontrollü izleme', description: 'YouTick, kısa süreli izleme erişimi vermeden önce bağlı hesabın biletini doğrular.' },
+                { title: 'Bilet kontrollü izleme', description: 'youtick, kısa süreli izleme erişimi vermeden önce bağlı hesabın biletini doğrular.' },
                 { title: 'Görünen test ücret modeli', description: 'Test USDC fiyatını ve örnek pilot paylaşımını gör; kazanç veya banka ödemesi vaadi yoktur.' },
             ],
             technologyLabel: 'Livepeer, NEAR ve USDC ile geliştirildi',
@@ -328,7 +328,7 @@ export const landingCopy = {
             },
             disabled: {
                 primary: 'Nasıl çalıştığını gör',
-                secondary: 'Neden YouTick',
+                secondary: 'Neden youtick',
                 status: 'Pilot yayını şu anda kapalı',
             },
         },

@@ -14,7 +14,7 @@ export const metadata: Metadata = {
         url: '/',
         locale: 'en_US',
         alternateLocale: ['tr_TR'],
-        title: 'YouTick — Ticketed digital screenings',
+        title: 'youtick — Ticketed digital screenings',
         description: 'Upload the work, set the ticket price, and sell directly to your audience.',
         images: [{ url: '/hero-concert.webp', width: 1024, height: 1024, alt: 'A concert stage facing a live audience' }],
     },

@@ -18,6 +18,7 @@ Load only relevant upstream references and verify their APIs against the pinned 
 - [Integration testing](rules/testing-integration-tests.md) — retain the repository's existing test runner
 - [Events and contract tools](rules/best-contract-tools.md) — no new crate merely for an example
 - [Chain signatures](rules/chain-signatures.md), [yield/resume](rules/yield-resume.md) — only when the task uses them
+- Security topics without a local rule (private callbacks, refunds on XCC failure, `ft_on_transfer` reentrancy, one yocto, front-running): the "Additional Rules (Upstream Docs)" table in [UPSTREAM.md](UPSTREAM.md) lists the official docs.near.org pages; the upstream SDK note (5.29.x) does not change this project's `=5.5.0` pin
 
 Upstream setup/deploy commands are not this project's workflow. Use the existing Contracts checks in `docs/testing.md`, including ABI/protocol checks when interfaces change. Use [youtick-contract-review](../youtick-contract-review/SKILL.md) for repository-specific review and [near-contract-audit](../near-contract-audit/SKILL.md) for vulnerability analysis. A local WASM build is not deployment evidence.
 
