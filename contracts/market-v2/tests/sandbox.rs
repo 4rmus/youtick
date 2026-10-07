@@ -91,6 +91,7 @@ async fn init_with_admin(
                 "tax_account_id": governance.id(),
                 "vat_public_key": near_key(&test_key("vat-signer")),
                 "vat_key_version": 1,
+                "payment_operator_id": "payments.testnet",
             },
         }))
         .transact()
