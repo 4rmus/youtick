@@ -19,6 +19,7 @@ updates:
     directories:
       - /apps/web
       - /workers/livepeer-bridge
+      - /workers/payment-service
       - /docs
       - /scripts/near-auth-provider-handoff
     schedule:

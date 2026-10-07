@@ -55,6 +55,18 @@ The local fault regressions prove bounded NEAR read fallback/circuit behavior
 and one-attempt Livepeer create degradation. They do not constitute provider,
 staging or distributed-isolate chaos evidence.
 
+## Payment service
+
+```bash
+cd workers/payment-service
+npm ci
+npm test -- --run
+npm run check
+```
+
+The VAT attestation tests reproduce the protocol golden vector with the reference test key
+(LOCAL_TEST). No RPC, signer secret or provider is used.
+
 ## Contracts
 
 Use Rust 1.86.0 and cargo-near 0.17.0:

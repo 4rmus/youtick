@@ -28,6 +28,7 @@ jobs:
         run: |
           npm --prefix apps/web audit --omit=dev --audit-level=high
           npm --prefix workers/livepeer-bridge audit --omit=dev --audit-level=high
+          npm --prefix workers/payment-service audit --omit=dev --audit-level=high
           npm --prefix docs audit --omit=dev --audit-level=high
 
   rust-wasm-audit:
@@ -100,6 +101,7 @@ jobs:
     outputs:
       web: ${{ steps.changes.outputs.web }}
       bridge: ${{ steps.changes.outputs.bridge }}
+      payments: ${{ steps.changes.outputs.payments }}
       contracts: ${{ steps.changes.outputs.contracts }}
       protocol: ${{ steps.changes.outputs.protocol }}
       docs: ${{ steps.changes.outputs.docs }}
@@ -117,6 +119,7 @@ jobs:
 
           web=false
           bridge=false
+          payments=false
           contracts=false
           protocol=false
           docs=false
@@ -124,6 +127,7 @@ jobs:
           set_all() {
             web=true
             bridge=true
+            payments=true
             contracts=true
             protocol=true
             docs=true
@@ -150,6 +154,9 @@ jobs:
                 workers/livepeer-bridge/*)
                   bridge=true
                   ;;
+                workers/payment-service/*)
+                  payments=true
+                  ;;
                 protocol/paid-media-livepeer-v1/*|scripts/check-paid-media-livepeer-v1.mjs)
                   web=true
                   contracts=true
@@ -158,6 +165,7 @@ jobs:
                   ;;
                 protocol/youtick-market-v2/*|scripts/check-youtick-market-v2.mjs)
                   protocol=true
+                  payments=true
                   ;;
                 contracts/*|scripts/check-paid-media-livepeer-v1-abi.mjs)
                   contracts=true
@@ -168,6 +176,7 @@ jobs:
                 .nvmrc)
                   web=true
                   bridge=true
+                  payments=true
                   protocol=true
                   docs=true
                   ;;
@@ -191,6 +200,7 @@ jobs:
           {
             echo "web=${web}"
             echo "bridge=${bridge}"
+            echo "payments=${payments}"
             echo "contracts=${contracts}"
             echo "protocol=${protocol}"
             echo "docs=${docs}"
@@ -248,6 +258,27 @@ jobs:
       - run: npm ci --no-audit --no-fund --prefer-offline
       - run: npm test -- --run
       - run: npm run test:provider-canary
+      - run: npm run check
+      - run: npx wrangler deploy --dry-run
+
+  payment-service:
+    name: Payment service
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: detect-changes
+    if: needs.detect-changes.outputs.payments == 'true'
+    defaults:
+      run:
+        working-directory: workers/payment-service
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: workers/payment-service/package-lock.json
+      - run: npm ci --no-audit --no-fund --prefer-offline
+      - run: npm test -- --run
       - run: npm run check
       - run: npx wrangler deploy --dry-run
 
@@ -550,6 +581,7 @@ jobs:
       - detect-changes
       - web
       - livepeer-bridge
+      - payment-service
       - contracts
       - protocol
       - docs

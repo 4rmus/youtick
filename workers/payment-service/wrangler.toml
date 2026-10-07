@@ -1,0 +1,26 @@
+# Configuration only; deploys run through protected workflows (none exists for this Worker yet).
+name = "youtick-payment-service"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[vars]
+PAYMENT_SERVICE_ENABLED = "false"
+NEAR_NETWORK = "testnet"
+NEAR_RPC_URL = "<replace-with-dedicated-near-rpc-url>"
+MARKET_V2_CONTRACT_ID = "<replace-with-market-v2-contract-id>"
+# Testnet only until the tax adviser's evidence policy (roadmap X3): one VAT-inclusive rate for all.
+VAT_POLICY = "fixed-testnet"
+VAT_RATE_BPS = "2000"
+VAT_KEY_VERSION = "1"
+ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
+# Secret (wrangler secret put): VAT_SIGNER_PRIVATE_KEY.
+
+[[ratelimits]]
+name = "PAYMENT_RATE_LIMITER"
+namespace_id = "3201"
+simple = { limit = 20, period = 60 }
