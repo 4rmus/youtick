@@ -1,0 +1,36 @@
+[package]
+name = "ckd-gate"
+version = "0.2.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { version = "=5.18.1", features = ["legacy"] }
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.140"
+sha2 = "=0.10.9"
+base64 = "=0.22.1"
+hex = "=0.4.3"
+# fast-auth's RS256 verifier (base-jwt-guard), pinned to a commit. Keep Cargo.lock unchanged:
+# a `cargo update` once made bad signatures trap with `unreachable` instead of returning false.
+# Owner-approved exception to the repo-wide near-sdk =5.5.0 pin (2026-10-07): this crate is
+# standalone, has its own lockfile and is never linked with the other contracts.
+base-jwt-guard = { git = "https://github.com/Peersyst/fast-auth", rev = "8f84383" }
+
+[dev-dependencies]
+near-sdk = { version = "=5.18.1", features = ["unit-testing"] }
+rsa = { version = "=0.9.10", features = ["sha2"] }
+rand = "=0.8.5"
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
+
+[workspace]

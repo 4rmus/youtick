@@ -107,6 +107,19 @@ cargo +1.86.0 near build non-reproducible-wasm
 `market_v2` includes `protocol_golden_vectors_are_accepted_byte_for_byte`, which reads
 `protocol/youtick-market-v2/golden-vectors.json`.
 
+## ckd-gate
+
+`contracts/ckd-gate` uses its own pins (near-sdk `=5.18.1`, fast-auth `base-jwt-guard` from git).
+Always build with `--locked` and never run `cargo update`:
+
+```bash
+cd contracts/ckd-gate
+cargo +1.86.0 test --locked
+cargo +1.86.0 fmt --all --check
+cargo +1.86.0 clippy --locked --all-targets -- -D warnings
+cargo +1.86.0 near build non-reproducible-wasm --locked
+```
+
 ## Read model
 
 ```bash
