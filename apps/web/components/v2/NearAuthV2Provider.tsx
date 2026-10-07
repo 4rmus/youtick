@@ -10,7 +10,7 @@ import type { ViewContract } from '@/lib/v2/tickets';
 export type V2Session =
     | { status: 'signed_out' }
     | { status: 'signing_in' }
-    | { status: 'signed_in'; accountId: string; ckdKey: Uint8Array }
+    | { status: 'signed_in'; accountId: string; publicKey: string; ckdKey: Uint8Array }
     | { status: 'error'; error: string };
 
 interface V2AuthContext {
@@ -51,7 +51,7 @@ export function NearAuthV2Provider({ children }: { children: ReactNode }) {
             config: config.auth, gateAccountId: config.gateAccountId, popup, redirectUri: window.location.origin, view,
             submit: relayerSubmitter(client, { inviteCode: options.inviteCode, onInvite: setInvite }),
         }).then((result) => {
-            if (current === generation.current) setSession({ status: 'signed_in', accountId: result.accountId, ckdKey: result.ckdKey });
+            if (current === generation.current) setSession({ status: 'signed_in', accountId: result.accountId, publicKey: result.publicKey, ckdKey: result.ckdKey });
         }, (error: unknown) => {
             if (current === generation.current) {
                 setSession({ status: 'error', error: error instanceof Error && /^[a-z_]{1,64}$/.test(error.message) ? error.message : 'sign_in_failed' });

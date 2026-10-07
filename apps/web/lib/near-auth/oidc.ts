@@ -52,7 +52,9 @@ export function browserOidcEnvironment(): OidcEnvironment {
     };
 }
 
-export async function authorizeUrl(input: OidcLoginInput, state: string, challenge: string): Promise<string> {
+export async function authorizeUrl(
+    input: OidcLoginInput, state: string, challenge: string, extra: Record<string, string> = {},
+): Promise<string> {
     const url = new URL('authorize', input.issuer);
     const params: Record<string, string> = {
         client_id: input.clientId,
@@ -65,6 +67,7 @@ export async function authorizeUrl(input: OidcLoginInput, state: string, challen
         code_challenge: challenge,
         code_challenge_method: 'S256',
         ...(input.prompt ? { prompt: input.prompt } : {}),
+        ...extra,
     };
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
     return url.href;
@@ -77,6 +80,38 @@ export async function authorizeUrl(input: OidcLoginInput, state: string, challen
 export async function loginWithNonce(
     popup: PopupLike, input: OidcLoginInput, env: OidcEnvironment = browserOidcEnvironment(),
 ): Promise<string> {
+    const tokens = await authorizeInPopup(popup, input, env, {});
+    if (typeof tokens.id_token !== 'string' || !tokens.id_token || tokens.id_token.length > MAX_ID_TOKEN_LENGTH) {
+        throw new Error('near_auth_token_exchange_failed');
+    }
+    return tokens.id_token;
+}
+
+/**
+ * Asks the user to approve one delegate action on the NEAR Auth screen. Auth0 shows the decoded
+ * action and copies these exact bytes into the access token's `fatxn` claim, which fast-auth
+ * checks before the MPC network signs. Resolves with the access token, valid for that one payload.
+ */
+export async function requestDelegateApproval(
+    popup: PopupLike,
+    input: Omit<OidcLoginInput, 'prompt'> & { audience: string; delegateBytes: Uint8Array },
+    env: OidcEnvironment = browserOidcEnvironment(),
+): Promise<string> {
+    if (input.delegateBytes.length === 0 || input.delegateBytes.length > 4096) throw new Error('near_auth_login_failed');
+    const tokens = await authorizeInPopup(popup, input, env, {
+        audience: input.audience,
+        scope: 'openid transaction:sign',
+        delegateAction: Array.from(input.delegateBytes).join(','),
+    });
+    if (typeof tokens.access_token !== 'string' || !tokens.access_token || tokens.access_token.length > MAX_ID_TOKEN_LENGTH) {
+        throw new Error('near_auth_token_exchange_failed');
+    }
+    return tokens.access_token;
+}
+
+async function authorizeInPopup(
+    popup: PopupLike, input: OidcLoginInput, env: OidcEnvironment, extra: Record<string, string>,
+): Promise<{ id_token?: unknown; access_token?: unknown }> {
     let issuerOrigin: string;
     let state: string;
     let verifier: string;
@@ -85,7 +120,7 @@ export async function loginWithNonce(
         state = base64Url(env.randomBytes(32));
         verifier = base64Url(env.randomBytes(32));
         const challenge = base64Url(await env.sha256(new TextEncoder().encode(verifier)));
-        popup.location.href = await authorizeUrl(input, state, challenge);
+        popup.location.href = await authorizeUrl(input, state, challenge, extra);
     } catch {
         if (!popup.closed) popup.close();
         throw new Error('near_auth_login_failed');
@@ -134,9 +169,7 @@ export async function loginWithNonce(
         }),
     });
     if (!tokenResponse.ok) throw new Error('near_auth_token_exchange_failed');
-    const tokens = await tokenResponse.json().catch(() => null) as { id_token?: unknown } | null;
-    if (typeof tokens?.id_token !== 'string' || !tokens.id_token || tokens.id_token.length > MAX_ID_TOKEN_LENGTH) {
-        throw new Error('near_auth_token_exchange_failed');
-    }
-    return tokens.id_token;
+    const tokens = await tokenResponse.json().catch(() => null) as { id_token?: unknown; access_token?: unknown } | null;
+    if (!tokens || typeof tokens !== 'object') throw new Error('near_auth_token_exchange_failed');
+    return tokens;
 }

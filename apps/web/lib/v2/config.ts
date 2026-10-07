@@ -8,6 +8,8 @@ export interface V2Config {
     gateAccountId: string;
     relayerUrl: string;
     bridgeUrl: string;
+    /** VAT attestations; checkout is unavailable without it. */
+    paymentServiceUrl: string | null;
 }
 
 const ACCOUNT_ID = /^(?=.{2,64}$)[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
@@ -22,11 +24,15 @@ function httpsOrigin(value: string | undefined): string | null {
 }
 
 export function v2Config(
-    env: { marketContractId?: string; gateAccountId?: string; relayerUrl?: string; bridgeUrl?: string; auth?: NearAuthConfig | null } = {
+    env: {
+        marketContractId?: string; gateAccountId?: string; relayerUrl?: string; bridgeUrl?: string; paymentServiceUrl?: string;
+        auth?: NearAuthConfig | null;
+    } = {
         marketContractId: process.env.NEXT_PUBLIC_MARKET_V2_CONTRACT_ID,
         gateAccountId: process.env.NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID,
         relayerUrl: process.env.NEXT_PUBLIC_RELAYER_URL,
         bridgeUrl: APP_CONFIG.livepeerBridgeUrl,
+        paymentServiceUrl: process.env.NEXT_PUBLIC_PAYMENT_SERVICE_URL,
     },
 ): V2Config | null {
     const auth = env.auth === undefined ? nearAuthConfig() : env.auth;
@@ -35,5 +41,5 @@ export function v2Config(
     const marketContractId = env.marketContractId?.trim() ?? '';
     const gateAccountId = env.gateAccountId?.trim() ?? '';
     if (!auth || !relayerUrl || !bridgeUrl || !ACCOUNT_ID.test(marketContractId) || !ACCOUNT_ID.test(gateAccountId)) return null;
-    return { auth, marketContractId, gateAccountId, relayerUrl, bridgeUrl };
+    return { auth, marketContractId, gateAccountId, relayerUrl, bridgeUrl, paymentServiceUrl: httpsOrigin(env.paymentServiceUrl) };
 }

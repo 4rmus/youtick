@@ -23,7 +23,7 @@ const ORIGIN = 'https://preview.youtick.net';
 describe('V2 config', () => {
     it('needs NEAR Auth and every V2 endpoint', () => {
         const env = { auth, marketContractId: MARKET, gateAccountId: 'ckd-gate.youtick.testnet', relayerUrl: RELAYER, bridgeUrl: BRIDGE };
-        expect(v2Config(env)).toEqual({ auth, marketContractId: MARKET, gateAccountId: 'ckd-gate.youtick.testnet', relayerUrl: RELAYER, bridgeUrl: BRIDGE });
+        expect(v2Config(env)).toEqual({ auth, marketContractId: MARKET, gateAccountId: 'ckd-gate.youtick.testnet', relayerUrl: RELAYER, bridgeUrl: BRIDGE, paymentServiceUrl: null });
         for (const override of [{ auth: null }, { relayerUrl: 'http://relayer.test' }, { relayerUrl: `${RELAYER}/path` },
             { bridgeUrl: '' }, { marketContractId: 'Bad Id' }, { gateAccountId: undefined }]) {
             expect(v2Config({ ...env, ...override })).toBeNull();
