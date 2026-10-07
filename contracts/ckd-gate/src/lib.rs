@@ -688,14 +688,28 @@ mod tests {
     #[should_panic(expected = "jwt too large")]
     fn oversized_token_is_rejected() {
         let jwt = format!("a.{}.c", "b".repeat(MAX_JWT_SIZE));
-        verify_token(&jwt, &[], ISS, CLIENT, "n", 1_000);
+        verify_token(
+            &jwt,
+            &[],
+            ISS,
+            CLIENT,
+            &expected_nonce(&gate(), &app()),
+            1_000,
+        );
     }
 
     #[test]
     fn malformed_tokens_are_rejected() {
         for jwt in ["", "only-one-part", "a.b", "..", "a.b.c.d"] {
             let outcome = std::panic::catch_unwind(|| {
-                verify_token(jwt, &[Issuer::new().public()], ISS, CLIENT, "n", 1_000)
+                verify_token(
+                    jwt,
+                    &[Issuer::new().public()],
+                    ISS,
+                    CLIENT,
+                    &expected_nonce(&gate(), &app()),
+                    1_000,
+                )
             });
             assert!(outcome.is_err(), "{jwt:?} must be rejected");
         }
