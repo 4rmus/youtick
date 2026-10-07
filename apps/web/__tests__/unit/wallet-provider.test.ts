@@ -247,7 +247,8 @@ describe('WalletProvider CSP initialization', () => {
     });
 
     it('reads the middleware nonce in the root layout', async () => {
-        const layout = await readFile('app/layout.tsx', 'utf8');
+        // Both root layouts (app/(site), app/(tr)) render this shell.
+        const layout = await readFile('components/RootShell.tsx', 'utf8');
 
         expect(layout).toContain("(await headers()).get('x-nonce')");
         expect(layout).toContain('<WalletProvider cspNonce={cspNonce}>');
