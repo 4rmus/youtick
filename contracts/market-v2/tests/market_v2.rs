@@ -3391,6 +3391,31 @@ fn protocol_golden_vectors_are_accepted_byte_for_byte() {
     );
     assert_eq!(market.get_escrow_balance(), U128(gross));
 
+    // Device calls and events match the protocol vectors.
+    let calls = &vectors["calls"];
+    let mut relayer = context("relayer.testnet");
+    relayer.block_timestamp(issued_at * 1_000_000);
+    testing_env!(relayer.build());
+    let add = &calls["add_device_args"];
+    market.add_device(
+        add["ticket_id"].as_str().unwrap().to_string(),
+        add["session_public_key"].as_str().unwrap().to_string(),
+        add["certificate_sha256"].as_str().unwrap().to_string(),
+        add["device_epoch"].as_str().unwrap().to_string(),
+        add["expires_at_ms"].as_str().unwrap().to_string(),
+        add["signature"].as_str().unwrap().to_string(),
+    );
+    assert_eq!(governance_event(), vectors["events"]["device_added"]);
+    let revoke = &calls["revoke_device_args"];
+    market.revoke_device(
+        revoke["ticket_id"].as_str().unwrap().to_string(),
+        revoke["session_public_key"].as_str().unwrap().to_string(),
+        revoke["device_epoch"].as_str().unwrap().to_string(),
+        revoke["expires_at_ms"].as_str().unwrap().to_string(),
+        revoke["signature"].as_str().unwrap().to_string(),
+    );
+    assert_eq!(governance_event(), vectors["events"]["device_revoked"]);
+
     // Settlement events match the protocol vectors too.
     let mut bridge = context("bridge.testnet");
     bridge.block_timestamp(issued_at * 1_000_000);
@@ -3885,4 +3910,353 @@ fn refund_window_closes_at_thirty_days_unless_taken_down() {
         market.get_ticket(purchase.ticket_id).unwrap().status,
         youtick_market_v2::TicketStatus::Refunded
     );
+}
+
+// --- E3c: ticket devices ---------------------------------------------------------------------
+
+fn device_signature(
+    label: &str,
+    action: &str,
+    ticket_id: &str,
+    expires: &str,
+    fields: &[&str],
+) -> String {
+    let mut lines = vec![
+        "youtick.market-v2.ticket-sig.v1",
+        "testnet",
+        "market.testnet",
+        action,
+        ticket_id,
+        expires,
+    ];
+    lines.extend_from_slice(fields);
+    v2::sign(&v2::key(label), &lines)
+}
+
+fn add(
+    market: &mut Contract,
+    label: &str,
+    ticket_id: &str,
+    session: &str,
+    epoch: &str,
+) -> youtick_market_v2::TicketDevice {
+    let expires = (NOW_MS + 600_000).to_string();
+    let signature = device_signature(
+        label,
+        "add_device",
+        ticket_id,
+        &expires,
+        &[session, v2::CERTIFICATE, epoch],
+    );
+    market.add_device(
+        ticket_id.to_string(),
+        session.to_string(),
+        v2::CERTIFICATE.to_string(),
+        epoch.to_string(),
+        expires,
+        signature,
+    )
+}
+
+#[test]
+fn relayed_add_device_keeps_three_devices_and_renews_existing_keys() {
+    let (mut market, purchase) = bought("job-devices", "devices");
+    let id = purchase.ticket_id.clone();
+    let sessions: Vec<String> = (1..=3)
+        .map(|n| v2::near_key(&v2::key(&format!("device-{n}"))))
+        .collect();
+    testing_env!(context("relayer.testnet").build());
+    let added = add(&mut market, "devices", &id, &sessions[0], "0");
+    assert_eq!(added.expires_at_ms.0, NOW_MS + 30 * 86_400_000);
+    let event = governance_event();
+    assert_eq!(event["event"], "device_added");
+    assert_eq!(event["data"][0]["device_epoch"], "0");
+    add(&mut market, "devices", &id, &sessions[1], "0");
+    assert_eq!(market.get_ticket(id.clone()).unwrap().devices.len(), 3);
+    // A fourth device replaces the oldest (the purchase device) and advances the epoch.
+    let purchase_session = purchase.msg["device"]["session_public_key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    add(&mut market, "devices", &id, &sessions[2], "0");
+    let logs = get_logs();
+    let evicted: serde_json::Value =
+        serde_json::from_str(logs[logs.len() - 2].strip_prefix("EVENT_JSON:").unwrap()).unwrap();
+    assert_eq!(evicted["event"], "device_revoked");
+    assert_eq!(evicted["data"][0]["session_public_key"], purchase_session);
+    assert_eq!(evicted["data"][0]["device_epoch"], "1");
+    let ticket = market.get_ticket(id.clone()).unwrap();
+    assert_eq!(ticket.device_epoch, 1);
+    let devices: Vec<String> = ticket
+        .devices
+        .into_iter()
+        .map(|d| d.session_public_key)
+        .collect();
+    assert_eq!(devices, sessions);
+    assert!(!devices.contains(&purchase_session));
+    // An epoch-0 signature (e.g. one seen on chain earlier) cannot rotate a device back in.
+    must_fail(|| {
+        add(&mut market, "devices", &id, &purchase_session, "0");
+    });
+    // Re-adding an existing key renews it and moves it to the newest position.
+    at("relayer.testnet", NOW_MS + 86_400_000);
+    let expires = (NOW_MS + 86_400_000 + 600_000).to_string();
+    let renewed = market.add_device(
+        id.clone(),
+        sessions[0].clone(),
+        v2::CERTIFICATE.to_string(),
+        "1".to_string(),
+        expires.clone(),
+        device_signature(
+            "devices",
+            "add_device",
+            &id,
+            &expires,
+            &[&sessions[0], v2::CERTIFICATE, "1"],
+        ),
+    );
+    assert_eq!(renewed.expires_at_ms.0, NOW_MS + 31 * 86_400_000);
+    let order: Vec<String> = market
+        .get_ticket(id)
+        .unwrap()
+        .devices
+        .into_iter()
+        .map(|d| d.session_public_key)
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            sessions[1].clone(),
+            sessions[2].clone(),
+            sessions[0].clone()
+        ]
+    );
+}
+
+#[test]
+fn add_device_rejects_foreign_keys_wrong_fields_and_unplayable_tickets() {
+    let (mut market, purchase) = bought("job-device-rules", "device-rules");
+    let id = purchase.ticket_id.clone();
+    let session = v2::near_key(&v2::key("rule-device"));
+    let expires = (NOW_MS + 600_000).to_string();
+    testing_env!(context("relayer.testnet").build());
+    let cases: Vec<(&str, String, String, String, String)> = vec![
+        (
+            "foreign key",
+            "0".into(),
+            expires.clone(),
+            v2::CERTIFICATE.into(),
+            device_signature(
+                "intruder",
+                "add_device",
+                &id,
+                &expires,
+                &[&session, v2::CERTIFICATE, "0"],
+            ),
+        ),
+        (
+            "revoke signature",
+            "0".into(),
+            expires.clone(),
+            v2::CERTIFICATE.into(),
+            device_signature(
+                "device-rules",
+                "revoke_device",
+                &id,
+                &expires,
+                &[&session, "0"],
+            ),
+        ),
+        (
+            "stale epoch",
+            "1".into(),
+            expires.clone(),
+            v2::CERTIFICATE.into(),
+            device_signature(
+                "device-rules",
+                "add_device",
+                &id,
+                &expires,
+                &[&session, v2::CERTIFICATE, "1"],
+            ),
+        ),
+        (
+            "expired",
+            "0".into(),
+            NOW_MS.to_string(),
+            v2::CERTIFICATE.into(),
+            device_signature(
+                "device-rules",
+                "add_device",
+                &id,
+                &NOW_MS.to_string(),
+                &[&session, v2::CERTIFICATE, "0"],
+            ),
+        ),
+        (
+            "bad certificate",
+            "0".into(),
+            expires.clone(),
+            "AB".repeat(32),
+            device_signature(
+                "device-rules",
+                "add_device",
+                &id,
+                &expires,
+                &[&session, &"AB".repeat(32), "0"],
+            ),
+        ),
+    ];
+    for (problem, epoch, expires_at, certificate, signature) in cases {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            market.add_device(
+                id.clone(),
+                session.clone(),
+                certificate.clone(),
+                epoch.clone(),
+                expires_at.clone(),
+                signature.clone(),
+            )
+        }));
+        assert!(outcome.is_err(), "{problem} must fail");
+    }
+    assert_eq!(market.get_ticket(id.clone()).unwrap().devices.len(), 1);
+
+    // Refunded tickets cannot hold devices.
+    let refund_expires = (NOW_MS + 600_000).to_string();
+    let _ = market.refund_unwatched(
+        id.clone(),
+        account("buyer.testnet"),
+        refund_expires.clone(),
+        refund_signature("device-rules", &id, "buyer.testnet", &refund_expires),
+    );
+    must_fail(|| {
+        add(&mut market, "device-rules", &id, &session, "0");
+    });
+}
+
+#[test]
+fn released_tickets_accept_devices_but_taken_down_publications_do_not() {
+    let (mut market, purchase) = bought("job-device-release", "device-release");
+    let id = purchase.ticket_id.clone();
+    let session = v2::near_key(&v2::key("release-device"));
+    at("anyone.testnet", NOW_MS + 30 * 86_400_000);
+    assert_eq!(market.release_expired(vec![id.clone()]), 1);
+    let expires = (NOW_MS + 30 * 86_400_000 + 600_000).to_string();
+    let signature = device_signature(
+        "device-release",
+        "add_device",
+        &id,
+        &expires,
+        &[&session, v2::CERTIFICATE, "0"],
+    );
+    market.add_device(
+        id.clone(),
+        session.clone(),
+        v2::CERTIFICATE.to_string(),
+        "0".into(),
+        expires.clone(),
+        signature.clone(),
+    );
+    testing_env!(context("governance.testnet").build());
+    market.takedown_livepeer_publication(
+        "job-device-release".to_string(),
+        "GOVERNANCE_DECISION".to_string(),
+        "incident-device-release".to_string(),
+        FINGERPRINT.to_string(),
+        U64(NOW_MS),
+    );
+    at("relayer.testnet", NOW_MS + 30 * 86_400_000);
+    must_fail(|| {
+        market.add_device(
+            id.clone(),
+            session.clone(),
+            v2::CERTIFICATE.to_string(),
+            "0".into(),
+            expires.clone(),
+            signature.clone(),
+        );
+    });
+}
+
+#[test]
+fn revocation_advances_the_epoch_so_old_signatures_cannot_restore_a_device() {
+    let (mut market, purchase) = bought("job-revoke", "revoke");
+    let id = purchase.ticket_id.clone();
+    let session = v2::near_key(&v2::key("revoked-device"));
+    let expires = (NOW_MS + 600_000).to_string();
+    let old_add = device_signature(
+        "revoke",
+        "add_device",
+        &id,
+        &expires,
+        &[&session, v2::CERTIFICATE, "0"],
+    );
+    testing_env!(context("relayer.testnet").build());
+    market.add_device(
+        id.clone(),
+        session.clone(),
+        v2::CERTIFICATE.into(),
+        "0".into(),
+        expires.clone(),
+        old_add.clone(),
+    );
+
+    // Holder revocation needs the ticket key and the current epoch.
+    must_fail(|| {
+        market.revoke_device(
+            id.clone(),
+            session.clone(),
+            "0".into(),
+            expires.clone(),
+            device_signature("intruder", "revoke_device", &id, &expires, &[&session, "0"]),
+        );
+    });
+    market.revoke_device(
+        id.clone(),
+        session.clone(),
+        "0".into(),
+        expires.clone(),
+        device_signature("revoke", "revoke_device", &id, &expires, &[&session, "0"]),
+    );
+    let event = governance_event();
+    assert_eq!(event["event"], "device_revoked");
+    assert_eq!(event["data"][0]["device_epoch"], "1");
+    let ticket = market.get_ticket(id.clone()).unwrap();
+    assert_eq!(ticket.device_epoch, 1);
+    assert!(ticket
+        .devices
+        .iter()
+        .all(|device| device.session_public_key != session));
+
+    // The unexpired epoch-0 signature can no longer re-add the device; a fresh one can.
+    must_fail(|| {
+        market.add_device(
+            id.clone(),
+            session.clone(),
+            v2::CERTIFICATE.into(),
+            "0".into(),
+            expires.clone(),
+            old_add.clone(),
+        );
+    });
+    add(&mut market, "revoke", &id, &session, "1");
+
+    // Platform revocation: platform account only, and it also advances the epoch.
+    for actor in ["relayer.testnet", "bridge.testnet", "admin.testnet"] {
+        testing_env!(context(actor).build());
+        must_fail(|| market.platform_revoke_device(id.clone(), session.clone()));
+    }
+    testing_env!(context("platform.testnet").build());
+    market.platform_revoke_device(id.clone(), session.clone());
+    let ticket = market.get_ticket(id.clone()).unwrap();
+    assert_eq!(ticket.device_epoch, 2);
+    assert!(ticket
+        .devices
+        .iter()
+        .all(|device| device.session_public_key != session));
+    testing_env!(context("relayer.testnet").build());
+    must_fail(|| {
+        add(&mut market, "revoke", &id, &session, "1");
+    });
 }

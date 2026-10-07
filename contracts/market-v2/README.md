@@ -1,6 +1,6 @@
 # youtick Market v2 contract
 
-Status: `E3B_LOCAL / NOT_DEPLOYED / RUNTIME_DISABLED`
+Status: `E3C_LOCAL / NOT_DEPLOYED / RUNTIME_DISABLED`
 
 This crate is the V2 Market. It is forked from `contracts/nft-ticket` at the merged self-upgrade
 gate (#257) and goes to mainnet under a new contract ID with empty state. Nothing is migrated
@@ -66,11 +66,35 @@ self-upgrade path are unchanged from V1.
 - **`withdraw_tax_balance()`** — the tax or platform account sends the VAT to `tax_account_id`.
   A failed transfer restores the balance.
 
+## Devices (gate E3c)
+
+- **`add_device(ticket_id, session_public_key, certificate_sha256, device_epoch, expires_at_ms, signature)`**
+  — the ticket key signs, and anyone submits (normally the relayer), so the viewer sends no
+  transaction.
+  - At most 3 devices are active, each valid for 30 days. Re-adding a key renews it, and a
+    fourth device replaces the oldest.
+  - It works for purchased, watched and released tickets. It fails for refunded or voided
+    tickets and for taken-down publications.
+- **`revoke_device(...)`** — signed by the holder.
+- **`platform_revoke_device(ticket_id, session_public_key)`** — platform account only, for
+  example when a leak is traced through the watermark.
+- **Device epoch.** Every revocation increments `device_epoch`, and so does every eviction of
+  the oldest device. Any `add_device` signature made for an older epoch is rejected, so a revoked
+  or evicted device cannot be restored with an old signature.
+- **Authoritative source.** `get_ticket` is the authoritative device list; events are not.
+  - Revocations and evictions emit `device_revoked`.
+  - Expiry is implicit in `expires_at_ms`.
+  - A completed refund clears all devices together with `ticket_refunded`.
+  - Devices stay on taken-down publications.
+- **What the Bridge must check before each token:** the ticket is playable, the publication is
+  not taken down, the session key is listed and unexpired, and the certificate hash matches.
+- **Limit.** A platform revocation stops one device. The ticket-key holder can sign a new device.
+  Blocking a leaking ticket entirely is a Bridge policy, not a contract rule.
+
 ## Not yet implemented
 
 | Gate | Adds |
 |---|---|
-| E3c | `add_device`, holder and platform `revoke_device` |
 | E3d | Card tickets: the payment operator role, `issue_card_ticket`, `void_card_ticket` |
 | E3e | Brake for new creators; invite-phase upload fee waiver |
 | Later | Timelocked addition of VAT keys |

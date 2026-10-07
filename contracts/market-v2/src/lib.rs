@@ -2317,6 +2317,122 @@ impl Contract {
         released
     }
 
+    /// Adds or renews a ticket device. The ticket key signs; anyone (normally the relayer)
+    /// submits, so the viewer needs no NEAR transaction. At most three devices are active; a
+    /// fourth replaces the oldest. A signature for an older device epoch is rejected.
+    pub fn add_device(
+        &mut self,
+        ticket_id: String,
+        session_public_key: String,
+        certificate_sha256: String,
+        device_epoch: String,
+        expires_at_ms: String,
+        signature: String,
+    ) -> TicketDevice {
+        let mut ticket = self.playable_ticket(&ticket_id);
+        parse_ed25519_key(&session_public_key);
+        assert_sha256("certificate_sha256", &certificate_sha256);
+        self.verify_ticket_action(
+            &ticket,
+            "add_device",
+            &expires_at_ms,
+            &[&session_public_key, &certificate_sha256, &device_epoch],
+            &signature,
+        );
+        require!(
+            parse_canonical_decimal("device_epoch", &device_epoch, u32::MAX as u128) as u32
+                == ticket.device_epoch,
+            "Stale device epoch"
+        );
+        let now = env::block_timestamp_ms();
+        ticket.devices.retain(|device| {
+            device.expires_at_ms.0 > now && device.session_public_key != session_public_key
+        });
+        // Insertion order is authorization order; the oldest device is dropped first. Eviction
+        // advances the epoch like a revocation, so the evicted device's old signature cannot be
+        // replayed to bring it back.
+        if ticket.devices.len() == MAX_TICKET_DEVICES {
+            let evicted = ticket.devices.remove(0);
+            ticket.device_epoch = ticket
+                .device_epoch
+                .checked_add(1)
+                .expect("Device epoch overflow");
+            emit_market_v2_event(
+                "device_revoked",
+                near_sdk::serde_json::json!({
+                    "ticket_id": ticket_id,
+                    "session_public_key": evicted.session_public_key,
+                    "device_epoch": ticket.device_epoch.to_string(),
+                }),
+            );
+        }
+        let device = TicketDevice {
+            session_public_key,
+            certificate_sha256,
+            authorized_at_ms: U64(now),
+            expires_at_ms: U64(now
+                .checked_add(PLAYBACK_DEVICE_LIFETIME_MS)
+                .expect("Time overflow")),
+        };
+        ticket.devices.push(device.clone());
+        self.tickets.insert(&ticket_id, &ticket);
+        self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        emit_market_v2_event(
+            "device_added",
+            near_sdk::serde_json::json!({
+                "ticket_id": ticket_id,
+                "session_public_key": device.session_public_key,
+                "device_epoch": ticket.device_epoch.to_string(),
+                "expires_at_ms": device.expires_at_ms.0.to_string(),
+            }),
+        );
+        device
+    }
+
+    /// The ticket holder removes a device. Every revocation advances the device epoch, so no
+    /// outstanding add_device signature can bring the device back.
+    pub fn revoke_device(
+        &mut self,
+        ticket_id: String,
+        session_public_key: String,
+        device_epoch: String,
+        expires_at_ms: String,
+        signature: String,
+    ) {
+        let ticket = self
+            .tickets
+            .get(&ticket_id)
+            .unwrap_or_else(|| env::panic_str("Ticket not found"));
+        parse_ed25519_key(&session_public_key);
+        self.verify_ticket_action(
+            &ticket,
+            "revoke_device",
+            &expires_at_ms,
+            &[&session_public_key, &device_epoch],
+            &signature,
+        );
+        require!(
+            parse_canonical_decimal("device_epoch", &device_epoch, u32::MAX as u128) as u32
+                == ticket.device_epoch,
+            "Stale device epoch"
+        );
+        self.revoke_ticket_device(ticket, session_public_key);
+    }
+
+    /// The platform removes a leaked device (for example, traced by its watermark).
+    pub fn platform_revoke_device(&mut self, ticket_id: String, session_public_key: String) {
+        require!(
+            env::predecessor_account_id() == self.platform_account_id,
+            "Only the platform account can revoke devices"
+        );
+        let ticket = self
+            .tickets
+            .get(&ticket_id)
+            .unwrap_or_else(|| env::panic_str("Ticket not found"));
+        parse_ed25519_key(&session_public_key);
+        self.revoke_ticket_device(ticket, session_public_key);
+    }
+
     pub fn withdraw_tax_balance(&mut self) -> Promise {
         let caller = env::predecessor_account_id();
         require!(
@@ -3226,6 +3342,77 @@ fn emit_market_v2_event(event: &str, data: near_sdk::serde_json::Value) {
 }
 
 impl Contract {
+    /// Tickets that may hold devices: not refunded or voided, publication not taken down.
+    fn playable_ticket(&self, ticket_id: &str) -> Ticket {
+        let ticket = self
+            .tickets
+            .get(&ticket_id.to_string())
+            .unwrap_or_else(|| env::panic_str("Ticket not found"));
+        require!(
+            matches!(
+                ticket.status,
+                TicketStatus::Purchased | TicketStatus::Watched | TicketStatus::Released
+            ),
+            "Ticket is not playable"
+        );
+        let publication = self
+            .publications
+            .get(&ticket.publication_id)
+            .expect("Publication not found");
+        require!(
+            publication.availability != PublicationAvailability::Takedown,
+            "Publication is taken down"
+        );
+        ticket
+    }
+
+    fn verify_ticket_action(
+        &self,
+        ticket: &Ticket,
+        action: &str,
+        expires_at_ms: &str,
+        fields: &[&str],
+        signature: &str,
+    ) {
+        parse_signature_expiry(expires_at_ms, env::block_timestamp_ms());
+        let network = self.network_id();
+        let contract_id = env::current_account_id();
+        let mut lines = vec![
+            TICKET_SIGNATURE_DOMAIN,
+            network.as_str(),
+            contract_id.as_str(),
+            action,
+            ticket.ticket_id.as_str(),
+            expires_at_ms,
+        ];
+        lines.extend_from_slice(fields);
+        verify_ed25519(
+            signature,
+            &signed_lines(&lines),
+            &parse_ed25519_key(&ticket.ticket_public_key),
+            "Invalid ticket signature",
+        );
+    }
+
+    fn revoke_ticket_device(&mut self, mut ticket: Ticket, session_public_key: String) {
+        ticket
+            .devices
+            .retain(|device| device.session_public_key != session_public_key);
+        ticket.device_epoch = ticket
+            .device_epoch
+            .checked_add(1)
+            .expect("Device epoch overflow");
+        self.tickets.insert(&ticket.ticket_id, &ticket);
+        emit_market_v2_event(
+            "device_revoked",
+            near_sdk::serde_json::json!({
+                "ticket_id": ticket.ticket_id,
+                "session_public_key": session_public_key,
+                "device_epoch": ticket.device_epoch.to_string(),
+            }),
+        );
+    }
+
     /// Moves a settled crypto ticket out of escrow. Returns the creator push when requested.
     fn settle_ticket(&mut self, ticket: &Ticket, push_creator: bool) -> Option<Promise> {
         self.escrow_balance = self
