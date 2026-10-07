@@ -1,5 +1,6 @@
 use near_sdk::borsh::BorshSerialize;
 use near_sdk::collections::{LazyOption, LookupMap, UnorderedSet};
+use near_sdk::json_types::U64;
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, PanicOnDefault, PublicKey};
 
 pub const ACCESS_STATE_VERSION: u8 = 2;
@@ -84,7 +85,9 @@ enum StorageKey {
     ContractPaused,
 }
 
-pub const TIMELOCK_DELAY_NS: u64 = 86_400_000_000_000; // 24 hours
+pub const TIMELOCK_DELAY_NS: u64 = 86_400_000_000_000; // 24 hours; zero on `.testnet`
+                                                       // Kept outside the contract struct so the deployed Access v2 Borsh layout is unchanged.
+const GUARDIAN_KEY: &[u8] = b"youtick:access:guardian:v1";
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
@@ -109,6 +112,9 @@ pub enum TimelockAction {
     },
     SetGrantIssuance {
         enabled: bool,
+    },
+    SetGuardian {
+        guardian_id: AccountId,
     },
 }
 
@@ -140,7 +146,14 @@ pub struct AccessControlContract {
 #[near]
 impl AccessControlContract {
     #[init]
-    pub fn new(owner_id: AccountId, market_contract_id: AccountId) -> Self {
+    pub fn new(
+        owner_id: AccountId,
+        market_contract_id: AccountId,
+        guardian_id: Option<AccountId>,
+    ) -> Self {
+        if let Some(guardian_id) = &guardian_id {
+            Self::write_guardian(&owner_id, guardian_id);
+        }
         let mut contract = Self {
             state_version: ACCESS_STATE_VERSION,
             owner_id,
@@ -331,9 +344,16 @@ impl AccessControlContract {
         self.market_contract_id = market_contract_id;
     }
 
+    /// Immediate and privilege-reducing; unpausing stays timelocked.
     pub fn pause_scope(&mut self, scope: SessionScope) {
-        let _ = scope;
-        Self::panic_timelock_required()
+        self.assert_owner_or_guardian();
+        if self.paused_scopes.insert(&scope.as_key().to_string()) {
+            env::log_str(&format!(
+                "Scope {} paused by {}",
+                scope.as_key(),
+                env::predecessor_account_id()
+            ));
+        }
     }
 
     fn pause_scope_timelocked(&mut self, scope: SessionScope) {
@@ -349,8 +369,17 @@ impl AccessControlContract {
         self.paused_scopes.remove(&scope.as_key().to_string());
     }
 
+    /// Immediate and privilege-reducing; unpausing stays timelocked.
     pub fn pause_contract(&mut self) {
-        Self::panic_timelock_required()
+        self.assert_owner_or_guardian();
+        if self.is_paused() {
+            return;
+        }
+        self.paused.set(&true);
+        env::log_str(&format!(
+            "Contract paused by {}",
+            env::predecessor_account_id()
+        ));
     }
 
     fn pause_contract_timelocked(&mut self) {
@@ -423,6 +452,14 @@ impl AccessControlContract {
         require!(limit > 0, "Cleanup limit must be positive");
         require!(limit <= MAX_GRANT_PAGE_SIZE, "Cleanup limit is too large");
         self.cleanup_owner_grants(&owner_id, limit as usize) as u32
+    }
+
+    pub fn get_guardian(&self) -> Option<AccountId> {
+        Self::read_guardian()
+    }
+
+    pub fn get_timelock_delay_ns(&self) -> U64 {
+        U64(Self::timelock_delay_ns())
     }
 
     pub fn get_contract_state(&self) -> AccessContractState {
@@ -583,7 +620,7 @@ impl AccessControlContract {
         let proposal = self.timelocks.get(&id).expect("Proposal not found");
         let elapsed = env::block_timestamp().saturating_sub(proposal.proposed_at);
         require!(
-            elapsed >= TIMELOCK_DELAY_NS,
+            elapsed >= Self::timelock_delay_ns(),
             "Timelock delay not yet passed"
         );
         self.timelocks.remove(&id);
@@ -612,6 +649,9 @@ impl AccessControlContract {
             TimelockAction::SetGrantIssuance { enabled } => {
                 self.set_grant_issuance_timelocked(enabled);
             }
+            TimelockAction::SetGuardian { guardian_id } => {
+                Self::write_guardian(&self.owner_id, &guardian_id);
+            }
         }
         env::log_str(&format!("Timelock proposal {} executed", id));
     }
@@ -629,6 +669,39 @@ impl AccessControlContract {
 
     pub fn get_timelock(&self, id: u64) -> Option<TimelockProposal> {
         self.timelocks.get(&id)
+    }
+
+    fn timelock_delay_ns() -> u64 {
+        if env::current_account_id().as_str().ends_with(".testnet") {
+            0
+        } else {
+            TIMELOCK_DELAY_NS
+        }
+    }
+
+    fn read_guardian() -> Option<AccountId> {
+        env::storage_read(GUARDIAN_KEY).map(|bytes| {
+            String::from_utf8(bytes)
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_else(|| env::panic_str("Invalid guardian state"))
+        })
+    }
+
+    fn write_guardian(owner_id: &AccountId, guardian_id: &AccountId) {
+        require!(
+            guardian_id != owner_id,
+            "Guardian and owner accounts must differ"
+        );
+        env::storage_write(GUARDIAN_KEY, guardian_id.as_bytes());
+    }
+
+    fn assert_owner_or_guardian(&self) {
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == self.owner_id || Self::read_guardian().as_ref() == Some(&caller),
+            "Only the owner or guardian can call this method",
+        );
     }
 
     fn set_scope_policy_internal(&mut self, scope: SessionScope, policy: ScopePolicy) {
@@ -764,7 +837,7 @@ fn current_time_ms() -> u64 {
 mod tests {
     use super::*;
     use near_crypto::{KeyType, SecretKey, Signature};
-    use near_sdk::test_utils::VMContextBuilder;
+    use near_sdk::test_utils::{get_logs, VMContextBuilder};
     use near_sdk::{testing_env, AccountId};
 
     fn account(value: &str) -> AccountId {
@@ -823,7 +896,7 @@ mod tests {
     fn issues_play_grant_with_policy_defaults() {
         let owner = account("owner.testnet");
         testing_env!(context("market.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"), None);
 
         let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
@@ -850,7 +923,7 @@ mod tests {
     fn rejects_grant_ttl_above_scope_limit() {
         let owner = account("owner.testnet");
         testing_env!(context("market.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"), None);
 
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
@@ -872,7 +945,8 @@ mod tests {
     fn revoke_and_pause_work_as_expected() {
         let owner = account("owner.testnet");
         testing_env!(context("market.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner.clone(), account("market.testnet"));
+        let mut contract =
+            AccessControlContract::new(owner.clone(), account("market.testnet"), None);
 
         let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
@@ -910,7 +984,7 @@ mod tests {
     fn rejects_delegated_grant_from_unauthorized_caller() {
         let owner = account("owner.testnet");
         testing_env!(context("registry.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"), None);
 
         let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
@@ -933,7 +1007,7 @@ mod tests {
     fn user_can_issue_own_grant_with_session_key_proof() {
         let owner = account("owner.testnet");
         testing_env!(context("alice.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"), None);
 
         let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
@@ -960,7 +1034,7 @@ mod tests {
     fn rejects_grant_with_wrong_session_key_proof() {
         let owner = account("owner.testnet");
         testing_env!(context("alice.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"), None);
 
         let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
@@ -994,7 +1068,8 @@ mod tests {
     fn direct_set_scope_policy_requires_timelock() {
         let owner = account("owner.testnet");
         testing_env!(context("owner.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner.clone(), account("market.testnet"));
+        let mut contract =
+            AccessControlContract::new(owner.clone(), account("market.testnet"), None);
 
         contract.set_scope_policy(
             SessionScope::Play,
@@ -1010,7 +1085,8 @@ mod tests {
     fn contract_pause_blocks_session_grant() {
         let owner = account("owner.testnet");
         testing_env!(context("alice.testnet", 500).build());
-        let mut contract = AccessControlContract::new(owner.clone(), account("market.testnet"));
+        let mut contract =
+            AccessControlContract::new(owner.clone(), account("market.testnet"), None);
         let existing_request = session_request(
             "existing-before-pause",
             "alice.testnet",
@@ -1063,7 +1139,7 @@ mod tests {
     fn paused_scope_blocks_existing_grant_verification() {
         let owner = account("owner.testnet");
         testing_env!(context("alice.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"), None);
         let resource_id = Some("job-1".to_string());
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
@@ -1102,7 +1178,7 @@ mod tests {
     fn play_grant_requires_bounded_resource() {
         let owner = account("owner.testnet");
         testing_env!(context("alice.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"), None);
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
 
@@ -1131,7 +1207,7 @@ mod tests {
     fn play_grant_rejects_oversized_bindings() {
         let owner = account("owner.testnet");
         testing_env!(context("alice.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"), None);
         let resource_id = Some("job-1".to_string());
 
         for (seed, origin_hash, device_hash) in [
@@ -1167,7 +1243,7 @@ mod tests {
     fn play_grant_rejects_oversized_session_key() {
         testing_env!(context("alice.testnet", 1_000).build());
         let mut contract =
-            AccessControlContract::new(account("owner.testnet"), account("market.testnet"));
+            AccessControlContract::new(account("owner.testnet"), account("market.testnet"), None);
         let mut request = session_request(
             "long-session-key",
             "alice.testnet",
@@ -1185,7 +1261,7 @@ mod tests {
     fn grant_count_cleanup_and_pagination_are_bounded() {
         let owner = account("owner.testnet");
         testing_env!(context("alice.testnet", 1_000).build());
-        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"), None);
         let origin_hash = Some("origin".to_string());
         let device_hash = Some("device".to_string());
 
@@ -1245,7 +1321,7 @@ mod tests {
         let proposed_at_ms = 1_000;
         let execute_at_ms = proposed_at_ms + TIMELOCK_DELAY_NS / 1_000_000;
         testing_env!(context("owner.testnet", proposed_at_ms).build());
-        let mut contract = AccessControlContract::new(owner, account("market.testnet"));
+        let mut contract = AccessControlContract::new(owner, account("market.testnet"), None);
         let id = contract.propose_action(TimelockAction::SetGrantIssuance { enabled: false });
 
         testing_env!(context("alice.testnet", execute_at_ms - 60_000).build());
@@ -1311,5 +1387,124 @@ mod tests {
         assert!(contract
             .list_session_grants(account("alice.testnet"), None, None)
             .is_empty());
+    }
+
+    fn mainnet_context(predecessor: &str, timestamp_ms: u64) -> VMContextBuilder {
+        let mut builder = context(predecessor, timestamp_ms);
+        builder.current_account_id(account("access.near"));
+        builder
+    }
+
+    fn mainnet_contract() -> AccessControlContract {
+        testing_env!(mainnet_context("deployer.near", 1_000).build());
+        AccessControlContract::new(
+            account("owner.near"),
+            account("market.near"),
+            Some(account("guardian.near")),
+        )
+    }
+
+    fn must_fail(action: impl FnOnce()) {
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(action)).is_err());
+    }
+
+    #[test]
+    fn guardian_and_owner_pause_immediately_and_unpause_waits_on_mainnet() {
+        let delay_ms = TIMELOCK_DELAY_NS / 1_000_000;
+        let mut contract = mainnet_contract();
+        assert_eq!(contract.get_guardian(), Some(account("guardian.near")));
+        assert_eq!(contract.get_timelock_delay_ns(), U64(TIMELOCK_DELAY_NS));
+
+        testing_env!(mainnet_context("attacker.near", 2_000).build());
+        must_fail(|| contract.pause_contract());
+        must_fail(|| contract.pause_scope(SessionScope::Play));
+        assert!(!contract.is_paused());
+
+        testing_env!(mainnet_context("guardian.near", 2_000).build());
+        contract.pause_scope(SessionScope::Play);
+        assert!(!contract.can_play(account("alice.near"), Some("job-1".to_string())));
+        contract.pause_contract();
+        assert!(contract.get_contract_state().paused);
+        assert!(get_logs()
+            .iter()
+            .any(|log| log == "Contract paused by guardian.near"));
+        testing_env!(mainnet_context("guardian.near", 2_000).build());
+        contract.pause_contract();
+        assert!(get_logs().is_empty());
+
+        testing_env!(mainnet_context("guardian.near", 2_000).build());
+        must_fail(|| contract.unpause_contract());
+        must_fail(|| {
+            contract.propose_action(TimelockAction::UnpauseContract);
+        });
+        testing_env!(mainnet_context("owner.near", 2_000).build());
+        must_fail(|| contract.unpause_contract());
+        let id = contract.propose_action(TimelockAction::UnpauseContract);
+        testing_env!(mainnet_context("owner.near", 2_000 + delay_ms - 1).build());
+        must_fail(|| contract.execute_action(id));
+        assert!(contract.get_contract_state().paused);
+        testing_env!(mainnet_context("owner.near", 2_000 + delay_ms).build());
+        contract.execute_action(id);
+        assert!(!contract.get_contract_state().paused);
+
+        contract.pause_contract();
+        assert!(contract.get_contract_state().paused);
+    }
+
+    #[test]
+    fn guardian_rotation_is_timelocked_and_separate_from_owner() {
+        let delay_ms = TIMELOCK_DELAY_NS / 1_000_000;
+        testing_env!(mainnet_context("deployer.near", 1_000).build());
+        must_fail(|| {
+            AccessControlContract::new(
+                account("owner.near"),
+                account("market.near"),
+                Some(account("owner.near")),
+            );
+        });
+        let mut contract = mainnet_contract();
+
+        testing_env!(mainnet_context("guardian.near", 2_000).build());
+        must_fail(|| {
+            contract.propose_action(TimelockAction::SetGuardian {
+                guardian_id: account("guardian-2.near"),
+            });
+        });
+        testing_env!(mainnet_context("owner.near", 2_000).build());
+        let rejected = contract.propose_action(TimelockAction::SetGuardian {
+            guardian_id: account("owner.near"),
+        });
+        let rotated = contract.propose_action(TimelockAction::SetGuardian {
+            guardian_id: account("guardian-2.near"),
+        });
+        testing_env!(mainnet_context("owner.near", 2_000 + delay_ms - 1).build());
+        must_fail(|| contract.execute_action(rotated));
+        testing_env!(mainnet_context("owner.near", 2_000 + delay_ms).build());
+        must_fail(|| contract.execute_action(rejected));
+        contract.execute_action(rotated);
+        assert_eq!(contract.get_guardian(), Some(account("guardian-2.near")));
+
+        testing_env!(mainnet_context("guardian.near", 3_000 + delay_ms).build());
+        must_fail(|| contract.pause_contract());
+        testing_env!(mainnet_context("guardian-2.near", 3_000 + delay_ms).build());
+        contract.pause_contract();
+        assert!(contract.get_contract_state().paused);
+    }
+
+    #[test]
+    fn contract_without_guardian_keeps_owner_pause_and_testnet_has_no_delay() {
+        testing_env!(context("deployer.testnet", 1_000).build());
+        let mut contract =
+            AccessControlContract::new(account("owner.testnet"), account("market.testnet"), None);
+        assert_eq!(contract.get_guardian(), None);
+        assert_eq!(contract.get_timelock_delay_ns(), U64(0));
+
+        testing_env!(context("guardian.testnet", 2_000).build());
+        must_fail(|| contract.pause_contract());
+        testing_env!(context("owner.testnet", 2_000).build());
+        contract.pause_contract();
+        let id = contract.propose_action(TimelockAction::UnpauseContract);
+        contract.execute_action(id);
+        assert!(!contract.get_contract_state().paused);
     }
 }
