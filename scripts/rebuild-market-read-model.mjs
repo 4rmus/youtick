@@ -31,6 +31,9 @@ const CATALOG = new Set([
     'bridge_unfreeze_cancelled',
     'new_purchases_unpause_requested',
     'new_purchases_unpause_cancelled',
+    'code_upgrade_proposed',
+    'code_upgrade_cancelled',
+    'code_upgraded',
     'contract_migrated',
 ]);
 const GOVERNANCE_EVENTS = new Set([
@@ -51,6 +54,9 @@ const GOVERNANCE_EVENTS = new Set([
     'bridge_unfreeze_cancelled',
     'new_purchases_unpause_requested',
     'new_purchases_unpause_cancelled',
+    'code_upgrade_proposed',
+    'code_upgrade_cancelled',
+    'code_upgraded',
     'contract_migrated',
 ]);
 const ACCOUNT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;

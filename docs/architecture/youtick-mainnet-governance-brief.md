@@ -147,6 +147,11 @@ Token çıkarılması bu brief'in kapsamı dışındadır. Hukuki risk (SPK/MiCA
    0 (owner kararı, 3 Ekim 2026). Deploy edilmedi.
 3. `MARKET_SELF_UPGRADE`: admin + 48 saat timelock'lu self-upgrade ve
    migrate yolu. Mainnet kontrat hesabından FullAccess anahtarın kaldırılması.
+   **Kaynakta (LOCAL_TEST):** admin hash önerir, admin veya guardian iptal eder,
+   48 saat sonra (testnet'te 0) herkes kodu gönderebilir; kod yükleme ve
+   `migrate` tek işlemde, migrate hata verirse geri alınır. FullAccess anahtarın
+   kaldırılması `MAINNET_KEY_CEREMONY` adımıdır; öncesinde testnet'te gerçek bir
+   self-upgrade tatbikatı gerekir. Deploy edilmedi.
 4. `ACCESS_CONTROL_INSTANT_PAUSE`: pause'u timelock'tan çıkarıp guardian'a vermek,
    unpause'u timelock'ta tutmak. Bugün `pause_contract` 24 saat bekliyor.
    **Kaynakta (LOCAL_TEST):** access-control'e guardian rolü eklendi (kurulumda
@@ -197,6 +202,11 @@ değerlendirme tamamlanmadan belirlenmez.
 - **Admin timelock'ları:** Bridge rotasyonu 48 saat. Bridge'i ve satışları yeniden
   açma önce istenir, 24 saat sonra uygulanır; admin veya guardian isteği iptal
   edebilir. Testnet'te bekleme yok. Guardian durdurma ve dondurma anında kalır.
+- **Kod güncelleme teslimi:** Önce yalnız SHA-256 zincire yazılır; kod 48 saat
+  sonra gönderilir ve herkes gönderebilir. Testnet'te bekleme yok ve FullAccess
+  anahtar kalır.
+- **Veri aktarımı:** Testnet verisi test verisidir; mainnet'e aktarılmaz ve
+  mainnet boş başlar. Testnet verisi silinmez.
 
 ## Owner kararı bekleyenler
 
