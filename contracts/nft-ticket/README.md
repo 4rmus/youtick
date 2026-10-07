@@ -39,7 +39,8 @@ The ABI contains only the Livepeer job, publication, entitlement, governance,
 takedown and payment surfaces. Upload pause/resume, reconciliation and an exact same-job replay
 cannot charge the creator again; a conflicting replay fails. A new job is a new
 charge and no automatic provider-failure refund is implemented. The MediaJob
-Borsh layout has no migration entrypoint. New Market v2 deployments must use a
+Borsh layout is unchanged; `migrate` only runs inside a timelocked self-upgrade
+(see below) and is a no-op for the current state version. New Market v2 deployments must use a
 fresh contract ID; the internal-testnet exception is a code-only update of the
 existing v2 account after exact raw-state and code-hash preflight. The purchase
 pause uses a dedicated namespaced storage key and does not change that Borsh
@@ -60,6 +61,15 @@ that is at least 24 hours old on mainnet; admin or guardian can cancel the
 request. `execute_bridge_rotation` waits 48 hours after `propose_bridge` on
 mainnet. All testnet delays are zero; `get_governance_timelocks` reports the
 delays and pending times. Guardian pause and freeze remain immediate.
+
+Code upgrades are hash-first. The admin calls `propose_code_upgrade` with the
+lowercase SHA-256 of the new WASM; admin or guardian can `cancel_code_upgrade`.
+After 48 hours on mainnet (zero on testnet) anyone may call
+`execute_code_upgrade` with the raw WASM as the call input. The contract checks
+the hash, then deploys and calls `migrate` in one batch, so a failing migrate
+reverts the deploy. `migrate` clears the pending record and emits
+`code_upgraded`. Removing the mainnet FullAccess key is a separate key-ceremony
+step.
 
 The event catalog is source-complete except `contract_migrated`, which cannot be
 truthfully emitted by this fresh-ID/no-migration design. Receipt ID and event

@@ -39,6 +39,11 @@ const ADMIN_TIMELOCK_EXTENSIONS = [
     'new_purchases_unpause_requested',
     'new_purchases_unpause_cancelled',
 ];
+const SELF_UPGRADE_EXTENSIONS = [
+    'code_upgrade_proposed',
+    'code_upgrade_cancelled',
+    'code_upgraded',
+];
 const NOT_APPLICABLE_TO_FRESH_ID = ['contract_migrated'];
 
 function sorted(values) {
@@ -74,6 +79,7 @@ test('Market producer, consumers and testnet evidence share the EVENT-001 catalo
         ...PUBLIC_BETA_EXTENSIONS,
         ...ROLE_ROTATION_EXTENSIONS,
         ...ADMIN_TIMELOCK_EXTENSIONS,
+        ...SELF_UPGRADE_EXTENSIONS,
     ]);
     const expectedAccepted = sorted([
         ...expectedEmitted,

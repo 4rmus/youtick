@@ -34,6 +34,9 @@ const EVENT_CATALOG = new Set([
     'bridge_unfreeze_cancelled',
     'new_purchases_unpause_requested',
     'new_purchases_unpause_cancelled',
+    'code_upgrade_proposed',
+    'code_upgrade_cancelled',
+    'code_upgraded',
     'contract_migrated',
 ]);
 const LEGACY_GOVERNANCE_EVENTS = new Set([
