@@ -4,7 +4,7 @@ Bu dosya Codex ve Claude Code için ortak proje sözleşmesidir. Kök dizine `CL
 
 ## Yerleşim ve komutlar
 
-- `apps/web` Next.js uygulaması · `contracts/nft-ticket`, `contracts/access-control` Rust NEAR kontratları · `workers/livepeer-bridge` Cloudflare Worker · `workers/relayer` V2 NEAR Auth relayer'ı (hesap, CKD, davet kredisi) · `read-model` D1 şeması · `protocol/paid-media-livepeer-v1` şema ve golden vektörler · `docs` VitePress.
+- `apps/web` Next.js uygulaması · `contracts/nft-ticket`, `contracts/access-control` Rust NEAR kontratları · `workers/livepeer-bridge` Cloudflare Worker · `workers/relayer` V2 NEAR Auth relayer'ı (hesap, CKD, davet kredisi) · `workers/payment-service` V2 KDV beyanı (E8'de kart yolu) · `read-model` D1 şeması · `protocol/paid-media-livepeer-v1` şema ve golden vektörler · `docs` VitePress.
 - Test ve kontrol komutlarının tek kaynağı `docs/testing.md`; dokunulan yola göre oradan seç. Kontratlar `cargo +1.86.0` ve `cargo-near 0.17.0` ile çalışır; `near-sdk =5.5.0` (`legacy`) sabittir.
 - Sürüm ve release: `docs/release-runbook.md`, `docs/cloudflare-release.md`. Gerçek deploy yalnız korumalı GitHub workflow'larından yürür.
 
