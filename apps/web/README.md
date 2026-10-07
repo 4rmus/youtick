@@ -89,7 +89,12 @@ The V2 pages `/tickets` and `/invite` also need `NEXT_PUBLIC_MARKET_V2_CONTRACT_
 `/tickets/buy?publication=<id>` (crypto checkout through one NEAR Auth approval) also needs
 `NEXT_PUBLIC_PAYMENT_SERVICE_URL` (HTTPS origin of the VAT attestation service); without it the
 page says sales are not open. The relayer turns the approval into an MPC signature and relays
-it; the ticket is confirmed only by `get_ticket`.
+it; the ticket is confirmed only by `get_ticket`. When the balance is too low and
+`NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE` is not `off`, the page offers a 1Click top-up: the
+Bridge's `ticket` quote with the user's own account as recipient (a V2 Bridge points
+`MARKET_CONTRACT_ID` at Market V2). Only the account's USDC balance counts as funded, never a
+1Click `SUCCESS`. The crypto rail is off for browser languages in
+`NEXT_PUBLIC_V2_CRYPTO_RAIL_DISABLED_LANGUAGES` (comma-separated, default `tr`).
 Multi-asset payments also default to `off`. `preview` is dry-quote only; `live`
 requires the Bridge to use the same mode and a positive
 `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`.

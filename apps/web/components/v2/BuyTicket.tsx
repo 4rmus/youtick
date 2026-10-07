@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, Loader2, Ticket } from 'lucide-react';
 import { ScreenState } from '@/components/ScreenState';
@@ -10,9 +10,11 @@ import { Card } from '@/components/ui/card';
 import { NEAR_CONFIG } from '@/lib/constants';
 import { formatUsdc } from '@/lib/livepeer-publication';
 import { loadDeviceKey, type DeviceKey } from '@/lib/v2/device-key';
+import { cryptoRailEnabled, fundingAvailable } from '@/lib/v2/funding';
 import { readAccessKey } from '@/lib/v2/near-reads';
 import { buyTicket, CheckoutError } from '@/lib/v2/purchase';
 import { findOwnedTickets } from '@/lib/v2/tickets';
+import { FundBalance } from './FundBalance';
 import { useNearAuthV2 } from './NearAuthV2Provider';
 import { SignInPanel } from './SignInPanel';
 
@@ -51,6 +53,11 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     const [state, setState] = useState<'idle' | 'buying' | 'done' | 'error'>('idle');
     const [error, setError] = useState('');
     const reserved = useRef(new Set<number>());
+    // Read from the browser after mount, so the server render never guesses the language.
+    const [cryptoRail, setCryptoRail] = useState<boolean | null>(null);
+    useEffect(() => {
+        setCryptoRail(cryptoRailEnabled(navigator.languages?.length ? navigator.languages : [navigator.language]));
+    }, []);
     const valid = Boolean(publicationId && /^[A-Za-z0-9._:-]{1,128}$/.test(publicationId));
 
     useEffect(() => {
@@ -71,9 +78,16 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
         queryFn: () => view<string>(NEAR_CONFIG.usdcContractId, 'ft_balance_of', { account_id: (session as { accountId: string }).accountId }),
         enabled: signedIn,
     });
+    const refetchBalance = balance.refetch;
+    const refreshBalance = useCallback(() => { void refetchBalance(); }, [refetchBalance]);
 
     if (!valid) return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Screening not found" />;
     if (!config.paymentServiceUrl) return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Ticket sales are not open yet" />;
+    if (cryptoRail === null) return <p className="text-center text-white/70" role="status">Loading…</p>;
+    if (!cryptoRail) {
+        return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Ticket sales are not available here yet"
+            description="Paying with crypto is not offered in your language. Card payments are coming." />;
+    }
     if (publication.isLoading) return <p className="text-center text-white/70" role="status">Loading…</p>;
     const item = publication.data;
     if (!item || item.availability !== 'ACTIVE') return <ScreenState icon={<Ticket className="h-7 w-7" />} title="This screening is not on sale" />;
@@ -131,9 +145,11 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
         <p className="text-sm text-white/60">
             Your youtick balance: {balance.data === undefined ? '…' : `${formatUsdc(balance.data)} USDC`}
         </p>
-        {!enough && balance.data !== undefined && <p className="text-sm text-amber-200">
-            Your balance is too low for this ticket. On testnet, send test USDC to your account <code className="break-all">{session.accountId}</code>.
-        </p>}
+        {!enough && balance.data !== undefined && (fundingAvailable()
+            ? <FundBalance accountId={session.accountId} publicationId={item.publication_id} balanceCoversPrice={enough} refreshBalance={refreshBalance} />
+            : <p className="text-sm text-amber-200">
+                Your balance is too low for this ticket. On testnet, send test USDC to your account <code className="break-all">{session.accountId}</code>.
+            </p>)}
         <Button className="min-h-11 gap-2" disabled={state === 'buying' || !enough || !device} onClick={() => void buy()}>
             {state === 'buying' && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {state === 'buying' ? 'Waiting for your approval…' : `Buy for ${formatUsdc(item.price_usdc)} USDC`}
