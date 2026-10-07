@@ -292,6 +292,9 @@ function buildEvents({ ticket, cardTicket, split, paymentReferenceHmac, session,
     ticket_released: event("ticket_released", { ticket_id: ticket.ticket_id, publication_id: FIXTURE.publication_id, ...settled }),
     card_ticket_voided: event("card_ticket_voided", { ticket_id: cardTicket.ticket_id, publication_id: FIXTURE.publication_id, reason: "chargeback" }),
     device_revoked: event("device_revoked", { ticket_id: ticket.ticket_id, session_public_key: secondSession, device_epoch: "1" }),
+    creator_payout_credited: event("creator_payout_credited", {
+      ticket_id: ticket.ticket_id, creator_id: FIXTURE.creator_id, creator_usdc_micro: split.creator_usdc_micro,
+    }),
   };
 }
 

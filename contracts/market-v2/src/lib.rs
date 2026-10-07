@@ -21,6 +21,11 @@ const TICKET_SIGNATURE_DOMAIN: &str = "youtick.market-v2.ticket-sig.v1";
 const VAT_DOMAIN: &str = "youtick.market-v2.vat.v1";
 const BUY_TICKET_V2_ACTION: &str = "buy_ticket_v2";
 const MAX_TICKET_DEVICES: usize = 3;
+const ESCROW_RELEASE_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
+// One ticket_released log is up to ~450 bytes; NEAR caps a call's logs at 16,384 bytes.
+const MAX_RELEASE_BATCH: usize = 25;
+// Ticket callbacks restore liabilities on failure; keep headroom above the withdraw callbacks.
+const TICKET_CALLBACK_GAS: Gas = Gas::from_tgas(15);
 const MIN_UPLOAD_FEE_USDC: u128 = 500_000;
 const UPLOAD_FEE_NUMERATOR: u128 = 3;
 const UPLOAD_FEE_DENOMINATOR: u128 = 10_000;
@@ -529,6 +534,14 @@ struct CreatorWithdrawCallbackArgs {
 
 #[derive(Serialize)]
 #[serde(crate = "near_sdk::serde")]
+struct TicketTransferCallbackArgs {
+    ticket_id: String,
+    receiver_id: AccountId,
+    amount: U128,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
 struct PlatformWithdrawCallbackArgs {
     amount: U128,
 }
@@ -569,6 +582,8 @@ pub struct Contract {
     vat_keys: LookupMap<u32, Vec<u8>>,
     // USDC held for tickets that have not settled yet; never available for withdrawal.
     escrow_balance: u128,
+    // Settled VAT owed to the tax account.
+    tax_balance: u128,
 }
 
 #[near]
@@ -680,6 +695,7 @@ impl Contract {
             tax_account_id,
             vat_keys,
             escrow_balance: 0,
+            tax_balance: 0,
         }
     }
 
@@ -2151,6 +2167,259 @@ impl Contract {
         );
     }
 
+    pub fn get_tax_balance(&self) -> U128 {
+        U128(self.tax_balance)
+    }
+
+    /// Bridge only, before the first playback token. A purchased crypto ticket settles: VAT to
+    /// the tax balance, the platform share to the platform balance and the creator share pushed
+    /// to the creator (credited to their balance if the transfer fails). Watched and released
+    /// tickets are a no-op; refunded or voided tickets and taken-down publications fail.
+    pub fn mark_watched(&mut self, ticket_id: String) -> PromiseOrValue<bool> {
+        self.assert_bridge();
+        let mut ticket = self
+            .tickets
+            .get(&ticket_id)
+            .unwrap_or_else(|| env::panic_str("Ticket not found"));
+        match ticket.status {
+            TicketStatus::Watched | TicketStatus::Released => return PromiseOrValue::Value(false),
+            TicketStatus::Refunded | TicketStatus::Voided => {
+                env::panic_str("Ticket is not playable")
+            }
+            TicketStatus::Purchased => {}
+        }
+        let publication = self
+            .publications
+            .get(&ticket.publication_id)
+            .expect("Publication not found");
+        require!(
+            publication.availability != PublicationAvailability::Takedown,
+            "Publication is taken down"
+        );
+        ticket.status = TicketStatus::Watched;
+        self.tickets.insert(&ticket_id, &ticket);
+        emit_market_v2_event("ticket_watched", settled_event_data(&ticket, true));
+        if ticket.rail == TicketRail::Card {
+            return PromiseOrValue::Value(true);
+        }
+        match self.settle_ticket(&ticket, true) {
+            Some(payout) => PromiseOrValue::Promise(payout),
+            None => PromiseOrValue::Value(true),
+        }
+    }
+
+    /// The ticket key signs where an unwatched crypto ticket's whole gross amount goes. Allowed
+    /// for 30 days after purchase, and indefinitely after a takedown. A failed transfer restores
+    /// the ticket.
+    pub fn refund_unwatched(
+        &mut self,
+        ticket_id: String,
+        refund_to: AccountId,
+        expires_at_ms: String,
+        signature: String,
+    ) -> Promise {
+        let mut ticket = self
+            .tickets
+            .get(&ticket_id)
+            .unwrap_or_else(|| env::panic_str("Ticket not found"));
+        require!(
+            ticket.status == TicketStatus::Purchased && ticket.rail == TicketRail::Crypto,
+            "Only unwatched crypto tickets can be refunded"
+        );
+        let now = env::block_timestamp_ms();
+        let taken_down = self
+            .publications
+            .get(&ticket.publication_id)
+            .is_some_and(|publication| {
+                publication.availability == PublicationAvailability::Takedown
+            });
+        // The refund window is the escrow period; after a takedown it stays open indefinitely.
+        require!(
+            taken_down
+                || now
+                    < ticket
+                        .purchased_at_ms
+                        .0
+                        .checked_add(ESCROW_RELEASE_MS)
+                        .expect("Time overflow"),
+            "Refund window has closed"
+        );
+        parse_signature_expiry(&expires_at_ms, now);
+        let network = self.network_id();
+        let contract_id = env::current_account_id();
+        let message = signed_lines(&[
+            TICKET_SIGNATURE_DOMAIN,
+            &network,
+            contract_id.as_str(),
+            "refund_unwatched",
+            &ticket_id,
+            &expires_at_ms,
+            refund_to.as_str(),
+        ]);
+        verify_ed25519(
+            &signature,
+            &message,
+            &parse_ed25519_key(&ticket.ticket_public_key),
+            "Invalid ticket signature",
+        );
+        let amount = ticket.gross_usdc_micro.0;
+        ticket.status = TicketStatus::Refunded;
+        self.tickets.insert(&ticket_id, &ticket);
+        self.escrow_balance = self
+            .escrow_balance
+            .checked_sub(amount)
+            .expect("Escrow balance underflow");
+        self.ft_transfer(refund_to.clone(), amount, "ticket refund")
+            .then(self.ticket_transfer_callback("on_ticket_refund", ticket_id, refund_to, amount))
+    }
+
+    /// Anyone may release unwatched crypto tickets older than 30 days. The creator share is
+    /// credited to the creator balance (no push, so batches stay within gas and log limits).
+    /// Ineligible IDs are skipped. Returns how many tickets were released.
+    pub fn release_expired(&mut self, ticket_ids: Vec<String>) -> u32 {
+        require!(
+            !ticket_ids.is_empty() && ticket_ids.len() <= MAX_RELEASE_BATCH,
+            "Release 1-25 tickets per call"
+        );
+        let now = env::block_timestamp_ms();
+        let mut released = 0;
+        for ticket_id in ticket_ids {
+            let Some(mut ticket) = self.tickets.get(&ticket_id) else {
+                continue;
+            };
+            let due = ticket
+                .purchased_at_ms
+                .0
+                .checked_add(ESCROW_RELEASE_MS)
+                .expect("Time overflow");
+            let taken_down =
+                self.publications
+                    .get(&ticket.publication_id)
+                    .is_some_and(|publication| {
+                        publication.availability == PublicationAvailability::Takedown
+                    });
+            if ticket.status != TicketStatus::Purchased
+                || ticket.rail != TicketRail::Crypto
+                || now < due
+                || taken_down
+            {
+                continue;
+            }
+            ticket.status = TicketStatus::Released;
+            self.tickets.insert(&ticket_id, &ticket);
+            self.settle_ticket(&ticket, false);
+            emit_market_v2_event("ticket_released", settled_event_data(&ticket, false));
+            released += 1;
+        }
+        if released > 0 {
+            self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        }
+        released
+    }
+
+    pub fn withdraw_tax_balance(&mut self) -> Promise {
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == self.tax_account_id || caller == self.platform_account_id,
+            "Only the tax or platform account can withdraw VAT"
+        );
+        let amount = self.tax_balance;
+        require!(amount > 0, "No tax balance");
+        self.tax_balance = 0;
+        self.ft_transfer(self.tax_account_id.clone(), amount, "VAT")
+            .then(
+                Promise::new(env::current_account_id()).function_call(
+                    "on_tax_withdraw".to_string(),
+                    near_sdk::serde_json::to_vec(&PlatformWithdrawCallbackArgs {
+                        amount: U128(amount),
+                    })
+                    .expect("Failed to serialize callback"),
+                    NearToken::from_yoctonear(0),
+                    WITHDRAW_CALLBACK_GAS,
+                ),
+            )
+    }
+
+    #[private]
+    pub fn on_tax_withdraw(&mut self, amount: U128) -> bool {
+        require!(
+            env::promise_results_count() == 1,
+            "Expected one withdrawal result"
+        );
+        if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
+            return true;
+        }
+        self.tax_balance = self
+            .tax_balance
+            .checked_add(amount.0)
+            .expect("Tax balance overflow");
+        false
+    }
+
+    /// A failed creator push is credited to the creator balance, so the share is never lost.
+    #[private]
+    pub fn on_creator_payout(
+        &mut self,
+        ticket_id: String,
+        receiver_id: AccountId,
+        amount: U128,
+    ) -> bool {
+        require!(
+            env::promise_results_count() == 1,
+            "Expected one payout result"
+        );
+        if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
+            return true;
+        }
+        self.credit_creator(&receiver_id, amount.0);
+        emit_market_v2_event(
+            "creator_payout_credited",
+            near_sdk::serde_json::json!({
+                "ticket_id": ticket_id,
+                "creator_id": receiver_id,
+                "creator_usdc_micro": amount.0.to_string(),
+            }),
+        );
+        false
+    }
+
+    /// A completed refund clears the ticket's devices; a failed one restores the ticket.
+    #[private]
+    pub fn on_ticket_refund(
+        &mut self,
+        ticket_id: String,
+        receiver_id: AccountId,
+        amount: U128,
+    ) -> bool {
+        require!(
+            env::promise_results_count() == 1,
+            "Expected one refund result"
+        );
+        let _ = receiver_id;
+        let mut ticket = self.tickets.get(&ticket_id).expect("Ticket not found");
+        if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
+            ticket.devices.clear();
+            self.tickets.insert(&ticket_id, &ticket);
+            emit_market_v2_event(
+                "ticket_refunded",
+                near_sdk::serde_json::json!({
+                    "ticket_id": ticket_id,
+                    "publication_id": ticket.publication_id,
+                    "rail": "crypto",
+                    "refunded_usdc_micro": amount.0.to_string(),
+                }),
+            );
+            return true;
+        }
+        ticket.status = TicketStatus::Purchased;
+        self.tickets.insert(&ticket_id, &ticket);
+        self.escrow_balance = self
+            .escrow_balance
+            .checked_add(amount.0)
+            .expect("Escrow balance overflow");
+        false
+    }
+
     pub fn get_creator_balance(&self, creator_id: AccountId) -> U128 {
         U128(self.creator_balances.get(&creator_id).unwrap_or(0))
     }
@@ -2927,6 +3196,23 @@ fn verify_ed25519(signature: &str, message: &str, public_key: &[u8; 32], error: 
     );
 }
 
+fn settled_event_data(ticket: &Ticket, include_rail: bool) -> near_sdk::serde_json::Value {
+    let mut data = near_sdk::serde_json::json!({
+        "ticket_id": ticket.ticket_id,
+        "publication_id": ticket.publication_id,
+        "vat_usdc_micro": ticket.vat_usdc_micro.0.to_string(),
+        "platform_usdc_micro": ticket.platform_usdc_micro.0.to_string(),
+        "creator_usdc_micro": ticket.creator_usdc_micro.0.to_string(),
+    });
+    if include_rail {
+        data["rail"] = near_sdk::serde_json::json!(match ticket.rail {
+            TicketRail::Crypto => "crypto",
+            TicketRail::Card => "card",
+        });
+    }
+    data
+}
+
 fn emit_market_v2_event(event: &str, data: near_sdk::serde_json::Value) {
     env::log_str(&format!(
         "EVENT_JSON:{}",
@@ -2940,6 +3226,66 @@ fn emit_market_v2_event(event: &str, data: near_sdk::serde_json::Value) {
 }
 
 impl Contract {
+    /// Moves a settled crypto ticket out of escrow. Returns the creator push when requested.
+    fn settle_ticket(&mut self, ticket: &Ticket, push_creator: bool) -> Option<Promise> {
+        self.escrow_balance = self
+            .escrow_balance
+            .checked_sub(ticket.gross_usdc_micro.0)
+            .expect("Escrow balance underflow");
+        self.tax_balance = self
+            .tax_balance
+            .checked_add(ticket.vat_usdc_micro.0)
+            .expect("Tax balance overflow");
+        self.platform_balance = self
+            .platform_balance
+            .checked_add(ticket.platform_usdc_micro.0)
+            .expect("Platform balance overflow");
+        let creator_amount = ticket.creator_usdc_micro.0;
+        if !push_creator {
+            self.credit_creator(&ticket.creator_id, creator_amount);
+            return None;
+        }
+        Some(
+            self.ft_transfer(ticket.creator_id.clone(), creator_amount, "ticket watched")
+                .then(self.ticket_transfer_callback(
+                    "on_creator_payout",
+                    ticket.ticket_id.clone(),
+                    ticket.creator_id.clone(),
+                    creator_amount,
+                )),
+        )
+    }
+
+    fn credit_creator(&mut self, creator_id: &AccountId, amount: u128) {
+        let balance = self
+            .creator_balances
+            .get(creator_id)
+            .unwrap_or(0)
+            .checked_add(amount)
+            .expect("Creator balance overflow");
+        self.creator_balances.insert(creator_id, &balance);
+    }
+
+    fn ticket_transfer_callback(
+        &self,
+        method: &str,
+        ticket_id: String,
+        receiver_id: AccountId,
+        amount: u128,
+    ) -> Promise {
+        Promise::new(env::current_account_id()).function_call(
+            method.to_string(),
+            near_sdk::serde_json::to_vec(&TicketTransferCallbackArgs {
+                ticket_id,
+                receiver_id,
+                amount: U128(amount),
+            })
+            .expect("Failed to serialize callback"),
+            NearToken::from_yoctonear(0),
+            TICKET_CALLBACK_GAS,
+        )
+    }
+
     fn buy_ticket_v2(&mut self, amount: U128, purchase: PurchaseMessageV2) -> PromiseOrValue<U128> {
         require!(
             purchase.action == BUY_TICKET_V2_ACTION,

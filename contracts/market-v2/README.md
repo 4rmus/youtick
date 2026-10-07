@@ -1,6 +1,6 @@
 # youtick Market v2 contract
 
-Status: `E3A_LOCAL / NOT_DEPLOYED / RUNTIME_DISABLED`
+Status: `E3B_LOCAL / NOT_DEPLOYED / RUNTIME_DISABLED`
 
 This crate is the V2 Market. It is forked from `contracts/nft-ticket` at the merged self-upgrade
 gate (#257) and goes to mainnet under a new contract ID with empty state. Nothing is migrated
@@ -43,13 +43,33 @@ The byte formats it accepts are defined in `protocol/youtick-market-v2`.
 Upload, publication, takedown, roles, timelocks, guardian controls, withdrawals and the hash-first
 self-upgrade path are unchanged from V1.
 
-## Not yet implemented
+## Settlement (gate E3b)
 
-Later E3 gates add the following. Until then, escrowed funds cannot leave the contract.
+- **`mark_watched(ticket_id)`** — Bridge role only, unfrozen; the Bridge calls it before the
+  first playback token.
+  - A purchased crypto ticket becomes `watched`. VAT moves to the tax balance and the platform
+    share to the platform balance.
+  - The creator share is pushed to the creator. If that transfer fails, the
+    `on_creator_payout` callback credits the creator balance and emits `creator_payout_credited`.
+  - On a watched or released ticket it does nothing. A refunded or voided ticket, or a
+    taken-down publication, makes it fail.
+- **`refund_unwatched(ticket_id, refund_to, expires_at_ms, signature)`** — anyone may submit it
+  with a ticket-key signature.
+  - The whole gross amount goes to `refund_to`.
+  - It is allowed for 30 days after purchase, and with no time limit after a takedown.
+  - A failed transfer restores the ticket and the escrow. A completed refund clears the devices
+    and emits `ticket_refunded`.
+- **`release_expired(ticket_ids)`** — anyone, 1–25 tickets per call (NEAR caps a call's logs at 16,384 bytes). A purchased crypto ticket
+  older than 30 days becomes `released` and its creator share is credited to the creator balance.
+  - Ineligible IDs are skipped, including tickets of taken-down publications.
+  - A released ticket stays playable, and a later `mark_watched` pays nothing again.
+- **`withdraw_tax_balance()`** — the tax or platform account sends the VAT to `tax_account_id`.
+  A failed transfer restores the balance.
+
+## Not yet implemented
 
 | Gate | Adds |
 |---|---|
-| E3b | `mark_watched` with push payout, `refund_unwatched`, `release_expired`, V2 takedown rules |
 | E3c | `add_device`, holder and platform `revoke_device` |
 | E3d | Card tickets: the payment operator role, `issue_card_ticket`, `void_card_ticket` |
 | E3e | Brake for new creators; invite-phase upload fee waiver |

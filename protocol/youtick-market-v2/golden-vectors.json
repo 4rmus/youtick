@@ -331,6 +331,18 @@
           "device_epoch": "1"
         }
       ]
+    },
+    "creator_payout_credited": {
+      "standard": "youtick_market",
+      "version": "2.0.0",
+      "event": "creator_payout_credited",
+      "data": [
+        {
+          "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+          "creator_id": "creator.testnet",
+          "creator_usdc_micro": "3958333"
+        }
+      ]
     }
   },
   "size_budget": {
