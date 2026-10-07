@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
       - main
@@ -19,6 +20,8 @@ jobs:
     name: Runtime Dependency Audit
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    needs: detect-changes
+    if: needs.detect-changes.outputs.npm_deps == 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -36,6 +39,8 @@ jobs:
     name: Production WASM Dependency Audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: detect-changes
+    if: needs.detect-changes.outputs.rust_deps == 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: dtolnay/rust-toolchain@52699249a776424c51ebc9ee197baf0f9dbf0d8a # 1.86.0
@@ -99,6 +104,8 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Draft pull requests run nothing; marking one ready for review runs CI.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     outputs:
       web: ${{ steps.changes.outputs.web }}
       bridge: ${{ steps.changes.outputs.bridge }}
@@ -107,6 +114,8 @@ jobs:
       contracts: ${{ steps.changes.outputs.contracts }}
       protocol: ${{ steps.changes.outputs.protocol }}
       docs: ${{ steps.changes.outputs.docs }}
+      npm_deps: ${{ steps.changes.outputs.npm_deps }}
+      rust_deps: ${{ steps.changes.outputs.rust_deps }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -126,6 +135,8 @@ jobs:
           contracts=false
           protocol=false
           docs=false
+          npm_deps=false
+          rust_deps=false
 
           set_all() {
             web=true
@@ -135,6 +146,8 @@ jobs:
             contracts=true
             protocol=true
             docs=true
+            npm_deps=true
+            rust_deps=true
           }
 
           changed_file="${RUNNER_TEMP}/changed-files"
@@ -151,7 +164,11 @@ jobs:
                 apps/web/*)
                   web=true
                   ;;
-                workers/livepeer-bridge/scripts/market-code-update*|workers/livepeer-bridge/scripts/v2-testnet-bootstrap*)
+                workers/livepeer-bridge/scripts/market-code-update*)
+                  bridge=true
+                  contracts=true
+                  ;;
+                workers/livepeer-bridge/scripts/v2-testnet-bootstrap*)
                   # Bootstrap policies need a same-commit CI run that retains attested contract bytes.
                   bridge=true
                   contracts=true
@@ -192,6 +209,9 @@ jobs:
                 scripts/cloudflare-release.mjs|scripts/cloudflare-release.test.mjs|scripts/release-metadata.mjs|scripts/release-metadata.test.mjs|scripts/release-smoke.mjs|scripts/release-smoke.test.mjs)
                   : # Release tooling is tested by the required CI Gate.
                   ;;
+                .claude/*|.agents/*|claudedocs/*|AGENTS.md|README.md|CHANGELOG.md|CONTRIBUTING.md|SECURITY.md|.github/pull_request_template.md)
+                  : # Agent instructions and repository prose; CI Gate still runs.
+                  ;;
                 .github/workflows/*)
                   set_all
                   ;;
@@ -199,11 +219,25 @@ jobs:
                   set_all
                   ;;
               esac
+              case "${path}" in
+                */package.json|*/package-lock.json)
+                  npm_deps=true
+                  ;;
+                contracts/*/Cargo.toml|contracts/*/Cargo.lock|scripts/check-rust-wasm-advisories.mjs|scripts/generate-contract-spdx.mjs)
+                  rust_deps=true
+                  ;;
+              esac
             done < "${changed_file}"
 
             if [[ "${found_change}" = false ]]; then
               set_all
             fi
+          fi
+
+          # Pushes to main always audit: new advisories land without a lockfile change.
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+            npm_deps=true
+            rust_deps=true
           fi
 
           {
@@ -214,6 +248,8 @@ jobs:
             echo "contracts=${contracts}"
             echo "protocol=${protocol}"
             echo "docs=${docs}"
+            echo "npm_deps=${npm_deps}"
+            echo "rust_deps=${rust_deps}"
           } >> "${GITHUB_OUTPUT}"
 
   web:
@@ -342,6 +378,17 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('contracts/**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
+      # Test builds only: the quality job builds the runtime artifacts from a clean target.
+      - name: Cache contract test builds
+        if: matrix.task == 'tests'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            contracts/*/target
+            contracts/*/tests/*/target
+            !contracts/*/target/*/incremental
+            !contracts/*/tests/*/target/*/incremental
+          key: ${{ runner.os }}-contract-test-target-rust-1.86.0-${{ hashFiles('contracts/**/Cargo.lock') }}
       - name: Install Wasm target for sandbox tests
         if: matrix.task == 'tests'
         run: rustup target add wasm32-unknown-unknown
@@ -679,6 +726,8 @@ jobs:
 
   codeql:
     name: CodeQL
+    # Runs on pushes to main (release workflows require it there) and weekly; not per pull request.
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/codeql.yml
     permissions:
       actions: read
@@ -703,7 +752,7 @@ jobs:
       - codeql
       - market-runtime-artifact
       - v2-runtime-artifact
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -734,6 +783,7 @@ jobs:
           scripts/fetch-neardata-market-block.test.mjs
           scripts/rebuild-market-read-model.test.mjs
           scripts/market-event-catalog.test.mjs
+          scripts/market-v2-read-model.test.mjs
           scripts/market-read-api.test.mjs
           scripts/current-catalog.test.mjs
           scripts/history-targeted-scan.test.mjs

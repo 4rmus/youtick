@@ -104,6 +104,13 @@ node scripts/check-paid-media-livepeer-v1-abi.mjs
 node scripts/check-paid-media-livepeer-v1.mjs
 ```
 
+In CI the `Contracts (tests)` job restores the contract `target` directories
+from a cache keyed on the Rust version and every `contracts/**/Cargo.lock`;
+cargo still rebuilds the workspace crates. `Contracts (quality)` builds from a
+clean target because it packages the runtime artifacts. A pull request that
+only changes `.claude/`, `.agents/`, `claudedocs/`, `AGENTS.md` or the root
+prose files runs no component jobs; `CI Gate` still runs.
+
 ## Market v2 protocol
 
 The V2 byte formats in `protocol/youtick-market-v2` have no runtime consumer yet. The checker
@@ -152,6 +159,7 @@ node --test scripts/apply-market-read-model-d1.test.mjs \
   scripts/fastnear-dev.test.mjs \
   scripts/fetch-neardata-market-block.test.mjs \
   scripts/market-event-catalog.test.mjs \
+  scripts/market-v2-read-model.test.mjs \
   scripts/market-read-api.test.mjs \
   scripts/current-catalog.test.mjs \
   scripts/rebuild-market-read-model.test.mjs
@@ -307,9 +315,13 @@ npm --prefix docs audit --omit=dev --audit-level=high
 ```
 
 The workflow regression requires every tracked third-party GitHub Action to use
-a full commit SHA. CI requires the three runtime npm audits above. The reusable
-CodeQL workflow is an explicit `CI Gate` dependency for pull requests and
-pushes, while retaining its weekly/manual entrypoints. Local source inspection
+a full commit SHA. CI requires the runtime npm audits above. The reusable
+CodeQL workflow is an explicit `CI Gate` dependency for pushes to `main`, while
+retaining its weekly/manual entrypoints; pull requests do not run it.
+On pull requests the npm audit runs only when a `package.json` or
+`package-lock.json` changes, and the WASM audit only when a contract
+`Cargo.toml`/`Cargo.lock` or its audit scripts change; pushes to `main` always
+run both. Draft pull requests run no CI jobs; marking one ready for review does. Local source inspection
 does not prove an analysis run; report it as `UNPROVEN` until GitHub executes
 the exact revision. CI downloads checksum-pinned cargo-audit 0.22.2 and fails
 when a RustSec vulnerability is reachable from either contract's normal WASM

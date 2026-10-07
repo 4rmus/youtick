@@ -39,6 +39,23 @@ const EVENT_CATALOG = new Set([
     'code_upgraded',
     'contract_migrated',
 ]);
+// V2 Market (contracts/market-v2) ticket events use the protocol envelope `2.0.0` without the
+// common context; the indexer derives it from the receipt (protocol/youtick-market-v2).
+const MARKET_V2_EVENT_CATALOG = new Set([
+    'ticket_purchased',
+    'card_ticket_issued',
+    'device_added',
+    'device_revoked',
+    'ticket_watched',
+    'ticket_refunded',
+    'ticket_released',
+    'card_ticket_voided',
+    'creator_payout_credited',
+]);
+// V2 Market events that keep the `1.0.0` envelope.
+const MARKET_V2_V1_ENVELOPE_EVENTS = new Set([
+    'vat_key_revoked',
+]);
 const LEGACY_GOVERNANCE_EVENTS = new Set([
     'bridge_frozen',
     'bridge_rotation_proposed',
@@ -136,9 +153,12 @@ export function parseNeardataMarketBlock(value, expected) {
                     throw new Error('invalid_neardata_event');
                 }
                 const data = event?.data?.[0];
+                const marketV2 = event?.version === '2.0.0';
                 if (event?.standard !== 'youtick_market'
-                    || event?.version !== '1.0.0'
-                    || !EVENT_CATALOG.has(event?.event)
+                    || !(marketV2
+                        ? MARKET_V2_EVENT_CATALOG.has(event?.event)
+                        : event?.version === '1.0.0'
+                            && (EVENT_CATALOG.has(event?.event) || MARKET_V2_V1_ENVELOPE_EVENTS.has(event?.event)))
                     || !Array.isArray(event?.data) || event.data.length !== 1
                     || !data || typeof data !== 'object' || Array.isArray(data)) {
                     throw new Error('invalid_neardata_event');
@@ -150,7 +170,7 @@ export function parseNeardataMarketBlock(value, expected) {
                     'block_timestamp_ms',
                     'idempotency_key',
                 ].some((key) => data[key] === undefined);
-                if (missingCommonContext && !LEGACY_GOVERNANCE_EVENTS.has(event.event)) {
+                if (missingCommonContext && !marketV2 && !LEGACY_GOVERNANCE_EVENTS.has(event.event)) {
                     throw new Error('invalid_neardata_event');
                 }
                 const common = {
@@ -159,7 +179,7 @@ export function parseNeardataMarketBlock(value, expected) {
                     block_height: String(header.height),
                     block_timestamp_ms: blockTimestampMs,
                     idempotency_key: data.idempotency_key
-                        ?? `legacy:${receipt.receipt_id}:${eventIndex}`,
+                        ?? `${marketV2 ? 'v2' : 'legacy'}:${receipt.receipt_id}:${eventIndex}`,
                 };
                 for (const [key, expectedValue] of Object.entries(common)
                     .filter(([key]) => key !== 'idempotency_key')) {
