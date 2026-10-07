@@ -4,7 +4,7 @@ Bu dosya Codex ve Claude Code için ortak proje sözleşmesidir. Kök dizine `CL
 
 ## Yerleşim ve komutlar
 
-- `apps/web` Next.js uygulaması · `contracts/nft-ticket`, `contracts/access-control` Rust NEAR kontratları · `workers/livepeer-bridge` Cloudflare Worker · `read-model` D1 şeması · `protocol/paid-media-livepeer-v1` şema ve golden vektörler · `docs` VitePress.
+- `apps/web` Next.js uygulaması · `contracts/nft-ticket`, `contracts/access-control` Rust NEAR kontratları · `workers/livepeer-bridge` Cloudflare Worker · `workers/relayer` V2 NEAR Auth relayer'ı (hesap, CKD, davet kredisi) · `workers/payment-service` V2 KDV beyanı (E8'de kart yolu) · `read-model` D1 şeması · `protocol/paid-media-livepeer-v1` şema ve golden vektörler · `docs` VitePress.
 - Test ve kontrol komutlarının tek kaynağı `docs/testing.md`; dokunulan yola göre oradan seç. Kontratlar `cargo +1.86.0` ve `cargo-near 0.17.0` ile çalışır; `near-sdk =5.5.0` (`legacy`) sabittir.
 - Sürüm ve release: `docs/release-runbook.md`, `docs/cloudflare-release.md`. Gerçek deploy yalnız korumalı GitHub workflow'larından yürür.
 
@@ -12,7 +12,7 @@ Bu dosya Codex ve Claude Code için ortak proje sözleşmesidir. Kök dizine `CL
 
 - İşi gate'lere böl; her gate'in başında amaç, değiştirilebilecek dosyalar, yasak dosyalar, kabul kriterleri ve hedef doğrulamaları yaz.
 - Varsayılan otonomdur: gate'leri sırayla sürdür, sonunda tek rapor ver. Yalnız onay gerektiren bir işlemde, çıktıyı değiştirecek bir belirsizlikte veya teşhis edilemeyen bir hatada dur. Kullanıcı "adım adım" derse her gate sonunda dur.
-- Bir görev, bir dal, bir PR. PR açıldığında squash auto-merge'ü etkinleştir; CI'ı oturumdan yoklama, başarısız kontrol bildirimi gelince düzelt.
+- Bir milestone, bir dal, bir PR. Milestone, yol haritasındaki bir adım (ör. E3) veya kullanıcının tek seferde verdiği iştir; gate değildir. Gate'ler aynı dalda ayrı commit olur. Dalı ara gate'lerde push'lama; milestone bitince bir kez push'la ve PR'ı aç, çünkü her PR push'u ve her merge tam CI çalıştırır. Main'i kıran acil düzeltme ayrı PR olabilir. PR açıldığında squash auto-merge'ü etkinleştir; CI'ı oturumdan yoklama, başarısız kontrol bildirimi gelince düzelt.
 
 ## Sorumluluk ve katılımcılar
 

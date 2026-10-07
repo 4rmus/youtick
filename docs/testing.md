@@ -55,6 +55,31 @@ The local fault regressions prove bounded NEAR read fallback/circuit behavior
 and one-attempt Livepeer create degradation. They do not constitute provider,
 staging or distributed-isolate chaos evidence.
 
+## Relayer
+
+```bash
+cd workers/relayer
+npm ci
+npm test -- --run
+npm run check
+```
+
+The tests use a decoded-transaction chain model and fake id_tokens (real RS256 verification is
+tested with generated keys). They are LOCAL_TEST only: no NEAR Auth, MPC, `ckd-gate` or USDC
+provider was called.
+
+## Payment service
+
+```bash
+cd workers/payment-service
+npm ci
+npm test -- --run
+npm run check
+```
+
+The VAT attestation tests reproduce the protocol golden vector with the reference test key
+(LOCAL_TEST). No RPC, signer secret or provider is used.
+
 ## Contracts
 
 Use Rust 1.86.0 and cargo-near 0.17.0:
@@ -114,6 +139,7 @@ node --test scripts/apply-market-read-model-d1.test.mjs \
   scripts/fastnear-dev.test.mjs \
   scripts/fetch-neardata-market-block.test.mjs \
   scripts/market-event-catalog.test.mjs \
+  scripts/market-v2-read-model.test.mjs \
   scripts/market-read-api.test.mjs \
   scripts/current-catalog.test.mjs \
   scripts/rebuild-market-read-model.test.mjs
@@ -269,9 +295,13 @@ npm --prefix docs audit --omit=dev --audit-level=high
 ```
 
 The workflow regression requires every tracked third-party GitHub Action to use
-a full commit SHA. CI requires the three runtime npm audits above. The reusable
-CodeQL workflow is an explicit `CI Gate` dependency for pull requests and
-pushes, while retaining its weekly/manual entrypoints. Local source inspection
+a full commit SHA. CI requires the runtime npm audits above. The reusable
+CodeQL workflow is an explicit `CI Gate` dependency for pushes to `main`, while
+retaining its weekly/manual entrypoints; pull requests do not run it.
+On pull requests the npm audit runs only when a `package.json` or
+`package-lock.json` changes, and the WASM audit only when a contract
+`Cargo.toml`/`Cargo.lock` or its audit scripts change; pushes to `main` always
+run both. Draft pull requests run no CI jobs; marking one ready for review does. Local source inspection
 does not prove an analysis run; report it as `UNPROVEN` until GitHub executes
 the exact revision. CI downloads checksum-pinned cargo-audit 0.22.2 and fails
 when a RustSec vulnerability is reachable from either contract's normal WASM

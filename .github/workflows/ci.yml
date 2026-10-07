@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
       - main
@@ -19,6 +20,8 @@ jobs:
     name: Runtime Dependency Audit
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    needs: detect-changes
+    if: needs.detect-changes.outputs.npm_deps == 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -28,12 +31,16 @@ jobs:
         run: |
           npm --prefix apps/web audit --omit=dev --audit-level=high
           npm --prefix workers/livepeer-bridge audit --omit=dev --audit-level=high
+          npm --prefix workers/relayer audit --omit=dev --audit-level=high
+          npm --prefix workers/payment-service audit --omit=dev --audit-level=high
           npm --prefix docs audit --omit=dev --audit-level=high
 
   rust-wasm-audit:
     name: Production WASM Dependency Audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: detect-changes
+    if: needs.detect-changes.outputs.rust_deps == 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: dtolnay/rust-toolchain@52699249a776424c51ebc9ee197baf0f9dbf0d8a # 1.86.0
@@ -97,12 +104,18 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Draft pull requests run nothing; marking one ready for review runs CI.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     outputs:
       web: ${{ steps.changes.outputs.web }}
       bridge: ${{ steps.changes.outputs.bridge }}
+      relayer: ${{ steps.changes.outputs.relayer }}
+      payments: ${{ steps.changes.outputs.payments }}
       contracts: ${{ steps.changes.outputs.contracts }}
       protocol: ${{ steps.changes.outputs.protocol }}
       docs: ${{ steps.changes.outputs.docs }}
+      npm_deps: ${{ steps.changes.outputs.npm_deps }}
+      rust_deps: ${{ steps.changes.outputs.rust_deps }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -117,16 +130,24 @@ jobs:
 
           web=false
           bridge=false
+          relayer=false
+          payments=false
           contracts=false
           protocol=false
           docs=false
+          npm_deps=false
+          rust_deps=false
 
           set_all() {
             web=true
             bridge=true
+            relayer=true
+            payments=true
             contracts=true
             protocol=true
             docs=true
+            npm_deps=true
+            rust_deps=true
           }
 
           changed_file="${RUNNER_TEMP}/changed-files"
@@ -150,6 +171,12 @@ jobs:
                 workers/livepeer-bridge/*)
                   bridge=true
                   ;;
+                workers/relayer/*)
+                  relayer=true
+                  ;;
+                workers/payment-service/*)
+                  payments=true
+                  ;;
                 protocol/paid-media-livepeer-v1/*|scripts/check-paid-media-livepeer-v1.mjs)
                   web=true
                   contracts=true
@@ -158,6 +185,7 @@ jobs:
                   ;;
                 protocol/youtick-market-v2/*|scripts/check-youtick-market-v2.mjs)
                   protocol=true
+                  payments=true
                   ;;
                 contracts/*|scripts/check-paid-media-livepeer-v1-abi.mjs)
                   contracts=true
@@ -168,6 +196,8 @@ jobs:
                 .nvmrc)
                   web=true
                   bridge=true
+                  relayer=true
+                  payments=true
                   protocol=true
                   docs=true
                   ;;
@@ -181,6 +211,14 @@ jobs:
                   set_all
                   ;;
               esac
+              case "${path}" in
+                */package.json|*/package-lock.json)
+                  npm_deps=true
+                  ;;
+                contracts/*/Cargo.toml|contracts/*/Cargo.lock|scripts/check-rust-wasm-advisories.mjs|scripts/generate-contract-spdx.mjs)
+                  rust_deps=true
+                  ;;
+              esac
             done < "${changed_file}"
 
             if [[ "${found_change}" = false ]]; then
@@ -188,12 +226,22 @@ jobs:
             fi
           fi
 
+          # Pushes to main always audit: new advisories land without a lockfile change.
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+            npm_deps=true
+            rust_deps=true
+          fi
+
           {
             echo "web=${web}"
             echo "bridge=${bridge}"
+            echo "relayer=${relayer}"
+            echo "payments=${payments}"
             echo "contracts=${contracts}"
             echo "protocol=${protocol}"
             echo "docs=${docs}"
+            echo "npm_deps=${npm_deps}"
+            echo "rust_deps=${rust_deps}"
           } >> "${GITHUB_OUTPUT}"
 
   web:
@@ -248,6 +296,48 @@ jobs:
       - run: npm ci --no-audit --no-fund --prefer-offline
       - run: npm test -- --run
       - run: npm run test:provider-canary
+      - run: npm run check
+      - run: npx wrangler deploy --dry-run
+
+  relayer:
+    name: Relayer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: detect-changes
+    if: needs.detect-changes.outputs.relayer == 'true'
+    defaults:
+      run:
+        working-directory: workers/relayer
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: workers/relayer/package-lock.json
+      - run: npm ci --no-audit --no-fund --prefer-offline
+      - run: npm test -- --run
+      - run: npm run check
+      - run: npx wrangler deploy --dry-run
+
+  payment-service:
+    name: Payment service
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: detect-changes
+    if: needs.detect-changes.outputs.payments == 'true'
+    defaults:
+      run:
+        working-directory: workers/payment-service
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: workers/payment-service/package-lock.json
+      - run: npm ci --no-audit --no-fund --prefer-offline
+      - run: npm test -- --run
       - run: npm run check
       - run: npx wrangler deploy --dry-run
 
@@ -534,6 +624,8 @@ jobs:
 
   codeql:
     name: CodeQL
+    # Runs on pushes to main (release workflows require it there) and weekly; not per pull request.
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/codeql.yml
     permissions:
       actions: read
@@ -550,12 +642,14 @@ jobs:
       - detect-changes
       - web
       - livepeer-bridge
+      - relayer
+      - payment-service
       - contracts
       - protocol
       - docs
       - codeql
       - market-runtime-artifact
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -586,6 +680,7 @@ jobs:
           scripts/fetch-neardata-market-block.test.mjs
           scripts/rebuild-market-read-model.test.mjs
           scripts/market-event-catalog.test.mjs
+          scripts/market-v2-read-model.test.mjs
           scripts/market-read-api.test.mjs
           scripts/current-catalog.test.mjs
           scripts/history-targeted-scan.test.mjs
