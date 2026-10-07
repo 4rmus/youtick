@@ -4,7 +4,7 @@ import { useMemo, useRef, useState, useEffect, useSyncExternalStore } from 'reac
 import Image from 'next/image';
 import * as Player from '@livepeer/react/player';
 import { getSrc } from '@livepeer/react/external';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Play } from 'lucide-react';
 import { ensureSessionGrant } from '@/lib/access-grants';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
@@ -23,7 +23,21 @@ type LivepeerPlayerProps = LivepeerPlaybackInput & {
 };
 
 export function LivepeerPlayer(props: LivepeerPlayerProps) {
-    return <LivepeerPlayerSession key={`${props.accountId}:${props.jobId}:${props.generation}:${props.playbackId}`} {...props} />;
+    return <LivepeerPlayerGate key={`${props.accountId}:${props.jobId}:${props.generation}:${props.playbackId}`} {...props} />;
+}
+
+// Opening the page must not count as watching: no playback token is requested until the viewer presses play.
+function LivepeerPlayerGate(props: LivepeerPlayerProps) {
+    const [started, setStarted] = useState(false);
+    const language = useSyncExternalStore(subscribePlayerLanguage, playerLanguage, () => 'en' as PlayerLanguage);
+    if (started) return <LivepeerPlayerSession {...props} />;
+    return <div lang={language} className="relative flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-black p-6 text-center text-white">
+        {props.poster && <Image fill priority unoptimized src={props.poster} alt="" sizes="(min-width: 1024px) 1024px, 100vw" className="object-cover" onError={event => { event.currentTarget.hidden = true; }} />}
+        <div aria-hidden="true" className="absolute inset-0 bg-black/50" />
+        <Button className="relative min-h-11 gap-2" onClick={() => setStarted(true)}>
+            <Play size={20} aria-hidden="true" />{playerCopy[language].play}
+        </Button>
+    </div>;
 }
 
 function LivepeerPlayerSession({
@@ -200,7 +214,7 @@ function LivepeerPlayerSession({
 
     return <Player.Root key={attempt}
         src={mode === 'native' ? src.map(source => ({ ...source, type: 'video' as const })) : src}
-        playbackId={playbackId} jwt={accessToken} preload="metadata" videoQuality="auto" storage={null}
+        playbackId={playbackId} jwt={accessToken} autoPlay preload="metadata" videoQuality="auto" storage={null}
         onPlaybackEvents={recordVideoPlaybackEvents}>
         <LivepeerPlayerSurface input={input} title={title} poster={poster} language={language} mode={mode}
             token={accessToken} tokenRef={tokenRef} recoveryRef={recovery} retry={retry} previewVttUrl={previewVttUrl} />
