@@ -987,7 +987,16 @@ Evidence classes remain separate:
   - the first full local sandbox run once returned different `published_at_ms`
     values for an exact finalize replay while publication count stayed one.
     One controlled isolated retry of the same sandbox test passed; this remains
-    recorded as local sandbox flake risk rather than being hidden.
+    recorded as local sandbox flake risk rather than being hidden. The flake was
+    root-caused on 2026-10-07 and is fixed by PR #279 (test harness only, no
+    contract change): `transact()` waits only for optimistic execution, and a
+    loaded single-node sandbox can abandon the block that executed the finalize
+    receipt and re-execute it one height later, so the returned
+    `published_at_ms` came from the abandoned block. The bridge nonce advanced
+    by exactly one, so the near-workspaces re-sign-on-error path was not
+    involved. The test now reads outcomes and views only from final canonical
+    blocks in `nft-ticket` and `market-v2` (`LOCAL_TEST`: 10/10 per crate with
+    and without CPU load).
 - UYGULAMA:
   - kept `youtick_market@1.0.0` and added contract/block/predecessor context plus
     a business `idempotency_key` to every event;
