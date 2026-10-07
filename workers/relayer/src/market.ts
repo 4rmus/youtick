@@ -11,6 +11,8 @@ const VAT_DOMAIN = 'youtick.market-v2.vat.v1';
 const MAX_SIGNATURE_TTL_MS = 3_600_000;
 /** Time for the sign and relay transactions to land before a signature expires on chain. */
 const EXPIRY_MARGIN_MS = 60_000;
+/** The contract's MIN_TICKET_PRICE_USDC: `split_ticket_amount` panics below it. */
+const MIN_TICKET_PRICE_USDC = 5_000_000n;
 
 const DECIMAL = /^(0|[1-9][0-9]{0,38})$/;
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -30,6 +32,11 @@ function exactStrings(value: unknown, keys: string[]): value is Record<string, s
         && keys.every((key) => typeof (value as Record<string, unknown>)[key] === 'string');
 }
 
+/**
+ * Compact JSON as `JSON.stringify` writes it (apps/web does). Re-serializing must give the same
+ * text, which also rules out duplicate keys: `JSON.parse` keeps the last one, while the Market's
+ * serde rejects the message and the transfer is refunded.
+ */
 function parseMessage(msg: string): PurchaseMessage {
     let value: unknown;
     try {
@@ -37,6 +44,7 @@ function parseMessage(msg: string): PurchaseMessage {
     } catch {
         throw new Error('purchase_invalid');
     }
+    if (JSON.stringify(value) !== msg) throw new Error('purchase_invalid');
     const body = value as Record<string, unknown> | null;
     if (!body || typeof body !== 'object' || Array.isArray(body)
         || Object.keys(body).sort().join(',') !== 'action,device,publication_id,ticket_public_key,vat'
@@ -69,6 +77,10 @@ function signedLines(fields: string[]): Uint8Array {
 async function verifyEd25519(signature: string, message: Uint8Array, key: Uint8Array): Promise<boolean> {
     if (!BASE64_SIGNATURE.test(signature)) return false;
     const bytes = Uint8Array.from(atob(signature), (char) => char.charCodeAt(0));
+    // `atob` ignores non-zero trailing bits; the Market's base64 decoder rejects them.
+    let canonical = '';
+    for (const byte of bytes) canonical += String.fromCharCode(byte);
+    if (btoa(canonical) !== signature) return false;
     const imported = await crypto.subtle.importKey('raw', key as BufferSource, 'Ed25519', false, ['verify']);
     return crypto.subtle.verify('Ed25519', imported, bytes as BufferSource, message as BufferSource);
 }
@@ -86,8 +98,15 @@ function networkOf(contractId: string): string {
     throw new Error('invalid_request');
 }
 
+/** The earlier of the device and VAT signature expiries of a message `checkPurchaseMessage` accepted. */
+export function purchaseExpiresAtMs(msg: string): number {
+    const purchase = parseMessage(msg);
+    return Math.min(Number(purchase.device.expires_at_ms), Number(purchase.vat.expires_at_ms));
+}
+
 /**
- * Throws a client error code unless Market V2 would accept this purchase now: active publication,
+ * Throws a client error code unless Market V2 would accept this purchase now: purchases open (not
+ * paused, no ended public testnet beta), active publication,
  * amount equal to its price, an unused ticket key, unexpired signatures, a valid device signature
  * by the ticket key and a VAT attestation signed by the Market's key for that version.
  */
@@ -107,16 +126,23 @@ export async function checkPurchaseMessage(near: NearClient, input: {
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', ticketKey as BufferSource));
     const ticketId = Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
 
-    const [publication, ticket, vatKey] = await Promise.all([
+    const [publication, ticket, vatKey, governance, beta] = await Promise.all([
         near.view<{ publication_id?: unknown; price_usdc?: unknown; availability?: unknown } | null>(
             input.marketContractId, 'get_publication', { publication_id: purchase.publication_id }),
         near.view<unknown>(input.marketContractId, 'get_ticket', { ticket_id: ticketId }),
         near.view<unknown>(input.marketContractId, 'get_vat_public_key', { key_version: Number(purchase.vat.key_version) }),
+        near.view<{ new_purchases_paused?: unknown } | null>(input.marketContractId, 'get_governance_state', {}),
+        near.view<{ ends_at_ms?: unknown; closed_at_ms?: unknown } | null>(input.marketContractId, 'get_public_testnet_beta_state', {}),
     ]);
+    // A beta state that exists but is no longer active refunds every purchase.
+    const betaOpen = beta === null || (beta.closed_at_ms === null && typeof beta.ends_at_ms === 'string'
+        && /^[0-9]{1,20}$/.test(beta.ends_at_ms) && input.nowMs < Number(beta.ends_at_ms));
+    if (governance?.new_purchases_paused !== false || !betaOpen) throw new Error('purchases_paused');
     if (!publication || publication.publication_id !== purchase.publication_id || publication.availability !== 'ACTIVE') {
         throw new Error('publication_unavailable');
     }
     if (publication.price_usdc !== input.amount) throw new Error('price_mismatch');
+    if (BigInt(input.amount) < MIN_TICKET_PRICE_USDC) throw new Error('publication_unavailable');
     if (ticket !== null) throw new Error('ticket_exists');
     if (typeof vatKey !== 'string') throw new Error('purchase_invalid');
 

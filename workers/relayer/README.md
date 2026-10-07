@@ -57,15 +57,21 @@ nothing is signed unless `RELAYER_MUTATIONS_ENABLED=true`.
     the exact bytes, the delegate nonce (above the key's, below `block_height × 1e6`, within u64)
     and expiry (at most 1,200 blocks), and the user's USDC balance.
   - It also checks what Market V2 would refund, so failed purchases cannot drain the shared limit
-    and gas: the publication is active and its price equals the amount, the ticket key is unused,
-    both signatures expire between one minute and one hour from now, the device signature is by
-    the ticket key and the VAT attestation is signed by `get_vat_public_key`.
+    and gas: purchases are not paused and no public testnet beta has ended, the publication is
+    active and its price (at least 5 USDC) equals the amount, the ticket key is unused, both
+    signatures expire between one minute and one hour from now, the device signature is by the
+    ticket key and the VAT attestation is signed by `get_vat_public_key`. `msg` must be compact
+    JSON exactly as `JSON.stringify` writes it, and signatures canonical base64: the Market
+    refunds duplicate keys and non-zero trailing bits that a lenient parser would accept.
   - Limits: a daily cap and a per-identity cap, charged once per purchase in the same storage
     transaction that records it.
   - A purchase is recorded under the SHA-256 of its delegate bytes. The approval token is kept only
     until fast-auth has signed, then replaced by the verified MPC signature. The alarm finishes a
-    purchase the client stopped asking about, fails one still unsigned after 10 minutes (a new
-    approval may start it again) and deletes finished records after a day. A guard that rejects
+    purchase the client stopped asking about, fails one still unsigned after 10 minutes and
+    deletes finished records after a day. An expired purchase keeps its sign transaction hash and
+    is not started again with the same bytes, because an unseen signature may already be on
+    chain; a new approval has new bytes and the same nonce, so only one of them can execute. A
+    relay is not sent when the message signatures expire within 30 seconds. A guard that rejects
     the token ends the purchase as `approval_rejected` instead of repeating the same answer.
 - **Verification.** id_tokens are checked with RS256 against the issuer's JWKS: issuer,
   audience/`azp`, expiry and `sub` limits. ckd-gate verifies the token again on chain.

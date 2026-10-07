@@ -5,6 +5,7 @@ import { KeyPairSigner, Signature, actions, baseDecode, baseEncode, createTransa
 import type { Env } from './env';
 import { relayerConfig, type RelayerConfig } from './env';
 import { createNearClient, type NearClient, type TxOutcome } from './near';
+import { purchaseExpiresAtMs } from './market';
 import { purchaseDelegate, sameBytes, type PurchaseFields } from './purchase';
 
 const CKD_GAS = 150_000_000_000_000n;
@@ -21,6 +22,8 @@ const LANDING_WINDOW_MS = 3 * 60 * 1000;
 const CKD_RECORD_TTL_MS = 10 * 60 * 1000;
 /** A purchase still waiting for its fast-auth signature after this needs a new approval. */
 const SIGN_TIMEOUT_MS = 10 * 60 * 1000;
+/** A relay must still land before the message's device and VAT signatures expire. */
+const RELAY_EXPIRY_MARGIN_MS = 30 * 1000;
 /** Finished purchases stay readable on the status route for this long. */
 const PURCHASE_RECORD_TTL_MS = 24 * 60 * 60 * 1000;
 const POLL_DELAYS_MS = [1_000, 2_000, 3_000, 4_000];
@@ -54,6 +57,8 @@ interface PurchaseRecord {
     fields: PurchaseFields;
     token?: string;
     signature?: string;
+    /** The fast-auth sign transaction of a purchase that expired; its signature may still be on chain. */
+    signTxHash?: string;
     txHash?: string | null;
     error?: string;
     retryable?: boolean;
@@ -99,8 +104,9 @@ export interface ControlDeps {
 
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 
-async function sha256Hex(value: string): Promise<string> {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+async function sha256Hex(value: string | Uint8Array): Promise<string> {
+    const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
+    const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource);
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
@@ -150,7 +156,7 @@ export class RelayerControl {
                 invite_unavailable: 409, invite_already_used: 409, ckd_already_requested: 409, tx_failed: 502,
                 tx_needs_review: 503, mutations_disabled: 503, relayer_key_invalid: 503, rpc_unavailable: 503,
                 payload_conflict: 409, invalid_request: 400, purchase_not_found: 404, approval_rejected: 409,
-                approval_expired: 409, relay_failed: 502,
+                approval_expired: 409, relay_failed: 502, signature_expired: 409,
             };
             if (known[code]) return json({ error: code }, known[code]);
             // The object only reads the relayer's own access key.
@@ -205,7 +211,8 @@ export class RelayerControl {
             }
             const current = await this.state.storage.get<PurchaseRecord>(key);
             if (current?.state === 'signing' && this.now() - current.createdAtMs > SIGN_TIMEOUT_MS) {
-                await this.failPurchase(id, 'approval_expired', true).catch(() => undefined);
+                // Not retryable: an unconfirmed sign may still have landed, and its signature is public.
+                await this.failPurchase(id, 'approval_expired', false).catch(() => undefined);
             }
         }
         if (pending) await this.state.storage.setAlarm(this.now() + CKD_RECORD_TTL_MS);
@@ -321,9 +328,14 @@ export class RelayerControl {
         }
         const { bytes } = purchaseDelegate({ senderId: accountId, publicKey: userPublicKey, usdcContractId: config.usdcContractId, fields });
         if (!sameBytes(bytes, Uint8Array.from(atob(body.bytes), (char) => char.charCodeAt(0)))) throw new Error('invalid_request');
-        const id = await sha256Hex(bytesToBase64(bytes));
+        const id = await sha256Hex(bytes);
         await this.state.storage.transaction(async (txn) => {
             const existing = await txn.get<PurchaseRecord>(`purchase:${id}`);
+            if (existing?.state === 'signing' && !await txn.get(`tx:sign:${id}`)) {
+                // Nothing was sent with the earlier token (e.g. mutations were disabled): use the newer one.
+                await txn.put(`purchase:${id}`, { ...existing, token, updatedAtMs: this.now() });
+                return;
+            }
             if (existing && !(existing.state === 'failed' && existing.retryable)) return;
             const identityKey = `count:${this.day()}:purchase:${identity}`;
             const used = BigInt(await txn.get<string>(identityKey) ?? '0');
@@ -388,6 +400,11 @@ export class RelayerControl {
         }
 
         const signature = Uint8Array.from(atob(record.signature ?? ''), (char) => char.charCodeAt(0));
+        // A relay first sent after a signature expired would only be refunded.
+        if (!await this.state.storage.get(`tx:relay:${id}`)
+            && purchaseExpiresAtMs(record.fields.args.msg) <= this.now() + RELAY_EXPIRY_MARGIN_MS) {
+            return this.failPurchase(id, 'signature_expired', false);
+        }
         let done: { done: boolean };
         try {
             done = await this.submit(config, `tx:relay:${id}`, record.accountId, `relay|${id}`,
@@ -415,7 +432,10 @@ export class RelayerControl {
             const current = await txn.get<PurchaseRecord>(`purchase:${id}`);
             if (!current || current.state === 'submitted' || current.state === 'failed') return;
             const { token: _drop, ...rest } = current;
-            await txn.put(`purchase:${id}`, { ...rest, state: 'failed', error, retryable, updatedAtMs: this.now() });
+            const sign = await txn.get<TxRecord>(`tx:sign:${id}`);
+            await txn.put(`purchase:${id}`, {
+                ...rest, state: 'failed', error, retryable, updatedAtMs: this.now(), ...(sign ? { signTxHash: sign.txHash } : {}),
+            });
             await txn.delete(`tx:sign:${id}`);
         });
         const current = await this.state.storage.get<PurchaseRecord>(`purchase:${id}`);

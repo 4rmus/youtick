@@ -18,7 +18,8 @@ const BLS_G1 = /^bls12381g1:[1-9A-HJ-NP-Za-km-z]{60,70}$/;
 const BLS_G2 = /^bls12381g2:[1-9A-HJ-NP-Za-km-z]{120,135}$/;
 /** Purchase errors the client can act on; each means "Market V2 would refund this now". */
 const PURCHASE_REJECTIONS: Record<string, number> = {
-    purchase_invalid: 400, publication_unavailable: 409, price_mismatch: 409, ticket_exists: 409, signature_expired: 409,
+    purchase_invalid: 400, purchases_paused: 503, publication_unavailable: 409, price_mismatch: 409, ticket_exists: 409,
+    signature_expired: 409,
 };
 
 export interface RelayerDeps {
