@@ -204,6 +204,9 @@ jobs:
                 scripts/cloudflare-release.mjs|scripts/cloudflare-release.test.mjs|scripts/release-metadata.mjs|scripts/release-metadata.test.mjs|scripts/release-smoke.mjs|scripts/release-smoke.test.mjs)
                   : # Release tooling is tested by the required CI Gate.
                   ;;
+                .claude/*|.agents/*|claudedocs/*|AGENTS.md|README.md|CHANGELOG.md|CONTRIBUTING.md|SECURITY.md|.github/pull_request_template.md)
+                  : # Agent instructions and repository prose; CI Gate still runs.
+                  ;;
                 .github/workflows/*)
                   set_all
                   ;;
@@ -370,6 +373,17 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('contracts/**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
+      # Test builds only: the quality job builds the runtime artifacts from a clean target.
+      - name: Cache contract test builds
+        if: matrix.task == 'tests'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            contracts/*/target
+            contracts/*/tests/*/target
+            !contracts/*/target/*/incremental
+            !contracts/*/tests/*/target/*/incremental
+          key: ${{ runner.os }}-contract-test-target-rust-1.86.0-${{ hashFiles('contracts/**/Cargo.lock') }}
       - name: Install Wasm target for sandbox tests
         if: matrix.task == 'tests'
         run: rustup target add wasm32-unknown-unknown

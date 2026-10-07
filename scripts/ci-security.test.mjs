@@ -226,6 +226,10 @@ printf '%s %s %s %s %s' "$web" "$bridge" "$contracts" "$protocol" "$docs"`;
         ['protocol/paid-media-livepeer-v1/compact-upload.ts', 'true true true true false'],
         ['protocol/paid-media-livepeer-v1/compact-upload-vectors.json', 'true true true true false'],
         ['docs/testing.md', 'false false false false true'],
+        ['.claude/rules/web.md', 'false false false false false'],
+        ['AGENTS.md', 'false false false false false'],
+        ['.github/workflows/ci.yml', 'true true true true true'],
+        ['read-model/schema.sql', 'true true true true true'],
     ]) {
         assert.equal(execFileSync('bash', ['-euo', 'pipefail', '-c', shell], {
             env: { ...process.env, path }, encoding: 'utf8',
@@ -306,6 +310,15 @@ printf '%s %s' "$npm_deps" "$rust_deps"`;
             env: { ...process.env, path, GITHUB_EVENT_NAME: event }, encoding: 'utf8',
         }), expected, `${event} ${path}`);
     }
+});
+
+test('only the contract tests job reuses a cached target directory', async () => {
+    const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const contracts = ci.slice(ci.indexOf('  contracts:'), ci.indexOf('  market-runtime-artifact:'));
+    const cacheStep = contracts.slice(contracts.indexOf('- name: Cache contract test builds'));
+
+    assert.match(cacheStep, /^- name: Cache contract test builds\n        if: matrix\.task == 'tests'\n/);
+    assert.equal((contracts.match(/contracts\/\*\/target\n/g) ?? []).length, 1);
 });
 
 test('testnet read model binding stays dark with only the finality probe cron', async () => {
