@@ -80,6 +80,9 @@ npm run build
 ```
 
 Copy `.env.example` to `.env.local` for development. Market and access IDs are required and have no fallback. The Livepeer, sponsored-upload and native-NEAR fee flags remain closed until their release gates are approved.
+V2 NEAR Auth sign-in (`lib/near-auth/`) stays off unless `NEXT_PUBLIC_ENABLE_NEAR_AUTH_V2=true`
+and `NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID` is set; only testnet has a pinned provider, and no
+`ckd-gate` is trusted until one is added to `CKD_TRUST_ROOTS` in `lib/ticket-keys/ckd.ts`.
 Multi-asset payments also default to `off`. `preview` is dry-quote only; `live`
 requires the Bridge to use the same mode and a positive
 `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`.

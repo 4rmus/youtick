@@ -23,7 +23,7 @@ Bu dosya Codex ve Claude Code için ortak proje sözleşmesidir. Kök dizine `CL
 ## Skill seçimi
 
 - Proje skill'leri `.agents/skills/` altındadır; Claude Code aynı dizini `.claude/skills` symlink'i üzerinden görür. Yalnız ilgili skill'i ve gerektiği referansı oku; kataloğun tamamını yükleme.
-- NEAR JS/RPC/işlem biçimi: `near-api-js` · mevcut cüzdan bağlantısı ve oturum arayüzü: `near-dapp` · Rust kontrat uygulaması: `near-smart-contracts` · güvenlik incelemesi: `near-contract-audit` · kontrat/ABI ve tüketici tutarlılığı: `youtick-contract-review` · USDC, iade ve ödeme uzlaştırması: `youtick-payment-flow` · 1Click/NEAR Intents API ayrıntısı: `near-intents`. V1 cüzdan-only'dir; sosyal giriş/MPC skill'i yoktur.
+- NEAR JS/RPC/işlem biçimi: `near-api-js` · mevcut cüzdan bağlantısı ve oturum arayüzü: `near-dapp` · Rust kontrat uygulaması: `near-smart-contracts` · güvenlik incelemesi: `near-contract-audit` · kontrat/ABI ve tüketici tutarlılığı: `youtick-contract-review` · USDC, iade ve ödeme uzlaştırması: `youtick-payment-flow` · 1Click/NEAR Intents API ayrıntısı: `near-intents`. V2 Google/passkey girişi, `ckd-gate` CKD ve bilet anahtarları: `youtick-near-auth`. V1 akışı cüzdan-only kalır.
 - Önce ilgili manifest, lockfile, kurulu API ve çağıran kodu karşılaştır. Skill örnekleri mevcut SDK sürümünü, ağ seçimini veya mimariyi değiştirme yetkisi vermez: paket/toolchain yükseltme, ikinci cüzdan katmanı, state migration veya yeniden iskeletleme yapma.
 - Kaynak sürümü ve güncelleme yöntemi `.agents/skills/SOURCES.md` içindedir. Kullanıcı genelindeki skill veya agent ayarlarını bu repo görevi kapsamında değiştirme.
 
