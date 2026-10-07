@@ -2,12 +2,14 @@
 
 Status: `LOCAL_TEST only / NOT_DEPLOYED`. Roadmap gate E7a; E8 adds the card path.
 
-For now this Worker only issues **VAT attestations** for V2 crypto purchases
-(`protocol/youtick-market-v2`, "VAT attestation"). It never moves money and stores nothing.
+For now this Worker issues **VAT attestations** for V2 crypto purchases
+(`protocol/youtick-market-v2`, "VAT attestation") and counts **checkout funnel steps** (E7e). It
+never moves money and stores no personal data.
 
 | Endpoint | Input | Output |
 |---|---|---|
 | `POST /v1/vat-attestations` | `{ ticket_id, publication_id }` | `{ gross_usdc_micro, vat_usdc_micro, expires_at_ms, key_version, signature }` |
+| `POST /v1/funnel` | `{ step, rail, code? }` | `204` |
 
 ## Rules
 
@@ -31,6 +33,14 @@ For now this Worker only issues **VAT attestations** for V2 crypto purchases
 - **Expiry.** An attestation expires 10 minutes after it is issued. The contract allows at most
   one hour.
 - **Access.** `ALLOWED_ORIGINS`, plus a per-IP rate limiter.
+- **Funnel.**
+  - `step` and `rail` come from fixed lists in `src/funnel.ts`. `code` is allowed only with
+    `purchase_failed`; a value outside the fixed failure list is counted as `other`.
+  - Each event is one Workers Analytics Engine data point (`FUNNEL` binding, dataset
+    `youtick_checkout_funnel`) holding the step, the rail and the code. No IP, account, session
+    id, user agent or publication is written, so steps cannot be joined into one person's path.
+  - The IP is used only as the rate-limiter key. Without the binding, events are accepted and
+    dropped.
 
 ## Checks
 
