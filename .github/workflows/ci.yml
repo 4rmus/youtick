@@ -156,6 +156,9 @@ jobs:
                   protocol=true
                   bridge=true
                   ;;
+                protocol/youtick-market-v2/*|scripts/check-youtick-market-v2.mjs)
+                  protocol=true
+                  ;;
                 contracts/*|scripts/check-paid-media-livepeer-v1-abi.mjs)
                   contracts=true
                   ;;
@@ -498,6 +501,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: node scripts/check-paid-media-livepeer-v1.mjs
+      - run: node scripts/check-youtick-market-v2.mjs
 
   docs:
     name: Docs

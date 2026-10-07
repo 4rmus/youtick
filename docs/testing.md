@@ -79,6 +79,17 @@ node scripts/check-paid-media-livepeer-v1-abi.mjs
 node scripts/check-paid-media-livepeer-v1.mjs
 ```
 
+## Market v2 protocol
+
+The V2 byte formats in `protocol/youtick-market-v2` have no runtime consumer yet. The checker
+rebuilds every golden vector, verifies signatures and the NEAR Auth size budget:
+
+```bash
+node scripts/check-youtick-market-v2.mjs
+# after an intended format change, regenerate and review the diff:
+node scripts/check-youtick-market-v2.mjs --write
+```
+
 ## Read model
 
 ```bash

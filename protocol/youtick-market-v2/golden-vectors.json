@@ -1,0 +1,365 @@
+{
+  "protocol": "youtick.market-v2.protocol.v1",
+  "fixture": {
+    "network": "testnet",
+    "contract_id": "market-v2.youtick.testnet",
+    "usdc_contract_id": "usdc.fakes.testnet",
+    "creator_id": "creator.testnet",
+    "buyer_id": "6f0c8e1d2a3b4c5d6e7f80919293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5",
+    "publication_id": "job-001",
+    "origin": "https://preview.youtick.net",
+    "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+    "ckd_key_hex": "51bd31e428a3931b33dec52e544533a8f73455539ff9e2b36e369b9f26e2a162",
+    "issued_at_ms": "1791360000000",
+    "gross_usdc_micro": "5000000",
+    "vat_usdc_micro": "833334",
+    "vat_key_version": "1",
+    "card_payment_reference": "cleeng-test-order-0001",
+    "payment_reference_key_hex": "985faa916db7d663843a6105cbddcc38551be72f5405b10ecece3ced70222951"
+  },
+  "key_derivation": {
+    "ckd_key_hex": "51bd31e428a3931b33dec52e544533a8f73455539ff9e2b36e369b9f26e2a162",
+    "root_key_hex": "677bda49a17152e42f6387a515a2f7ec87efad30ba3dd18bf66f078b850d4fab",
+    "tickets": [
+      {
+        "index": 0,
+        "seed_hex": "03c872e9e35693d433a8a0aa4b18cfb2bdddd7d420b14ee82e5642f49b2c41da",
+        "public_key": "ed25519:zHUk7HeksDWkiWQyxcJEGW5dKCtVg1G1RZ1B3rMG5e7",
+        "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3"
+      },
+      {
+        "index": 1,
+        "seed_hex": "2b17c89eb567935339b8075ea66ed9556cb1af1da6296e6ddbecd8d2da738dde",
+        "public_key": "ed25519:41SBTarHKX6kmsbkxFUZGSWWVQMSZtvNpK3iqvFRbWZN",
+        "ticket_id": "3ed17b27af13f30599198b508eff45e7656ea57ff8995fee360c28f3492ee093"
+      },
+      {
+        "index": 2,
+        "seed_hex": "cdffd7bd6df82834b9a505986786e975636c25883ea047f50a8ebd1d26095d26",
+        "public_key": "ed25519:CPHsXpbZTc45nUy4qPbNxzi3XbifurReiHQz4u3nUBJn",
+        "ticket_id": "06c61c2be088287855bbedfd42eefc03425c8740ff4063e8ac7f3e30296a4a8e"
+      }
+    ]
+  },
+  "ticket_signatures": {
+    "purchase_device": {
+      "signer_public_key": "ed25519:zHUk7HeksDWkiWQyxcJEGW5dKCtVg1G1RZ1B3rMG5e7",
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+      "action": "purchase_device",
+      "fields": {
+        "publication_id": "job-001",
+        "session_public_key": "ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9",
+        "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88"
+      },
+      "message": "youtick.market-v2.ticket-sig.v1\ntestnet\nmarket-v2.youtick.testnet\npurchase_device\n09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3\n1791360600000\njob-001\ned25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9\n5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+      "signature": "WBcXrE47T8Pd6n8nkfYujOgmnbcmxohZ/IU25GIp+HqWw5NaiLrYxC7p6WGVUDkUTEZ2s5QJ6qKQO9dIgwecDA=="
+    },
+    "card_purchase": {
+      "signer_public_key": "ed25519:41SBTarHKX6kmsbkxFUZGSWWVQMSZtvNpK3iqvFRbWZN",
+      "ticket_id": "3ed17b27af13f30599198b508eff45e7656ea57ff8995fee360c28f3492ee093",
+      "action": "card_purchase",
+      "fields": {
+        "publication_id": "job-001",
+        "session_public_key": "ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9",
+        "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+        "payment_reference_hmac": "10120d6bbc05f99b0bf02988ebae00794db91b648f97e52e7e12a1a8c6868b2b",
+        "gross_minor": "500",
+        "currency": "USD"
+      },
+      "message": "youtick.market-v2.ticket-sig.v1\ntestnet\nmarket-v2.youtick.testnet\ncard_purchase\n3ed17b27af13f30599198b508eff45e7656ea57ff8995fee360c28f3492ee093\n1791360600000\njob-001\ned25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9\n5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88\n10120d6bbc05f99b0bf02988ebae00794db91b648f97e52e7e12a1a8c6868b2b\n500\nUSD",
+      "signature": "xcO8s/FJew09hpuSD/qFSpDq7nBdth2NFKZWNvehLmE6kMZwVRPBXU5bhfEzu8ZJvfMqtiU7X4wq6BPY9A2yBw=="
+    },
+    "add_device": {
+      "signer_public_key": "ed25519:zHUk7HeksDWkiWQyxcJEGW5dKCtVg1G1RZ1B3rMG5e7",
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+      "action": "add_device",
+      "fields": {
+        "session_public_key": "ed25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3",
+        "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+        "device_epoch": "0"
+      },
+      "message": "youtick.market-v2.ticket-sig.v1\ntestnet\nmarket-v2.youtick.testnet\nadd_device\n09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3\n1791360600000\ned25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3\n5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88\n0",
+      "signature": "zVny5VUPiUMhTJQ5lFrLcSCDmapOmmX0CRRHWnm0T2E5BzDTtenW2Cd7a6PnEpNvy4hVd9Ki8ndQ/sUJBUfyCQ=="
+    },
+    "revoke_device": {
+      "signer_public_key": "ed25519:zHUk7HeksDWkiWQyxcJEGW5dKCtVg1G1RZ1B3rMG5e7",
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+      "action": "revoke_device",
+      "fields": {
+        "session_public_key": "ed25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3",
+        "device_epoch": "0"
+      },
+      "message": "youtick.market-v2.ticket-sig.v1\ntestnet\nmarket-v2.youtick.testnet\nrevoke_device\n09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3\n1791360600000\ned25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3\n0",
+      "signature": "s2/P62VLeB45TZTj4w+6wc4tfnzDJTSUebwqBsSR+xDWNwOs183gUZOkG896xVddqn2g07iiQkN7qiD3obIdAg=="
+    },
+    "refund_unwatched": {
+      "signer_public_key": "ed25519:zHUk7HeksDWkiWQyxcJEGW5dKCtVg1G1RZ1B3rMG5e7",
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+      "action": "refund_unwatched",
+      "fields": {
+        "refund_to": "6f0c8e1d2a3b4c5d6e7f80919293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5"
+      },
+      "message": "youtick.market-v2.ticket-sig.v1\ntestnet\nmarket-v2.youtick.testnet\nrefund_unwatched\n09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3\n1791360600000\n6f0c8e1d2a3b4c5d6e7f80919293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5",
+      "signature": "GssLdWvIEnzUpx8+4ICjOD6N7Yo/y2mKYeZSVls5dBO0eXWw1m8zZd24FdsaeMkosEtiTCOd4Y1Cyq7CNnRJDA=="
+    }
+  },
+  "vat_attestation": {
+    "signer_public_key": "ed25519:9dbrbJu3qJtAJ5z3eyX1rQ4jDMzdhpVQMaP71VyfLUr1",
+    "input": {
+      "network": "testnet",
+      "contract_id": "market-v2.youtick.testnet",
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+      "publication_id": "job-001",
+      "gross_usdc_micro": "5000000",
+      "vat_usdc_micro": "833334",
+      "expires_at_ms": "1791360600000",
+      "key_version": "1"
+    },
+    "message": "youtick.market-v2.vat.v1\ntestnet\nmarket-v2.youtick.testnet\n09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3\njob-001\n5000000\n833334\n1791360600000\n1",
+    "signature": "3R3/iWByOrdhGEEQ46hfcl56JmKEa5t3YYURQmM4DggRVxUA9USV6MzCXWtg/aBeLTDbZ+PlO4fU0GdAYyLSBw==",
+    "split": {
+      "net_usdc_micro": "4166666",
+      "platform_usdc_micro": "208333",
+      "creator_usdc_micro": "3958333"
+    }
+  },
+  "purchase": {
+    "ft_transfer_call_args": {
+      "receiver_id": "market-v2.youtick.testnet",
+      "amount": "5000000",
+      "msg": "{\"action\":\"buy_ticket_v2\",\"publication_id\":\"job-001\",\"ticket_public_key\":\"ed25519:zHUk7HeksDWkiWQyxcJEGW5dKCtVg1G1RZ1B3rMG5e7\",\"device\":{\"session_public_key\":\"ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9\",\"certificate_sha256\":\"5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88\",\"expires_at_ms\":\"1791360600000\",\"signature\":\"WBcXrE47T8Pd6n8nkfYujOgmnbcmxohZ/IU25GIp+HqWw5NaiLrYxC7p6WGVUDkUTEZ2s5QJ6qKQO9dIgwecDA==\"},\"vat\":{\"vat_usdc_micro\":\"833334\",\"expires_at_ms\":\"1791360600000\",\"key_version\":\"1\",\"signature\":\"3R3/iWByOrdhGEEQ46hfcl56JmKEa5t3YYURQmM4DggRVxUA9USV6MzCXWtg/aBeLTDbZ+PlO4fU0GdAYyLSBw==\"}}"
+    },
+    "msg": {
+      "action": "buy_ticket_v2",
+      "publication_id": "job-001",
+      "ticket_public_key": "ed25519:zHUk7HeksDWkiWQyxcJEGW5dKCtVg1G1RZ1B3rMG5e7",
+      "device": {
+        "session_public_key": "ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9",
+        "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+        "expires_at_ms": "1791360600000",
+        "signature": "WBcXrE47T8Pd6n8nkfYujOgmnbcmxohZ/IU25GIp+HqWw5NaiLrYxC7p6WGVUDkUTEZ2s5QJ6qKQO9dIgwecDA=="
+      },
+      "vat": {
+        "vat_usdc_micro": "833334",
+        "expires_at_ms": "1791360600000",
+        "key_version": "1",
+        "signature": "3R3/iWByOrdhGEEQ46hfcl56JmKEa5t3YYURQmM4DggRVxUA9USV6MzCXWtg/aBeLTDbZ+PlO4fU0GdAYyLSBw=="
+      }
+    }
+  },
+  "card_ticket": {
+    "issue_card_ticket_args": {
+      "ticket_public_key": "ed25519:41SBTarHKX6kmsbkxFUZGSWWVQMSZtvNpK3iqvFRbWZN",
+      "publication_id": "job-001",
+      "device": {
+        "session_public_key": "ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9",
+        "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+        "expires_at_ms": "1791360600000",
+        "signature": "xcO8s/FJew09hpuSD/qFSpDq7nBdth2NFKZWNvehLmE6kMZwVRPBXU5bhfEzu8ZJvfMqtiU7X4wq6BPY9A2yBw=="
+      },
+      "payment_reference_hmac": "10120d6bbc05f99b0bf02988ebae00794db91b648f97e52e7e12a1a8c6868b2b",
+      "gross_minor": "500",
+      "currency": "USD"
+    },
+    "void_card_ticket_args": {
+      "ticket_id": "3ed17b27af13f30599198b508eff45e7656ea57ff8995fee360c28f3492ee093",
+      "reason": "chargeback"
+    }
+  },
+  "calls": {
+    "add_device_args": {
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+      "session_public_key": "ed25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3",
+      "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+      "device_epoch": "0",
+      "expires_at_ms": "1791360600000",
+      "signature": "zVny5VUPiUMhTJQ5lFrLcSCDmapOmmX0CRRHWnm0T2E5BzDTtenW2Cd7a6PnEpNvy4hVd9Ki8ndQ/sUJBUfyCQ=="
+    },
+    "revoke_device_args": {
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+      "session_public_key": "ed25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3",
+      "device_epoch": "0",
+      "expires_at_ms": "1791360600000",
+      "signature": "s2/P62VLeB45TZTj4w+6wc4tfnzDJTSUebwqBsSR+xDWNwOs183gUZOkG896xVddqn2g07iiQkN7qiD3obIdAg=="
+    },
+    "platform_revoke_device_args": {
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+      "session_public_key": "ed25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3"
+    },
+    "refund_unwatched_args": {
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+      "refund_to": "6f0c8e1d2a3b4c5d6e7f80919293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5",
+      "expires_at_ms": "1791360600000",
+      "signature": "GssLdWvIEnzUpx8+4ICjOD6N7Yo/y2mKYeZSVls5dBO0eXWw1m8zZd24FdsaeMkosEtiTCOd4Y1Cyq7CNnRJDA=="
+    },
+    "mark_watched_args": {
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3"
+    },
+    "release_expired_args": {
+      "ticket_ids": [
+        "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3"
+      ]
+    }
+  },
+  "playback_request": {
+    "input": {
+      "network": "testnet",
+      "contract_id": "market-v2.youtick.testnet",
+      "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+      "session_public_key": "ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9",
+      "origin": "https://preview.youtick.net",
+      "device_nonce": "c7fb50b34f2635e6d9a8b912be1c74c5",
+      "expires_at_ms": "1791360120000"
+    },
+    "message": "youtick.market-v2.playback.v1\ntestnet\nmarket-v2.youtick.testnet\n09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3\ned25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9\nhttps://preview.youtick.net\nc7fb50b34f2635e6d9a8b912be1c74c5\n1791360120000",
+    "signature": "1rEaB/RU0uaOqyCkx0rt6pIQcK7UAqK85ChEhoMVDXHL2b4wPisqn4Z+HI+fqRX4FoS6kkssioiyP8lm+J1IDQ=="
+  },
+  "events": {
+    "ticket_purchased": {
+      "standard": "youtick_market",
+      "version": "2.0.0",
+      "event": "ticket_purchased",
+      "data": [
+        {
+          "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+          "publication_id": "job-001",
+          "creator_id": "creator.testnet",
+          "rail": "crypto",
+          "asset": "usdc.fakes.testnet",
+          "gross_usdc_micro": "5000000",
+          "vat_usdc_micro": "833334",
+          "net_usdc_micro": "4166666",
+          "platform_usdc_micro": "208333",
+          "creator_usdc_micro": "3958333",
+          "vat_key_version": "1",
+          "status": "purchased"
+        }
+      ]
+    },
+    "card_ticket_issued": {
+      "standard": "youtick_market",
+      "version": "2.0.0",
+      "event": "card_ticket_issued",
+      "data": [
+        {
+          "ticket_id": "3ed17b27af13f30599198b508eff45e7656ea57ff8995fee360c28f3492ee093",
+          "publication_id": "job-001",
+          "creator_id": "creator.testnet",
+          "rail": "card",
+          "gross_minor": "500",
+          "currency": "USD",
+          "payment_reference_hmac": "10120d6bbc05f99b0bf02988ebae00794db91b648f97e52e7e12a1a8c6868b2b",
+          "status": "purchased"
+        }
+      ]
+    },
+    "device_added": {
+      "standard": "youtick_market",
+      "version": "2.0.0",
+      "event": "device_added",
+      "data": [
+        {
+          "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+          "session_public_key": "ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9",
+          "device_epoch": "0",
+          "expires_at_ms": "1793952000000"
+        }
+      ]
+    },
+    "ticket_watched": {
+      "standard": "youtick_market",
+      "version": "2.0.0",
+      "event": "ticket_watched",
+      "data": [
+        {
+          "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+          "publication_id": "job-001",
+          "rail": "crypto",
+          "vat_usdc_micro": "833334",
+          "platform_usdc_micro": "208333",
+          "creator_usdc_micro": "3958333"
+        }
+      ]
+    },
+    "ticket_refunded": {
+      "standard": "youtick_market",
+      "version": "2.0.0",
+      "event": "ticket_refunded",
+      "data": [
+        {
+          "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+          "publication_id": "job-001",
+          "rail": "crypto",
+          "refunded_usdc_micro": "5000000"
+        }
+      ]
+    },
+    "ticket_released": {
+      "standard": "youtick_market",
+      "version": "2.0.0",
+      "event": "ticket_released",
+      "data": [
+        {
+          "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+          "publication_id": "job-001",
+          "vat_usdc_micro": "833334",
+          "platform_usdc_micro": "208333",
+          "creator_usdc_micro": "3958333"
+        }
+      ]
+    },
+    "card_ticket_voided": {
+      "standard": "youtick_market",
+      "version": "2.0.0",
+      "event": "card_ticket_voided",
+      "data": [
+        {
+          "ticket_id": "3ed17b27af13f30599198b508eff45e7656ea57ff8995fee360c28f3492ee093",
+          "publication_id": "job-001",
+          "reason": "chargeback"
+        }
+      ]
+    },
+    "device_revoked": {
+      "standard": "youtick_market",
+      "version": "2.0.0",
+      "event": "device_revoked",
+      "data": [
+        {
+          "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+          "session_public_key": "ed25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3",
+          "device_epoch": "1"
+        }
+      ]
+    }
+  },
+  "size_budget": {
+    "assumptions": {
+      "sender_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "usdc_contract_id": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+      "market_contract_id": "market-v2.youtick.near",
+      "jwt_signature_chars": 342,
+      "other_claims": "illustrative; not captured from a live token"
+    },
+    "token_limit_bytes": 7168,
+    "prompt_limit_bytes": 24576,
+    "typical": {
+      "publication_id_chars": 39,
+      "purchase_msg_bytes": 664,
+      "ft_transfer_call_args_bytes": 785,
+      "delegate_bytes": 1027,
+      "fatxn_json_bytes": 3416,
+      "token_bytes_estimate": 5525,
+      "prompt_bytes_estimate": 12454
+    },
+    "worst": {
+      "publication_id_chars": 128,
+      "purchase_msg_bytes": 753,
+      "ft_transfer_call_args_bytes": 874,
+      "delegate_bytes": 1116,
+      "fatxn_json_bytes": 3810,
+      "token_bytes_estimate": 6050,
+      "prompt_bytes_estimate": 13533
+    }
+  }
+}
