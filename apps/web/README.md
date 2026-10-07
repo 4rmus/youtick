@@ -86,6 +86,10 @@ and `NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID` is set; only testnet has a pinned provider
 The V2 pages `/tickets` and `/invite` also need `NEXT_PUBLIC_MARKET_V2_CONTRACT_ID`,
 `NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID`, `NEXT_PUBLIC_RELAYER_URL` (HTTPS origin) and
 `NEXT_PUBLIC_LIVEPEER_BRIDGE_URL`; otherwise they return 404.
+`/tickets/buy?publication=<id>` (crypto checkout through one NEAR Auth approval) also needs
+`NEXT_PUBLIC_PAYMENT_SERVICE_URL` (HTTPS origin of the VAT attestation service); without it the
+page says sales are not open. The relayer turns the approval into an MPC signature and relays
+it; the ticket is confirmed only by `get_ticket`.
 Multi-asset payments also default to `off`. `preview` is dry-quote only; `live`
 requires the Bridge to use the same mode and a positive
 `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`.
