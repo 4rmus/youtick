@@ -64,11 +64,17 @@ class FakePopup implements PopupLike {
     close() { this.closed = true; }
 }
 
+const PURCHASE_ID = 'ab'.repeat(32);
+
 function harness(options: { vatStatus?: number; relayer?: Array<[number, unknown]>; ticketAfter?: number; accessToken?: string } = {}) {
     const popup = new FakePopup();
     let listener: ((event: { origin: string; data: unknown; source?: unknown }) => void) | null = null;
     const requests: { url: string; body: Record<string, unknown> }[] = [];
-    const relayer = [...(options.relayer ?? [[202, { pending: true }], [200, { submitted: true, txHash: 'h' }]])];
+    const relayer = [...(options.relayer ?? [
+        [202, { purchaseId: PURCHASE_ID, state: 'signing', txHash: null }],
+        [202, { purchaseId: PURCHASE_ID, state: 'relaying', txHash: 'h' }],
+        [200, { purchaseId: PURCHASE_ID, state: 'submitted', txHash: 'h' }],
+    ])];
     const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         requests.push({ url: String(url), body });
@@ -125,9 +131,12 @@ describe('NEAR Auth checkout', () => {
         const authorize = new URL(h.popup.location.href);
         expect(authorize.searchParams.get('audience')).toBe('auth0.jwt.fast-auth.testnet');
         expect(authorize.searchParams.get('scope')).toBe('openid transaction:sign');
+        // The signing token is sent once; a pending purchase is followed by its id alone.
         const relayed = h.requests.filter((r) => r.url === 'https://relayer.test/v1/purchases');
-        expect(relayed).toHaveLength(2);
-        const body = relayed[1].body as { access_token: string; args: { receiver_id: string; amount: string; msg: string }; nonce: string; max_block_height: string };
+        expect(relayed).toHaveLength(1);
+        expect(h.requests.filter((r) => r.url === 'https://relayer.test/v1/purchases/status').map((r) => r.body))
+            .toEqual([{ purchase_id: PURCHASE_ID }, { purchase_id: PURCHASE_ID }]);
+        const body = relayed[0].body as { access_token: string; args: { receiver_id: string; amount: string; msg: string }; nonce: string; max_block_height: string };
         expect(body.access_token).toBe('signing-token');
         expect(body.nonce).toBe('8');
         expect(body.max_block_height).toBe('1600');
@@ -147,6 +156,12 @@ describe('NEAR Auth checkout', () => {
         expect(noVat.popup.location.href).toBe('about:blank');
 
         await expect(harness({ relayer: [[409, { error: 'insufficient_balance' }]] }).run()).rejects.toThrow('insufficient_balance');
+        await expect(harness({ relayer: [[202, { purchaseId: PURCHASE_ID, state: 'signing' }], [409, { error: 'approval_rejected' }]] }).run())
+            .rejects.toThrow('approval_rejected');
+        // Without a usable id there is nothing to follow; the client never resends the token.
+        const noId = harness({ relayer: [[202, { state: 'signing' }]] });
+        await expect(noId.run()).rejects.toThrow('purchase_pending');
+        expect(noId.requests.filter((r) => r.url.startsWith('https://relayer.test/'))).toHaveLength(1);
         const refunded = harness({ ticketAfter: 100 });
         await expect(refunded.run()).rejects.toThrow(CheckoutError);
         await expect(harness({ ticketAfter: 100 }).run()).rejects.toThrow('purchase_not_confirmed');

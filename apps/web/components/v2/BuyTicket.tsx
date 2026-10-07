@@ -27,6 +27,14 @@ const ERRORS: Record<string, string> = {
     daily_limit_reached: 'Purchases are paused for today. Please try again tomorrow.',
     rate_limited: 'Too many attempts. Please wait a minute and try again.',
     purchase_not_confirmed: 'The payment was returned, so no ticket was issued. Please try again.',
+    publication_unavailable: 'This screening is not on sale right now.',
+    price_mismatch: 'The price of this screening changed. Please reload the page.',
+    ticket_exists: 'Something went wrong preparing your ticket. Please try again.',
+    signature_expired: 'The purchase took too long. Please try again.',
+    approval_rejected: 'The purchase was not approved. Please try again.',
+    approval_expired: 'The approval expired. Please try again.',
+    account_not_ready: 'Your youtick account is still being set up. Please try again in a minute.',
+    purchase_pending: 'Your purchase is still being processed. Check My tickets in a few minutes before trying again.',
 };
 
 interface PublicationView {

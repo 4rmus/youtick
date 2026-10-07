@@ -120,12 +120,18 @@ export async function buyTicket(input: {
         nonce: deps.randomNonce?.() ?? crypto.randomUUID(), audience: config.auth.provider.signingAudience, delegateBytes: bytes,
     }, deps.oidc);
 
-    const body = { access_token: accessToken, args, nonce: nonce.toString(), max_block_height: maxBlockHeight.toString() };
-    for (let attempt = 0; ; attempt += 1) {
-        const relayed = await postJson(fetcher, `${config.relayerUrl}/v1/purchases`, body);
-        if (relayed.status === 200) break;
-        if (relayed.status !== 202 || attempt >= 20) throw new CheckoutError(errorCode(relayed.value, 'purchase_pending'));
+    // The signing token is sent once: it expires within about a minute, and the user's nonce moves
+    // once the relay lands, so a pending purchase is followed by its id on the status route.
+    let relayed = await postJson(fetcher, `${config.relayerUrl}/v1/purchases`, {
+        access_token: accessToken, args, nonce: nonce.toString(), max_block_height: maxBlockHeight.toString(),
+    });
+    const purchaseId = relayed.value.purchaseId;
+    for (let attempt = 0; relayed.status !== 200; attempt += 1) {
+        if (relayed.status !== 202 || typeof purchaseId !== 'string' || !/^[0-9a-f]{64}$/.test(purchaseId) || attempt >= 20) {
+            throw new CheckoutError(errorCode(relayed.value, 'purchase_pending'));
+        }
         await sleep(3_000);
+        relayed = await postJson(fetcher, `${config.relayerUrl}/v1/purchases/status`, { purchase_id: purchaseId });
     }
     // The relay landed; only the chain says whether the Market accepted or refunded the transfer.
     for (let attempt = 0; attempt < 10; attempt += 1) {
