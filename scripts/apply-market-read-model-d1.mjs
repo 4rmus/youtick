@@ -225,6 +225,45 @@ function projectionStatements(db, record, data) {
             WHERE withdrawal_history.source_block_height <= excluded.source_block_height
         `, [...scope, data.withdrawal_id, data.account_id, data.asset, data.amount,
             record.event.event, data.reason_code || null, height])];
+    case 'ticket_purchased':
+    case 'card_ticket_issued': {
+        const card = record.event.event === 'card_ticket_issued';
+        return [bound(db, `
+            INSERT INTO market_v2_tickets (
+                network, contract_id, ticket_id, publication_id, creator_id, rail, status,
+                gross_amount, currency, vat_usdc_micro, platform_usdc_micro, creator_usdc_micro,
+                purchased_at_ms, settled_at_ms, payout_credited_to_balance, source_block_height
+            ) VALUES (?, ?, ?, ?, ?, ?, 'purchased', ?, ?, ?, ?, ?, ?, NULL, 0, ?)
+            ON CONFLICT (network, contract_id, ticket_id) DO NOTHING
+        `, [...scope, data.ticket_id, data.publication_id, data.creator_id, card ? 'card' : 'crypto',
+            card ? data.gross_minor : data.gross_usdc_micro, card ? data.currency : 'USDC',
+            card ? '0' : data.vat_usdc_micro, card ? '0' : data.platform_usdc_micro,
+            card ? '0' : data.creator_usdc_micro, Number(data.block_timestamp_ms), height])];
+    }
+    case 'ticket_watched':
+    case 'ticket_released':
+    case 'ticket_refunded':
+    case 'card_ticket_voided': {
+        const status = {
+            ticket_watched: 'watched', ticket_released: 'released',
+            ticket_refunded: 'refunded', card_ticket_voided: 'voided',
+        }[record.event.event];
+        const settled = status === 'watched' || status === 'released';
+        return [bound(db, `
+            UPDATE market_v2_tickets SET status=?, settled_at_ms=COALESCE(?, settled_at_ms),
+                source_block_height=?
+            WHERE network=? AND contract_id=? AND ticket_id=? AND source_block_height <= ?
+        `, [status, settled ? Number(data.block_timestamp_ms) : null, height, ...scope, data.ticket_id, height])];
+    }
+    case 'creator_payout_credited':
+        return [bound(db, `
+            UPDATE market_v2_tickets SET payout_credited_to_balance=1, source_block_height=?
+            WHERE network=? AND contract_id=? AND ticket_id=? AND source_block_height <= ?
+        `, [height, ...scope, data.ticket_id, height])];
+    case 'device_added':
+    case 'device_revoked':
+        // Devices are authoritative only through get_ticket; chain_events keeps the raw event.
+        return [];
     default:
         return [bound(db, `
             INSERT INTO governance_audit VALUES (?, ?, ?, ?, ?, ?)
