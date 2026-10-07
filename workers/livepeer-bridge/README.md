@@ -189,6 +189,51 @@ latency. A validated status response separately emits its allowlisted payment
 status; deposit/refund addresses, quote payloads and API credentials are never
 included.
 
+## V2 Market ticket playback (`/v3/playback-tokens`)
+
+Off unless `MARKET_PROTOCOL=v2` and `LIVEPEER_PLAYBACK_V3_ENABLED=true` (with the usual
+`LIVEPEER_BRIDGE_ENABLED` and `LIVEPEER_PLAYBACK_ISSUANCE_ENABLED`). A V2 deployment points
+`MARKET_CONTRACT_ID` at `contracts/market-v2`. V1 deployments are unchanged.
+
+- **Request.** The body is `{ request, signature }`.
+  - `request` is the protocol's "Playback request" (`protocol/youtick-market-v2`).
+  - The device session key signs it.
+  - The network, contract and origin must match the deployment, and the request must expire
+    within 5 minutes.
+- **Authorization.** It comes from the final `get_ticket` view, with `get_publication` read at
+  the same block.
+  - The ticket must be `purchased`, `watched` or `released`.
+  - The publication must be `ACTIVE` or `SALES_SUSPENDED`.
+  - The session key must be listed on the ticket and unexpired.
+- **First play.** A `purchased` ticket is settled through the operator outbox first
+  (`/internal/mark-watched`).
+  - The outbox signs `mark_watched` with 100 TGas.
+  - It confirms from the final ticket status (`watched` or `released`).
+  - A pending outcome returns `503 playback_pending`. A contract refusal (refunded or voided
+    ticket, takedown) returns `403 playback_denied`. No token is issued in either case.
+- **Operator key.** In V2 the on-chain operator function-call key must allow exactly
+  `finalize_livepeer_publication`, `suspend_livepeer_sales` and `mark_watched`. The operator
+  account must be the V2 contract's active Bridge.
+- **Tokens.** Each token lives at most 180 seconds, and never longer than the device's
+  remaining validity.
+- **Escrow release.** With `MARKET_V2_RELEASE_ENABLED=true`, the `scheduled` handler releases
+  purchased crypto tickets older than 30 days.
+  - It reads up to 25 due ticket IDs from `MARKET_READ_MODEL` (`market_v2_tickets`, migration
+    `0010`), leaving out tickets of taken-down publications.
+  - It sends one `release_expired` batch through the operator outbox, with 150 TGas.
+  - The batch is confirmed once none of its tickets is still `purchased`. Confirmed records are
+    deleted, and a failed batch is retried by the next run.
+  - The V2 operator key must also allow `release_expired`.
+  - The V2 deployment config must add a cron trigger (for example every 15 minutes). V1
+    deployments get no trigger.
+- **Client rule.** Sign a playback request only after the viewer presses play. The first
+  accepted request settles the ticket, and that ends the viewer's refund right. Any device on the
+  ticket can do this; there is no replay cache within the 5-minute request window.
+- **Outbox records.** Confirmed `mark_watched` records are deleted, never archived, so the
+  operator object's record budget does not grow with tickets. The final ticket status on chain is
+  the durable record. A failed transaction on a ticket that is still `purchased` clears its
+  record, and the next play signs a fresh one.
+
 ## Commands
 
 ```bash

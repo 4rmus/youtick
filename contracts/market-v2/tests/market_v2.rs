@@ -232,6 +232,7 @@ fn contract() -> Contract {
         tax_account_id: account("tax.testnet"),
         vat_public_key: v2::vat_public_key(),
         vat_key_version: 1,
+        payment_operator_id: account("payments.testnet"),
     })
 }
 
@@ -268,6 +269,7 @@ fn public_upload_contract() -> (Contract, PaidJobRequest, SponsoredUploadQuote, 
         tax_account_id: account("tax.testnet"),
         vat_public_key: v2::vat_public_key(),
         vat_key_version: 1,
+        payment_operator_id: account("payments.testnet"),
     });
     (contract, request, quote, signature)
 }
@@ -1743,6 +1745,7 @@ fn constructor_rejects_shared_admin_and_guardian() {
             tax_account_id: account("tax.testnet"),
             vat_public_key: v2::vat_public_key(),
             vat_key_version: 1,
+            payment_operator_id: account("payments.testnet"),
         });
     });
 }
@@ -2655,6 +2658,7 @@ fn compact_upload_cross_language_vectors_preserve_payment_and_device() {
             tax_account_id: account("tax.testnet"),
             vat_public_key: v2::vat_public_key(),
             vat_key_version: 1,
+            payment_operator_id: account("payments.testnet"),
         });
         testing_env!(context("admin.testnet").build());
         market.request_new_purchases_unpause();
@@ -2850,6 +2854,7 @@ fn mainnet_contract() -> Contract {
         tax_account_id: account("tax.testnet"),
         vat_public_key: v2::vat_public_key(),
         vat_key_version: 1,
+        payment_operator_id: account("payments.testnet"),
     })
 }
 
@@ -3326,6 +3331,7 @@ fn protocol_golden_vectors_are_accepted_byte_for_byte() {
             .unwrap()
             .parse()
             .unwrap(),
+        payment_operator_id: account("payments.testnet"),
     });
     let publication_id = fixture["publication_id"].as_str().unwrap();
     let gross: u128 = fixture["gross_usdc_micro"]
@@ -3390,6 +3396,57 @@ fn protocol_golden_vectors_are_accepted_byte_for_byte() {
         vectors["purchase"]["msg"]["device"]["session_public_key"]
     );
     assert_eq!(market.get_escrow_balance(), U128(gross));
+
+    // Device calls and events match the protocol vectors.
+    let calls = &vectors["calls"];
+    let mut relayer = context("relayer.testnet");
+    relayer.block_timestamp(issued_at * 1_000_000);
+    testing_env!(relayer.build());
+    let add = &calls["add_device_args"];
+    market.add_device(
+        add["ticket_id"].as_str().unwrap().to_string(),
+        add["session_public_key"].as_str().unwrap().to_string(),
+        add["certificate_sha256"].as_str().unwrap().to_string(),
+        add["device_epoch"].as_str().unwrap().to_string(),
+        add["expires_at_ms"].as_str().unwrap().to_string(),
+        add["signature"].as_str().unwrap().to_string(),
+    );
+    assert_eq!(governance_event(), vectors["events"]["device_added"]);
+    let revoke = &calls["revoke_device_args"];
+    market.revoke_device(
+        revoke["ticket_id"].as_str().unwrap().to_string(),
+        revoke["session_public_key"].as_str().unwrap().to_string(),
+        revoke["device_epoch"].as_str().unwrap().to_string(),
+        revoke["expires_at_ms"].as_str().unwrap().to_string(),
+        revoke["signature"].as_str().unwrap().to_string(),
+    );
+    assert_eq!(governance_event(), vectors["events"]["device_revoked"]);
+
+    // Card ticket calls and events match the protocol vectors.
+    let card = &vectors["card_ticket"];
+    let mut operator = context("payments.testnet");
+    operator.block_timestamp(issued_at * 1_000_000);
+    operator.attached_deposit(near_sdk::NearToken::from_millinear(100));
+    testing_env!(operator.build());
+    let issue = &card["issue_card_ticket_args"];
+    market.issue_card_ticket(
+        issue["ticket_public_key"].as_str().unwrap().to_string(),
+        issue["publication_id"].as_str().unwrap().to_string(),
+        serde_json::from_value(issue["device"].clone()).unwrap(),
+        issue["payment_reference_hmac"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        issue["gross_minor"].as_str().unwrap().to_string(),
+        issue["currency"].as_str().unwrap().to_string(),
+    );
+    assert_eq!(governance_event(), vectors["events"]["card_ticket_issued"]);
+    let void = &card["void_card_ticket_args"];
+    market.void_card_ticket(
+        void["ticket_id"].as_str().unwrap().to_string(),
+        void["reason"].as_str().unwrap().to_string(),
+    );
+    assert_eq!(governance_event(), vectors["events"]["card_ticket_voided"]);
 
     // Settlement events match the protocol vectors too.
     let mut bridge = context("bridge.testnet");
@@ -3885,4 +3942,760 @@ fn refund_window_closes_at_thirty_days_unless_taken_down() {
         market.get_ticket(purchase.ticket_id).unwrap().status,
         youtick_market_v2::TicketStatus::Refunded
     );
+}
+
+// --- E3c: ticket devices ---------------------------------------------------------------------
+
+fn device_signature(
+    label: &str,
+    action: &str,
+    ticket_id: &str,
+    expires: &str,
+    fields: &[&str],
+) -> String {
+    let mut lines = vec![
+        "youtick.market-v2.ticket-sig.v1",
+        "testnet",
+        "market.testnet",
+        action,
+        ticket_id,
+        expires,
+    ];
+    lines.extend_from_slice(fields);
+    v2::sign(&v2::key(label), &lines)
+}
+
+fn add(
+    market: &mut Contract,
+    label: &str,
+    ticket_id: &str,
+    session: &str,
+    epoch: &str,
+) -> youtick_market_v2::TicketDevice {
+    let expires = (NOW_MS + 600_000).to_string();
+    let signature = device_signature(
+        label,
+        "add_device",
+        ticket_id,
+        &expires,
+        &[session, v2::CERTIFICATE, epoch],
+    );
+    market.add_device(
+        ticket_id.to_string(),
+        session.to_string(),
+        v2::CERTIFICATE.to_string(),
+        epoch.to_string(),
+        expires,
+        signature,
+    )
+}
+
+#[test]
+fn relayed_add_device_keeps_three_devices_and_renews_existing_keys() {
+    let (mut market, purchase) = bought("job-devices", "devices");
+    let id = purchase.ticket_id.clone();
+    let sessions: Vec<String> = (1..=3)
+        .map(|n| v2::near_key(&v2::key(&format!("device-{n}"))))
+        .collect();
+    testing_env!(context("relayer.testnet").build());
+    let added = add(&mut market, "devices", &id, &sessions[0], "0");
+    assert_eq!(added.expires_at_ms.0, NOW_MS + 30 * 86_400_000);
+    let event = governance_event();
+    assert_eq!(event["event"], "device_added");
+    assert_eq!(event["data"][0]["device_epoch"], "0");
+    add(&mut market, "devices", &id, &sessions[1], "0");
+    assert_eq!(market.get_ticket(id.clone()).unwrap().devices.len(), 3);
+    // A fourth device replaces the oldest (the purchase device) and advances the epoch.
+    let purchase_session = purchase.msg["device"]["session_public_key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    add(&mut market, "devices", &id, &sessions[2], "0");
+    let logs = get_logs();
+    let evicted: serde_json::Value =
+        serde_json::from_str(logs[logs.len() - 2].strip_prefix("EVENT_JSON:").unwrap()).unwrap();
+    assert_eq!(evicted["event"], "device_revoked");
+    assert_eq!(evicted["data"][0]["session_public_key"], purchase_session);
+    assert_eq!(evicted["data"][0]["device_epoch"], "1");
+    let ticket = market.get_ticket(id.clone()).unwrap();
+    assert_eq!(ticket.device_epoch, 1);
+    let devices: Vec<String> = ticket
+        .devices
+        .into_iter()
+        .map(|d| d.session_public_key)
+        .collect();
+    assert_eq!(devices, sessions);
+    assert!(!devices.contains(&purchase_session));
+    // An epoch-0 signature (e.g. one seen on chain earlier) cannot rotate a device back in.
+    must_fail(|| {
+        add(&mut market, "devices", &id, &purchase_session, "0");
+    });
+    // Re-adding an existing key renews it and moves it to the newest position.
+    at("relayer.testnet", NOW_MS + 86_400_000);
+    let expires = (NOW_MS + 86_400_000 + 600_000).to_string();
+    let renewed = market.add_device(
+        id.clone(),
+        sessions[0].clone(),
+        v2::CERTIFICATE.to_string(),
+        "1".to_string(),
+        expires.clone(),
+        device_signature(
+            "devices",
+            "add_device",
+            &id,
+            &expires,
+            &[&sessions[0], v2::CERTIFICATE, "1"],
+        ),
+    );
+    assert_eq!(renewed.expires_at_ms.0, NOW_MS + 31 * 86_400_000);
+    let order: Vec<String> = market
+        .get_ticket(id)
+        .unwrap()
+        .devices
+        .into_iter()
+        .map(|d| d.session_public_key)
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            sessions[1].clone(),
+            sessions[2].clone(),
+            sessions[0].clone()
+        ]
+    );
+}
+
+#[test]
+fn add_device_rejects_foreign_keys_wrong_fields_and_unplayable_tickets() {
+    let (mut market, purchase) = bought("job-device-rules", "device-rules");
+    let id = purchase.ticket_id.clone();
+    let session = v2::near_key(&v2::key("rule-device"));
+    let expires = (NOW_MS + 600_000).to_string();
+    testing_env!(context("relayer.testnet").build());
+    let cases: Vec<(&str, String, String, String, String)> = vec![
+        (
+            "foreign key",
+            "0".into(),
+            expires.clone(),
+            v2::CERTIFICATE.into(),
+            device_signature(
+                "intruder",
+                "add_device",
+                &id,
+                &expires,
+                &[&session, v2::CERTIFICATE, "0"],
+            ),
+        ),
+        (
+            "revoke signature",
+            "0".into(),
+            expires.clone(),
+            v2::CERTIFICATE.into(),
+            device_signature(
+                "device-rules",
+                "revoke_device",
+                &id,
+                &expires,
+                &[&session, "0"],
+            ),
+        ),
+        (
+            "stale epoch",
+            "1".into(),
+            expires.clone(),
+            v2::CERTIFICATE.into(),
+            device_signature(
+                "device-rules",
+                "add_device",
+                &id,
+                &expires,
+                &[&session, v2::CERTIFICATE, "1"],
+            ),
+        ),
+        (
+            "expired",
+            "0".into(),
+            NOW_MS.to_string(),
+            v2::CERTIFICATE.into(),
+            device_signature(
+                "device-rules",
+                "add_device",
+                &id,
+                &NOW_MS.to_string(),
+                &[&session, v2::CERTIFICATE, "0"],
+            ),
+        ),
+        (
+            "bad certificate",
+            "0".into(),
+            expires.clone(),
+            "AB".repeat(32),
+            device_signature(
+                "device-rules",
+                "add_device",
+                &id,
+                &expires,
+                &[&session, &"AB".repeat(32), "0"],
+            ),
+        ),
+    ];
+    for (problem, epoch, expires_at, certificate, signature) in cases {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            market.add_device(
+                id.clone(),
+                session.clone(),
+                certificate.clone(),
+                epoch.clone(),
+                expires_at.clone(),
+                signature.clone(),
+            )
+        }));
+        assert!(outcome.is_err(), "{problem} must fail");
+    }
+    assert_eq!(market.get_ticket(id.clone()).unwrap().devices.len(), 1);
+
+    // Refunded tickets cannot hold devices.
+    let refund_expires = (NOW_MS + 600_000).to_string();
+    let _ = market.refund_unwatched(
+        id.clone(),
+        account("buyer.testnet"),
+        refund_expires.clone(),
+        refund_signature("device-rules", &id, "buyer.testnet", &refund_expires),
+    );
+    must_fail(|| {
+        add(&mut market, "device-rules", &id, &session, "0");
+    });
+}
+
+#[test]
+fn released_tickets_accept_devices_but_taken_down_publications_do_not() {
+    let (mut market, purchase) = bought("job-device-release", "device-release");
+    let id = purchase.ticket_id.clone();
+    let session = v2::near_key(&v2::key("release-device"));
+    at("anyone.testnet", NOW_MS + 30 * 86_400_000);
+    assert_eq!(market.release_expired(vec![id.clone()]), 1);
+    let expires = (NOW_MS + 30 * 86_400_000 + 600_000).to_string();
+    let signature = device_signature(
+        "device-release",
+        "add_device",
+        &id,
+        &expires,
+        &[&session, v2::CERTIFICATE, "0"],
+    );
+    market.add_device(
+        id.clone(),
+        session.clone(),
+        v2::CERTIFICATE.to_string(),
+        "0".into(),
+        expires.clone(),
+        signature.clone(),
+    );
+    testing_env!(context("governance.testnet").build());
+    market.takedown_livepeer_publication(
+        "job-device-release".to_string(),
+        "GOVERNANCE_DECISION".to_string(),
+        "incident-device-release".to_string(),
+        FINGERPRINT.to_string(),
+        U64(NOW_MS),
+    );
+    at("relayer.testnet", NOW_MS + 30 * 86_400_000);
+    must_fail(|| {
+        market.add_device(
+            id.clone(),
+            session.clone(),
+            v2::CERTIFICATE.to_string(),
+            "0".into(),
+            expires.clone(),
+            signature.clone(),
+        );
+    });
+}
+
+#[test]
+fn revocation_advances_the_epoch_so_old_signatures_cannot_restore_a_device() {
+    let (mut market, purchase) = bought("job-revoke", "revoke");
+    let id = purchase.ticket_id.clone();
+    let session = v2::near_key(&v2::key("revoked-device"));
+    let expires = (NOW_MS + 600_000).to_string();
+    let old_add = device_signature(
+        "revoke",
+        "add_device",
+        &id,
+        &expires,
+        &[&session, v2::CERTIFICATE, "0"],
+    );
+    testing_env!(context("relayer.testnet").build());
+    market.add_device(
+        id.clone(),
+        session.clone(),
+        v2::CERTIFICATE.into(),
+        "0".into(),
+        expires.clone(),
+        old_add.clone(),
+    );
+
+    // Holder revocation needs the ticket key and the current epoch.
+    must_fail(|| {
+        market.revoke_device(
+            id.clone(),
+            session.clone(),
+            "0".into(),
+            expires.clone(),
+            device_signature("intruder", "revoke_device", &id, &expires, &[&session, "0"]),
+        );
+    });
+    market.revoke_device(
+        id.clone(),
+        session.clone(),
+        "0".into(),
+        expires.clone(),
+        device_signature("revoke", "revoke_device", &id, &expires, &[&session, "0"]),
+    );
+    let event = governance_event();
+    assert_eq!(event["event"], "device_revoked");
+    assert_eq!(event["data"][0]["device_epoch"], "1");
+    let ticket = market.get_ticket(id.clone()).unwrap();
+    assert_eq!(ticket.device_epoch, 1);
+    assert!(ticket
+        .devices
+        .iter()
+        .all(|device| device.session_public_key != session));
+
+    // The unexpired epoch-0 signature can no longer re-add the device; a fresh one can.
+    must_fail(|| {
+        market.add_device(
+            id.clone(),
+            session.clone(),
+            v2::CERTIFICATE.into(),
+            "0".into(),
+            expires.clone(),
+            old_add.clone(),
+        );
+    });
+    add(&mut market, "revoke", &id, &session, "1");
+
+    // Platform revocation: platform account only, and it also advances the epoch.
+    for actor in ["relayer.testnet", "bridge.testnet", "admin.testnet"] {
+        testing_env!(context(actor).build());
+        must_fail(|| market.platform_revoke_device(id.clone(), session.clone()));
+    }
+    testing_env!(context("platform.testnet").build());
+    market.platform_revoke_device(id.clone(), session.clone());
+    let ticket = market.get_ticket(id.clone()).unwrap();
+    assert_eq!(ticket.device_epoch, 2);
+    assert!(ticket
+        .devices
+        .iter()
+        .all(|device| device.session_public_key != session));
+    testing_env!(context("relayer.testnet").build());
+    must_fail(|| {
+        add(&mut market, "revoke", &id, &session, "1");
+    });
+}
+
+// --- E3d: card tickets -----------------------------------------------------------------------
+
+struct CardSale {
+    ticket_public_key: String,
+    ticket_id: String,
+    device: youtick_market_v2::SignedTicketDevice,
+    reference: String,
+}
+
+fn card_sale(
+    publication_id: &str,
+    label: &str,
+    reference: &str,
+    gross_minor: &str,
+    currency: &str,
+) -> CardSale {
+    let key = v2::key(label);
+    let ticket_id = v2::ticket_id(&key);
+    let session = v2::near_key(&v2::key(&format!("card-session-{label}")));
+    let expires = (NOW_MS + 600_000).to_string();
+    let signature = v2::sign(
+        &key,
+        &[
+            "youtick.market-v2.ticket-sig.v1",
+            "testnet",
+            "market.testnet",
+            "card_purchase",
+            &ticket_id,
+            &expires,
+            publication_id,
+            &session,
+            v2::CERTIFICATE,
+            reference,
+            gross_minor,
+            currency,
+        ],
+    );
+    CardSale {
+        ticket_public_key: v2::near_key(&key),
+        ticket_id,
+        device: youtick_market_v2::SignedTicketDevice {
+            session_public_key: session,
+            certificate_sha256: v2::CERTIFICATE.to_string(),
+            expires_at_ms: expires,
+            signature,
+        },
+        reference: reference.to_string(),
+    }
+}
+
+fn issue(
+    market: &mut Contract,
+    publication_id: &str,
+    sale: &CardSale,
+    gross_minor: &str,
+    currency: &str,
+) -> youtick_market_v2::Ticket {
+    market.issue_card_ticket(
+        sale.ticket_public_key.clone(),
+        publication_id.to_string(),
+        sale.device.clone(),
+        sale.reference.clone(),
+        gross_minor.to_string(),
+        currency.to_string(),
+    )
+}
+
+/// The payment operator attaches NEAR for card ticket storage.
+fn operator_env() {
+    let mut operator = context("payments.testnet");
+    operator.attached_deposit(near_sdk::NearToken::from_millinear(100));
+    testing_env!(operator.build());
+}
+
+fn card_market(publication_id: &str) -> Contract {
+    let mut market = contract();
+    create_job(&mut market, publication_id, "creator.testnet");
+    finalize(
+        &mut market,
+        publication_id,
+        1,
+        "creator.testnet",
+        ASSET_HASH,
+        &format!("playback_{publication_id}"),
+    );
+    market
+}
+
+#[test]
+fn payment_operator_issues_card_tickets_without_moving_money() {
+    let mut market = card_market("job-card");
+    let reference = "1".repeat(64);
+    let sale = card_sale("job-card", "card", &reference, "500", "USD");
+    for actor in [
+        "buyer.testnet",
+        "bridge.testnet",
+        "platform.testnet",
+        TESTNET_USDC,
+    ] {
+        testing_env!(context(actor).build());
+        must_fail(|| {
+            issue(&mut market, "job-card", &sale, "500", "USD");
+        });
+    }
+    operator_env();
+    let platform_before = market.get_platform_balance();
+    let ticket = issue(&mut market, "job-card", &sale, "500", "USD");
+    assert_eq!(ticket.rail, youtick_market_v2::TicketRail::Card);
+    assert_eq!(ticket.gross_usdc_micro, U128(0));
+    assert_eq!(ticket.devices.len(), 1);
+    let card = ticket.card.unwrap();
+    assert_eq!(card.payment_reference_hmac, reference);
+    assert_eq!(card.gross_minor, U64(500));
+    assert_eq!(card.currency, "USD");
+    let event = governance_event();
+    assert_eq!(event["event"], "card_ticket_issued");
+    assert_eq!(event["data"][0]["rail"], "card");
+    assert_eq!(market.get_escrow_balance(), U128(0));
+    assert_eq!(market.get_platform_balance(), platform_before);
+
+    // Watching a card ticket records it but moves no money; refunds and releases are crypto only.
+    testing_env!(context("bridge.testnet").build());
+    assert!(matches!(
+        market.mark_watched(sale.ticket_id.clone()),
+        PromiseOrValue::Value(true)
+    ));
+    assert_eq!(market.get_tax_balance(), U128(0));
+    assert_eq!(
+        market.get_creator_balance(account("creator.testnet")),
+        U128(0)
+    );
+    at("anyone.testnet", NOW_MS + 40 * 86_400_000);
+    assert_eq!(market.release_expired(vec![sale.ticket_id.clone()]), 0);
+}
+
+#[test]
+fn card_signatures_bind_reference_amount_and_currency_and_references_are_single_use() {
+    let mut market = card_market("job-card-rules");
+    let reference = "2".repeat(64);
+    let sale = card_sale("job-card-rules", "card-rules", &reference, "500", "USD");
+    operator_env();
+    // The operator cannot change what the buyer signed.
+    for (gross, currency) in [("501", "USD"), ("500", "EUR")] {
+        must_fail(|| {
+            issue(&mut market, "job-card-rules", &sale, gross, currency);
+        });
+    }
+    let mut other_reference = card_sale("job-card-rules", "card-rules", &reference, "500", "USD");
+    other_reference.reference = "3".repeat(64);
+    must_fail(|| {
+        issue(
+            &mut market,
+            "job-card-rules",
+            &other_reference,
+            "500",
+            "USD",
+        );
+    });
+    // A crypto purchase signature cannot be used as a card checkout signature.
+    let crypto = v2::purchase("job-card-rules", "card-rules", 5_000_000, NOW_MS);
+    let mut crossed = card_sale("job-card-rules", "card-rules", &reference, "500", "USD");
+    crossed.device.signature = crypto.msg["device"]["signature"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    must_fail(|| {
+        issue(&mut market, "job-card-rules", &crossed, "500", "USD");
+    });
+    for bad_currency in ["usd", "US", "USDT"] {
+        must_fail(|| {
+            issue(&mut market, "job-card-rules", &sale, "500", bad_currency);
+        });
+    }
+    issue(&mut market, "job-card-rules", &sale, "500", "USD");
+    // The same reference cannot create a second ticket, even with a fresh ticket key.
+    let reused = card_sale("job-card-rules", "card-rules-2", &reference, "500", "USD");
+    must_fail(|| {
+        issue(&mut market, "job-card-rules", &reused, "500", "USD");
+    });
+    // The same ticket key cannot be issued twice either.
+    let mut again = card_sale(
+        "job-card-rules",
+        "card-rules",
+        &"4".repeat(64),
+        "500",
+        "USD",
+    );
+    again.reference = "4".repeat(64);
+    must_fail(|| {
+        issue(&mut market, "job-card-rules", &again, "500", "USD");
+    });
+    // A fresh reference and key work.
+    let fresh = card_sale(
+        "job-card-rules",
+        "card-rules-3",
+        &"5".repeat(64),
+        "500",
+        "USD",
+    );
+    issue(&mut market, "job-card-rules", &fresh, "500", "USD");
+}
+
+#[test]
+fn card_issue_follows_the_purchase_pause_and_publication_availability() {
+    let mut market = card_market("job-card-pause");
+    let sale = card_sale(
+        "job-card-pause",
+        "card-pause",
+        &"6".repeat(64),
+        "500",
+        "USD",
+    );
+    testing_env!(context("guardian.testnet").build());
+    market.pause_new_purchases();
+    operator_env();
+    must_fail(|| {
+        issue(&mut market, "job-card-pause", &sale, "500", "USD");
+    });
+    testing_env!(context("admin.testnet").build());
+    market.request_new_purchases_unpause();
+    market.unpause_new_purchases();
+    testing_env!(context("bridge.testnet").build());
+    market.suspend_livepeer_sales("job-card-pause".to_string());
+    operator_env();
+    must_fail(|| {
+        issue(&mut market, "job-card-pause", &sale, "500", "USD");
+    });
+}
+
+#[test]
+fn voiding_a_card_ticket_removes_access_and_keeps_the_record() {
+    let mut market = card_market("job-card-void");
+    let sale = card_sale("job-card-void", "card-void", &"7".repeat(64), "500", "USD");
+    operator_env();
+    issue(&mut market, "job-card-void", &sale, "500", "USD");
+    testing_env!(context("bridge.testnet").build());
+    let _ = market.mark_watched(sale.ticket_id.clone());
+
+    for actor in ["buyer.testnet", "bridge.testnet", "platform.testnet"] {
+        testing_env!(context(actor).build());
+        must_fail(|| market.void_card_ticket(sale.ticket_id.clone(), "chargeback".to_string()));
+    }
+    operator_env();
+    must_fail(|| market.void_card_ticket(sale.ticket_id.clone(), "fraud".to_string()));
+    // Crypto tickets cannot be voided by the operator.
+    testing_env!(context(TESTNET_USDC).build());
+    let crypto = v2::purchase("job-card-void", "crypto-void", 5_000_000, NOW_MS);
+    market.ft_on_transfer(
+        account("buyer.testnet"),
+        U128(5_000_000),
+        crypto.msg.to_string(),
+    );
+    operator_env();
+    must_fail(|| market.void_card_ticket(crypto.ticket_id.clone(), "refund".to_string()));
+
+    market.void_card_ticket(sale.ticket_id.clone(), "chargeback".to_string());
+    let event = governance_event();
+    assert_eq!(event["event"], "card_ticket_voided");
+    assert_eq!(event["data"][0]["reason"], "chargeback");
+    let voided = market.get_ticket(sale.ticket_id.clone()).unwrap();
+    assert_eq!(voided.status, youtick_market_v2::TicketStatus::Voided);
+    assert!(voided.devices.is_empty());
+    assert!(voided.card.is_some());
+    must_fail(|| market.void_card_ticket(sale.ticket_id.clone(), "refund".to_string()));
+    // A voided ticket cannot play or hold devices, and its reference stays used.
+    testing_env!(context("bridge.testnet").build());
+    must_fail(|| {
+        market.mark_watched(sale.ticket_id.clone());
+    });
+    testing_env!(context("relayer.testnet").build());
+    must_fail(|| {
+        add(
+            &mut market,
+            "card-void",
+            &sale.ticket_id,
+            &v2::near_key(&v2::key("void-device")),
+            "0",
+        );
+    });
+}
+
+#[test]
+fn payment_operator_is_a_separate_timelocked_role() {
+    let mut market = contract();
+    assert_eq!(
+        market.get_payment_operator_id(),
+        account("payments.testnet")
+    );
+    testing_env!(context("admin.testnet").build());
+    for clash in [
+        "bridge.testnet",
+        "platform.testnet",
+        "admin.testnet",
+        "guardian.testnet",
+    ] {
+        must_fail(|| {
+            market.propose_role_rotation(GovernanceRole::PaymentOperator, account(clash));
+        });
+    }
+    market.propose_role_rotation(
+        GovernanceRole::PaymentOperator,
+        account("payments-2.testnet"),
+    );
+    market.execute_role_rotation(GovernanceRole::PaymentOperator);
+    assert_eq!(
+        market.get_payment_operator_id(),
+        account("payments-2.testnet")
+    );
+    // The bridge cannot be rotated onto the payment operator account.
+    must_fail(|| market.propose_bridge(account("payments-2.testnet")));
+    testing_env!(context("market.testnet").build());
+    must_fail(|| {
+        Contract::new(MarketInitConfig {
+            platform_account_id: account("platform.testnet"),
+            bridge_account_id: account("bridge.testnet"),
+            takedown_authority_id: account("governance.testnet"),
+            admin_account_id: account("admin.testnet"),
+            guardian_account_id: account("guardian.testnet"),
+            quote_public_key: Base64VecU8(quote_public_key()),
+            quote_key_version: 1,
+            near_operational_reserve: U128(1_000_000_000_000_000_000_000_000),
+            tax_account_id: account("tax.testnet"),
+            vat_public_key: v2::vat_public_key(),
+            vat_key_version: 1,
+            payment_operator_id: account("bridge.testnet"),
+        });
+    });
+}
+
+#[test]
+fn card_ticket_storage_is_paid_by_the_operator_deposit() {
+    // The mock host keeps writes made before a panic, so each attempt uses a fresh sale; on
+    // chain the failed call reverts entirely.
+    let mut market = card_market("job-card-storage");
+    let unpaid = card_sale(
+        "job-card-storage",
+        "card-unpaid",
+        &"8".repeat(64),
+        "500",
+        "USD",
+    );
+    testing_env!(context("payments.testnet").build());
+    must_fail(|| {
+        issue(&mut market, "job-card-storage", &unpaid, "500", "USD");
+    });
+    let short = card_sale(
+        "job-card-storage",
+        "card-short",
+        &"a".repeat(64),
+        "500",
+        "USD",
+    );
+    let mut tiny = context("payments.testnet");
+    tiny.attached_deposit(near_sdk::NearToken::from_yoctonear(1));
+    testing_env!(tiny.build());
+    must_fail(|| {
+        issue(&mut market, "job-card-storage", &short, "500", "USD");
+    });
+    let paid = card_sale(
+        "job-card-storage",
+        "card-paid",
+        &"b".repeat(64),
+        "500",
+        "USD",
+    );
+    operator_env();
+    issue(&mut market, "job-card-storage", &paid, "500", "USD");
+}
+
+#[test]
+fn the_purchase_pause_also_stops_card_voids() {
+    let mut market = card_market("job-card-void-pause");
+    let sale = card_sale(
+        "job-card-void-pause",
+        "card-void-pause",
+        &"9".repeat(64),
+        "500",
+        "USD",
+    );
+    operator_env();
+    issue(&mut market, "job-card-void-pause", &sale, "500", "USD");
+    testing_env!(context("guardian.testnet").build());
+    market.pause_new_purchases();
+    operator_env();
+    must_fail(|| market.void_card_ticket(sale.ticket_id.clone(), "chargeback".to_string()));
+    assert_eq!(
+        market.get_ticket(sale.ticket_id.clone()).unwrap().status,
+        youtick_market_v2::TicketStatus::Purchased
+    );
+    testing_env!(context("admin.testnet").build());
+    market.request_new_purchases_unpause();
+    market.unpause_new_purchases();
+    operator_env();
+    market.void_card_ticket(sale.ticket_id, "chargeback".to_string());
+}
+
+#[test]
+fn payment_operator_cannot_share_the_takedown_or_tax_account() {
+    let mut market = contract();
+    testing_env!(context("admin.testnet").build());
+    for clash in ["governance.testnet", "tax.testnet"] {
+        must_fail(|| {
+            market.propose_role_rotation(GovernanceRole::PaymentOperator, account(clash));
+        });
+    }
 }

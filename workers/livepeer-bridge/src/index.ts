@@ -16,6 +16,7 @@ import {
 import { deserialize } from 'borsh';
 import { verifyMessage as verifyNep413Message } from 'near-api-js/nep413';
 import type { CreateUploadResult, MediaSourceType, ProviderVerificationCheckpoint, ProviderPlayback } from './media-provider';
+import { canonicalPlaybackV3Message, decideTicketPlayback, parsePlaybackV3Body } from './playback-v3';
 import { MEDIA_SOURCE_FORMATS, supportedProfile } from './media-provider';
 import { LivepeerProvider } from './livepeer-provider';
 import { dependencyFetch } from './dependency-fetch';
@@ -59,6 +60,11 @@ export interface Env {
     LIVEPEER_OPERATOR_MUTATIONS_ENABLED?: string;
     LIVEPEER_OPERATOR_JOB_ID?: string;
     LIVEPEER_PLAYBACK_V2_ENABLED?: string;
+    // 'v2' points this deployment at contracts/market-v2 (tickets); anything else keeps V1.
+    MARKET_PROTOCOL?: string;
+    LIVEPEER_PLAYBACK_V3_ENABLED?: string;
+    // Scheduled release_expired for V2 tickets older than 30 days (reads MARKET_READ_MODEL).
+    MARKET_V2_RELEASE_ENABLED?: string;
     LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED?: string;
     LIVEPEER_NEAR_CREATOR_FEE_ENABLED?: string;
     LIVEPEER_SPONSORED_UPLOADS_ENABLED?: string;
@@ -408,7 +414,7 @@ type ReconcileRecord = {
     salesSuspensionQueuedAtMs?: number;
 };
 type FinalJob = { job: OnChainJob; blockHash: string };
-type OutboxMethod = 'finalize_livepeer_publication' | 'suspend_livepeer_sales';
+type OutboxMethod = 'finalize_livepeer_publication' | 'suspend_livepeer_sales' | 'mark_watched' | 'release_expired';
 type OutboxInput = {
     idempotencyKey: string;
     method: OutboxMethod;
@@ -445,6 +451,16 @@ type SuspendSalesInput = {
     idempotencyKey: string;
     payloadSha256: string;
     publicationId: string;
+};
+type MarkWatchedInput = {
+    idempotencyKey: string;
+    payloadSha256: string;
+    ticketId: string;
+};
+type ReleaseExpiredInput = {
+    idempotencyKey: string;
+    payloadSha256: string;
+    ticketIds: string[];
 };
 type OperatorRecord = {
     schema: 'youtick.livepeer-operator-outbox.v1';
@@ -546,6 +562,7 @@ const PUBLIC_BETA_RATE_LIMIT_ROUTES = new Set([
     '/v1/sponsored-upload-relays',
     '/v1/playback-tokens',
     '/v2/playback-tokens',
+    '/v3/playback-tokens',
 ]);
 const MAX_CONTROL_BODY_BYTES = 64 * 1024;
 const MAX_SOURCE_BYTES = 20_000_000_000n;
@@ -598,6 +615,12 @@ const POSITIVE_ENTITLEMENT_CACHE_MS = 5 * 60 * 1000;
 const NEGATIVE_ENTITLEMENT_CACHE_MS = 3 * 1000;
 const PROVIDER_POLICY_CACHE_MS = 30 * 1000;
 const FINALIZE_GAS = 15_000_000_000_000n;
+// mark_watched settles escrow and pushes the creator share (20 TGas transfer + 15 TGas callback).
+const MARK_WATCHED_GAS = 100_000_000_000_000n;
+// Up to 25 tickets: per-ticket state updates and events, no transfers.
+const RELEASE_EXPIRED_GAS = 150_000_000_000_000n;
+const RELEASE_BATCH_SIZE = 25;
+const ESCROW_RELEASE_MS = 30 * 24 * 60 * 60 * 1000;
 const JOB_KEY = 'job:v1';
 const RECONCILE_KEY = 'reconcile:v1';
 const RECONCILE_HEALTHY_INTERVAL_MS = 15 * 60 * 1000;
@@ -638,6 +661,20 @@ const OUTBOX_METHODS = new Set<OutboxMethod>([
     'finalize_livepeer_publication',
     'suspend_livepeer_sales',
 ]);
+const MARKET_V2_OUTBOX_METHODS = new Set<OutboxMethod>([...OUTBOX_METHODS, 'mark_watched', 'release_expired']);
+// Per-ticket settlements: the chain is the durable record, so confirmed records are deleted and
+// never archived (the operator object's record budget must not grow with tickets).
+const EPHEMERAL_OUTBOX_METHODS = new Set<OutboxMethod>(['mark_watched', 'release_expired']);
+const TICKET_ID_PATTERN = /^[0-9a-f]{64}$/;
+
+function isMarketV2(env: Env): boolean {
+    return env.MARKET_PROTOCOL === 'v2';
+}
+
+// The on-chain operator key must allow exactly these methods; V1 deployments are unchanged.
+function operatorOutboxMethods(env: Env): Set<OutboxMethod> {
+    return isMarketV2(env) ? MARKET_V2_OUTBOX_METHODS : OUTBOX_METHODS;
+}
 const playbackAuthorizationCache = new Map<string, { value: unknown; expiresAtMs: number }>();
 let edgeColdStartPending = true;
 
@@ -681,6 +718,8 @@ const SAFE_ERROR_CODES = new Set([
     'invalid_outbox',
     'invalid_playback_request',
     'invalid_playback_v2_request',
+    'invalid_playback_v3_request',
+    'playback_pending',
     'invalid_sponsored_upload_quote_request',
     'invalid_sponsored_upload_relay',
     'invalid_upload_preflight',
@@ -854,7 +893,7 @@ const bridgeWorker = {
         }
 
         if (request.method === 'OPTIONS'
-            && ['/v1/upload-preflight', '/v1/upload-intents', '/v1/upload-heartbeats', '/v1/playback-tokens', '/v2/playback-tokens', '/v1/creator-fee-quotes/near', '/v1/sponsored-upload-quotes', '/v1/sponsored-upload-relays']
+            && ['/v1/upload-preflight', '/v1/upload-intents', '/v1/upload-heartbeats', '/v1/playback-tokens', '/v2/playback-tokens', '/v3/playback-tokens', '/v1/creator-fee-quotes/near', '/v1/sponsored-upload-quotes', '/v1/sponsored-upload-relays']
                 .includes(url.pathname)) {
             const origin = request.headers.get('Origin') || '';
             if (!allowedOrigins(env).has(origin)) return json({ error: 'origin_denied' }, 403);
@@ -987,6 +1026,22 @@ const bridgeWorker = {
             return withCors(await issueStatelessPlaybackToken(request, env), corsOrigin);
         }
 
+        if (request.method === 'POST' && url.pathname === '/v3/playback-tokens') {
+            const origin = request.headers.get('Origin') || '';
+            const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
+            if (!PUBLIC_CONTROL_REQUESTS_IMPLEMENTED
+                || env.LIVEPEER_BRIDGE_ENABLED !== 'true'
+                || env.LIVEPEER_PLAYBACK_ISSUANCE_ENABLED !== 'true'
+                || env.LIVEPEER_PLAYBACK_V3_ENABLED !== 'true'
+                || !isMarketV2(env)) {
+                return withCors(json({ error: 'control_plane_disabled' }, 503), corsOrigin);
+            }
+            if (!validPlaybackV2Config(env)) {
+                return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
+            }
+            return withCors(await issueTicketPlaybackToken(request, env), corsOrigin);
+        }
+
         if (request.method === 'POST' && url.pathname === '/v1/creator-fee-quotes/near') {
             const origin = request.headers.get('Origin') || '';
             const corsOrigin = allowedOrigins(env).has(origin) ? origin : '';
@@ -1074,6 +1129,12 @@ export default {
                 }));
             }
         }
+    },
+
+    async scheduled(_controller: ScheduledController, env: Env, context: ExecutionContext): Promise<void> {
+        context.waitUntil(runScheduledRelease(env).then(() => undefined, (error) => {
+            console.error(formatLog('market_v2_release_failed', { code: safeErrorCode(error) }));
+        }));
     },
 
     async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
@@ -1252,6 +1313,16 @@ export class LivepeerControl {
             }
             if (request.method === 'POST' && url.pathname === '/internal/finalize') {
                 const run = this.operatorTail.then(() => this.finalizePublication(request));
+                this.operatorTail = run.then(() => undefined, () => undefined);
+                return await run;
+            }
+            if (request.method === 'POST' && url.pathname === '/internal/mark-watched') {
+                const run = this.operatorTail.then(() => this.markWatched(request));
+                this.operatorTail = run.then(() => undefined, () => undefined);
+                return await run;
+            }
+            if (request.method === 'POST' && url.pathname === '/internal/release-expired') {
+                const run = this.operatorTail.then(() => this.releaseExpired(request));
                 this.operatorTail = run.then(() => undefined, () => undefined);
                 return await run;
             }
@@ -1925,6 +1996,16 @@ export class LivepeerControl {
         return processSuspendSalesOutbox(this.state, this.env, input);
     }
 
+    private async releaseExpired(request: Request): Promise<Response> {
+        const input = await parseReleaseExpiredInput(await readJsonObject(request));
+        return processReleaseExpiredOutbox(this.state, this.env, input);
+    }
+
+    private async markWatched(request: Request): Promise<Response> {
+        const input = await parseMarkWatchedInput(await readJsonObject(request));
+        return processMarkWatchedOutbox(this.state, this.env, input);
+    }
+
     private async deletePublicBetaAsset(request: Request): Promise<Response> {
         const input = await readJsonObject(request);
         requireExactKeys(input, ['jobId', 'generation', 'assetId'], 'invalid_outbox');
@@ -2292,7 +2373,9 @@ async function operatorOutboxArchive(
     env: Env,
     record: OperatorRecord,
 ): Promise<OperatorOutboxArchive> {
-    if (record.state !== 'CONFIRMED' || !record.confirmedAtMs || !record.archive) {
+    // Confirmed mark_watched records are deleted, never archived (persistConfirmedOperatorRecord).
+    if (record.state !== 'CONFIRMED' || !record.confirmedAtMs || !record.archive
+        || record.method === 'mark_watched' || record.method === 'release_expired') {
         throw new Error('operator_archive_unavailable');
     }
     const summary = {
@@ -6292,6 +6375,73 @@ async function issueStatelessPlaybackToken(request: Request, env: Env): Promise<
     }
 }
 
+// V2 Market playback: the device session key signs the protocol request; the final ticket view
+// authorizes; the first play finalizes mark_watched (escrow settlement) before any token.
+async function issueTicketPlaybackToken(request: Request, env: Env): Promise<Response> {
+    const startedAtMs = performance.now();
+    try {
+        const input = parsePlaybackV3Body(await readJsonObject(request), {
+            network: env.NEAR_NETWORK!,
+            contractId: env.MARKET_CONTRACT_ID!,
+            origins: allowedOrigins(env),
+            nowMs: Date.now(),
+        });
+        await verifyEd25519Signature(
+            input.request.session_public_key,
+            input.signature,
+            canonicalPlaybackV3Message(input.request),
+        );
+        const ticket = await nearPlaybackView(env, env.MARKET_CONTRACT_ID!, 'get_ticket', {
+            ticket_id: input.request.ticket_id,
+        });
+        const ticketValue = ticket.value === null ? null : requireObject(ticket.value, 'playback_authorization_unavailable');
+        const publication = ticketValue === null ? { value: null } : await nearPlaybackView(
+            env,
+            env.MARKET_CONTRACT_ID!,
+            'get_publication',
+            { publication_id: ticketValue.publication_id },
+            ticket.blockHash,
+        );
+        const decision = decideTicketPlayback(ticketValue, publication.value, input.request, Date.now());
+        let markWatchedRequired = false;
+        if (decision.kind === 'watch') {
+            markWatchedRequired = true;
+            const response = await forwardMarkWatched(env, input.request.ticket_id);
+            if (response.status !== 200) {
+                // Only a refusal is reported as such; operator internals stay private.
+                const failure = await response.json().catch(() => ({})) as { error?: unknown };
+                throw new Error(failure.error === 'playback_denied' ? 'playback_denied' : 'playback_pending');
+            }
+        }
+        const provider = await verifyStatelessProviderPolicy(env, decision.playbackId);
+        const nowMs = Date.now();
+        const deviceRemainingSeconds = Math.floor((decision.deviceExpiresAtMs - nowMs) / 1000);
+        if (deviceRemainingSeconds < 1) throw new Error('playback_denied');
+        const ttlSeconds = Math.min(PLAYBACK_V2_TTL_SECONDS, deviceRemainingSeconds);
+        const issuedAtSeconds = Math.floor(nowMs / 1000);
+        const token = await signLivepeerJwt(env, decision.playbackId, issuedAtSeconds, ttlSeconds);
+        console.info(formatLog('ticket_playback_authorization_completed', {
+            markWatched: markWatchedRequired,
+            latencyMs: Math.max(0, performance.now() - startedAtMs),
+        }));
+        return json({
+            schema: 'youtick.livepeer-playback-token.v3',
+            playback_id: decision.playbackId,
+            token,
+            expires_at_ms: String((issuedAtSeconds + ttlSeconds) * 1000),
+            hls_url: livepeerHlsUrl(decision.playbackId),
+            ...(provider.previewVttUrl ? { preview_vtt_url: provider.previewVttUrl } : {}),
+        });
+    } catch (error) {
+        const code = safeErrorCode(error);
+        const httpCode = errorStatus(code);
+        console.error(formatLog('ticket_playback_request_failed', {
+            code, httpCode, latencyMs: Math.max(0, performance.now() - startedAtMs),
+        }));
+        return json({ error: code }, httpCode);
+    }
+}
+
 async function verifyPlaybackV2Proofs(env: Env, input: PlaybackV2Request): Promise<boolean> {
     await verifyEd25519Signature(
         input.certificate.session_public_key,
@@ -7235,6 +7385,183 @@ async function forwardSalesSuspension(env: Env, publicationId: string): Promise<
     }));
 }
 
+async function forwardMarkWatched(env: Env, ticketId: string): Promise<Response> {
+    if (!env.LIVEPEER_CONTROL || !validOperatorConfig(env)) throw new Error('runtime_not_configured');
+    const signer = KeyPairSigner.fromSecretKey(env.NEAR_OPERATOR_PRIVATE_KEY as `ed25519:${string}`);
+    const publicKey = (await signer.getPublicKey()).toString();
+    const keyEpoch = Number(env.NEAR_OPERATOR_KEY_EPOCH);
+    const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+        operatorObjectName(env.NEAR_NETWORK!, publicKey, keyEpoch),
+    ));
+    const payloadSha256 = await sha256Hex(canonicalJson({ ticket_id: ticketId }));
+    return object.fetch(new Request('https://object/internal/mark-watched', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idempotencyKey: `${ticketId}:mark-watched`, payloadSha256, ticketId }),
+    }));
+}
+
+async function parseMarkWatchedInput(value: JsonObject): Promise<MarkWatchedInput> {
+    requireExactKeys(value, ['idempotencyKey', 'payloadSha256', 'ticketId'], 'invalid_outbox');
+    if (typeof value.ticketId !== 'string'
+        || !TICKET_ID_PATTERN.test(value.ticketId)
+        || value.idempotencyKey !== `${value.ticketId}:mark-watched`
+        || typeof value.payloadSha256 !== 'string'
+        || value.payloadSha256 !== await sha256Hex(canonicalJson({ ticket_id: value.ticketId }))) {
+        throw new Error('invalid_outbox');
+    }
+    return value as MarkWatchedInput;
+}
+
+async function finalTicketStatus(env: Env, ticketId: string): Promise<string | null> {
+    const { value } = await nearPlaybackView(env, env.MARKET_CONTRACT_ID!, 'get_ticket', { ticket_id: ticketId });
+    if (value === null) return null;
+    const ticket = requireObject(value, 'playback_authorization_unavailable');
+    if (typeof ticket.status !== 'string') throw new Error('playback_authorization_unavailable');
+    return ticket.status;
+}
+
+async function processMarkWatchedOutbox(
+    state: DurableObjectState,
+    env: Env,
+    input: MarkWatchedInput,
+): Promise<Response> {
+    if (!isMarketV2(env)) throw new Error('operator_unauthorized');
+    const settled = async () => ['watched', 'released'].includes(await finalTicketStatus(env, input.ticketId) || '');
+    // Already settled tickets never create an outbox record.
+    if (await settled()) return json({ accepted: true, watched: true, tx_hash: null }, 200);
+    try {
+        const result = await processOperatorOutbox(
+            state,
+            env,
+            input,
+            'mark_watched',
+            { ticket_id: input.ticketId },
+            settled,
+        );
+        return json({ accepted: true, watched: result.confirmed, tx_hash: result.txHash }, result.status);
+    } catch (error) {
+        if (error instanceof Error && error.message === 'near_finalize_failed') {
+            const status = await finalTicketStatus(env, input.ticketId);
+            // The contract refuses refunded or voided tickets and taken-down publications.
+            if (!['purchased', 'watched', 'released'].includes(status || '')) throw new Error('playback_denied');
+            // Still purchased after a failed transaction: drop the record so the next play signs
+            // a fresh transaction instead of reporting the old failure forever.
+            if (status === 'purchased') {
+                await state.storage.delete(`outbox:${input.idempotencyKey}`);
+                throw new Error('playback_pending');
+            }
+        }
+        throw error;
+    }
+}
+
+async function releaseIdempotencyKey(ticketIds: string[]): Promise<string> {
+    return `release:${await sha256Hex(ticketIds.join(','))}`;
+}
+
+async function forwardReleaseExpired(env: Env, ticketIds: string[]): Promise<Response> {
+    if (!env.LIVEPEER_CONTROL || !validOperatorConfig(env)) throw new Error('runtime_not_configured');
+    const signer = KeyPairSigner.fromSecretKey(env.NEAR_OPERATOR_PRIVATE_KEY as `ed25519:${string}`);
+    const publicKey = (await signer.getPublicKey()).toString();
+    const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+        operatorObjectName(env.NEAR_NETWORK!, publicKey, Number(env.NEAR_OPERATOR_KEY_EPOCH)),
+    ));
+    const sorted = [...ticketIds].sort();
+    return object.fetch(new Request('https://object/internal/release-expired', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            idempotencyKey: await releaseIdempotencyKey(sorted),
+            payloadSha256: await sha256Hex(canonicalJson({ ticket_ids: sorted })),
+            ticketIds: sorted,
+        }),
+    }));
+}
+
+async function parseReleaseExpiredInput(value: JsonObject): Promise<ReleaseExpiredInput> {
+    requireExactKeys(value, ['idempotencyKey', 'payloadSha256', 'ticketIds'], 'invalid_outbox');
+    const ids = value.ticketIds;
+    if (!Array.isArray(ids)
+        || ids.length < 1 || ids.length > RELEASE_BATCH_SIZE
+        || ids.some((id, index) => typeof id !== 'string' || !TICKET_ID_PATTERN.test(id)
+            || (index > 0 && id <= (ids[index - 1] as string)))
+        || value.idempotencyKey !== await releaseIdempotencyKey(ids as string[])
+        || typeof value.payloadSha256 !== 'string'
+        || value.payloadSha256 !== await sha256Hex(canonicalJson({ ticket_ids: ids }))) {
+        throw new Error('invalid_outbox');
+    }
+    return value as ReleaseExpiredInput;
+}
+
+async function processReleaseExpiredOutbox(
+    state: DurableObjectState,
+    env: Env,
+    input: ReleaseExpiredInput,
+): Promise<Response> {
+    if (!isMarketV2(env)) throw new Error('operator_unauthorized');
+    // Confirmed once no ticket of the batch is still purchased (released, or settled otherwise).
+    const settled = async () => {
+        for (const ticketId of input.ticketIds) {
+            if (await finalTicketStatus(env, ticketId) === 'purchased') return false;
+        }
+        return true;
+    };
+    if (await settled()) return json({ accepted: true, released: true, tx_hash: null }, 200);
+    try {
+        const result = await processOperatorOutbox(
+            state,
+            env,
+            input,
+            'release_expired',
+            { ticket_ids: input.ticketIds },
+            settled,
+        );
+        return json({ accepted: true, released: result.confirmed, tx_hash: result.txHash }, result.status);
+    } catch (error) {
+        // A failed batch is retried by the next scheduled run with a fresh transaction.
+        if (error instanceof Error && error.message === 'near_finalize_failed') {
+            await state.storage.delete(`outbox:${input.idempotencyKey}`);
+        }
+        throw error;
+    }
+}
+
+/**
+ * Reads up to 25 purchased crypto tickets older than 30 days from the read model. Tickets of
+ * taken-down publications are excluded: the contract skips them, and they would otherwise
+ * stay at the head of the queue.
+ */
+export async function dueReleaseTicketIds(env: Env, nowMs: number): Promise<string[]> {
+    const result = await env.MARKET_READ_MODEL!.prepare(`
+        SELECT t.ticket_id FROM market_v2_tickets AS t
+        WHERE t.network = ? AND t.contract_id = ? AND t.rail = 'crypto' AND t.status = 'purchased'
+          AND t.purchased_at_ms <= ?
+          AND NOT EXISTS (
+              SELECT 1 FROM publications AS p
+              WHERE p.network = t.network AND p.contract_id = t.contract_id
+                AND p.publication_id = t.publication_id AND p.availability = 'TAKEDOWN'
+          )
+        ORDER BY t.purchased_at_ms, t.ticket_id
+        LIMIT ?
+    `).bind(env.NEAR_NETWORK, env.MARKET_CONTRACT_ID, nowMs - ESCROW_RELEASE_MS, RELEASE_BATCH_SIZE)
+        .all<{ ticket_id: string }>();
+    return (result.results || [])
+        .map((row) => row.ticket_id)
+        .filter((id) => typeof id === 'string' && TICKET_ID_PATTERN.test(id));
+}
+
+export async function runScheduledRelease(env: Env, nowMs = Date.now()): Promise<{ released: number; status: number | null }> {
+    if (!isMarketV2(env) || env.MARKET_V2_RELEASE_ENABLED !== 'true' || !env.MARKET_READ_MODEL) {
+        return { released: 0, status: null };
+    }
+    const ticketIds = await dueReleaseTicketIds(env, nowMs);
+    if (ticketIds.length === 0) return { released: 0, status: null };
+    const response = await forwardReleaseExpired(env, ticketIds);
+    console.info(formatLog('market_v2_release_scheduled', { tickets: ticketIds.length, status: response.status }));
+    return { released: response.status === 200 ? ticketIds.length : 0, status: response.status };
+}
+
 async function parseSuspendSalesInput(value: JsonObject): Promise<SuspendSalesInput> {
     requireExactKeys(value, ['idempotencyKey', 'payloadSha256', 'publicationId'], 'invalid_outbox');
     if (typeof value.publicationId !== 'string'
@@ -7351,7 +7678,7 @@ async function processSuspendSalesOutbox(
 async function processOperatorOutbox(
     state: DurableObjectState,
     env: Env,
-    input: FinalizeInput | SuspendSalesInput,
+    input: FinalizeInput | SuspendSalesInput | MarkWatchedInput | ReleaseExpiredInput,
     method: OutboxMethod,
     args: JsonObject,
     isConfirmed: () => Promise<boolean>,
@@ -7452,7 +7779,8 @@ async function processOperatorOutbox(
             [actions.functionCall(
                 method,
                 args,
-                FINALIZE_GAS,
+                method === 'mark_watched' ? MARK_WATCHED_GAS
+                    : method === 'release_expired' ? RELEASE_EXPIRED_GAS : FINALIZE_GAS,
                 0n,
             )],
             baseDecode(record.blockHash!),
@@ -7535,9 +7863,9 @@ async function readOperatorAccessKey(
         || typeof functionCall.allowance !== 'string'
         || !/^[1-9][0-9]*$/.test(functionCall.allowance)
         || !Array.isArray(methodNames)
-        || methodNames.length !== OUTBOX_METHODS.size
-        || methodNames.some((method) => typeof method !== 'string' || !OUTBOX_METHODS.has(method as OutboxMethod))
-        || Array.from(OUTBOX_METHODS).some((method) => !methodNames.includes(method))
+        || methodNames.length !== operatorOutboxMethods(env).size
+        || methodNames.some((method) => typeof method !== 'string' || !operatorOutboxMethods(env).has(method as OutboxMethod))
+        || Array.from(operatorOutboxMethods(env)).some((method) => !methodNames.includes(method))
         || typeof result.nonce !== 'number'
         || !Number.isSafeInteger(result.nonce)
         || typeof result.block_hash !== 'string') {
@@ -7734,6 +8062,12 @@ async function persistConfirmedOperatorRecord(
     record: OperatorRecord,
 ): Promise<OperatorRecord> {
     const confirmed = confirmOperatorRecord(record);
+    if (EPHEMERAL_OUTBOX_METHODS.has(confirmed.method)) {
+        // One record per ticket would exhaust the operator object's record budget; the chain
+        // (final ticket status) is the durable record, so confirmed settlements are not kept.
+        await state.storage.delete(key);
+        return confirmed;
+    }
     await state.storage.put(key, confirmed);
     const archive = confirmed.archive;
     if (env.OPERATOR_OUTBOX_ARCHIVE_ENABLED === 'true'
@@ -8058,6 +8392,7 @@ function errorStatus(code: string): number {
         || code === 'runtime_not_configured'
         || code === 'webhook_queue_unavailable'
         || code === 'playback_authorization_unavailable'
+        || code === 'playback_pending'
         || code === 'rate_source_invalid'
         || code === 'rate_source_stale'
         || code === 'rate_source_unavailable'

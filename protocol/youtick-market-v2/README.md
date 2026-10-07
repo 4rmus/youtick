@@ -167,8 +167,9 @@ could be reversed.
    timelocked roles can extend and revoke.
 6. **One device epoch per ticket.** The epoch starts at 0.
    - `add_device` must carry the current epoch.
-   - Every revocation (holder or platform) increments it, so an unexpired `add_device`
-     signature cannot re-add a revoked device.
+   - Every revocation (holder or platform) increments it, and so does the eviction of the oldest
+     device when a fourth is added. An unexpired `add_device` signature therefore cannot re-add a
+     revoked or evicted device.
 7. **Card tickets.** Each `payment_reference_hmac` may be used only once.
    - A `ticket_id` that already exists is rejected.
    - A crypto purchase on an existing `ticket_id` returns the full amount.

@@ -1,6 +1,6 @@
 mod compact_upload;
 use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
-use near_sdk::collections::LookupMap;
+use near_sdk::collections::{LookupMap, LookupSet};
 use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
@@ -102,6 +102,7 @@ impl StorageKey {
     const PLAYBACK_BINDINGS: Self = Self(b"livepeer-v1:playback-bindings");
     const TICKETS: Self = Self(b"market-v2:tickets");
     const VAT_KEYS: Self = Self(b"market-v2:vat-keys");
+    const CARD_REFERENCES: Self = Self(b"market-v2:card-references");
     const CREATOR_BALANCES: Self = Self(b"livepeer-v1:creator-balances");
     const TAKEDOWNS: Self = Self(b"livepeer-v1:takedowns");
     const PUBLICATION_IDS: Self = Self(b"livepeer-v1:publication-ids");
@@ -239,6 +240,7 @@ pub enum GovernanceRole {
     Guardian,
     Platform,
     TakedownAuthority,
+    PaymentOperator,
 }
 
 #[near(serializers = [borsh, json])]
@@ -328,6 +330,8 @@ pub struct MarketInitConfig {
     /// `ed25519:<base58>` key of the youtick VAT signer.
     pub vat_public_key: String,
     pub vat_key_version: u32,
+    /// Writes and voids card tickets after verified payment-provider events (gate E3d).
+    pub payment_operator_id: AccountId,
 }
 
 #[near(serializers = [borsh, json])]
@@ -387,6 +391,17 @@ pub struct CardTicketData {
     pub payment_reference_hmac: String,
     pub gross_minor: U64,
     pub currency: String,
+}
+
+/// A device bound to a card ticket by the ticket key's `card_purchase` signature.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SignedTicketDevice {
+    pub session_public_key: String,
+    pub certificate_sha256: String,
+    pub expires_at_ms: String,
+    pub signature: String,
 }
 
 #[derive(Deserialize)]
@@ -580,6 +595,9 @@ pub struct Contract {
     near_operational_reserve: u128,
     tax_account_id: AccountId,
     vat_keys: LookupMap<u32, Vec<u8>>,
+    payment_operator_id: AccountId,
+    // Each provider payment reference may create one card ticket only.
+    card_references: LookupSet<String>,
     // USDC held for tickets that have not settled yet; never available for withdrawal.
     escrow_balance: u128,
     // Settled VAT owed to the tax account.
@@ -637,7 +655,17 @@ impl Contract {
             tax_account_id,
             vat_public_key,
             vat_key_version,
+            payment_operator_id,
         } = config;
+        require!(
+            payment_operator_id != bridge_account_id
+                && payment_operator_id != platform_account_id
+                && payment_operator_id != admin_account_id
+                && payment_operator_id != guardian_account_id
+                && payment_operator_id != takedown_authority_id
+                && payment_operator_id != tax_account_id,
+            "Payment operator must be a separate authority"
+        );
         require!(vat_key_version > 0, "VAT key version must be positive");
         require!(
             tax_account_id != platform_account_id && tax_account_id != bridge_account_id,
@@ -694,6 +722,8 @@ impl Contract {
             near_operational_reserve: near_operational_reserve.0,
             tax_account_id,
             vat_keys,
+            payment_operator_id,
+            card_references: LookupSet::new(StorageKey::CARD_REFERENCES),
             escrow_balance: 0,
             tax_balance: 0,
         }
@@ -1044,6 +1074,9 @@ impl Contract {
             }
             GovernanceRole::TakedownAuthority => {
                 std::mem::replace(&mut self.takedown_authority_id, next_account_id)
+            }
+            GovernanceRole::PaymentOperator => {
+                std::mem::replace(&mut self.payment_operator_id, next_account_id)
             }
         };
         emit_governance_event(
@@ -2317,6 +2350,310 @@ impl Contract {
         released
     }
 
+    /// Adds or renews a ticket device. The ticket key signs; anyone (normally the relayer)
+    /// submits, so the viewer needs no NEAR transaction. At most three devices are active; a
+    /// fourth replaces the oldest. A signature for an older device epoch is rejected.
+    pub fn add_device(
+        &mut self,
+        ticket_id: String,
+        session_public_key: String,
+        certificate_sha256: String,
+        device_epoch: String,
+        expires_at_ms: String,
+        signature: String,
+    ) -> TicketDevice {
+        let mut ticket = self.playable_ticket(&ticket_id);
+        parse_ed25519_key(&session_public_key);
+        assert_sha256("certificate_sha256", &certificate_sha256);
+        self.verify_ticket_action(
+            &ticket,
+            "add_device",
+            &expires_at_ms,
+            &[&session_public_key, &certificate_sha256, &device_epoch],
+            &signature,
+        );
+        require!(
+            parse_canonical_decimal("device_epoch", &device_epoch, u32::MAX as u128) as u32
+                == ticket.device_epoch,
+            "Stale device epoch"
+        );
+        let now = env::block_timestamp_ms();
+        ticket.devices.retain(|device| {
+            device.expires_at_ms.0 > now && device.session_public_key != session_public_key
+        });
+        // Insertion order is authorization order; the oldest device is dropped first. Eviction
+        // advances the epoch like a revocation, so the evicted device's old signature cannot be
+        // replayed to bring it back.
+        if ticket.devices.len() == MAX_TICKET_DEVICES {
+            let evicted = ticket.devices.remove(0);
+            ticket.device_epoch = ticket
+                .device_epoch
+                .checked_add(1)
+                .expect("Device epoch overflow");
+            emit_market_v2_event(
+                "device_revoked",
+                near_sdk::serde_json::json!({
+                    "ticket_id": ticket_id,
+                    "session_public_key": evicted.session_public_key,
+                    "device_epoch": ticket.device_epoch.to_string(),
+                }),
+            );
+        }
+        let device = TicketDevice {
+            session_public_key,
+            certificate_sha256,
+            authorized_at_ms: U64(now),
+            expires_at_ms: U64(now
+                .checked_add(PLAYBACK_DEVICE_LIFETIME_MS)
+                .expect("Time overflow")),
+        };
+        ticket.devices.push(device.clone());
+        self.tickets.insert(&ticket_id, &ticket);
+        self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        emit_market_v2_event(
+            "device_added",
+            near_sdk::serde_json::json!({
+                "ticket_id": ticket_id,
+                "session_public_key": device.session_public_key,
+                "device_epoch": ticket.device_epoch.to_string(),
+                "expires_at_ms": device.expires_at_ms.0.to_string(),
+            }),
+        );
+        device
+    }
+
+    /// The ticket holder removes a device. Every revocation advances the device epoch, so no
+    /// outstanding add_device signature can bring the device back.
+    pub fn revoke_device(
+        &mut self,
+        ticket_id: String,
+        session_public_key: String,
+        device_epoch: String,
+        expires_at_ms: String,
+        signature: String,
+    ) {
+        let ticket = self
+            .tickets
+            .get(&ticket_id)
+            .unwrap_or_else(|| env::panic_str("Ticket not found"));
+        parse_ed25519_key(&session_public_key);
+        self.verify_ticket_action(
+            &ticket,
+            "revoke_device",
+            &expires_at_ms,
+            &[&session_public_key, &device_epoch],
+            &signature,
+        );
+        require!(
+            parse_canonical_decimal("device_epoch", &device_epoch, u32::MAX as u128) as u32
+                == ticket.device_epoch,
+            "Stale device epoch"
+        );
+        self.revoke_ticket_device(ticket, session_public_key);
+    }
+
+    /// The platform removes a leaked device (for example, traced by its watermark).
+    pub fn platform_revoke_device(&mut self, ticket_id: String, session_public_key: String) {
+        require!(
+            env::predecessor_account_id() == self.platform_account_id,
+            "Only the platform account can revoke devices"
+        );
+        let ticket = self
+            .tickets
+            .get(&ticket_id)
+            .unwrap_or_else(|| env::panic_str("Ticket not found"));
+        parse_ed25519_key(&session_public_key);
+        self.revoke_ticket_device(ticket, session_public_key);
+    }
+
+    pub fn get_payment_operator_id(&self) -> AccountId {
+        self.payment_operator_id.clone()
+    }
+
+    /// Payment operator only, after a verified provider purchase event. Writes a card ticket
+    /// without moving tokens. The ticket key's `card_purchase` signature binds the device, the
+    /// payment reference and the charged amount; each payment reference creates one ticket.
+    /// The operator attaches NEAR for the ticket's storage (any excess is returned), so a
+    /// compromised operator cannot exhaust the contract's own storage balance.
+    #[payable]
+    pub fn issue_card_ticket(
+        &mut self,
+        ticket_public_key: String,
+        publication_id: String,
+        device: SignedTicketDevice,
+        payment_reference_hmac: String,
+        gross_minor: String,
+        currency: String,
+    ) -> Ticket {
+        require!(
+            env::predecessor_account_id() == self.payment_operator_id,
+            "Only the payment operator can issue card tickets"
+        );
+        require!(!self.new_purchases_paused(), "New purchases are paused");
+        require!(
+            self.public_testnet_beta_state().is_none()
+                || self.active_public_testnet_beta().is_some(),
+            "Public beta is not active"
+        );
+        assert_identifier("publication_id", &publication_id);
+        let ticket_key = parse_ed25519_key(&ticket_public_key);
+        let ticket_id = hex_sha256(&ticket_key);
+        parse_ed25519_key(&device.session_public_key);
+        assert_sha256("certificate_sha256", &device.certificate_sha256);
+        assert_sha256("payment_reference_hmac", &payment_reference_hmac);
+        require!(
+            parse_canonical_decimal("gross_minor", &gross_minor, u64::MAX as u128) > 0,
+            "gross_minor must be positive"
+        );
+        require!(
+            currency.len() == 3 && currency.bytes().all(|byte| byte.is_ascii_uppercase()),
+            "currency must be an ISO 4217 code"
+        );
+        let now = env::block_timestamp_ms();
+        parse_signature_expiry(&device.expires_at_ms, now);
+        let publication = self
+            .publications
+            .get(&publication_id)
+            .expect("Publication not found");
+        require!(
+            publication.availability == PublicationAvailability::Active,
+            "Publication is not on sale"
+        );
+        require!(
+            self.tickets.get(&ticket_id).is_none(),
+            "Ticket already exists"
+        );
+        require!(
+            !self.card_references.contains(&payment_reference_hmac),
+            "Payment reference already used"
+        );
+        let network = self.network_id();
+        let contract_id = env::current_account_id();
+        let message = signed_lines(&[
+            TICKET_SIGNATURE_DOMAIN,
+            &network,
+            contract_id.as_str(),
+            "card_purchase",
+            &ticket_id,
+            &device.expires_at_ms,
+            &publication_id,
+            &device.session_public_key,
+            &device.certificate_sha256,
+            &payment_reference_hmac,
+            &gross_minor,
+            &currency,
+        ]);
+        verify_ed25519(
+            &device.signature,
+            &message,
+            &ticket_key,
+            "Invalid ticket signature",
+        );
+
+        let storage_before = env::storage_usage();
+        let ticket = Ticket {
+            ticket_id: ticket_id.clone(),
+            ticket_public_key,
+            publication_id: publication_id.clone(),
+            creator_id: publication.creator_id.clone(),
+            rail: TicketRail::Card,
+            status: TicketStatus::Purchased,
+            gross_usdc_micro: U128(0),
+            vat_usdc_micro: U128(0),
+            platform_usdc_micro: U128(0),
+            creator_usdc_micro: U128(0),
+            vat_key_version: 0,
+            purchased_at_ms: U64(now),
+            device_epoch: 0,
+            devices: vec![TicketDevice {
+                session_public_key: device.session_public_key,
+                certificate_sha256: device.certificate_sha256,
+                authorized_at_ms: U64(now),
+                expires_at_ms: U64(now
+                    .checked_add(PLAYBACK_DEVICE_LIFETIME_MS)
+                    .expect("Time overflow")),
+            }],
+            card: Some(CardTicketData {
+                payment_reference_hmac: payment_reference_hmac.clone(),
+                gross_minor: U64(gross_minor.parse().expect("checked above")),
+                currency: currency.clone(),
+            }),
+        };
+        self.tickets.insert(&ticket_id, &ticket);
+        self.card_references.insert(&payment_reference_hmac);
+        let storage_cost = env::storage_byte_cost().saturating_mul(u128::from(
+            env::storage_usage().saturating_sub(storage_before),
+        ));
+        let attached = env::attached_deposit();
+        require!(
+            attached >= storage_cost,
+            format!(
+                "Attach at least {} yoctoNEAR for card ticket storage",
+                storage_cost.as_yoctonear()
+            )
+        );
+        let excess = attached.saturating_sub(storage_cost);
+        if !excess.is_zero() {
+            Promise::new(env::predecessor_account_id()).transfer(excess);
+        }
+        emit_market_v2_event(
+            "card_ticket_issued",
+            near_sdk::serde_json::json!({
+                "ticket_id": ticket_id,
+                "publication_id": publication_id,
+                "creator_id": publication.creator_id,
+                "rail": "card",
+                "gross_minor": gross_minor,
+                "currency": currency,
+                "payment_reference_hmac": payment_reference_hmac,
+                "status": "purchased",
+            }),
+        );
+        ticket
+    }
+
+    /// Payment operator only, after a provider refund or a lost chargeback. The card ticket
+    /// becomes `voided` and loses its devices; the record and its payment reference remain.
+    pub fn void_card_ticket(&mut self, ticket_id: String, reason: String) {
+        require!(
+            env::predecessor_account_id() == self.payment_operator_id,
+            "Only the payment operator can void card tickets"
+        );
+        // The guardian's purchase pause also stops voids, so a compromised operator cannot
+        // revoke paid tickets while its rotation timelock runs.
+        require!(!self.new_purchases_paused(), "New purchases are paused");
+        require!(
+            reason == "refund" || reason == "chargeback",
+            "reason must be refund or chargeback"
+        );
+        let mut ticket = self
+            .tickets
+            .get(&ticket_id)
+            .unwrap_or_else(|| env::panic_str("Ticket not found"));
+        require!(
+            ticket.rail == TicketRail::Card,
+            "Only card tickets can be voided"
+        );
+        require!(
+            matches!(
+                ticket.status,
+                TicketStatus::Purchased | TicketStatus::Watched
+            ),
+            "Ticket is already voided"
+        );
+        ticket.status = TicketStatus::Voided;
+        ticket.devices.clear();
+        self.tickets.insert(&ticket_id, &ticket);
+        emit_market_v2_event(
+            "card_ticket_voided",
+            near_sdk::serde_json::json!({
+                "ticket_id": ticket_id,
+                "publication_id": ticket.publication_id,
+                "reason": reason,
+            }),
+        );
+    }
+
     pub fn withdraw_tax_balance(&mut self) -> Promise {
         let caller = env::predecessor_account_id();
         require!(
@@ -2931,7 +3268,8 @@ impl Contract {
                 && account_id != &self.platform_account_id
                 && account_id != &self.takedown_authority_id
                 && account_id != &self.admin_account_id
-                && account_id != &self.guardian_account_id,
+                && account_id != &self.guardian_account_id
+                && account_id != &self.payment_operator_id,
             "Bridge account must be a separate authority"
         );
     }
@@ -2942,6 +3280,7 @@ impl Contract {
             GovernanceRole::Guardian => &self.guardian_account_id,
             GovernanceRole::Platform => &self.platform_account_id,
             GovernanceRole::TakedownAuthority => &self.takedown_authority_id,
+            GovernanceRole::PaymentOperator => &self.payment_operator_id,
         }
     }
 
@@ -2994,7 +3333,17 @@ impl Contract {
         let guardian = pick(GovernanceRole::Guardian);
         let platform = pick(GovernanceRole::Platform);
         let takedown = pick(GovernanceRole::TakedownAuthority);
+        let operator = pick(GovernanceRole::PaymentOperator);
         let bridge = &self.active_bridge_account_id;
+        require!(
+            operator != bridge
+                && operator != platform
+                && operator != admin
+                && operator != guardian
+                && operator != takedown
+                && operator != &self.tax_account_id,
+            "Payment operator must be a separate authority"
+        );
         require!(
             platform != bridge,
             "Platform and bridge accounts must differ"
@@ -3226,6 +3575,77 @@ fn emit_market_v2_event(event: &str, data: near_sdk::serde_json::Value) {
 }
 
 impl Contract {
+    /// Tickets that may hold devices: not refunded or voided, publication not taken down.
+    fn playable_ticket(&self, ticket_id: &str) -> Ticket {
+        let ticket = self
+            .tickets
+            .get(&ticket_id.to_string())
+            .unwrap_or_else(|| env::panic_str("Ticket not found"));
+        require!(
+            matches!(
+                ticket.status,
+                TicketStatus::Purchased | TicketStatus::Watched | TicketStatus::Released
+            ),
+            "Ticket is not playable"
+        );
+        let publication = self
+            .publications
+            .get(&ticket.publication_id)
+            .expect("Publication not found");
+        require!(
+            publication.availability != PublicationAvailability::Takedown,
+            "Publication is taken down"
+        );
+        ticket
+    }
+
+    fn verify_ticket_action(
+        &self,
+        ticket: &Ticket,
+        action: &str,
+        expires_at_ms: &str,
+        fields: &[&str],
+        signature: &str,
+    ) {
+        parse_signature_expiry(expires_at_ms, env::block_timestamp_ms());
+        let network = self.network_id();
+        let contract_id = env::current_account_id();
+        let mut lines = vec![
+            TICKET_SIGNATURE_DOMAIN,
+            network.as_str(),
+            contract_id.as_str(),
+            action,
+            ticket.ticket_id.as_str(),
+            expires_at_ms,
+        ];
+        lines.extend_from_slice(fields);
+        verify_ed25519(
+            signature,
+            &signed_lines(&lines),
+            &parse_ed25519_key(&ticket.ticket_public_key),
+            "Invalid ticket signature",
+        );
+    }
+
+    fn revoke_ticket_device(&mut self, mut ticket: Ticket, session_public_key: String) {
+        ticket
+            .devices
+            .retain(|device| device.session_public_key != session_public_key);
+        ticket.device_epoch = ticket
+            .device_epoch
+            .checked_add(1)
+            .expect("Device epoch overflow");
+        self.tickets.insert(&ticket.ticket_id, &ticket);
+        emit_market_v2_event(
+            "device_revoked",
+            near_sdk::serde_json::json!({
+                "ticket_id": ticket.ticket_id,
+                "session_public_key": session_public_key,
+                "device_epoch": ticket.device_epoch.to_string(),
+            }),
+        );
+    }
+
     /// Moves a settled crypto ticket out of escrow. Returns the creator push when requested.
     fn settle_ticket(&mut self, ticket: &Ticket, push_creator: bool) -> Option<Promise> {
         self.escrow_balance = self
@@ -3464,6 +3884,7 @@ fn role_rotation_key(role: GovernanceRole) -> Vec<u8> {
         GovernanceRole::Guardian => b"guardian",
         GovernanceRole::Platform => b"platform",
         GovernanceRole::TakedownAuthority => b"takedown-authority",
+        GovernanceRole::PaymentOperator => b"payment-operator",
     };
     [ROLE_ROTATION_PREFIX, tag].concat()
 }
@@ -3767,6 +4188,7 @@ mod tests {
             tax_account_id: "tax.testnet".parse().unwrap(),
             vat_public_key: "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF".to_string(),
             vat_key_version: 1,
+            payment_operator_id: "payments.testnet".parse().unwrap(),
         })
     }
 
@@ -4075,6 +4497,7 @@ mod tests {
             tax_account_id: "tax.testnet".parse().unwrap(),
             vat_public_key: "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF".to_string(),
             vat_key_version: 1,
+            payment_operator_id: "payments.testnet".parse().unwrap(),
         };
         let mut mainnet = context("market.near");
         mainnet.current_account_id(account("market.near"));

@@ -284,7 +284,8 @@ function buildEvents({ ticket, cardTicket, split, paymentReferenceHmac, session,
       ticket_id: cardTicket.ticket_id, publication_id: FIXTURE.publication_id, creator_id: FIXTURE.creator_id, rail: "card",
       gross_minor: "500", currency: "USD", payment_reference_hmac: paymentReferenceHmac, status: "purchased",
     }),
-    device_added: event("device_added", { ticket_id: ticket.ticket_id, session_public_key: session, device_epoch: "0", expires_at_ms: deviceExpiry }),
+    // The add_device call vector adds the second session at epoch 0.
+    device_added: event("device_added", { ticket_id: ticket.ticket_id, session_public_key: secondSession, device_epoch: "0", expires_at_ms: deviceExpiry }),
     ticket_watched: event("ticket_watched", { ticket_id: ticket.ticket_id, publication_id: FIXTURE.publication_id, rail: "crypto", ...settled }),
     ticket_refunded: event("ticket_refunded", {
       ticket_id: ticket.ticket_id, publication_id: FIXTURE.publication_id, rail: "crypto", refunded_usdc_micro: FIXTURE.gross_usdc_micro,
