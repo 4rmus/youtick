@@ -16,7 +16,8 @@ NEAR_RPC_URL = "<replace-with-dedicated-near-rpc-url>"
 RELAYER_ACCOUNT_ID = "<replace-with-relayer-account-id>"
 NEAR_AUTH_CLIENT_ID = "<replace-with-near-auth-client-id>"
 CKD_GATE_ACCOUNT_IDS = ""
-USDC_CONTRACT_ID = "usdc.fakes.testnet"
+# Circle testnet USDC: the only token Market V2 accepts on testnet (TESTNET_USDC in contracts/market-v2).
+USDC_CONTRACT_ID = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af"
 # 0.01 NEAR per new implicit account; storage deposits above 0.01 NEAR are refused.
 ACCOUNT_FUNDING_YOCTO = "10000000000000000000000"
 MAX_STORAGE_DEPOSIT_YOCTO = "10000000000000000000000"
