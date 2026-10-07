@@ -1,0 +1,593 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "youtick.market-v2.protocol.v1",
+  "title": "youtick Market v2 messages",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "ticket_id": {
+      "$ref": "#/$defs/sha256"
+    },
+    "account_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$"
+    },
+    "publication_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "ed25519_public_key": {
+      "type": "string",
+      "pattern": "^ed25519:[1-9A-HJ-NP-Za-km-z]{43,44}$"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{86}==$"
+    },
+    "decimal_u64": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "decimal_u128": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,38})$"
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "rail": {
+      "enum": [
+        "crypto",
+        "card"
+      ]
+    },
+    "device_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_public_key",
+        "certificate_sha256",
+        "expires_at_ms",
+        "signature"
+      ],
+      "properties": {
+        "session_public_key": {
+          "$ref": "#/$defs/ed25519_public_key"
+        },
+        "certificate_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "expires_at_ms": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "signature": {
+          "$ref": "#/$defs/signature"
+        }
+      }
+    },
+    "vat_attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vat_usdc_micro",
+        "expires_at_ms",
+        "key_version",
+        "signature"
+      ],
+      "properties": {
+        "vat_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "expires_at_ms": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "key_version": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "signature": {
+          "$ref": "#/$defs/signature"
+        }
+      }
+    },
+    "purchase_msg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "publication_id",
+        "ticket_public_key",
+        "device",
+        "vat"
+      ],
+      "properties": {
+        "action": {
+          "const": "buy_ticket_v2"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publication_id"
+        },
+        "ticket_public_key": {
+          "$ref": "#/$defs/ed25519_public_key"
+        },
+        "device": {
+          "$ref": "#/$defs/device_binding"
+        },
+        "vat": {
+          "$ref": "#/$defs/vat_attestation"
+        }
+      }
+    },
+    "issue_card_ticket_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_public_key",
+        "publication_id",
+        "device",
+        "payment_reference_hmac",
+        "gross_minor",
+        "currency"
+      ],
+      "properties": {
+        "ticket_public_key": {
+          "$ref": "#/$defs/ed25519_public_key"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publication_id"
+        },
+        "device": {
+          "$ref": "#/$defs/device_binding"
+        },
+        "payment_reference_hmac": {
+          "$ref": "#/$defs/sha256"
+        },
+        "gross_minor": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        }
+      }
+    },
+    "void_card_ticket_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "reason"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "reason": {
+          "enum": [
+            "refund",
+            "chargeback"
+          ]
+        }
+      }
+    },
+    "add_device_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "session_public_key",
+        "certificate_sha256",
+        "device_epoch",
+        "expires_at_ms",
+        "signature"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "session_public_key": {
+          "$ref": "#/$defs/ed25519_public_key"
+        },
+        "certificate_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "device_epoch": {
+          "$ref": "#/$defs/decimal_u32"
+        },
+        "expires_at_ms": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "signature": {
+          "$ref": "#/$defs/signature"
+        }
+      }
+    },
+    "refund_unwatched_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "refund_to",
+        "expires_at_ms",
+        "signature"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "refund_to": {
+          "$ref": "#/$defs/account_id"
+        },
+        "expires_at_ms": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "signature": {
+          "$ref": "#/$defs/signature"
+        }
+      }
+    },
+    "mark_watched_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        }
+      }
+    },
+    "release_expired_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_ids"
+      ],
+      "properties": {
+        "ticket_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/ticket_id"
+          }
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "standard",
+        "version",
+        "event",
+        "data"
+      ],
+      "properties": {
+        "standard": {
+          "const": "youtick_market"
+        },
+        "version": {
+          "const": "2.0.0"
+        },
+        "event": {
+          "enum": [
+            "ticket_purchased",
+            "card_ticket_issued",
+            "device_added",
+            "ticket_watched",
+            "ticket_refunded",
+            "ticket_released",
+            "card_ticket_voided",
+            "device_revoked"
+          ]
+        },
+        "data": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "event_ticket_purchased": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "publication_id",
+        "creator_id",
+        "rail",
+        "asset",
+        "gross_usdc_micro",
+        "vat_usdc_micro",
+        "net_usdc_micro",
+        "platform_usdc_micro",
+        "creator_usdc_micro",
+        "vat_key_version",
+        "status"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publication_id"
+        },
+        "creator_id": {
+          "$ref": "#/$defs/account_id"
+        },
+        "rail": {
+          "const": "crypto"
+        },
+        "asset": {
+          "$ref": "#/$defs/account_id"
+        },
+        "gross_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "vat_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "net_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "platform_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "creator_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "vat_key_version": {
+          "$ref": "#/$defs/decimal_u32"
+        },
+        "status": {
+          "const": "purchased"
+        }
+      }
+    },
+    "event_card_ticket_issued": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "publication_id",
+        "creator_id",
+        "rail",
+        "gross_minor",
+        "currency",
+        "payment_reference_hmac",
+        "status"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publication_id"
+        },
+        "creator_id": {
+          "$ref": "#/$defs/account_id"
+        },
+        "rail": {
+          "const": "card"
+        },
+        "gross_minor": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "payment_reference_hmac": {
+          "$ref": "#/$defs/sha256"
+        },
+        "status": {
+          "const": "purchased"
+        }
+      }
+    },
+    "event_device_added": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "session_public_key",
+        "device_epoch",
+        "expires_at_ms"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "session_public_key": {
+          "$ref": "#/$defs/ed25519_public_key"
+        },
+        "device_epoch": {
+          "$ref": "#/$defs/decimal_u32"
+        },
+        "expires_at_ms": {
+          "$ref": "#/$defs/decimal_u64"
+        }
+      }
+    },
+    "event_ticket_watched": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "publication_id",
+        "rail",
+        "vat_usdc_micro",
+        "platform_usdc_micro",
+        "creator_usdc_micro"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publication_id"
+        },
+        "rail": {
+          "$ref": "#/$defs/rail"
+        },
+        "vat_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "platform_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "creator_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        }
+      }
+    },
+    "event_ticket_refunded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "publication_id",
+        "rail",
+        "refunded_usdc_micro"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publication_id"
+        },
+        "rail": {
+          "const": "crypto"
+        },
+        "refunded_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        }
+      }
+    },
+    "event_ticket_released": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "publication_id",
+        "vat_usdc_micro",
+        "platform_usdc_micro",
+        "creator_usdc_micro"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publication_id"
+        },
+        "vat_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "platform_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "creator_usdc_micro": {
+          "$ref": "#/$defs/decimal_u128"
+        }
+      }
+    },
+    "event_card_ticket_voided": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "publication_id",
+        "reason"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publication_id"
+        },
+        "reason": {
+          "enum": [
+            "refund",
+            "chargeback"
+          ]
+        }
+      }
+    },
+    "event_device_revoked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "session_public_key",
+        "device_epoch"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "session_public_key": {
+          "$ref": "#/$defs/ed25519_public_key"
+        },
+        "device_epoch": {
+          "$ref": "#/$defs/decimal_u32"
+        }
+      }
+    },
+    "decimal_u32": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,9})$"
+    },
+    "revoke_device_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "session_public_key",
+        "device_epoch",
+        "expires_at_ms",
+        "signature"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "session_public_key": {
+          "$ref": "#/$defs/ed25519_public_key"
+        },
+        "device_epoch": {
+          "$ref": "#/$defs/decimal_u32"
+        },
+        "expires_at_ms": {
+          "$ref": "#/$defs/decimal_u64"
+        },
+        "signature": {
+          "$ref": "#/$defs/signature"
+        }
+      }
+    },
+    "platform_revoke_device_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticket_id",
+        "session_public_key"
+      ],
+      "properties": {
+        "ticket_id": {
+          "$ref": "#/$defs/ticket_id"
+        },
+        "session_public_key": {
+          "$ref": "#/$defs/ed25519_public_key"
+        }
+      }
+    }
+  }
+}
