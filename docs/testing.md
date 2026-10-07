@@ -68,6 +68,18 @@ The tests use a decoded-transaction chain model and fake id_tokens (real RS256 v
 tested with generated keys). They are LOCAL_TEST only: no NEAR Auth, MPC, `ckd-gate` or USDC
 provider was called.
 
+## Payment service
+
+```bash
+cd workers/payment-service
+npm ci
+npm test -- --run
+npm run check
+```
+
+The VAT attestation tests reproduce the protocol golden vector with the reference test key
+(LOCAL_TEST). No RPC, signer secret or provider is used.
+
 ## Contracts
 
 Use Rust 1.86.0 and cargo-near 0.17.0:
