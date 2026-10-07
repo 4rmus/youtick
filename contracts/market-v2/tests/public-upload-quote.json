@@ -1,0 +1,38 @@
+{
+  "request": {
+    "creator_id": "creator.testnet",
+    "job_id": "job-public",
+    "title": "Public testnet video",
+    "price_usdc": "2000000",
+    "expected_source_bytes": "5000000000",
+    "profile_id": "paid-media-livepeer-v1",
+    "profile_config_sha256": "28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2",
+    "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
+    "upload_key_expires_at_ms": "1785675700000"
+  },
+  "quote": {
+    "domain": "youtick.sponsored-upload-quote",
+    "version": "1",
+    "network": "testnet",
+    "contract_id": "market.testnet",
+    "creator_id": "creator.testnet",
+    "job_id": "job-public",
+    "request_sha256": "c9fc2ec81a5ee3557bf0588cc67215f74676870fc7a6687e04416a94e8cf0dfc",
+    "expected_source_bytes": "5000000000",
+    "upload_fee_usdc": "1500000",
+    "sponsor_fee_usdc": "100000",
+    "total_fee_usdc": "1600000",
+    "delegate_receiver_id": "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af",
+    "delegate_method": "ft_transfer_call",
+    "delegate_gas": "100000000000000",
+    "delegate_deposit_yocto": "1",
+    "issued_at_ms": "1785589300000",
+    "quote_block_height": "1000",
+    "max_delegate_block_height": "1200",
+    "expires_at_ms": "1785589420000",
+    "quote_key_version": 1,
+    "quote_id": "9d331f628fe0b13f841ce48be31e4cfc2d80e87320a09acda5fdc9b80d7d659f"
+  },
+  "public_key": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+  "signature": "IxQmFHkmh/xutbLWfXL9elTcfr0RWsyH0pmU/A+dUltD9Cvu1/6JoMpb/DOK0bXkpUjopT+Tue+427SnL7g1Dg=="
+}

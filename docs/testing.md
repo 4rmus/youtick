@@ -90,6 +90,23 @@ node scripts/check-youtick-market-v2.mjs
 node scripts/check-youtick-market-v2.mjs --write
 ```
 
+## Market v2 contract
+
+`contracts/market-v2` is not deployed. Same toolchain as the other contracts:
+
+```bash
+cd contracts/market-v2
+cargo +1.86.0 test --lib
+cargo +1.86.0 test --test market_v2
+cargo +1.86.0 test --test sandbox
+cargo +1.86.0 fmt --all --check
+cargo +1.86.0 clippy --all-targets -- -D warnings
+cargo +1.86.0 near build non-reproducible-wasm
+```
+
+`market_v2` includes `protocol_golden_vectors_are_accepted_byte_for_byte`, which reads
+`protocol/youtick-market-v2/golden-vectors.json`.
+
 ## Read model
 
 ```bash

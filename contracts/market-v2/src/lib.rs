@@ -1,0 +1,3911 @@
+mod compact_upload;
+use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
+use near_sdk::collections::LookupMap;
+use near_sdk::json_types::{Base64VecU8, U128, U64};
+use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::{
+    env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue,
+    PromiseResult,
+};
+
+const TESTNET_USDC: &str = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
+const MAINNET_USDC: &str = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
+const PROFILE: &str = "paid-media-livepeer-v1";
+const PAID_SOURCE_MAX_BYTES: u128 = 20_000_000_000;
+// V2 ticket economics and message formats: protocol/youtick-market-v2.
+const MIN_TICKET_PRICE_USDC: u128 = 5_000_000;
+const PLATFORM_DIVISOR: u128 = 20;
+const MAX_VAT_RATE_BPS: u128 = 2_700;
+const MAX_SIGNATURE_TTL_MS: u64 = 3_600_000;
+const TICKET_SIGNATURE_DOMAIN: &str = "youtick.market-v2.ticket-sig.v1";
+const VAT_DOMAIN: &str = "youtick.market-v2.vat.v1";
+const BUY_TICKET_V2_ACTION: &str = "buy_ticket_v2";
+const MAX_TICKET_DEVICES: usize = 3;
+const MIN_UPLOAD_FEE_USDC: u128 = 500_000;
+const UPLOAD_FEE_NUMERATOR: u128 = 3;
+const UPLOAD_FEE_DENOMINATOR: u128 = 10_000;
+const FT_TRANSFER_GAS: Gas = Gas::from_tgas(20);
+const WITHDRAW_CALLBACK_GAS: Gas = Gas::from_tgas(10);
+const QUOTE_MAX_SOURCE_AGE_MS: u64 = 60_000;
+const QUOTE_MAX_LIFETIME_MS: u64 = 120_000;
+const SPONSORED_UPLOAD_DELEGATE_GAS: u64 = 100_000_000_000_000;
+const SPONSORED_UPLOAD_FEE_USDC: u128 = 100_000;
+const SPONSORED_UPLOAD_DEPOSIT_YOCTO: u128 = 1;
+const SPONSORED_UPLOAD_MAX_BLOCK_WINDOW: u64 = 200;
+// Distinct from the V1 Market (2): a code upgrade across the two layouts fails in `migrate`.
+const MARKET_STATE_VERSION: u32 = 3;
+const PLAYBACK_DEVICE_LIFETIME_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
+const PLAYBACK_DEVICE_PREFIX: &[u8] = b"youtick:market:playback-devices:v1:";
+// Kept outside Contract so an emergency purchase control does not change the
+// deployed Market v2 Borsh layout or require a state migration.
+const NEW_PURCHASES_PAUSED_KEY: &[u8] = b"youtick:market:control:new-purchases-paused:v1";
+const PUBLIC_TESTNET_BETA_STATE_KEY: &[u8] = b"youtick:market:public-testnet-beta:state:v1";
+const PUBLIC_TESTNET_BETA_JOB_PREFIX: &[u8] = b"youtick:market:public-testnet-beta:job:v1:";
+const PUBLIC_TESTNET_BETA_DAY_PREFIX: &[u8] = b"youtick:market:public-testnet-beta:day:v1:";
+const PUBLIC_TESTNET_BETA_MAX_SOURCE_BYTES: u128 = 1_000_000_000;
+const PUBLIC_TESTNET_BETA_MAX_JOBS: u32 = 10;
+const PUBLIC_TESTNET_BETA_UPLOAD_MS: u64 = 13 * 24 * 60 * 60 * 1_000;
+const PUBLIC_TESTNET_BETA_TOTAL_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
+const PUBLIC_TESTNET_BETA_JOB_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
+const PUBLIC_TESTNET_BETA_START_RUNWAY_BYTES: u128 = 100_000;
+const PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES: u128 = 25_000;
+const PUBLIC_UPLOAD_POLICY_KEY: &[u8] = b"youtick:market:public-upload-policy:v1";
+const PUBLIC_UPLOAD_CREATOR_PREFIX: &[u8] = b"youtick:market:public-upload-creator:v1:";
+const PUBLIC_UPLOAD_MAX_SOURCE_BYTES: u128 = 5_000_000_000;
+// Pending role rotations live outside Contract for the same Borsh-layout reason.
+const ROLE_ROTATION_PREFIX: &[u8] = b"youtick:market:role-rotation:v1:";
+const BRIDGE_UNFREEZE_REQUEST_KEY: &[u8] = b"youtick:market:control:bridge-unfreeze-request:v1";
+const NEW_PURCHASES_UNPAUSE_REQUEST_KEY: &[u8] =
+    b"youtick:market:control:new-purchases-unpause-request:v1";
+// Mainnet delays; every `.testnet` deployment uses zero (owner decision 2026-10-03).
+const MAINNET_ROLE_ROTATION_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
+const MAINNET_BRIDGE_ROTATION_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
+const MAINNET_REOPEN_DELAY_MS: u64 = 24 * 60 * 60 * 1_000;
+const MAINNET_CODE_UPGRADE_DELAY_MS: u64 = 48 * 60 * 60 * 1_000;
+const CODE_UPGRADE_KEY: &[u8] = b"youtick:market:control:code-upgrade:v1";
+const CODE_UPGRADE_MIGRATE_GAS: Gas = Gas::from_tgas(50);
+const LEGACY_UPLOAD_PROFILE_HASH: &str =
+    "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77";
+
+const FULL_HD_UPLOAD_PROFILE_HASH: &str =
+    "a6751ecd819f080430d3bea4cab0d7b906cd729993c925ae16c676433fe65752";
+
+const PUBLIC_UPLOAD_PROFILE_HASH: &str =
+    "28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2";
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FeeAsset {
+    Usdc,
+    Near,
+}
+
+#[derive(Clone, Copy)]
+pub struct StorageKey(pub &'static [u8]);
+
+impl near_sdk::IntoStorageKey for StorageKey {
+    fn into_storage_key(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+}
+
+impl StorageKey {
+    const MEDIA_JOBS: Self = Self(b"livepeer-v1:jobs");
+    const PUBLICATIONS: Self = Self(b"livepeer-v1:publications");
+    const ASSET_BINDINGS: Self = Self(b"livepeer-v1:asset-bindings");
+    const PLAYBACK_BINDINGS: Self = Self(b"livepeer-v1:playback-bindings");
+    const TICKETS: Self = Self(b"market-v2:tickets");
+    const VAT_KEYS: Self = Self(b"market-v2:vat-keys");
+    const CREATOR_BALANCES: Self = Self(b"livepeer-v1:creator-balances");
+    const TAKEDOWNS: Self = Self(b"livepeer-v1:takedowns");
+    const PUBLICATION_IDS: Self = Self(b"livepeer-v1:publication-ids");
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MediaJobStatus {
+    Authorized,
+    Published,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PublicationAvailability {
+    Active,
+    SalesSuspended,
+    Takedown,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaJob {
+    pub job_id: String,
+    pub creator_id: AccountId,
+    pub profile_id: String,
+    pub profile_config_sha256: String,
+    pub title: String,
+    pub price_usdc: U128,
+    pub expected_source_bytes: U128,
+    pub generation: u64,
+    pub status: MediaJobStatus,
+    pub created_at_ms: u64,
+    pub published_at_ms: Option<u64>,
+    pub fee_asset: FeeAsset,
+    pub fee_amount: U128,
+    pub fee_usd_micro: U128,
+    pub upload_public_key: String,
+    pub upload_key_expires_at_ms: U64,
+    pub fee_quote_hash: Option<String>,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Publication {
+    pub publication_id: String,
+    pub creator_id: AccountId,
+    pub title: String,
+    pub price_usdc: U128,
+    pub generation: u64,
+    pub expected_source_bytes: U128,
+    pub profile_id: String,
+    pub profile_config_sha256: String,
+    pub asset_id_hash: String,
+    pub playback_id: String,
+    pub project_id_hash: String,
+    pub verified_source_bytes: U128,
+    pub provider_source_fingerprint: Option<String>,
+    pub ready_at_ms: U64,
+    pub published_availability: PublicationAvailability,
+    pub availability: PublicationAvailability,
+    pub published_at_ms: u64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LivepeerPublicationSubmission {
+    pub job_id: String,
+    pub generation: u64,
+    pub creator_id: AccountId,
+    pub expected_source_bytes: U128,
+    pub profile_id: String,
+    pub profile_config_sha256: String,
+    pub asset_id_hash: String,
+    pub playback_id: String,
+    pub project_id_hash: String,
+    pub verified_source_bytes: U128,
+    pub provider_source_fingerprint: Option<String>,
+    pub ready_at_ms: U64,
+    pub availability: PublicationAvailability,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TakedownRecord {
+    pub publication_id: String,
+    pub reason_code: String,
+    pub incident_id: String,
+    pub evidence_sha256: String,
+    pub effective_at_ms: U64,
+    pub recorded_at_ms: U64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GovernanceState {
+    pub state_version: u32,
+    pub admin_account_id: AccountId,
+    pub guardian_account_id: AccountId,
+    pub active_bridge_account_id: AccountId,
+    pub pending_bridge_account_id: Option<AccountId>,
+    pub bridge_frozen: bool,
+    pub new_purchases_paused: bool,
+    pub bridge_rotation_proposed_at_ms: Option<U64>,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingCodeUpgrade {
+    pub code_sha256: String,
+    pub proposed_at_ms: U64,
+    pub executable_at_ms: U64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GovernanceTimelocks {
+    pub role_rotation_delay_ms: U64,
+    pub bridge_rotation_delay_ms: U64,
+    pub reopen_delay_ms: U64,
+    pub code_upgrade_delay_ms: U64,
+    pub bridge_rotation_executable_at_ms: Option<U64>,
+    pub bridge_unfreeze_requested_at_ms: Option<U64>,
+    pub bridge_unfreeze_executable_at_ms: Option<U64>,
+    pub new_purchases_unpause_requested_at_ms: Option<U64>,
+    pub new_purchases_unpause_executable_at_ms: Option<U64>,
+}
+
+#[near(serializers = [borsh, json])]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GovernanceRole {
+    Admin,
+    Guardian,
+    Platform,
+    TakedownAuthority,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingRoleRotation {
+    pub role: GovernanceRole,
+    pub current_account_id: AccountId,
+    pub next_account_id: AccountId,
+    pub proposed_at_ms: U64,
+    pub executable_at_ms: U64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageReserveStatus {
+    pub storage_usage_bytes: U64,
+    pub storage_byte_cost_yocto: U128,
+    pub storage_stake_yocto: U128,
+    pub operational_reserve_yocto: U128,
+    pub account_balance_yocto: U128,
+    pub reserve_headroom_yocto: U128,
+    pub reserve_runway_bytes: U128,
+    pub reserve_covered: bool,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicTestnetBetaState {
+    pub version: u32,
+    pub started_at_ms: U64,
+    pub upload_closes_at_ms: U64,
+    pub ends_at_ms: U64,
+    pub closed_at_ms: Option<U64>,
+    pub total_job_count: u32,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicTestnetBetaJob {
+    pub creator_id: AccountId,
+    pub generation: u64,
+    pub request_sha256: String,
+    pub sponsor_quote_id: String,
+    pub admitted_at_ms: U64,
+    pub deadline_at_ms: U64,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicUploadProfile {
+    pub profile_id: String,
+    pub profile_config_sha256: String,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicUploadPolicy {
+    pub version: u32,
+    pub environment: String,
+    pub network: String,
+    pub market_contract_id: AccountId,
+    pub max_source_bytes: U128,
+    pub job_ttl_ms: U64,
+    pub signed_quote_required: bool,
+    pub profiles: Vec<PublicUploadProfile>,
+}
+
+#[near(serializers = [borsh])]
+struct PublicUploadCreator {
+    day: u64,
+    count: u32,
+    latest_job_id: String,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MarketInitConfig {
+    pub platform_account_id: AccountId,
+    pub bridge_account_id: AccountId,
+    pub takedown_authority_id: AccountId,
+    pub admin_account_id: AccountId,
+    pub guardian_account_id: AccountId,
+    pub quote_public_key: Base64VecU8,
+    pub quote_key_version: u32,
+    pub near_operational_reserve: U128,
+    pub tax_account_id: AccountId,
+    /// `ed25519:<base58>` key of the youtick VAT signer.
+    pub vat_public_key: String,
+    pub vat_key_version: u32,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TicketRail {
+    Crypto,
+    Card,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TicketStatus {
+    Purchased,
+    Watched,
+    Refunded,
+    Released,
+    Voided,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TicketDevice {
+    pub session_public_key: String,
+    pub certificate_sha256: String,
+    pub authorized_at_ms: U64,
+    pub expires_at_ms: U64,
+}
+
+/// A ticket is keyed by `ticket_id = sha256(ticket public key)` and never records the buyer.
+/// The whole gross amount stays in escrow until the ticket settles. Tickets are never deleted.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ticket {
+    pub ticket_id: String,
+    pub ticket_public_key: String,
+    pub publication_id: String,
+    pub creator_id: AccountId,
+    pub rail: TicketRail,
+    pub status: TicketStatus,
+    pub gross_usdc_micro: U128,
+    pub vat_usdc_micro: U128,
+    pub platform_usdc_micro: U128,
+    pub creator_usdc_micro: U128,
+    pub vat_key_version: u32,
+    pub purchased_at_ms: U64,
+    pub device_epoch: u32,
+    pub devices: Vec<TicketDevice>,
+    /// Set only for card tickets (gate E3d); reserved now so the per-ticket layout never migrates.
+    pub card: Option<CardTicketData>,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CardTicketData {
+    pub payment_reference_hmac: String,
+    pub gross_minor: U64,
+    pub currency: String,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+struct TicketDeviceBinding {
+    session_public_key: String,
+    certificate_sha256: String,
+    expires_at_ms: String,
+    signature: String,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+struct VatAttestation {
+    vat_usdc_micro: String,
+    expires_at_ms: String,
+    key_version: String,
+    signature: String,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+struct PurchaseMessageV2 {
+    action: String,
+    publication_id: String,
+    ticket_public_key: String,
+    device: TicketDeviceBinding,
+    vat: VatAttestation,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+struct TransferMessage {
+    action: Option<String>,
+    publication_id: Option<String>,
+    job_id: Option<String>,
+    title: Option<String>,
+    price_usdc: Option<U128>,
+    expected_source_bytes: Option<U128>,
+    profile_id: Option<String>,
+    profile_config_sha256: Option<String>,
+    upload_public_key: Option<String>,
+    upload_key_expires_at_ms: Option<U64>,
+    sponsor_quote: Option<SponsoredUploadQuote>,
+    sponsor_quote_signature: Option<Base64VecU8>,
+    playback_session: Option<PlaybackSessionAuthorization>,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PlaybackSessionAuthorization {
+    pub session_public_key: String,
+    pub certificate_sha256: String,
+    pub authorization_duration_ms: U64,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlaybackDevice {
+    pub session_public_key: String,
+    pub certificate_sha256: String,
+    pub authorized_at_ms: U64,
+    pub expires_at_ms: U64,
+    // None denotes a delegated payment: the Bridge verifies the user's delegate,
+    // never the relayer's signer key, before granting playback.
+    pub authorizing_public_key: Option<String>,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaidJobRequest {
+    pub creator_id: AccountId,
+    pub job_id: String,
+    pub title: String,
+    pub price_usdc: U128,
+    pub expected_source_bytes: U128,
+    pub profile_id: String,
+    pub profile_config_sha256: String,
+    pub upload_public_key: String,
+    pub upload_key_expires_at_ms: U64,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreatorFeeQuote {
+    pub domain: String,
+    pub version: String,
+    pub network: String,
+    pub contract_id: AccountId,
+    pub creator_id: AccountId,
+    pub job_id: String,
+    pub expected_source_bytes: U128,
+    pub fee_usd_micro: U128,
+    pub near_usd_micro: U128,
+    pub fee_near_yocto: U128,
+    pub rate_source: String,
+    pub rate_timestamp_ms: U64,
+    pub expires_at_ms: U64,
+    pub quote_key_version: u32,
+    pub quote_id: String,
+}
+
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SponsoredUploadQuote {
+    pub domain: String,
+    pub version: String,
+    pub network: String,
+    pub contract_id: AccountId,
+    pub creator_id: AccountId,
+    pub job_id: String,
+    pub request_sha256: String,
+    pub expected_source_bytes: U128,
+    pub upload_fee_usdc: U128,
+    pub sponsor_fee_usdc: U128,
+    pub total_fee_usdc: U128,
+    pub delegate_receiver_id: AccountId,
+    pub delegate_method: String,
+    pub delegate_gas: U64,
+    pub delegate_deposit_yocto: U128,
+    pub issued_at_ms: U64,
+    pub quote_block_height: U64,
+    pub max_delegate_block_height: U64,
+    pub expires_at_ms: U64,
+    pub quote_key_version: u32,
+    pub quote_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct FtTransferArgs {
+    receiver_id: AccountId,
+    amount: U128,
+    memo: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct CreatorWithdrawCallbackArgs {
+    creator_id: AccountId,
+    amount: U128,
+    withdrawal_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct PlatformWithdrawCallbackArgs {
+    amount: U128,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct NearWithdrawCallbackArgs {
+    amount: U128,
+}
+
+#[near(contract_state)]
+#[derive(PanicOnDefault)]
+pub struct Contract {
+    state_version: u32,
+    platform_account_id: AccountId,
+    admin_account_id: AccountId,
+    guardian_account_id: AccountId,
+    active_bridge_account_id: AccountId,
+    pending_bridge_account_id: Option<AccountId>,
+    bridge_frozen: bool,
+    bridge_rotation_proposed_at_ms: Option<u64>,
+    takedown_authority_id: AccountId,
+    media_jobs: LookupMap<String, MediaJob>,
+    publications: LookupMap<String, Publication>,
+    asset_bindings: LookupMap<String, String>,
+    playback_bindings: LookupMap<String, String>,
+    tickets: LookupMap<String, Ticket>,
+    creator_balances: LookupMap<AccountId, u128>,
+    takedowns: LookupMap<String, TakedownRecord>,
+    platform_balance: u128,
+    publication_ids: LookupMap<u64, String>,
+    publication_count: u64,
+    platform_near_balance: u128,
+    quote_public_key: Vec<u8>,
+    quote_key_version: u32,
+    near_operational_reserve: u128,
+    tax_account_id: AccountId,
+    vat_keys: LookupMap<u32, Vec<u8>>,
+    // USDC held for tickets that have not settled yet; never available for withdrawal.
+    escrow_balance: u128,
+}
+
+#[near]
+impl Contract {
+    #[init]
+    pub fn new_public_testnet(config: MarketInitConfig) -> Self {
+        let mut contract = Self::new(config);
+        require!(
+            contract.network_id() == "testnet",
+            "Public upload is testnet only"
+        );
+        require!(
+            contract.public_testnet_beta_state().is_none(),
+            "Public beta state exists"
+        );
+        write_raw(
+            PUBLIC_UPLOAD_POLICY_KEY,
+            &PublicUploadPolicy {
+                version: 1,
+                environment: "public-testnet".to_string(),
+                network: "testnet".to_string(),
+                market_contract_id: env::current_account_id(),
+                max_source_bytes: U128(PUBLIC_UPLOAD_MAX_SOURCE_BYTES),
+                job_ttl_ms: U64(PUBLIC_TESTNET_BETA_JOB_TTL_MS),
+                signed_quote_required: true,
+                profiles: [PUBLIC_UPLOAD_PROFILE_HASH, LEGACY_UPLOAD_PROFILE_HASH]
+                    .iter()
+                    .map(|hash| PublicUploadProfile {
+                        profile_id: PROFILE.to_string(),
+                        profile_config_sha256: hash.to_string(),
+                    })
+                    .collect(),
+            },
+        );
+        env::storage_write(NEW_PURCHASES_PAUSED_KEY, &[1]);
+        contract.bridge_frozen = true;
+        contract
+    }
+
+    #[init]
+    pub fn new(config: MarketInitConfig) -> Self {
+        let MarketInitConfig {
+            platform_account_id,
+            bridge_account_id,
+            takedown_authority_id,
+            admin_account_id,
+            guardian_account_id,
+            quote_public_key,
+            quote_key_version,
+            near_operational_reserve,
+            tax_account_id,
+            vat_public_key,
+            vat_key_version,
+        } = config;
+        require!(vat_key_version > 0, "VAT key version must be positive");
+        require!(
+            tax_account_id != platform_account_id && tax_account_id != bridge_account_id,
+            "Tax account must be separate"
+        );
+        let vat_public_key = parse_ed25519_key(&vat_public_key);
+        require!(
+            platform_account_id != bridge_account_id,
+            "Platform and bridge accounts must differ"
+        );
+        require!(
+            quote_public_key.0.len() == 32,
+            "Quote public key must be Ed25519"
+        );
+        require!(quote_key_version > 0, "Quote key version must be positive");
+        require!(
+            admin_account_id != guardian_account_id,
+            "Admin and guardian accounts must differ"
+        );
+        require!(
+            admin_account_id != bridge_account_id && guardian_account_id != bridge_account_id,
+            "Admin, guardian and bridge accounts must differ"
+        );
+        require!(
+            takedown_authority_id != bridge_account_id
+                && takedown_authority_id != platform_account_id,
+            "Takedown authority must be separate"
+        );
+        let mut vat_keys = LookupMap::new(StorageKey::VAT_KEYS);
+        vat_keys.insert(&vat_key_version, &vat_public_key.to_vec());
+        Self {
+            state_version: MARKET_STATE_VERSION,
+            platform_account_id,
+            admin_account_id,
+            guardian_account_id,
+            active_bridge_account_id: bridge_account_id,
+            pending_bridge_account_id: None,
+            bridge_frozen: false,
+            bridge_rotation_proposed_at_ms: None,
+            takedown_authority_id,
+            media_jobs: LookupMap::new(StorageKey::MEDIA_JOBS),
+            publications: LookupMap::new(StorageKey::PUBLICATIONS),
+            asset_bindings: LookupMap::new(StorageKey::ASSET_BINDINGS),
+            playback_bindings: LookupMap::new(StorageKey::PLAYBACK_BINDINGS),
+            tickets: LookupMap::new(StorageKey::TICKETS),
+            creator_balances: LookupMap::new(StorageKey::CREATOR_BALANCES),
+            takedowns: LookupMap::new(StorageKey::TAKEDOWNS),
+            platform_balance: 0,
+            publication_ids: LookupMap::new(StorageKey::PUBLICATION_IDS),
+            publication_count: 0,
+            platform_near_balance: 0,
+            quote_public_key: quote_public_key.0,
+            quote_key_version,
+            near_operational_reserve: near_operational_reserve.0,
+            tax_account_id,
+            vat_keys,
+            escrow_balance: 0,
+        }
+    }
+
+    pub fn freeze_bridge(&mut self) {
+        self.assert_guardian();
+        if self.bridge_frozen {
+            return;
+        }
+        self.bridge_frozen = true;
+        emit_governance_event(
+            "bridge_frozen",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+            }),
+        );
+    }
+
+    pub fn request_bridge_unfreeze(&mut self) -> U64 {
+        self.assert_admin();
+        require!(self.bridge_frozen, "Livepeer bridge is not frozen");
+        if let Some(requested_at_ms) = read_raw::<u64>(BRIDGE_UNFREEZE_REQUEST_KEY) {
+            return U64(requested_at_ms);
+        }
+        let requested_at_ms = env::block_timestamp_ms();
+        write_raw(BRIDGE_UNFREEZE_REQUEST_KEY, &requested_at_ms);
+        emit_governance_event(
+            "bridge_unfreeze_requested",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+                "requested_at_ms": requested_at_ms.to_string(),
+                "executable_at_ms": self.reopen_executable_at_ms(requested_at_ms).to_string(),
+            }),
+        );
+        U64(requested_at_ms)
+    }
+
+    pub fn cancel_bridge_unfreeze(&mut self) {
+        self.assert_admin_or_guardian();
+        if read_raw::<u64>(BRIDGE_UNFREEZE_REQUEST_KEY).is_none() {
+            return;
+        }
+        env::storage_remove(BRIDGE_UNFREEZE_REQUEST_KEY);
+        emit_governance_event(
+            "bridge_unfreeze_cancelled",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+            }),
+        );
+    }
+
+    pub fn unfreeze_bridge(&mut self) {
+        self.assert_admin();
+        if !self.bridge_frozen {
+            env::storage_remove(BRIDGE_UNFREEZE_REQUEST_KEY);
+            return;
+        }
+        self.assert_reopen_elapsed(BRIDGE_UNFREEZE_REQUEST_KEY);
+        env::storage_remove(BRIDGE_UNFREEZE_REQUEST_KEY);
+        self.bridge_frozen = false;
+        emit_governance_event(
+            "bridge_unfrozen",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+            }),
+        );
+    }
+
+    pub fn pause_new_purchases(&mut self) {
+        self.assert_guardian();
+        if self.new_purchases_paused() {
+            return;
+        }
+        env::storage_write(NEW_PURCHASES_PAUSED_KEY, &[1]);
+        emit_governance_event(
+            "new_purchases_paused",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+            }),
+        );
+    }
+
+    pub fn request_new_purchases_unpause(&mut self) -> U64 {
+        self.assert_admin();
+        require!(self.new_purchases_paused(), "New purchases are not paused");
+        if let Some(requested_at_ms) = read_raw::<u64>(NEW_PURCHASES_UNPAUSE_REQUEST_KEY) {
+            return U64(requested_at_ms);
+        }
+        let requested_at_ms = env::block_timestamp_ms();
+        write_raw(NEW_PURCHASES_UNPAUSE_REQUEST_KEY, &requested_at_ms);
+        emit_governance_event(
+            "new_purchases_unpause_requested",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "requested_at_ms": requested_at_ms.to_string(),
+                "executable_at_ms": self.reopen_executable_at_ms(requested_at_ms).to_string(),
+            }),
+        );
+        U64(requested_at_ms)
+    }
+
+    pub fn cancel_new_purchases_unpause(&mut self) {
+        self.assert_admin_or_guardian();
+        if read_raw::<u64>(NEW_PURCHASES_UNPAUSE_REQUEST_KEY).is_none() {
+            return;
+        }
+        env::storage_remove(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
+        emit_governance_event(
+            "new_purchases_unpause_cancelled",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+            }),
+        );
+    }
+
+    pub fn unpause_new_purchases(&mut self) {
+        self.assert_admin();
+        if !self.new_purchases_paused() {
+            env::storage_remove(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
+            return;
+        }
+        self.assert_reopen_elapsed(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
+        env::storage_remove(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
+        env::storage_remove(NEW_PURCHASES_PAUSED_KEY);
+        emit_governance_event(
+            "new_purchases_unpaused",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+            }),
+        );
+    }
+
+    pub fn start_public_testnet_beta(&mut self) -> PublicTestnetBetaState {
+        self.assert_admin();
+        require!(
+            self.get_public_upload_policy().is_none(),
+            "Public upload cannot start a legacy beta"
+        );
+        require!(
+            self.network_id() == "testnet",
+            "Public beta is testnet only"
+        );
+        require!(self.new_purchases_paused(), "New purchases must be paused");
+        require!(
+            self.public_testnet_beta_state().is_none(),
+            "Public beta already started"
+        );
+        self.assert_runway(PUBLIC_TESTNET_BETA_START_RUNWAY_BYTES);
+        let started_at_ms = env::block_timestamp_ms();
+        let state = PublicTestnetBetaState {
+            version: 1,
+            started_at_ms: U64(started_at_ms),
+            upload_closes_at_ms: U64(started_at_ms
+                .checked_add(PUBLIC_TESTNET_BETA_UPLOAD_MS)
+                .expect("Public beta upload close overflow")),
+            ends_at_ms: U64(started_at_ms
+                .checked_add(PUBLIC_TESTNET_BETA_TOTAL_MS)
+                .expect("Public beta end overflow")),
+            closed_at_ms: None,
+            total_job_count: 0,
+        };
+        write_raw(PUBLIC_TESTNET_BETA_STATE_KEY, &state);
+        emit_governance_event(
+            "public_testnet_beta_started",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "started_at_ms": state.started_at_ms,
+                "upload_closes_at_ms": state.upload_closes_at_ms,
+                "ends_at_ms": state.ends_at_ms,
+            }),
+        );
+        state
+    }
+
+    pub fn close_public_testnet_beta(&mut self) -> PublicTestnetBetaState {
+        self.assert_guardian();
+        let mut state = self
+            .public_testnet_beta_state()
+            .expect("Public beta has not started");
+        if state.closed_at_ms.is_some() {
+            return state;
+        }
+        state.closed_at_ms = Some(U64(env::block_timestamp_ms()));
+        write_raw(PUBLIC_TESTNET_BETA_STATE_KEY, &state);
+        env::storage_write(NEW_PURCHASES_PAUSED_KEY, &[1]);
+        emit_governance_event(
+            "public_testnet_beta_closed",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "closed_at_ms": state.closed_at_ms,
+                "total_job_count": state.total_job_count,
+            }),
+        );
+        state
+    }
+
+    pub fn propose_bridge(&mut self, next_bridge_account_id: AccountId) {
+        self.assert_admin();
+        self.assert_valid_bridge_account(&next_bridge_account_id);
+        if self.pending_bridge_account_id.as_ref() == Some(&next_bridge_account_id) {
+            return;
+        }
+        require!(
+            self.pending_bridge_account_id.is_none(),
+            "Bridge rotation already pending"
+        );
+        let proposed_at_ms = env::block_timestamp_ms();
+        self.pending_bridge_account_id = Some(next_bridge_account_id.clone());
+        self.bridge_rotation_proposed_at_ms = Some(proposed_at_ms);
+        emit_governance_event(
+            "bridge_rotation_proposed",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+                "pending_bridge_account_id": next_bridge_account_id,
+                "proposed_at_ms": proposed_at_ms.to_string(),
+                "executable_at_ms": self.bridge_rotation_executable_at_ms(proposed_at_ms).to_string(),
+            }),
+        );
+    }
+
+    pub fn cancel_bridge_rotation(&mut self) {
+        self.assert_admin_or_guardian();
+        let Some(pending_bridge_account_id) = self.pending_bridge_account_id.take() else {
+            return;
+        };
+        self.bridge_rotation_proposed_at_ms = None;
+        emit_governance_event(
+            "bridge_rotation_cancelled",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "active_bridge_account_id": self.active_bridge_account_id,
+                "pending_bridge_account_id": pending_bridge_account_id,
+            }),
+        );
+    }
+
+    pub fn execute_bridge_rotation(&mut self) {
+        self.assert_admin();
+        let proposed_at_ms = self
+            .bridge_rotation_proposed_at_ms
+            .expect("Bridge rotation is not pending");
+        require!(
+            env::block_timestamp_ms() >= self.bridge_rotation_executable_at_ms(proposed_at_ms),
+            "Bridge rotation timelock has not elapsed"
+        );
+        let next_bridge_account_id = self
+            .pending_bridge_account_id
+            .take()
+            .expect("Bridge rotation is not pending");
+        let previous_bridge_account_id =
+            std::mem::replace(&mut self.active_bridge_account_id, next_bridge_account_id);
+        self.bridge_rotation_proposed_at_ms = None;
+        emit_governance_event(
+            "bridge_rotated",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "previous_bridge_account_id": previous_bridge_account_id,
+                "active_bridge_account_id": self.active_bridge_account_id,
+            }),
+        );
+    }
+
+    pub fn propose_role_rotation(
+        &mut self,
+        role: GovernanceRole,
+        next_account_id: AccountId,
+    ) -> PendingRoleRotation {
+        self.assert_admin();
+        if let Some(pending) = read_raw::<PendingRoleRotation>(&role_rotation_key(role)) {
+            require!(
+                pending.next_account_id == next_account_id,
+                "Role rotation already pending"
+            );
+            return pending;
+        }
+        self.assert_valid_role_assignment(role, &next_account_id);
+        let proposed_at_ms = env::block_timestamp_ms();
+        let pending = PendingRoleRotation {
+            role,
+            current_account_id: self.role_account_id(role).clone(),
+            next_account_id,
+            proposed_at_ms: U64(proposed_at_ms),
+            executable_at_ms: U64(proposed_at_ms
+                .checked_add(self.role_rotation_delay_ms())
+                .expect("Role rotation delay overflow")),
+        };
+        write_raw(&role_rotation_key(role), &pending);
+        emit_governance_event(
+            "role_rotation_proposed",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "role": role,
+                "current_account_id": pending.current_account_id,
+                "next_account_id": pending.next_account_id,
+                "proposed_at_ms": pending.proposed_at_ms,
+                "executable_at_ms": pending.executable_at_ms,
+            }),
+        );
+        pending
+    }
+
+    pub fn cancel_role_rotation(&mut self, role: GovernanceRole) {
+        self.assert_admin_or_guardian();
+        let Some(pending) = read_raw::<PendingRoleRotation>(&role_rotation_key(role)) else {
+            return;
+        };
+        env::storage_remove(&role_rotation_key(role));
+        emit_governance_event(
+            "role_rotation_cancelled",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "role": role,
+                "current_account_id": pending.current_account_id,
+                "next_account_id": pending.next_account_id,
+            }),
+        );
+    }
+
+    pub fn execute_role_rotation(&mut self, role: GovernanceRole) {
+        self.assert_admin();
+        let pending = read_raw::<PendingRoleRotation>(&role_rotation_key(role))
+            .expect("Role rotation is not pending");
+        require!(
+            env::block_timestamp_ms() >= pending.executable_at_ms.0,
+            "Role rotation timelock has not elapsed"
+        );
+        require!(
+            self.role_account_id(role) == &pending.current_account_id,
+            "Role changed since rotation was proposed"
+        );
+        // Other roles may have rotated meanwhile; re-check separation now.
+        self.assert_valid_role_assignment(role, &pending.next_account_id);
+        env::storage_remove(&role_rotation_key(role));
+        let next_account_id = pending.next_account_id.clone();
+        let previous_account_id = match role {
+            GovernanceRole::Admin => std::mem::replace(&mut self.admin_account_id, next_account_id),
+            GovernanceRole::Guardian => {
+                std::mem::replace(&mut self.guardian_account_id, next_account_id)
+            }
+            GovernanceRole::Platform => {
+                std::mem::replace(&mut self.platform_account_id, next_account_id)
+            }
+            GovernanceRole::TakedownAuthority => {
+                std::mem::replace(&mut self.takedown_authority_id, next_account_id)
+            }
+        };
+        emit_governance_event(
+            "role_rotated",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "role": role,
+                "previous_account_id": previous_account_id,
+                "active_account_id": pending.next_account_id,
+            }),
+        );
+    }
+
+    pub fn propose_code_upgrade(&mut self, code_sha256: String) -> PendingCodeUpgrade {
+        self.assert_admin();
+        assert_sha256("code_sha256", &code_sha256);
+        if let Some(pending) = read_raw::<PendingCodeUpgrade>(CODE_UPGRADE_KEY) {
+            require!(
+                pending.code_sha256 == code_sha256,
+                "Code upgrade already pending"
+            );
+            return pending;
+        }
+        let proposed_at_ms = env::block_timestamp_ms();
+        let pending = PendingCodeUpgrade {
+            code_sha256,
+            proposed_at_ms: U64(proposed_at_ms),
+            executable_at_ms: U64(proposed_at_ms
+                .checked_add(self.governance_delay_ms(MAINNET_CODE_UPGRADE_DELAY_MS))
+                .expect("Code upgrade delay overflow")),
+        };
+        write_raw(CODE_UPGRADE_KEY, &pending);
+        emit_governance_event(
+            "code_upgrade_proposed",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "code_sha256": pending.code_sha256,
+                "proposed_at_ms": pending.proposed_at_ms,
+                "executable_at_ms": pending.executable_at_ms,
+            }),
+        );
+        pending
+    }
+
+    pub fn cancel_code_upgrade(&mut self) {
+        self.assert_admin_or_guardian();
+        let Some(pending) = read_raw::<PendingCodeUpgrade>(CODE_UPGRADE_KEY) else {
+            return;
+        };
+        env::storage_remove(CODE_UPGRADE_KEY);
+        emit_governance_event(
+            "code_upgrade_cancelled",
+            near_sdk::serde_json::json!({
+                "actor_id": env::predecessor_account_id(),
+                "code_sha256": pending.code_sha256,
+            }),
+        );
+    }
+
+    /// Permissionless: the hash and timelock fix what and when. The raw
+    /// WASM is the call input, not JSON. Deploy and `migrate` form one
+    /// batch, so a failing migrate leaves the current code in place.
+    pub fn execute_code_upgrade(&mut self) -> Promise {
+        let pending =
+            read_raw::<PendingCodeUpgrade>(CODE_UPGRADE_KEY).expect("Code upgrade is not pending");
+        require!(
+            env::block_timestamp_ms() >= pending.executable_at_ms.0,
+            "Code upgrade timelock has not elapsed"
+        );
+        let code = env::input().expect("Code upgrade requires WASM input");
+        require!(
+            hex_sha256(&code) == pending.code_sha256,
+            "Code does not match the proposed SHA-256"
+        );
+        Promise::new(env::current_account_id())
+            .deploy_contract(code)
+            .function_call(
+                "migrate".to_string(),
+                Vec::new(),
+                NearToken::from_yoctonear(0),
+                CODE_UPGRADE_MIGRATE_GAS,
+            )
+    }
+
+    /// Runs in the new code. Same-layout upgrades only clear the pending
+    /// record; a layout change must read its previous struct here.
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        let contract: Contract = env::state_read().expect("Market state is missing");
+        require!(
+            contract.state_version == MARKET_STATE_VERSION,
+            "Unsupported Market state version"
+        );
+        let pending =
+            read_raw::<PendingCodeUpgrade>(CODE_UPGRADE_KEY).expect("Code upgrade is not pending");
+        env::storage_remove(CODE_UPGRADE_KEY);
+        emit_market_event(
+            "code_upgraded",
+            &format!("governance:code_upgraded:{}", pending.code_sha256),
+            near_sdk::serde_json::json!({
+                "code_sha256": pending.code_sha256,
+                "state_version": contract.state_version,
+            }),
+        );
+        contract
+    }
+
+    pub fn get_pending_code_upgrade(&self) -> Option<PendingCodeUpgrade> {
+        read_raw(CODE_UPGRADE_KEY)
+    }
+
+    pub fn get_governance_timelocks(&self) -> GovernanceTimelocks {
+        let unfreeze = read_raw::<u64>(BRIDGE_UNFREEZE_REQUEST_KEY);
+        let unpause = read_raw::<u64>(NEW_PURCHASES_UNPAUSE_REQUEST_KEY);
+        GovernanceTimelocks {
+            role_rotation_delay_ms: U64(self.governance_delay_ms(MAINNET_ROLE_ROTATION_DELAY_MS)),
+            bridge_rotation_delay_ms: U64(
+                self.governance_delay_ms(MAINNET_BRIDGE_ROTATION_DELAY_MS)
+            ),
+            reopen_delay_ms: U64(self.governance_delay_ms(MAINNET_REOPEN_DELAY_MS)),
+            code_upgrade_delay_ms: U64(self.governance_delay_ms(MAINNET_CODE_UPGRADE_DELAY_MS)),
+            bridge_rotation_executable_at_ms: self
+                .bridge_rotation_proposed_at_ms
+                .map(|at| U64(self.bridge_rotation_executable_at_ms(at))),
+            bridge_unfreeze_requested_at_ms: unfreeze.map(U64),
+            bridge_unfreeze_executable_at_ms: unfreeze
+                .map(|at| U64(self.reopen_executable_at_ms(at))),
+            new_purchases_unpause_requested_at_ms: unpause.map(U64),
+            new_purchases_unpause_executable_at_ms: unpause
+                .map(|at| U64(self.reopen_executable_at_ms(at))),
+        }
+    }
+
+    pub fn get_pending_role_rotation(&self, role: GovernanceRole) -> Option<PendingRoleRotation> {
+        read_raw(&role_rotation_key(role))
+    }
+
+    pub fn create_paid_job(&mut self, request: PaidJobRequest) -> MediaJob {
+        require!(
+            self.get_public_upload_policy().is_none(),
+            "Public upload requires a sponsored quote"
+        );
+        require!(
+            self.public_testnet_beta_state().is_none(),
+            "Public beta requires a sponsored upload quote"
+        );
+        let fee_usd_micro = upload_fee_usdc(request.expected_source_bytes.0);
+        self.create_usdc_paid_job(request, fee_usd_micro, None)
+    }
+
+    fn create_usdc_paid_job(
+        &mut self,
+        request: PaidJobRequest,
+        fee_usd_micro: u128,
+        fee_quote_hash: Option<String>,
+    ) -> MediaJob {
+        require!(
+            env::predecessor_account_id() == self.usdc_contract_id(),
+            "Paid jobs must be created through USDC ft_transfer_call"
+        );
+        require!(!self.new_purchases_paused(), "New purchases are paused");
+        assert_paid_job_request(&request);
+        require!(
+            self.media_jobs.get(&request.job_id).is_none(),
+            "Media job already exists"
+        );
+
+        let job = MediaJob {
+            job_id: request.job_id.clone(),
+            creator_id: request.creator_id,
+            profile_id: request.profile_id,
+            profile_config_sha256: request.profile_config_sha256,
+            title: request.title,
+            price_usdc: request.price_usdc,
+            expected_source_bytes: request.expected_source_bytes,
+            generation: 1,
+            status: MediaJobStatus::Authorized,
+            created_at_ms: env::block_timestamp_ms(),
+            published_at_ms: None,
+            fee_asset: FeeAsset::Usdc,
+            fee_amount: U128(fee_usd_micro),
+            fee_usd_micro: U128(fee_usd_micro),
+            upload_public_key: request.upload_public_key,
+            upload_key_expires_at_ms: request.upload_key_expires_at_ms,
+            fee_quote_hash,
+        };
+        self.media_jobs.insert(&job.job_id, &job);
+        emit_media_job_authorized(&job);
+        job
+    }
+
+    #[payable]
+    pub fn create_paid_job_near(
+        &mut self,
+        request: PaidJobRequest,
+        quote: CreatorFeeQuote,
+        quote_signature: Base64VecU8,
+    ) -> PromiseOrValue<MediaJob> {
+        require!(
+            self.get_public_upload_policy().is_none(),
+            "Public upload requires sponsored USDC"
+        );
+        require!(
+            self.public_testnet_beta_state().is_none(),
+            "Native NEAR upload is disabled for public beta"
+        );
+        require!(
+            env::predecessor_account_id() == request.creator_id,
+            "Creator mismatch"
+        );
+        self.verify_creator_fee_quote(&request, &quote, &quote_signature.0);
+        let deposit = env::attached_deposit().as_yoctonear();
+        require!(
+            deposit == quote.fee_near_yocto.0,
+            "Incorrect creator upload fee"
+        );
+
+        if let Some(existing) = self.media_jobs.get(&request.job_id) {
+            require!(
+                job_matches_request(&existing, &request, &quote),
+                "Conflicting paid job replay"
+            );
+            return PromiseOrValue::Promise(
+                Promise::new(request.creator_id).transfer(NearToken::from_yoctonear(deposit)),
+            );
+        }
+
+        require!(!self.new_purchases_paused(), "New purchases are paused");
+        assert_paid_job_request(&request);
+        let job = MediaJob {
+            job_id: request.job_id.clone(),
+            creator_id: request.creator_id,
+            profile_id: request.profile_id,
+            profile_config_sha256: request.profile_config_sha256,
+            title: request.title,
+            price_usdc: request.price_usdc,
+            expected_source_bytes: request.expected_source_bytes,
+            generation: 1,
+            status: MediaJobStatus::Authorized,
+            created_at_ms: env::block_timestamp_ms(),
+            published_at_ms: None,
+            fee_asset: FeeAsset::Near,
+            fee_amount: quote.fee_near_yocto,
+            fee_usd_micro: quote.fee_usd_micro,
+            upload_public_key: request.upload_public_key,
+            upload_key_expires_at_ms: request.upload_key_expires_at_ms,
+            fee_quote_hash: Some(quote.quote_id),
+        };
+        self.media_jobs.insert(&job.job_id, &job);
+        self.platform_near_balance = self
+            .platform_near_balance
+            .checked_add(deposit)
+            .expect("Platform NEAR balance overflow");
+        emit_media_job_authorized(&job);
+        PromiseOrValue::Value(job)
+    }
+
+    pub fn replace_upload_key(
+        &mut self,
+        job_id: String,
+        new_public_key: String,
+        expires_at_ms: U64,
+    ) -> MediaJob {
+        let mut job = self.media_jobs.get(&job_id).expect("Media job not found");
+        require!(
+            env::predecessor_account_id() == job.creator_id,
+            "Only the creator can replace the upload key"
+        );
+        require!(
+            job.status == MediaJobStatus::Authorized,
+            "Published media jobs cannot replace upload keys"
+        );
+        assert_upload_key(&new_public_key, expires_at_ms.0);
+        if self.get_public_upload_policy().is_some() {
+            let deadline = self.require_public_upload_job(&job);
+            require!(
+                env::block_timestamp_ms() < deadline,
+                "Public upload deadline expired"
+            );
+            require!(
+                expires_at_ms.0 <= deadline,
+                "Upload key exceeds public upload deadline"
+            );
+        }
+        if let Some(marker) = self.public_testnet_beta_job(&job_id) {
+            require!(
+                expires_at_ms.0 <= marker.deadline_at_ms.0,
+                "Upload key exceeds public beta job deadline"
+            );
+        }
+        job.upload_public_key = new_public_key;
+        job.upload_key_expires_at_ms = expires_at_ms;
+        self.media_jobs.insert(&job_id, &job);
+        let upload_public_key_sha256 = hex_sha256(job.upload_public_key.as_bytes());
+        emit_market_event(
+            "media_job_upload_key_replaced",
+            &format!(
+                "job:{}:{}:upload-key:{}",
+                job.job_id, job.generation, upload_public_key_sha256
+            ),
+            near_sdk::serde_json::json!({
+                "account_id": job.creator_id,
+                "job_id": job.job_id,
+                "generation": job.generation,
+                "upload_public_key_sha256": upload_public_key_sha256,
+                "upload_key_expires_at_ms": job.upload_key_expires_at_ms,
+            }),
+        );
+        job
+    }
+
+    pub fn rotate_quote_public_key(&mut self, version: u32, public_key: Base64VecU8) {
+        require!(
+            env::predecessor_account_id() == self.platform_account_id,
+            "Only the platform account can rotate quote keys"
+        );
+        require!(
+            version
+                == self
+                    .quote_key_version
+                    .checked_add(1)
+                    .expect("Quote key version overflow"),
+            "Quote key version must increase by one"
+        );
+        require!(public_key.0.len() == 32, "Quote public key must be Ed25519");
+        self.quote_key_version = version;
+        self.quote_public_key = public_key.0;
+        emit_market_event(
+            "quote_key_rotated",
+            &format!("quote-key:{version}"),
+            near_sdk::serde_json::json!({
+                "account_id": env::predecessor_account_id(),
+                "quote_key_version": version,
+                "quote_public_key_sha256": hex_sha256(&self.quote_public_key),
+            }),
+        );
+    }
+
+    pub fn restart_paid_job(
+        &mut self,
+        job_id: String,
+        expected_source_bytes: U128,
+        profile_id: String,
+        profile_config_sha256: String,
+    ) -> MediaJob {
+        require!(
+            self.get_public_upload_policy().is_none(),
+            "Public upload jobs cannot restart"
+        );
+        let mut job = self.media_jobs.get(&job_id).expect("Media job not found");
+        require!(
+            self.public_testnet_beta_job(&job_id).is_none(),
+            "Public beta jobs cannot restart"
+        );
+        require!(
+            env::predecessor_account_id() == job.creator_id,
+            "Only the creator can restart a media job"
+        );
+        require!(
+            job.status != MediaJobStatus::Published,
+            "Published media jobs cannot restart"
+        );
+        assert_source_bytes(expected_source_bytes.0);
+        assert_profile(&profile_id, &profile_config_sha256);
+        require!(
+            job.expected_source_bytes == expected_source_bytes,
+            "A retry must keep the original source byte count"
+        );
+
+        job.generation = job.generation.checked_add(1).expect("Generation overflow");
+        job.profile_id = profile_id;
+        job.profile_config_sha256 = profile_config_sha256;
+        self.media_jobs.insert(&job_id, &job);
+        job
+    }
+
+    pub fn finalize_livepeer_publication(
+        &mut self,
+        submission: LivepeerPublicationSubmission,
+    ) -> Publication {
+        self.assert_bridge();
+        require!(
+            submission.availability == PublicationAvailability::Active,
+            "Initial publication availability must be active"
+        );
+        assert_profile(&submission.profile_id, &submission.profile_config_sha256);
+        assert_sha256("asset_id_hash", &submission.asset_id_hash);
+        assert_playback_id(&submission.playback_id);
+        assert_sha256("project_id_hash", &submission.project_id_hash);
+        if let Some(fingerprint) = &submission.provider_source_fingerprint {
+            assert_sha256("provider_source_fingerprint", fingerprint);
+        }
+        require!(submission.ready_at_ms.0 > 0, "ready_at_ms must be positive");
+
+        let mut job = self.job_for_generation(&submission.job_id, submission.generation);
+        require!(
+            job.creator_id == submission.creator_id,
+            "Media job creator mismatch"
+        );
+        require!(
+            job.expected_source_bytes == submission.expected_source_bytes,
+            "Expected source byte mismatch"
+        );
+        require!(
+            submission.verified_source_bytes == submission.expected_source_bytes,
+            "Verified source byte mismatch"
+        );
+        require!(
+            job.profile_id == submission.profile_id,
+            "Media job profile mismatch"
+        );
+        require!(
+            job.profile_config_sha256 == submission.profile_config_sha256,
+            "Media job profile configuration mismatch"
+        );
+
+        if let Some(existing) = self.publications.get(&submission.job_id) {
+            require!(
+                publication_matches(&existing, &submission),
+                "Conflicting finalize request"
+            );
+            return existing;
+        }
+
+        if self.get_public_upload_policy().is_some() {
+            let deadline = self.require_public_upload_job(&job);
+            require!(
+                env::block_timestamp_ms() < deadline,
+                "Public upload deadline expired"
+            );
+        }
+        if self.public_testnet_beta_state().is_some() {
+            require!(
+                self.active_public_testnet_beta().is_some(),
+                "Public beta is not active"
+            );
+            let marker = self.require_public_testnet_beta_job(&job);
+            require!(
+                env::block_timestamp_ms() <= marker.deadline_at_ms.0,
+                "Public beta job deadline expired"
+            );
+        }
+
+        self.bind_identity(
+            &self.asset_bindings,
+            &submission.asset_id_hash,
+            &submission.job_id,
+            "asset_id_hash",
+        );
+        self.bind_identity(
+            &self.playback_bindings,
+            &submission.playback_id,
+            &submission.job_id,
+            "playback_id",
+        );
+
+        let published_at_ms = env::block_timestamp_ms();
+        let publication = Publication {
+            publication_id: submission.job_id.clone(),
+            creator_id: submission.creator_id,
+            title: job.title.clone(),
+            price_usdc: job.price_usdc,
+            generation: submission.generation,
+            expected_source_bytes: submission.expected_source_bytes,
+            profile_id: submission.profile_id,
+            profile_config_sha256: submission.profile_config_sha256,
+            asset_id_hash: submission.asset_id_hash.clone(),
+            playback_id: submission.playback_id.clone(),
+            project_id_hash: submission.project_id_hash,
+            verified_source_bytes: submission.verified_source_bytes,
+            provider_source_fingerprint: submission.provider_source_fingerprint,
+            ready_at_ms: submission.ready_at_ms,
+            published_availability: submission.availability.clone(),
+            availability: submission.availability,
+            published_at_ms,
+        };
+        job.status = MediaJobStatus::Published;
+        job.published_at_ms = Some(published_at_ms);
+        self.media_jobs.insert(&submission.job_id, &job);
+        self.publications.insert(&submission.job_id, &publication);
+        let next_count = self
+            .publication_count
+            .checked_add(1)
+            .expect("Publication count overflow");
+        self.publication_ids
+            .insert(&self.publication_count, &submission.job_id);
+        self.publication_count = next_count;
+        self.asset_bindings
+            .insert(&submission.asset_id_hash, &submission.job_id);
+        self.playback_bindings
+            .insert(&submission.playback_id, &submission.job_id);
+        if self.public_testnet_beta_state().is_some() {
+            self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        }
+        emit_market_event(
+            "publication_finalized",
+            &format!(
+                "publication:{}:{}:finalized",
+                publication.publication_id, publication.generation
+            ),
+            near_sdk::serde_json::json!({
+                "account_id": publication.creator_id,
+                "publication_id": publication.publication_id,
+                "job_id": submission.job_id,
+                "generation": publication.generation,
+                "title": publication.title,
+                "playback_id": publication.playback_id,
+                "published_at_ms": publication.published_at_ms,
+                "asset": "USDC",
+                "amount": publication.price_usdc,
+                "availability": publication.availability,
+            }),
+        );
+        publication
+    }
+
+    pub fn suspend_livepeer_sales(&mut self, publication_id: String) -> Publication {
+        self.assert_bridge();
+        let mut publication = self
+            .publications
+            .get(&publication_id)
+            .expect("Publication not found");
+        if self.active_public_testnet_beta().is_some() {
+            let job = self
+                .media_jobs
+                .get(&publication_id)
+                .expect("Media job not found");
+            self.require_public_testnet_beta_job(&job);
+        }
+        require!(
+            publication.availability != PublicationAvailability::Takedown,
+            "Takedown publication cannot change through sales suspension"
+        );
+        if publication.availability == PublicationAvailability::SalesSuspended {
+            return publication;
+        }
+        publication.availability = PublicationAvailability::SalesSuspended;
+        self.publications.insert(&publication_id, &publication);
+        emit_market_event(
+            "publication_sales_suspended",
+            &format!("publication:{publication_id}:sales-suspended"),
+            near_sdk::serde_json::json!({
+                "account_id": publication.creator_id,
+                "publication_id": publication_id,
+                "generation": publication.generation,
+                "availability": publication.availability,
+            }),
+        );
+        publication
+    }
+
+    pub fn takedown_livepeer_publication(
+        &mut self,
+        publication_id: String,
+        reason_code: String,
+        incident_id: String,
+        evidence_sha256: String,
+        effective_at_ms: U64,
+    ) -> Publication {
+        self.assert_takedown_authority();
+        require!(
+            matches!(
+                reason_code.as_str(),
+                "PUBLIC_MEDIA_EXPOSURE"
+                    | "LEGAL_REQUIREMENT"
+                    | "KEY_COMPROMISE"
+                    | "GOVERNANCE_DECISION"
+            ),
+            "Unsupported takedown reason"
+        );
+        assert_identifier("incident_id", &incident_id);
+        assert_sha256("evidence_sha256", &evidence_sha256);
+        require!(
+            effective_at_ms.0 > 0 && effective_at_ms.0 <= env::block_timestamp_ms(),
+            "Takedown effective time must have arrived"
+        );
+        let mut publication = self
+            .publications
+            .get(&publication_id)
+            .expect("Publication not found");
+        if publication.availability == PublicationAvailability::Takedown {
+            let existing = self
+                .takedowns
+                .get(&publication_id)
+                .expect("Takedown record missing");
+            require!(
+                existing.reason_code == reason_code
+                    && existing.incident_id == incident_id
+                    && existing.evidence_sha256 == evidence_sha256
+                    && existing.effective_at_ms == effective_at_ms,
+                "Conflicting takedown request"
+            );
+            return publication;
+        }
+        require!(
+            matches!(
+                publication.availability,
+                PublicationAvailability::Active | PublicationAvailability::SalesSuspended
+            ),
+            "Publication cannot transition to takedown"
+        );
+        let record = TakedownRecord {
+            publication_id: publication_id.clone(),
+            reason_code,
+            incident_id,
+            evidence_sha256,
+            effective_at_ms,
+            recorded_at_ms: U64(env::block_timestamp_ms()),
+        };
+        publication.availability = PublicationAvailability::Takedown;
+        self.publications.insert(&publication_id, &publication);
+        self.takedowns.insert(&publication_id, &record);
+        emit_market_event(
+            "publication_takedown",
+            &format!(
+                "publication:{publication_id}:takedown:{}",
+                record.incident_id
+            ),
+            near_sdk::serde_json::json!({
+                "account_id": publication.creator_id,
+                "publication_id": publication_id,
+                "generation": publication.generation,
+                "reason_code": record.reason_code,
+                "incident_id": record.incident_id,
+                "evidence_sha256": record.evidence_sha256,
+                "effective_at_ms": record.effective_at_ms,
+                "availability": publication.availability,
+            }),
+        );
+        publication
+    }
+
+    pub fn get_compact_upload_version(&self) -> u8 {
+        1
+    }
+
+    pub fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> PromiseOrValue<U128> {
+        require!(
+            env::predecessor_account_id() == self.usdc_contract_id(),
+            "Only Circle USDC is accepted"
+        );
+        if !msg.starts_with("yt:u1:")
+            && transfer_action(&msg).as_deref() == Some(BUY_TICKET_V2_ACTION)
+        {
+            let purchase: PurchaseMessageV2 =
+                near_sdk::serde_json::from_str(&msg).expect("Invalid ticket purchase message");
+            return self.buy_ticket_v2(amount, purchase);
+        }
+        let message: TransferMessage = if msg.starts_with("yt:u1:") {
+            compact_upload::decode(&msg, self, &sender_id)
+        } else {
+            near_sdk::serde_json::from_str(&msg).expect("Invalid purchase message")
+        };
+        if let Some(session) = &message.playback_session {
+            assert_playback_session(session);
+        }
+
+        if message.action.as_deref() == Some("create_paid_job") {
+            require!(message.publication_id.is_none(), "Invalid paid job message");
+            let expected_source_bytes = message
+                .expected_source_bytes
+                .expect("expected_source_bytes is required");
+            let expected_fee = upload_fee_usdc(expected_source_bytes.0);
+            let job_id = message.job_id.expect("job_id is required");
+            let title = message.title.expect("title is required");
+            let price_usdc = message.price_usdc.expect("price_usdc is required");
+            let profile_id = message.profile_id.expect("profile_id is required");
+            let profile_config_sha256 = message
+                .profile_config_sha256
+                .expect("profile_config_sha256 is required");
+            let upload_public_key = message
+                .upload_public_key
+                .expect("upload_public_key is required");
+            let upload_key_expires_at_ms = message
+                .upload_key_expires_at_ms
+                .expect("upload_key_expires_at_ms is required");
+            let request = PaidJobRequest {
+                creator_id: sender_id.clone(),
+                job_id: job_id.clone(),
+                title: title.clone(),
+                price_usdc,
+                expected_source_bytes,
+                profile_id: profile_id.clone(),
+                profile_config_sha256: profile_config_sha256.clone(),
+                upload_public_key: upload_public_key.clone(),
+                upload_key_expires_at_ms,
+            };
+            let quote = match (message.sponsor_quote, message.sponsor_quote_signature) {
+                (None, None) => None,
+                (Some(quote), Some(signature)) => {
+                    self.verify_sponsored_upload_quote(&request, &quote, &signature.0);
+                    Some(quote)
+                }
+                _ => env::panic_str("Incomplete sponsored upload quote"),
+            };
+            let public_beta = self.public_testnet_beta_state();
+            if public_beta.is_some() && self.active_public_testnet_beta().is_none() {
+                return PromiseOrValue::Value(amount);
+            }
+            let public_upload = self.get_public_upload_policy().is_some();
+            if (public_beta.is_some() || public_upload) && quote.is_none() {
+                return PromiseOrValue::Value(amount);
+            }
+            let (expected_fee, quote_hash) = quote.as_ref().map_or((expected_fee, None), |quote| {
+                (quote.total_fee_usdc.0, Some(quote.quote_id.clone()))
+            });
+            require!(amount.0 == expected_fee, "Incorrect creator upload fee");
+
+            if let Some(existing) = self.media_jobs.get(&job_id) {
+                require!(
+                    usdc_job_matches_request(
+                        &existing,
+                        &request,
+                        expected_fee,
+                        quote_hash.as_deref()
+                    ),
+                    "Conflicting paid job replay"
+                );
+                if public_beta.is_some() {
+                    self.require_public_testnet_beta_job(&existing);
+                }
+                return PromiseOrValue::Value(amount);
+            }
+
+            if self.new_purchases_paused() {
+                return PromiseOrValue::Value(amount);
+            }
+            if public_upload {
+                self.admit_public_upload(&request);
+            }
+            if public_beta.is_some() {
+                self.admit_public_testnet_beta_job(
+                    &request,
+                    quote
+                        .as_ref()
+                        .expect("Public beta sponsor quote is required"),
+                );
+            }
+            self.create_usdc_paid_job(request, expected_fee, quote_hash);
+            self.platform_balance = self
+                .platform_balance
+                .checked_add(amount.0)
+                .expect("Platform balance overflow");
+            self.authorize_playback_device(&sender_id, message.playback_session);
+            if public_beta.is_some() || public_upload {
+                self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+            }
+            return PromiseOrValue::Value(U128(0));
+        }
+
+        env::panic_str("Unsupported transfer action")
+    }
+
+    pub fn withdraw_creator_balance(&mut self) -> Promise {
+        let creator_id = env::predecessor_account_id();
+        let amount = self.creator_balances.get(&creator_id).unwrap_or(0);
+        require!(amount > 0, "No creator balance");
+        self.creator_balances.insert(&creator_id, &0);
+        let withdrawal_id = format!(
+            "creator-withdrawal:{creator_id}:{amount}:{}",
+            env::block_timestamp_ms()
+        );
+        emit_market_event(
+            "creator_balance_withdrawal_started",
+            &withdrawal_id,
+            near_sdk::serde_json::json!({
+                "account_id": creator_id,
+                "asset": "USDC",
+                "amount": amount.to_string(),
+                "withdrawal_id": withdrawal_id,
+            }),
+        );
+
+        self.ft_transfer(creator_id.clone(), amount, "creator payout")
+            .then(
+                Promise::new(env::current_account_id()).function_call(
+                    "on_creator_withdraw".to_string(),
+                    near_sdk::serde_json::to_vec(&CreatorWithdrawCallbackArgs {
+                        creator_id,
+                        amount: U128(amount),
+                        withdrawal_id,
+                    })
+                    .expect("Failed to serialize callback"),
+                    NearToken::from_yoctonear(0),
+                    WITHDRAW_CALLBACK_GAS,
+                ),
+            )
+    }
+
+    pub fn withdraw_platform_balance(&mut self) -> Promise {
+        require!(
+            env::predecessor_account_id() == self.platform_account_id,
+            "Only the platform account can withdraw"
+        );
+        let amount = self.platform_balance;
+        require!(amount > 0, "No platform balance");
+        self.platform_balance = 0;
+        let withdrawal_id = format!(
+            "platform-withdrawal:USDC:{amount}:{}",
+            env::block_timestamp_ms()
+        );
+        emit_market_event(
+            "platform_withdrawal_started",
+            &withdrawal_id,
+            near_sdk::serde_json::json!({
+                "account_id": self.platform_account_id,
+                "asset": "USDC",
+                "amount": amount.to_string(),
+                "withdrawal_id": withdrawal_id,
+            }),
+        );
+
+        self.ft_transfer(
+            self.platform_account_id.clone(),
+            amount,
+            "platform commission",
+        )
+        .then(
+            Promise::new(env::current_account_id()).function_call(
+                "on_platform_withdraw".to_string(),
+                near_sdk::serde_json::to_vec(&PlatformWithdrawCallbackArgs {
+                    amount: U128(amount),
+                })
+                .expect("Failed to serialize callback"),
+                NearToken::from_yoctonear(0),
+                WITHDRAW_CALLBACK_GAS,
+            ),
+        )
+    }
+
+    pub fn withdraw_platform_near(&mut self, amount: U128) -> Promise {
+        require!(
+            env::predecessor_account_id() == self.platform_account_id,
+            "Only the platform account can withdraw"
+        );
+        require!(
+            amount.0 > 0 && amount.0 <= self.platform_near_balance,
+            "Insufficient platform NEAR balance"
+        );
+        let liquid = self.storage_reserve_status().reserve_headroom_yocto.0;
+        require!(
+            amount.0 <= liquid,
+            "Withdrawal would consume storage stake or reserve"
+        );
+        self.platform_near_balance -= amount.0;
+        let withdrawal_id = format!(
+            "platform-withdrawal:NEAR:{}:{}",
+            amount.0,
+            env::block_timestamp_ms()
+        );
+        emit_market_event(
+            "platform_withdrawal_started",
+            &withdrawal_id,
+            near_sdk::serde_json::json!({
+                "account_id": self.platform_account_id,
+                "asset": "NEAR",
+                "amount": amount,
+                "withdrawal_id": withdrawal_id,
+            }),
+        );
+        Promise::new(self.platform_account_id.clone())
+            .transfer(NearToken::from_yoctonear(amount.0))
+            .then(
+                Promise::new(env::current_account_id()).function_call(
+                    "on_platform_near_withdraw".to_string(),
+                    near_sdk::serde_json::to_vec(&NearWithdrawCallbackArgs { amount })
+                        .expect("Failed to serialize callback"),
+                    NearToken::from_yoctonear(0),
+                    WITHDRAW_CALLBACK_GAS,
+                ),
+            )
+    }
+
+    #[private]
+    pub fn on_creator_withdraw(
+        &mut self,
+        creator_id: AccountId,
+        amount: U128,
+        withdrawal_id: String,
+    ) -> bool {
+        require!(
+            env::promise_results_count() == 1,
+            "Expected one withdrawal result"
+        );
+        if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
+            emit_market_event(
+                "creator_balance_withdrawal_succeeded",
+                &withdrawal_id,
+                near_sdk::serde_json::json!({
+                    "account_id": creator_id,
+                    "asset": "USDC",
+                    "amount": amount,
+                    "withdrawal_id": withdrawal_id,
+                }),
+            );
+            return true;
+        }
+        let restored = self
+            .creator_balances
+            .get(&creator_id)
+            .unwrap_or(0)
+            .checked_add(amount.0)
+            .expect("Creator balance overflow");
+        self.creator_balances.insert(&creator_id, &restored);
+        emit_market_event(
+            "creator_balance_withdrawal_failed",
+            &withdrawal_id,
+            near_sdk::serde_json::json!({
+                "account_id": creator_id,
+                "asset": "USDC",
+                "amount": amount,
+                "withdrawal_id": withdrawal_id,
+                "reason_code": "PROMISE_FAILED",
+            }),
+        );
+        false
+    }
+
+    #[private]
+    pub fn on_platform_withdraw(&mut self, amount: U128) -> bool {
+        require!(
+            env::promise_results_count() == 1,
+            "Expected one withdrawal result"
+        );
+        if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
+            return true;
+        }
+        self.platform_balance = self
+            .platform_balance
+            .checked_add(amount.0)
+            .expect("Platform balance overflow");
+        false
+    }
+
+    #[private]
+    pub fn on_platform_near_withdraw(&mut self, amount: U128) -> bool {
+        require!(
+            env::promise_results_count() == 1,
+            "Expected one withdrawal result"
+        );
+        if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
+            return true;
+        }
+        self.platform_near_balance = self
+            .platform_near_balance
+            .checked_add(amount.0)
+            .expect("Platform NEAR balance overflow");
+        false
+    }
+
+    pub fn get_media_job(&self, job_id: String) -> Option<MediaJob> {
+        self.media_jobs.get(&job_id)
+    }
+
+    pub fn get_playback_device(
+        &self,
+        account_id: AccountId,
+        session_public_key: String,
+    ) -> Option<PlaybackDevice> {
+        let devices: Vec<PlaybackDevice> =
+            read_raw(&playback_devices_key(&account_id)).unwrap_or_default();
+        devices.into_iter().find(|device| {
+            device.session_public_key == session_public_key
+                && device.expires_at_ms.0 > env::block_timestamp_ms()
+        })
+    }
+
+    #[payable]
+    pub fn activate_playback_device(
+        &mut self,
+        publication_id: String,
+        playback_session: PlaybackSessionAuthorization,
+    ) {
+        require!(
+            env::attached_deposit() == NearToken::from_yoctonear(1),
+            "Attach exactly 1 yoctoNEAR"
+        );
+        let account_id = env::signer_account_id();
+        require!(
+            env::predecessor_account_id() == account_id,
+            "Direct account transaction required"
+        );
+        require!(
+            env::signer_account_pk().curve_type() == near_sdk::CurveType::ED25519,
+            "Invalid authorizing key"
+        );
+        require!(!self.bridge_frozen, "Livepeer bridge is frozen");
+        assert_playback_session(&playback_session);
+        let publication = self
+            .publications
+            .get(&publication_id)
+            .expect("Publication not found");
+        require!(
+            publication.availability != PublicationAvailability::Takedown,
+            "Publication unavailable"
+        );
+        // Viewers play through ticket devices; account devices remain only for the creator's
+        // own preview.
+        require!(
+            publication.creator_id == account_id,
+            "Only the publication creator can activate an account device"
+        );
+        let signer_key = String::from(&env::signer_account_pk());
+        if self
+            .get_playback_device(
+                account_id.clone(),
+                playback_session.session_public_key.clone(),
+            )
+            .is_some_and(|device| {
+                device.certificate_sha256 == playback_session.certificate_sha256
+                    && device.authorizing_public_key.as_ref() == Some(&signer_key)
+            })
+        {
+            return;
+        }
+        self.authorize_playback_device(&account_id, Some(playback_session));
+        self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+    }
+
+    fn authorize_playback_device(
+        &mut self,
+        account_id: &AccountId,
+        authorization: Option<PlaybackSessionAuthorization>,
+    ) {
+        let Some(authorization) = authorization else {
+            return;
+        };
+        let key = playback_devices_key(account_id);
+        let now = env::block_timestamp_ms();
+        let mut devices: Vec<PlaybackDevice> = read_raw(&key).unwrap_or_default();
+        devices.retain(|device| {
+            device.expires_at_ms.0 > now
+                && device.session_public_key != authorization.session_public_key
+        });
+        // Insertion order is authorization order; reads never change it.
+        if devices.len() == 3 {
+            devices.remove(0);
+        }
+        devices.push(PlaybackDevice {
+            session_public_key: authorization.session_public_key,
+            certificate_sha256: authorization.certificate_sha256,
+            authorized_at_ms: U64(now),
+            expires_at_ms: U64(now
+                .checked_add(PLAYBACK_DEVICE_LIFETIME_MS)
+                .expect("Time overflow")),
+            authorizing_public_key: (env::signer_account_id() == *account_id)
+                .then(|| String::from(&env::signer_account_pk())),
+        });
+        write_raw(&key, &devices);
+    }
+
+    pub fn get_publication(&self, publication_id: String) -> Option<Publication> {
+        self.publications.get(&publication_id)
+    }
+
+    pub fn get_publications_count(&self) -> u64 {
+        self.publication_count
+    }
+
+    pub fn get_publications(
+        &self,
+        from_index: Option<U64>,
+        limit: Option<u64>,
+    ) -> Vec<Publication> {
+        let start = from_index.unwrap_or(U64(0)).0.min(self.publication_count);
+        let end = start
+            .saturating_add(limit.unwrap_or(50).min(100))
+            .min(self.publication_count);
+        (start..end)
+            .map(|position| {
+                let publication_id = self
+                    .publication_ids
+                    .get(&position)
+                    .expect("Publication index is inconsistent");
+                self.publications
+                    .get(&publication_id)
+                    .expect("Indexed publication is missing")
+            })
+            .collect()
+    }
+
+    pub fn get_takedown(&self, publication_id: String) -> Option<TakedownRecord> {
+        self.takedowns.get(&publication_id)
+    }
+
+    pub fn get_ticket(&self, ticket_id: String) -> Option<Ticket> {
+        self.tickets.get(&ticket_id)
+    }
+
+    pub fn get_escrow_balance(&self) -> U128 {
+        U128(self.escrow_balance)
+    }
+
+    pub fn get_tax_account_id(&self) -> AccountId {
+        self.tax_account_id.clone()
+    }
+
+    pub fn get_vat_public_key(&self, key_version: u32) -> Option<String> {
+        self.vat_keys
+            .get(&key_version)
+            .map(|key| format!("ed25519:{}", near_sdk::bs58::encode(key).into_string()))
+    }
+
+    /// Revoking a VAT key only narrows authority, so the admin or guardian may do it at once.
+    /// Adding a key widens authority and is not available without a timelock.
+    pub fn revoke_vat_key(&mut self, key_version: u32) {
+        self.assert_admin_or_guardian();
+        require!(
+            self.vat_keys.remove(&key_version).is_some(),
+            "Unknown VAT key version"
+        );
+        emit_governance_event(
+            "vat_key_revoked",
+            near_sdk::serde_json::json!({ "key_version": key_version }),
+        );
+    }
+
+    pub fn get_creator_balance(&self, creator_id: AccountId) -> U128 {
+        U128(self.creator_balances.get(&creator_id).unwrap_or(0))
+    }
+
+    pub fn get_platform_balance(&self) -> U128 {
+        U128(self.platform_balance)
+    }
+
+    pub fn get_platform_near_balance(&self) -> U128 {
+        U128(self.platform_near_balance)
+    }
+
+    pub fn get_quote_key_version(&self) -> u32 {
+        self.quote_key_version
+    }
+
+    pub fn get_storage_reserve_status(&self) -> StorageReserveStatus {
+        self.storage_reserve_status()
+    }
+
+    pub fn get_public_testnet_beta_state(&self) -> Option<PublicTestnetBetaState> {
+        self.public_testnet_beta_state()
+    }
+
+    pub fn get_public_upload_policy(&self) -> Option<PublicUploadPolicy> {
+        read_raw(PUBLIC_UPLOAD_POLICY_KEY)
+    }
+
+    pub fn set_public_upload_full_hd(&mut self, enabled: bool) -> PublicUploadPolicy {
+        self.assert_admin();
+        require!(
+            self.network_id() == "testnet",
+            "Public upload is testnet only"
+        );
+        require!(
+            self.bridge_frozen && self.new_purchases_paused(),
+            "Profile changes require paused purchases and a frozen bridge"
+        );
+        let mut policy = self
+            .get_public_upload_policy()
+            .expect("Public upload policy required");
+        require!(
+            policy.version == 1
+                && policy.environment == "public-testnet"
+                && policy.network == "testnet"
+                && policy.market_contract_id == env::current_account_id()
+                && policy.max_source_bytes.0 == PUBLIC_UPLOAD_MAX_SOURCE_BYTES
+                && policy.job_ttl_ms.0 == PUBLIC_TESTNET_BETA_JOB_TTL_MS
+                && policy.signed_quote_required,
+            "Public upload policy mismatch"
+        );
+        let standard: Vec<PublicUploadProfile> =
+            [PUBLIC_UPLOAD_PROFILE_HASH, LEGACY_UPLOAD_PROFILE_HASH]
+                .iter()
+                .map(|hash| PublicUploadProfile {
+                    profile_id: PROFILE.to_string(),
+                    profile_config_sha256: hash.to_string(),
+                })
+                .collect();
+        let mut full_hd = vec![PublicUploadProfile {
+            profile_id: PROFILE.to_string(),
+            profile_config_sha256: FULL_HD_UPLOAD_PROFILE_HASH.to_string(),
+        }];
+        full_hd.extend(standard.clone());
+        require!(
+            policy.profiles == standard || policy.profiles == full_hd,
+            "Unsupported public upload profiles"
+        );
+        let selected = if enabled { full_hd } else { standard };
+        if policy.profiles != selected {
+            policy.profiles = selected;
+            write_raw(PUBLIC_UPLOAD_POLICY_KEY, &policy);
+            self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        }
+        policy
+    }
+
+    pub fn get_public_testnet_beta_job(&self, job_id: String) -> Option<PublicTestnetBetaJob> {
+        read_raw(&public_testnet_beta_job_key(&job_id))
+    }
+
+    pub fn has_public_testnet_beta_job_today(&self, creator_id: AccountId) -> bool {
+        let day = env::block_timestamp_ms() / (24 * 60 * 60 * 1_000);
+        env::storage_has_key(&public_testnet_beta_day_key(&creator_id, day))
+    }
+
+    pub fn get_governance_state(&self) -> GovernanceState {
+        GovernanceState {
+            state_version: self.state_version,
+            admin_account_id: self.admin_account_id.clone(),
+            guardian_account_id: self.guardian_account_id.clone(),
+            active_bridge_account_id: self.active_bridge_account_id.clone(),
+            pending_bridge_account_id: self.pending_bridge_account_id.clone(),
+            bridge_frozen: self.bridge_frozen,
+            new_purchases_paused: self.new_purchases_paused(),
+            bridge_rotation_proposed_at_ms: self.bridge_rotation_proposed_at_ms.map(U64),
+        }
+    }
+
+    pub fn get_usdc_contract_id(&self) -> AccountId {
+        self.usdc_contract_id()
+    }
+}
+
+impl Contract {
+    fn public_testnet_beta_state(&self) -> Option<PublicTestnetBetaState> {
+        read_raw(PUBLIC_TESTNET_BETA_STATE_KEY)
+    }
+
+    fn require_public_upload_job(&self, job: &MediaJob) -> u64 {
+        require!(
+            job.generation == 1 && job.fee_asset == FeeAsset::Usdc && job.fee_quote_hash.is_some(),
+            "Invalid public upload job"
+        );
+        require!(
+            job.expected_source_bytes.0 <= PUBLIC_UPLOAD_MAX_SOURCE_BYTES
+                && job.profile_id == PROFILE
+                && [
+                    FULL_HD_UPLOAD_PROFILE_HASH,
+                    PUBLIC_UPLOAD_PROFILE_HASH,
+                    LEGACY_UPLOAD_PROFILE_HASH
+                ]
+                .contains(&job.profile_config_sha256.as_str()),
+            "Public upload policy mismatch"
+        );
+        job.created_at_ms
+            .checked_add(PUBLIC_TESTNET_BETA_JOB_TTL_MS)
+            .expect("Public upload deadline overflow")
+    }
+
+    fn admit_public_upload(&self, request: &PaidJobRequest) {
+        require!(
+            request.expected_source_bytes.0 <= PUBLIC_UPLOAD_MAX_SOURCE_BYTES
+                && request.profile_id == PROFILE
+                && self.get_public_upload_policy().is_some_and(|policy| policy
+                    .profiles
+                    .first()
+                    .is_some_and(
+                        |profile| profile.profile_config_sha256 == request.profile_config_sha256
+                    )),
+            "Public upload policy mismatch"
+        );
+        let now = env::block_timestamp_ms();
+        let deadline = now
+            .checked_add(PUBLIC_TESTNET_BETA_JOB_TTL_MS)
+            .expect("Public upload deadline overflow");
+        require!(
+            request.upload_key_expires_at_ms.0 <= deadline,
+            "Upload key exceeds public upload deadline"
+        );
+        let day = now / (24 * 60 * 60 * 1_000);
+        let key = [PUBLIC_UPLOAD_CREATOR_PREFIX, request.creator_id.as_bytes()].concat();
+        let previous: Option<PublicUploadCreator> = read_raw(&key);
+        let mut count = 0;
+        if let Some(previous) = previous {
+            if let Some(job) = self.media_jobs.get(&previous.latest_job_id) {
+                require!(
+                    job.status == MediaJobStatus::Published
+                        || now >= self.require_public_upload_job(&job),
+                    "Creator already has an active public upload"
+                );
+            }
+            if previous.day == day {
+                count = previous.count;
+            }
+        }
+        require!(count < 2, "Public upload daily limit reached");
+        write_raw(
+            &key,
+            &PublicUploadCreator {
+                day,
+                count: count + 1,
+                latest_job_id: request.job_id.clone(),
+            },
+        );
+    }
+
+    fn active_public_testnet_beta(&self) -> Option<PublicTestnetBetaState> {
+        let state = self.public_testnet_beta_state()?;
+        (state.closed_at_ms.is_none() && env::block_timestamp_ms() < state.ends_at_ms.0)
+            .then_some(state)
+    }
+
+    fn assert_runway(&self, minimum_bytes: u128) {
+        require!(
+            self.storage_reserve_status().reserve_runway_bytes.0 >= minimum_bytes,
+            format!("Storage runway must remain at least {minimum_bytes} bytes")
+        );
+    }
+
+    fn public_testnet_beta_job(&self, job_id: &str) -> Option<PublicTestnetBetaJob> {
+        read_raw(&public_testnet_beta_job_key(job_id))
+    }
+
+    fn admit_public_testnet_beta_job(
+        &self,
+        request: &PaidJobRequest,
+        quote: &SponsoredUploadQuote,
+    ) -> PublicTestnetBetaJob {
+        let mut state = self
+            .active_public_testnet_beta()
+            .expect("Public beta is not active");
+        let now_ms = env::block_timestamp_ms();
+        require!(
+            now_ms < state.upload_closes_at_ms.0,
+            "Public beta upload admission is closed"
+        );
+        require!(
+            request.expected_source_bytes.0 <= PUBLIC_TESTNET_BETA_MAX_SOURCE_BYTES,
+            "Public beta source exceeds 1,000,000,000 bytes"
+        );
+        require!(
+            state.total_job_count < PUBLIC_TESTNET_BETA_MAX_JOBS,
+            "Public beta job limit reached"
+        );
+        let day = now_ms / (24 * 60 * 60 * 1_000);
+        let day_key = public_testnet_beta_day_key(&request.creator_id, day);
+        require!(
+            !env::storage_has_key(&day_key),
+            "Creator already has a public beta job today"
+        );
+        let job_key = public_testnet_beta_job_key(&request.job_id);
+        require!(
+            !env::storage_has_key(&job_key),
+            "Public beta job already exists"
+        );
+        let deadline_at_ms = now_ms
+            .checked_add(PUBLIC_TESTNET_BETA_JOB_TTL_MS)
+            .expect("Public beta job deadline overflow")
+            .min(state.ends_at_ms.0);
+        require!(
+            request.upload_key_expires_at_ms.0 <= deadline_at_ms,
+            "Upload key exceeds public beta job deadline"
+        );
+        let marker = PublicTestnetBetaJob {
+            creator_id: request.creator_id.clone(),
+            generation: 1,
+            request_sha256: paid_job_request_sha256(request),
+            sponsor_quote_id: quote.quote_id.clone(),
+            admitted_at_ms: U64(now_ms),
+            deadline_at_ms: U64(deadline_at_ms),
+        };
+        state.total_job_count = state
+            .total_job_count
+            .checked_add(1)
+            .expect("Public beta job count overflow");
+        write_raw(&job_key, &marker);
+        env::storage_write(&day_key, request.job_id.as_bytes());
+        write_raw(PUBLIC_TESTNET_BETA_STATE_KEY, &state);
+        marker
+    }
+
+    fn require_public_testnet_beta_job(&self, job: &MediaJob) -> PublicTestnetBetaJob {
+        let marker = self
+            .public_testnet_beta_job(&job.job_id)
+            .expect("Public beta job marker not found");
+        require!(
+            marker.creator_id == job.creator_id,
+            "Public beta creator mismatch"
+        );
+        require!(
+            marker.generation == job.generation,
+            "Public beta generation mismatch"
+        );
+        require!(
+            job.fee_quote_hash.as_deref() == Some(marker.sponsor_quote_id.as_str()),
+            "Public beta sponsor quote mismatch"
+        );
+        marker
+    }
+
+    fn new_purchases_paused(&self) -> bool {
+        env::storage_read(NEW_PURCHASES_PAUSED_KEY).as_deref() == Some(&[1])
+    }
+
+    fn storage_reserve_status(&self) -> StorageReserveStatus {
+        let storage_usage = env::storage_usage();
+        let storage_byte_cost = env::storage_byte_cost().as_yoctonear();
+        let storage_stake = u128::from(storage_usage)
+            .checked_mul(storage_byte_cost)
+            .expect("Storage stake overflow");
+        let protected = storage_stake
+            .checked_add(self.near_operational_reserve)
+            .expect("Protected NEAR balance overflow");
+        let account_balance = env::account_balance().as_yoctonear();
+        let reserve_headroom = account_balance.saturating_sub(protected);
+        StorageReserveStatus {
+            storage_usage_bytes: U64(storage_usage),
+            storage_byte_cost_yocto: U128(storage_byte_cost),
+            storage_stake_yocto: U128(storage_stake),
+            operational_reserve_yocto: U128(self.near_operational_reserve),
+            account_balance_yocto: U128(account_balance),
+            reserve_headroom_yocto: U128(reserve_headroom),
+            reserve_runway_bytes: U128(reserve_headroom / storage_byte_cost),
+            reserve_covered: account_balance >= protected,
+        }
+    }
+
+    fn verify_creator_fee_quote(
+        &self,
+        request: &PaidJobRequest,
+        quote: &CreatorFeeQuote,
+        signature: &[u8],
+    ) {
+        let now = env::block_timestamp_ms();
+        require!(
+            quote.domain == "youtick.creator-fee-quote",
+            "Invalid quote domain"
+        );
+        require!(quote.version == "1", "Invalid quote version");
+        require!(quote.network == self.network_id(), "Quote network mismatch");
+        require!(
+            quote.contract_id == env::current_account_id(),
+            "Quote contract mismatch"
+        );
+        require!(
+            quote.creator_id == request.creator_id && quote.job_id == request.job_id,
+            "Quote job mismatch"
+        );
+        require!(
+            quote.expected_source_bytes == request.expected_source_bytes,
+            "Quote byte count mismatch"
+        );
+        require!(
+            quote.quote_key_version == self.quote_key_version,
+            "Quote key version mismatch"
+        );
+        require!(
+            quote.rate_timestamp_ms.0 <= now
+                && now - quote.rate_timestamp_ms.0 <= QUOTE_MAX_SOURCE_AGE_MS,
+            "Stale quote rate"
+        );
+        require!(
+            quote.expires_at_ms.0 > now
+                && quote.expires_at_ms.0 - quote.rate_timestamp_ms.0 <= QUOTE_MAX_LIFETIME_MS,
+            "Expired quote"
+        );
+        require!(
+            !quote.rate_source.is_empty()
+                && !quote.rate_source.contains('\r')
+                && !quote.rate_source.contains('\n'),
+            "Invalid rate source"
+        );
+        let fee_usd_micro = upload_fee_usdc(request.expected_source_bytes.0);
+        require!(
+            quote.fee_usd_micro.0 == fee_usd_micro,
+            "Quote USD fee mismatch"
+        );
+        require!(quote.near_usd_micro.0 > 0, "Invalid NEAR/USD rate");
+        let fee_near_yocto = div_ceil(
+            fee_usd_micro
+                .checked_mul(10u128.pow(24))
+                .expect("NEAR fee overflow"),
+            quote.near_usd_micro.0,
+        );
+        require!(
+            quote.fee_near_yocto.0 == fee_near_yocto,
+            "Quote NEAR fee mismatch"
+        );
+        let message = canonical_quote_message(quote);
+        self.verify_quote_signature(&message, &quote.quote_id, signature);
+    }
+
+    fn verify_sponsored_upload_quote(
+        &self,
+        request: &PaidJobRequest,
+        quote: &SponsoredUploadQuote,
+        signature: &[u8],
+    ) {
+        assert_paid_job_request(request);
+        let now_ms = env::block_timestamp_ms();
+        let block_height = env::block_height();
+        require!(
+            quote.domain == "youtick.sponsored-upload-quote",
+            "Invalid quote domain"
+        );
+        require!(quote.version == "1", "Invalid quote version");
+        require!(quote.network == self.network_id(), "Quote network mismatch");
+        require!(
+            quote.contract_id == env::current_account_id(),
+            "Quote contract mismatch"
+        );
+        require!(
+            quote.creator_id == request.creator_id && quote.job_id == request.job_id,
+            "Quote job mismatch"
+        );
+        require!(
+            quote.request_sha256 == paid_job_request_sha256(request),
+            "Quote request mismatch"
+        );
+        require!(
+            quote.expected_source_bytes == request.expected_source_bytes,
+            "Quote byte count mismatch"
+        );
+        require!(
+            quote.delegate_receiver_id == self.usdc_contract_id()
+                && quote.delegate_method == "ft_transfer_call"
+                && quote.delegate_gas.0 == SPONSORED_UPLOAD_DELEGATE_GAS
+                && quote.delegate_deposit_yocto.0 == SPONSORED_UPLOAD_DEPOSIT_YOCTO,
+            "Invalid sponsored delegate policy"
+        );
+        require!(
+            quote.quote_block_height.0 <= block_height
+                && block_height <= quote.max_delegate_block_height.0
+                && quote.quote_block_height.0 < quote.max_delegate_block_height.0
+                && quote
+                    .max_delegate_block_height
+                    .0
+                    .checked_sub(quote.quote_block_height.0)
+                    .is_some_and(|window| window <= SPONSORED_UPLOAD_MAX_BLOCK_WINDOW),
+            "Expired delegate block window"
+        );
+        require!(
+            quote.issued_at_ms.0 <= now_ms
+                && now_ms - quote.issued_at_ms.0 <= QUOTE_MAX_LIFETIME_MS,
+            "Stale sponsored quote"
+        );
+        require!(
+            quote.expires_at_ms.0 > now_ms
+                && quote.expires_at_ms.0 > quote.issued_at_ms.0
+                && quote.expires_at_ms.0 - quote.issued_at_ms.0 <= QUOTE_MAX_LIFETIME_MS,
+            "Expired quote"
+        );
+        require!(
+            quote.quote_key_version == self.quote_key_version,
+            "Quote key version mismatch"
+        );
+        let upload_fee_usdc = upload_fee_usdc(request.expected_source_bytes.0);
+        require!(
+            quote.upload_fee_usdc.0 == upload_fee_usdc,
+            "Quote upload fee mismatch"
+        );
+        require!(
+            quote.sponsor_fee_usdc.0 == SPONSORED_UPLOAD_FEE_USDC,
+            "Quote sponsor fee mismatch"
+        );
+        let total_fee_usdc = upload_fee_usdc
+            .checked_add(SPONSORED_UPLOAD_FEE_USDC)
+            .expect("Sponsored total fee overflow");
+        require!(
+            quote.total_fee_usdc.0 == total_fee_usdc,
+            "Quote total fee mismatch"
+        );
+        let message = canonical_sponsored_upload_quote_message(quote);
+        self.verify_quote_signature(&message, &quote.quote_id, signature);
+    }
+
+    fn verify_quote_signature(&self, message: &str, quote_id: &str, signature: &[u8]) {
+        require!(
+            quote_id == hex_sha256(message.as_bytes()),
+            "Quote ID mismatch"
+        );
+        let signature: [u8; 64] = signature
+            .try_into()
+            .unwrap_or_else(|_| env::panic_str("Invalid quote signature"));
+        let public_key: [u8; 32] = self
+            .quote_public_key
+            .as_slice()
+            .try_into()
+            .expect("Invalid quote public key");
+        require!(
+            env::ed25519_verify(&signature, message.as_bytes(), &public_key),
+            "Invalid quote signature"
+        );
+    }
+
+    fn network_id(&self) -> String {
+        if env::current_account_id().as_str().ends_with(".testnet") {
+            "testnet".to_string()
+        } else if env::current_account_id().as_str().ends_with(".near") {
+            "mainnet".to_string()
+        } else {
+            env::panic_str("Unsupported NEAR network")
+        }
+    }
+    fn assert_bridge(&self) {
+        require!(
+            env::predecessor_account_id() == self.active_bridge_account_id,
+            "Only the configured Livepeer bridge can call this method"
+        );
+        require!(!self.bridge_frozen, "Livepeer bridge is frozen");
+    }
+
+    fn assert_admin(&self) {
+        require!(
+            env::predecessor_account_id() == self.admin_account_id,
+            "Only the admin account can call this method"
+        );
+    }
+
+    fn assert_guardian(&self) {
+        require!(
+            env::predecessor_account_id() == self.guardian_account_id,
+            "Only the guardian account can call this method"
+        );
+    }
+
+    fn assert_admin_or_guardian(&self) {
+        let predecessor = env::predecessor_account_id();
+        require!(
+            predecessor == self.admin_account_id || predecessor == self.guardian_account_id,
+            "Only the admin or guardian account can call this method"
+        );
+    }
+
+    fn assert_valid_bridge_account(&self, account_id: &AccountId) {
+        require!(
+            account_id != &self.active_bridge_account_id
+                && account_id != &self.platform_account_id
+                && account_id != &self.takedown_authority_id
+                && account_id != &self.admin_account_id
+                && account_id != &self.guardian_account_id,
+            "Bridge account must be a separate authority"
+        );
+    }
+
+    fn role_account_id(&self, role: GovernanceRole) -> &AccountId {
+        match role {
+            GovernanceRole::Admin => &self.admin_account_id,
+            GovernanceRole::Guardian => &self.guardian_account_id,
+            GovernanceRole::Platform => &self.platform_account_id,
+            GovernanceRole::TakedownAuthority => &self.takedown_authority_id,
+        }
+    }
+
+    fn governance_delay_ms(&self, mainnet_delay_ms: u64) -> u64 {
+        if self.network_id() == "testnet" {
+            0
+        } else {
+            mainnet_delay_ms
+        }
+    }
+
+    fn role_rotation_delay_ms(&self) -> u64 {
+        self.governance_delay_ms(MAINNET_ROLE_ROTATION_DELAY_MS)
+    }
+
+    fn bridge_rotation_executable_at_ms(&self, proposed_at_ms: u64) -> u64 {
+        proposed_at_ms
+            .checked_add(self.governance_delay_ms(MAINNET_BRIDGE_ROTATION_DELAY_MS))
+            .expect("Bridge rotation delay overflow")
+    }
+
+    fn reopen_executable_at_ms(&self, requested_at_ms: u64) -> u64 {
+        requested_at_ms
+            .checked_add(self.governance_delay_ms(MAINNET_REOPEN_DELAY_MS))
+            .expect("Reopen delay overflow")
+    }
+
+    fn assert_reopen_elapsed(&self, request_key: &[u8]) {
+        let requested_at_ms = read_raw::<u64>(request_key).expect("Reopen has not been requested");
+        require!(
+            env::block_timestamp_ms() >= self.reopen_executable_at_ms(requested_at_ms),
+            "Reopen timelock has not elapsed"
+        );
+    }
+
+    // Applies the same separation rules as `new` to the post-rotation roles.
+    fn assert_valid_role_assignment(&self, role: GovernanceRole, next_account_id: &AccountId) {
+        require!(
+            next_account_id != self.role_account_id(role),
+            "Role already uses this account"
+        );
+        let pick = |candidate: GovernanceRole| {
+            if candidate == role {
+                next_account_id
+            } else {
+                self.role_account_id(candidate)
+            }
+        };
+        let admin = pick(GovernanceRole::Admin);
+        let guardian = pick(GovernanceRole::Guardian);
+        let platform = pick(GovernanceRole::Platform);
+        let takedown = pick(GovernanceRole::TakedownAuthority);
+        let bridge = &self.active_bridge_account_id;
+        require!(
+            platform != bridge,
+            "Platform and bridge accounts must differ"
+        );
+        require!(admin != guardian, "Admin and guardian accounts must differ");
+        require!(
+            admin != bridge && guardian != bridge,
+            "Admin, guardian and bridge accounts must differ"
+        );
+        require!(
+            takedown != bridge && takedown != platform,
+            "Takedown authority must be separate"
+        );
+        if let Some(pending_bridge) = &self.pending_bridge_account_id {
+            require!(
+                next_account_id != pending_bridge,
+                "Role account must differ from the pending bridge"
+            );
+        }
+    }
+
+    fn assert_takedown_authority(&self) {
+        require!(
+            env::predecessor_account_id() == self.takedown_authority_id,
+            "Only the configured takedown authority can call this method"
+        );
+    }
+
+    fn job_for_generation(&self, job_id: &str, generation: u64) -> MediaJob {
+        let job = self
+            .media_jobs
+            .get(&job_id.to_string())
+            .expect("Media job not found");
+        require!(
+            job.generation == generation,
+            "Media job generation mismatch"
+        );
+        job
+    }
+
+    fn bind_identity(
+        &self,
+        bindings: &LookupMap<String, String>,
+        identity: &str,
+        job_id: &str,
+        label: &str,
+    ) {
+        if let Some(existing) = bindings.get(&identity.to_string()) {
+            require!(existing == job_id, format!("{label} is already bound"));
+        }
+    }
+
+    fn usdc_contract_id(&self) -> AccountId {
+        let current = env::current_account_id();
+        let value = if current.as_str().ends_with(".testnet") {
+            TESTNET_USDC
+        } else if current.as_str().ends_with(".near") {
+            MAINNET_USDC
+        } else {
+            env::panic_str("Unsupported NEAR network");
+        };
+        value.parse().expect("Invalid embedded USDC account")
+    }
+
+    fn ft_transfer(&self, receiver_id: AccountId, amount: u128, memo: &str) -> Promise {
+        Promise::new(self.usdc_contract_id()).function_call(
+            "ft_transfer".to_string(),
+            near_sdk::serde_json::to_vec(&FtTransferArgs {
+                receiver_id,
+                amount: U128(amount),
+                memo: Some(memo.to_string()),
+            })
+            .expect("Failed to serialize ft_transfer"),
+            NearToken::from_yoctonear(1),
+            FT_TRANSFER_GAS,
+        )
+    }
+}
+
+fn publication_matches(
+    publication: &Publication,
+    submission: &LivepeerPublicationSubmission,
+) -> bool {
+    publication.generation == submission.generation
+        && publication.creator_id == submission.creator_id
+        && publication.expected_source_bytes == submission.expected_source_bytes
+        && publication.profile_id == submission.profile_id
+        && publication.profile_config_sha256 == submission.profile_config_sha256
+        && publication.asset_id_hash == submission.asset_id_hash
+        && publication.playback_id == submission.playback_id
+        && publication.project_id_hash == submission.project_id_hash
+        && publication.verified_source_bytes == submission.verified_source_bytes
+        && publication.provider_source_fingerprint == submission.provider_source_fingerprint
+        && publication.ready_at_ms == submission.ready_at_ms
+        && publication.published_availability == submission.availability
+}
+
+// --- Market v2 tickets (protocol/youtick-market-v2) ------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+struct ActionProbe {
+    action: Option<String>,
+}
+
+fn transfer_action(msg: &str) -> Option<String> {
+    near_sdk::serde_json::from_str::<ActionProbe>(msg)
+        .ok()
+        .and_then(|probe| probe.action)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct TicketSplit {
+    vat: u128,
+    platform: u128,
+    creator: u128,
+}
+
+/// VAT is attested by youtick; the contract only bounds it. `vat + platform + creator == gross`.
+fn split_ticket_amount(gross: u128, vat: u128) -> TicketSplit {
+    require!(
+        gross >= MIN_TICKET_PRICE_USDC,
+        "Ticket price is below the 5 USDC minimum"
+    );
+    require!(
+        vat.checked_mul(10_000 + MAX_VAT_RATE_BPS)
+            .expect("VAT overflow")
+            <= gross.checked_mul(MAX_VAT_RATE_BPS).expect("Gross overflow"),
+        "VAT exceeds the maximum inclusive rate"
+    );
+    let net = gross - vat;
+    let platform = net / PLATFORM_DIVISOR;
+    TicketSplit {
+        vat,
+        platform,
+        creator: net - platform,
+    }
+}
+
+/// Parses `ed25519:<base58>` and requires the canonical encoding of exactly 32 bytes, so the
+/// raw string can be used in signed messages.
+fn parse_ed25519_key(value: &str) -> [u8; 32] {
+    let encoded = value
+        .strip_prefix("ed25519:")
+        .unwrap_or_else(|| env::panic_str("Public keys must be ed25519"));
+    let bytes = near_sdk::bs58::decode(encoded)
+        .into_vec()
+        .unwrap_or_else(|_| env::panic_str("Invalid base58 public key"));
+    let key: [u8; 32] = bytes
+        .try_into()
+        .unwrap_or_else(|_| env::panic_str("Public keys must be 32 bytes"));
+    require!(
+        near_sdk::bs58::encode(key).into_string() == encoded,
+        "Public key must be canonical base58"
+    );
+    key
+}
+
+fn parse_canonical_decimal(label: &str, value: &str, max: u128) -> u128 {
+    let parsed = value
+        .parse::<u128>()
+        .unwrap_or_else(|_| env::panic_str(&format!("{label} must be an unsigned integer")));
+    require!(
+        parsed.to_string() == value && parsed <= max,
+        format!("{label} must be a canonical in-range integer")
+    );
+    parsed
+}
+
+fn parse_signature_expiry(value: &str, now_ms: u64) -> u64 {
+    let expires = parse_canonical_decimal("expires_at_ms", value, u64::MAX as u128) as u64;
+    require!(expires > now_ms, "Signature expired");
+    require!(
+        expires - now_ms <= MAX_SIGNATURE_TTL_MS,
+        "Signature expiry is too far ahead"
+    );
+    expires
+}
+
+fn signed_lines(fields: &[&str]) -> String {
+    for field in fields {
+        require!(
+            !field.is_empty() && !field.contains(['\n', '\r']),
+            "Signed fields must be non-empty single lines"
+        );
+    }
+    fields.join("\n")
+}
+
+fn verify_ed25519(signature: &str, message: &str, public_key: &[u8; 32], error: &str) {
+    use near_sdk::base64::Engine;
+    let bytes = near_sdk::base64::engine::general_purpose::STANDARD
+        .decode(signature)
+        .unwrap_or_else(|_| env::panic_str(error));
+    let signature: [u8; 64] = bytes.try_into().unwrap_or_else(|_| env::panic_str(error));
+    require!(
+        env::ed25519_verify(&signature, message.as_bytes(), public_key),
+        error
+    );
+}
+
+fn emit_market_v2_event(event: &str, data: near_sdk::serde_json::Value) {
+    env::log_str(&format!(
+        "EVENT_JSON:{}",
+        near_sdk::serde_json::json!({
+            "standard": "youtick_market",
+            "version": "2.0.0",
+            "event": event,
+            "data": [data],
+        })
+    ));
+}
+
+impl Contract {
+    fn buy_ticket_v2(&mut self, amount: U128, purchase: PurchaseMessageV2) -> PromiseOrValue<U128> {
+        require!(
+            purchase.action == BUY_TICKET_V2_ACTION,
+            "Unsupported transfer action"
+        );
+        assert_identifier("publication_id", &purchase.publication_id);
+        let ticket_key = parse_ed25519_key(&purchase.ticket_public_key);
+        let ticket_id = hex_sha256(&ticket_key);
+        parse_ed25519_key(&purchase.device.session_public_key);
+        assert_sha256("certificate_sha256", &purchase.device.certificate_sha256);
+        let now = env::block_timestamp_ms();
+        parse_signature_expiry(&purchase.device.expires_at_ms, now);
+        parse_signature_expiry(&purchase.vat.expires_at_ms, now);
+        let vat =
+            parse_canonical_decimal("vat_usdc_micro", &purchase.vat.vat_usdc_micro, u128::MAX);
+        let vat_key_version =
+            parse_canonical_decimal("key_version", &purchase.vat.key_version, u32::MAX as u128)
+                as u32;
+
+        if self.new_purchases_paused()
+            || (self.public_testnet_beta_state().is_some()
+                && self.active_public_testnet_beta().is_none())
+        {
+            return PromiseOrValue::Value(amount);
+        }
+        let publication = self
+            .publications
+            .get(&purchase.publication_id)
+            .expect("Publication not found");
+        // An existing ticket_id (a reused key) returns the full amount and changes nothing.
+        if publication.availability != PublicationAvailability::Active
+            || amount != publication.price_usdc
+            || self.tickets.get(&ticket_id).is_some()
+        {
+            return PromiseOrValue::Value(amount);
+        }
+
+        let network = self.network_id();
+        let contract_id = env::current_account_id();
+        let device_message = signed_lines(&[
+            TICKET_SIGNATURE_DOMAIN,
+            &network,
+            contract_id.as_str(),
+            "purchase_device",
+            &ticket_id,
+            &purchase.device.expires_at_ms,
+            &purchase.publication_id,
+            &purchase.device.session_public_key,
+            &purchase.device.certificate_sha256,
+        ]);
+        verify_ed25519(
+            &purchase.device.signature,
+            &device_message,
+            &ticket_key,
+            "Invalid ticket signature",
+        );
+        let vat_key: [u8; 32] = self
+            .vat_keys
+            .get(&vat_key_version)
+            .unwrap_or_else(|| env::panic_str("Unknown VAT key version"))
+            .try_into()
+            .expect("Invalid stored VAT key");
+        let gross = amount.0.to_string();
+        let vat_message = signed_lines(&[
+            VAT_DOMAIN,
+            &network,
+            contract_id.as_str(),
+            &ticket_id,
+            &purchase.publication_id,
+            &gross,
+            &purchase.vat.vat_usdc_micro,
+            &purchase.vat.expires_at_ms,
+            &purchase.vat.key_version,
+        ]);
+        verify_ed25519(
+            &purchase.vat.signature,
+            &vat_message,
+            &vat_key,
+            "Invalid VAT attestation",
+        );
+        let split = split_ticket_amount(amount.0, vat);
+
+        let ticket = Ticket {
+            ticket_id: ticket_id.clone(),
+            ticket_public_key: purchase.ticket_public_key,
+            publication_id: purchase.publication_id.clone(),
+            creator_id: publication.creator_id.clone(),
+            rail: TicketRail::Crypto,
+            status: TicketStatus::Purchased,
+            gross_usdc_micro: amount,
+            vat_usdc_micro: U128(split.vat),
+            platform_usdc_micro: U128(split.platform),
+            creator_usdc_micro: U128(split.creator),
+            vat_key_version,
+            purchased_at_ms: U64(now),
+            device_epoch: 0,
+            devices: vec![TicketDevice {
+                session_public_key: purchase.device.session_public_key,
+                certificate_sha256: purchase.device.certificate_sha256,
+                authorized_at_ms: U64(now),
+                expires_at_ms: U64(now
+                    .checked_add(PLAYBACK_DEVICE_LIFETIME_MS)
+                    .expect("Time overflow")),
+            }],
+            card: None,
+        };
+        debug_assert!(ticket.devices.len() <= MAX_TICKET_DEVICES);
+        self.tickets.insert(&ticket_id, &ticket);
+        self.escrow_balance = self
+            .escrow_balance
+            .checked_add(amount.0)
+            .expect("Escrow balance overflow");
+        // Tickets are never deleted and the contract pays their storage, so every purchase
+        // keeps the emergency runway (a failed check panics and the buyer is refunded).
+        self.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        emit_market_v2_event(
+            "ticket_purchased",
+            near_sdk::serde_json::json!({
+                "ticket_id": ticket_id,
+                "publication_id": purchase.publication_id,
+                "creator_id": publication.creator_id,
+                "rail": "crypto",
+                "asset": self.usdc_contract_id(),
+                "gross_usdc_micro": gross,
+                "vat_usdc_micro": split.vat.to_string(),
+                "net_usdc_micro": (amount.0 - split.vat).to_string(),
+                "platform_usdc_micro": split.platform.to_string(),
+                "creator_usdc_micro": split.creator.to_string(),
+                "vat_key_version": vat_key_version.to_string(),
+                "status": "purchased",
+            }),
+        );
+        PromiseOrValue::Value(U128(0))
+    }
+}
+
+fn public_testnet_beta_job_key(job_id: &str) -> Vec<u8> {
+    [PUBLIC_TESTNET_BETA_JOB_PREFIX, job_id.as_bytes()].concat()
+}
+
+fn public_testnet_beta_day_key(creator_id: &AccountId, day: u64) -> Vec<u8> {
+    [
+        PUBLIC_TESTNET_BETA_DAY_PREFIX,
+        format!("{creator_id}:{day}").as_bytes(),
+    ]
+    .concat()
+}
+
+fn read_raw<T: BorshDeserialize>(key: &[u8]) -> Option<T> {
+    env::storage_read(key).map(|value| T::try_from_slice(&value).expect("Invalid raw state"))
+}
+
+fn assert_playback_session(session: &PlaybackSessionAuthorization) {
+    assert_sha256("certificate_sha256", &session.certificate_sha256);
+    let key: near_sdk::PublicKey = session
+        .session_public_key
+        .parse()
+        .expect("Invalid playback device key");
+    require!(
+        key.curve_type() == near_sdk::CurveType::ED25519,
+        "Invalid playback device key"
+    );
+    require!(
+        session.authorization_duration_ms.0 == PLAYBACK_DEVICE_LIFETIME_MS,
+        "Invalid playback device duration"
+    );
+}
+
+fn playback_devices_key(account_id: &AccountId) -> Vec<u8> {
+    [PLAYBACK_DEVICE_PREFIX, account_id.as_bytes()].concat()
+}
+
+fn role_rotation_key(role: GovernanceRole) -> Vec<u8> {
+    let tag: &[u8] = match role {
+        GovernanceRole::Admin => b"admin",
+        GovernanceRole::Guardian => b"guardian",
+        GovernanceRole::Platform => b"platform",
+        GovernanceRole::TakedownAuthority => b"takedown-authority",
+    };
+    [ROLE_ROTATION_PREFIX, tag].concat()
+}
+
+fn write_raw<T: BorshSerialize>(key: &[u8], value: &T) {
+    env::storage_write(
+        key,
+        &near_sdk::borsh::to_vec(value).expect("Failed to serialize raw state"),
+    );
+}
+
+fn assert_identifier(label: &str, value: &str) {
+    require!(
+        !value.is_empty()
+            && value.len() <= 128
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'-' | b'_' | b'.' | b':')),
+        format!("{label} must be 1-128 ASCII identifier characters")
+    );
+}
+
+fn assert_title(value: &str) {
+    require!(
+        !value.trim().is_empty() && value.len() <= 200,
+        "title must be 1-200 bytes"
+    );
+}
+
+fn assert_playback_id(value: &str) {
+    require!(
+        (6..=128).contains(&value.len())
+            && value
+                .bytes()
+                .all(|byte| { byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') }),
+        "playback_id must be 6-128 URL-safe ASCII characters"
+    );
+}
+
+fn assert_source_bytes(value: u128) {
+    require!(
+        (1..=PAID_SOURCE_MAX_BYTES).contains(&value),
+        "expected_source_bytes must be between 1 and 20,000,000,000"
+    );
+}
+
+fn upload_fee_usdc(source_bytes: u128) -> u128 {
+    assert_source_bytes(source_bytes);
+    div_ceil(
+        source_bytes
+            .checked_mul(UPLOAD_FEE_NUMERATOR)
+            .expect("Upload fee overflow"),
+        UPLOAD_FEE_DENOMINATOR,
+    )
+    .max(MIN_UPLOAD_FEE_USDC)
+}
+
+fn div_ceil(numerator: u128, denominator: u128) -> u128 {
+    numerator / denominator + u128::from(numerator % denominator != 0)
+}
+
+fn assert_paid_job_request(request: &PaidJobRequest) {
+    assert_identifier("job_id", &request.job_id);
+    assert_title(&request.title);
+    assert_source_bytes(request.expected_source_bytes.0);
+    assert_profile(&request.profile_id, &request.profile_config_sha256);
+    assert_upload_key(
+        &request.upload_public_key,
+        request.upload_key_expires_at_ms.0,
+    );
+    require!(
+        request.price_usdc.0 >= MIN_TICKET_PRICE_USDC,
+        "USDC ticket price must be at least 5.000000"
+    );
+}
+
+fn assert_upload_key(public_key: &str, expires_at_ms: u64) {
+    require!(
+        public_key.starts_with("ed25519:")
+            && (40..=80).contains(&public_key.len())
+            && public_key[8..].bytes().all(|byte| matches!(byte,
+                b'1'..=b'9' | b'A'..=b'H' | b'J'..=b'N' | b'P'..=b'Z' | b'a'..=b'k' | b'm'..=b'z')),
+        "Invalid upload public key"
+    );
+    require!(
+        expires_at_ms > env::block_timestamp_ms(),
+        "Upload key must not be expired"
+    );
+}
+
+fn canonical_quote_message(quote: &CreatorFeeQuote) -> String {
+    [
+        quote.domain.clone(),
+        quote.version.clone(),
+        quote.network.clone(),
+        quote.contract_id.to_string(),
+        quote.creator_id.to_string(),
+        quote.job_id.clone(),
+        quote.expected_source_bytes.0.to_string(),
+        quote.fee_usd_micro.0.to_string(),
+        quote.near_usd_micro.0.to_string(),
+        quote.fee_near_yocto.0.to_string(),
+        quote.rate_source.clone(),
+        quote.rate_timestamp_ms.0.to_string(),
+        quote.expires_at_ms.0.to_string(),
+        quote.quote_key_version.to_string(),
+    ]
+    .join("\n")
+}
+
+fn canonical_sponsored_upload_quote_message(quote: &SponsoredUploadQuote) -> String {
+    [
+        quote.domain.clone(),
+        quote.version.clone(),
+        quote.network.clone(),
+        quote.contract_id.to_string(),
+        quote.creator_id.to_string(),
+        quote.job_id.clone(),
+        quote.request_sha256.clone(),
+        quote.expected_source_bytes.0.to_string(),
+        quote.upload_fee_usdc.0.to_string(),
+        quote.sponsor_fee_usdc.0.to_string(),
+        quote.total_fee_usdc.0.to_string(),
+        quote.delegate_receiver_id.to_string(),
+        quote.delegate_method.clone(),
+        quote.delegate_gas.0.to_string(),
+        quote.delegate_deposit_yocto.0.to_string(),
+        quote.issued_at_ms.0.to_string(),
+        quote.quote_block_height.0.to_string(),
+        quote.max_delegate_block_height.0.to_string(),
+        quote.expires_at_ms.0.to_string(),
+        quote.quote_key_version.to_string(),
+    ]
+    .join("\n")
+}
+
+fn paid_job_request_sha256(request: &PaidJobRequest) -> String {
+    hex_sha256(
+        &near_sdk::serde_json::to_vec(request).expect("Failed to serialize paid job request"),
+    )
+}
+
+fn hex_sha256(value: &[u8]) -> String {
+    env::sha256(value)
+        .into_iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn job_matches_request(job: &MediaJob, request: &PaidJobRequest, quote: &CreatorFeeQuote) -> bool {
+    job.creator_id == request.creator_id
+        && job.title == request.title
+        && job.price_usdc == request.price_usdc
+        && job.expected_source_bytes == request.expected_source_bytes
+        && job.profile_id == request.profile_id
+        && job.profile_config_sha256 == request.profile_config_sha256
+        && job.upload_public_key == request.upload_public_key
+        && job.upload_key_expires_at_ms == request.upload_key_expires_at_ms
+        && job.fee_asset == FeeAsset::Near
+        && job.fee_amount == quote.fee_near_yocto
+        && job.fee_usd_micro == quote.fee_usd_micro
+        && job.fee_quote_hash.as_deref() == Some(quote.quote_id.as_str())
+}
+
+fn usdc_job_matches_request(
+    job: &MediaJob,
+    request: &PaidJobRequest,
+    fee_usd_micro: u128,
+    fee_quote_hash: Option<&str>,
+) -> bool {
+    job.creator_id == request.creator_id
+        && job.title == request.title
+        && job.price_usdc == request.price_usdc
+        && job.expected_source_bytes == request.expected_source_bytes
+        && job.profile_id == request.profile_id
+        && job.profile_config_sha256 == request.profile_config_sha256
+        && job.upload_public_key == request.upload_public_key
+        && job.upload_key_expires_at_ms == request.upload_key_expires_at_ms
+        && job.fee_asset == FeeAsset::Usdc
+        && job.fee_amount.0 == fee_usd_micro
+        && job.fee_usd_micro.0 == fee_usd_micro
+        && job.fee_quote_hash.as_deref() == fee_quote_hash
+}
+
+fn emit_media_job_authorized(job: &MediaJob) {
+    emit_market_event(
+        "media_job_authorized",
+        &format!("job:{}:{}:authorized", job.job_id, job.generation),
+        near_sdk::serde_json::json!({
+            "account_id": job.creator_id,
+            "job_id": job.job_id,
+            "generation": job.generation,
+            "asset": fee_asset_name(&job.fee_asset),
+            "amount": job.fee_amount,
+            "fee_usd_micro": job.fee_usd_micro,
+            "expected_source_bytes": job.expected_source_bytes,
+            "price_usdc": job.price_usdc,
+            "upload_key_expires_at_ms": job.upload_key_expires_at_ms,
+            "fee_quote_hash": job.fee_quote_hash,
+        }),
+    );
+}
+
+fn fee_asset_name(asset: &FeeAsset) -> &'static str {
+    match asset {
+        FeeAsset::Usdc => "USDC",
+        FeeAsset::Near => "NEAR",
+    }
+}
+
+fn emit_market_event(event: &str, idempotency_key: &str, mut data: near_sdk::serde_json::Value) {
+    let fields = data.as_object_mut().expect("Event data must be an object");
+    fields.insert(
+        "contract_id".to_string(),
+        near_sdk::serde_json::json!(env::current_account_id()),
+    );
+    fields.insert(
+        "predecessor_account_id".to_string(),
+        near_sdk::serde_json::json!(env::predecessor_account_id()),
+    );
+    fields.insert(
+        "block_height".to_string(),
+        near_sdk::serde_json::json!(env::block_height().to_string()),
+    );
+    fields.insert(
+        "block_timestamp_ms".to_string(),
+        near_sdk::serde_json::json!(env::block_timestamp_ms().to_string()),
+    );
+    fields.insert(
+        "idempotency_key".to_string(),
+        near_sdk::serde_json::json!(idempotency_key),
+    );
+    env::log_str(&format!(
+        "EVENT_JSON:{}",
+        near_sdk::serde_json::json!({
+            "standard": "youtick_market",
+            "version": "1.0.0",
+            "event": event,
+            "data": [data],
+        })
+    ));
+}
+
+fn emit_governance_event(event: &str, data: near_sdk::serde_json::Value) {
+    emit_market_event(
+        event,
+        &format!(
+            "governance:{event}:{}:{}",
+            env::predecessor_account_id(),
+            env::block_timestamp_ms()
+        ),
+        data,
+    );
+}
+
+fn assert_profile(profile_id: &str, profile_config_sha256: &str) {
+    require!(profile_id == PROFILE, "Unsupported paid-media profile");
+    assert_sha256("profile_config_sha256", profile_config_sha256);
+}
+
+fn assert_sha256(label: &str, value: &str) {
+    require!(
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        format!("{label} must be lowercase SHA-256 hex")
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use near_sdk::test_utils::{get_logs, VMContextBuilder};
+    use near_sdk::{testing_env, PromiseResult};
+
+    fn account(value: &str) -> AccountId {
+        value.parse().unwrap()
+    }
+
+    fn context(predecessor: &str) -> VMContextBuilder {
+        let mut builder = VMContextBuilder::new();
+        builder.current_account_id(account("market.testnet"));
+        builder.predecessor_account_id(account(predecessor));
+        builder.block_timestamp(1_785_589_300_000_000_000);
+        builder
+    }
+
+    fn contract() -> Contract {
+        testing_env!(context("market.testnet").build());
+        Contract::new(MarketInitConfig {
+            platform_account_id: account("platform.testnet"),
+            bridge_account_id: account("bridge.testnet"),
+            takedown_authority_id: account("governance.testnet"),
+            admin_account_id: account("admin.testnet"),
+            guardian_account_id: account("guardian.testnet"),
+            quote_public_key: Base64VecU8(vec![1; 32]),
+            quote_key_version: 1,
+            near_operational_reserve: U128(1_000_000_000_000_000_000_000_000),
+            tax_account_id: "tax.testnet".parse().unwrap(),
+            vat_public_key: "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF".to_string(),
+            vat_key_version: 1,
+        })
+    }
+
+    #[test]
+    fn upload_title_vectors_match_readable_and_compact_validation() {
+        let contract = contract();
+        let titles: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../protocol/paid-media-livepeer-v1/upload-title-vectors.json"
+        ))
+        .unwrap();
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../protocol/paid-media-livepeer-v1/compact-upload-vectors.json"
+        ))
+        .unwrap();
+        let fixture = &vectors[0];
+        let sender: AccountId =
+            serde_json::from_value(fixture["request"]["creator_id"].clone()).unwrap();
+        let encoded = fixture["compact_message"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("yt:u1:")
+            .unwrap();
+        let original: Base64VecU8 = serde_json::from_value(encoded.into()).unwrap();
+        for vector in titles.as_array().unwrap() {
+            let title = vector["title"].as_str().unwrap();
+            let accepted = vector["accepted"].as_bool().unwrap();
+            assert_eq!(
+                std::panic::catch_unwind(|| assert_title(title)).is_ok(),
+                accepted
+            );
+            let mut bytes = original.0.clone();
+            let offset = 4 + u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+            let end = offset
+                + 4
+                + u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            let mut replacement = (title.len() as u32).to_le_bytes().to_vec();
+            replacement.extend_from_slice(title.as_bytes());
+            bytes.splice(offset..end, replacement);
+            let encoded = serde_json::to_value(Base64VecU8(bytes)).unwrap();
+            let message = format!("yt:u1:{}", encoded.as_str().unwrap());
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compact_upload::decode(&message, &contract, &sender)
+            }));
+            assert_eq!(result.is_ok(), accepted, "{}", vector["name"]);
+            if let Ok(decoded) = result {
+                assert_eq!(decoded.title.as_deref(), Some(title));
+            }
+        }
+    }
+
+    fn public_beta_request(index: u32, creator: &str, source_bytes: u128) -> PaidJobRequest {
+        PaidJobRequest {
+            creator_id: account(creator),
+            job_id: format!("public-job-{index}"),
+            title: "Public beta".to_string(),
+            price_usdc: U128(MIN_TICKET_PRICE_USDC),
+            expected_source_bytes: U128(source_bytes),
+            profile_id: PROFILE.to_string(),
+            profile_config_sha256: "a".repeat(64),
+            upload_public_key: "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF".to_string(),
+            upload_key_expires_at_ms: U64(1_785_675_700_000),
+        }
+    }
+
+    fn public_beta_quote(request: &PaidJobRequest) -> SponsoredUploadQuote {
+        SponsoredUploadQuote {
+            domain: "youtick.sponsored-upload-quote".to_string(),
+            version: "1".to_string(),
+            network: "testnet".to_string(),
+            contract_id: account("market.testnet"),
+            creator_id: request.creator_id.clone(),
+            job_id: request.job_id.clone(),
+            request_sha256: paid_job_request_sha256(request),
+            expected_source_bytes: request.expected_source_bytes,
+            upload_fee_usdc: U128(MIN_UPLOAD_FEE_USDC),
+            sponsor_fee_usdc: U128(SPONSORED_UPLOAD_FEE_USDC),
+            total_fee_usdc: U128(MIN_UPLOAD_FEE_USDC + SPONSORED_UPLOAD_FEE_USDC),
+            delegate_receiver_id: account(TESTNET_USDC),
+            delegate_method: "ft_transfer_call".to_string(),
+            delegate_gas: U64(SPONSORED_UPLOAD_DELEGATE_GAS),
+            delegate_deposit_yocto: U128(1),
+            issued_at_ms: U64(1_785_589_300_000),
+            quote_block_height: U64(1),
+            max_delegate_block_height: U64(2),
+            expires_at_ms: U64(1_785_589_420_000),
+            quote_key_version: 1,
+            quote_id: format!("{:064x}", request.job_id.len()),
+        }
+    }
+
+    #[test]
+    fn selects_circle_usdc_from_network() {
+        let contract = contract();
+        assert_eq!(contract.get_usdc_contract_id(), account(TESTNET_USDC));
+        let mut builder = context("market.near");
+        builder.current_account_id(account("market.near"));
+        testing_env!(builder.build());
+        assert_eq!(contract.get_usdc_contract_id(), account(MAINNET_USDC));
+    }
+
+    #[test]
+    fn public_beta_enforces_size_daily_global_and_absolute_deadline() {
+        let contract = contract();
+        write_raw(
+            PUBLIC_TESTNET_BETA_STATE_KEY,
+            &PublicTestnetBetaState {
+                version: 1,
+                started_at_ms: U64(1_785_589_300_000),
+                upload_closes_at_ms: U64(1_786_712_500_000),
+                ends_at_ms: U64(1_786_798_900_000),
+                closed_at_ms: None,
+                total_job_count: 0,
+            },
+        );
+
+        let oversized = public_beta_request(99, "oversized.testnet", 1_000_000_001);
+        assert!(std::panic::catch_unwind(|| {
+            contract.admit_public_testnet_beta_job(&oversized, &public_beta_quote(&oversized));
+        })
+        .is_err());
+
+        let first = public_beta_request(0, "creator-0.testnet", 1_000_000_000);
+        contract.admit_public_testnet_beta_job(&first, &public_beta_quote(&first));
+        let same_day = public_beta_request(12, "creator-0.testnet", 1);
+        assert!(std::panic::catch_unwind(|| {
+            contract.admit_public_testnet_beta_job(&same_day, &public_beta_quote(&same_day));
+        })
+        .is_err());
+
+        for index in 1..PUBLIC_TESTNET_BETA_MAX_JOBS {
+            let creator = format!("creator-{index}.testnet");
+            let request = public_beta_request(index, &creator, 1_000_000_000);
+            let marker =
+                contract.admit_public_testnet_beta_job(&request, &public_beta_quote(&request));
+            assert_eq!(marker.deadline_at_ms, U64(1_785_675_700_000));
+        }
+        assert_eq!(
+            contract
+                .public_testnet_beta_state()
+                .unwrap()
+                .total_job_count,
+            PUBLIC_TESTNET_BETA_MAX_JOBS
+        );
+
+        let over_limit = public_beta_request(11, "creator-11.testnet", 1);
+        assert!(std::panic::catch_unwind(|| {
+            contract.admit_public_testnet_beta_job(&over_limit, &public_beta_quote(&over_limit));
+        })
+        .is_err());
+
+        let mut closed_context = context("market.testnet");
+        closed_context.block_timestamp(1_786_712_500_000_000_000);
+        testing_env!(closed_context.build());
+        let after_upload_close = public_beta_request(13, "creator-13.testnet", 1);
+        assert!(std::panic::catch_unwind(|| {
+            contract.admit_public_testnet_beta_job(
+                &after_upload_close,
+                &public_beta_quote(&after_upload_close),
+            );
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn public_beta_start_requires_exact_storage_runway() {
+        let mut contract = contract();
+        env::storage_write(NEW_PURCHASES_PAUSED_KEY, &[1]);
+        let storage_usage = env::storage_usage();
+        let byte_cost = env::storage_byte_cost().as_yoctonear();
+        let mut low = context("admin.testnet");
+        low.storage_usage(storage_usage);
+        low.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve
+                + (u128::from(storage_usage) + PUBLIC_TESTNET_BETA_START_RUNWAY_BYTES - 1)
+                    * byte_cost,
+        ));
+        testing_env!(low.build());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.start_public_testnet_beta();
+        }))
+        .is_err());
+
+        let mut exact = context("admin.testnet");
+        exact.storage_usage(storage_usage);
+        exact.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve
+                + (u128::from(storage_usage) + PUBLIC_TESTNET_BETA_START_RUNWAY_BYTES) * byte_cost,
+        ));
+        testing_env!(exact.build());
+        assert_eq!(contract.start_public_testnet_beta().total_job_count, 0);
+    }
+
+    #[test]
+    fn public_upload_keeps_creator_limits_without_the_beta_campaign_limit() {
+        let mut contract = contract();
+        assert!(contract.get_public_upload_policy().is_none());
+        write_raw(
+            PUBLIC_UPLOAD_POLICY_KEY,
+            &PublicUploadPolicy {
+                version: 1,
+                environment: "public-testnet".to_string(),
+                network: "testnet".to_string(),
+                market_contract_id: account("market.testnet"),
+                max_source_bytes: U128(PUBLIC_UPLOAD_MAX_SOURCE_BYTES),
+                job_ttl_ms: U64(PUBLIC_TESTNET_BETA_JOB_TTL_MS),
+                signed_quote_required: true,
+                profiles: [PUBLIC_UPLOAD_PROFILE_HASH, LEGACY_UPLOAD_PROFILE_HASH]
+                    .iter()
+                    .map(|hash| PublicUploadProfile {
+                        profile_id: PROFILE.to_string(),
+                        profile_config_sha256: hash.to_string(),
+                    })
+                    .collect(),
+            },
+        );
+        testing_env!(context(TESTNET_USDC).build());
+        let mut first = public_beta_request(0, "creator.testnet", PUBLIC_UPLOAD_MAX_SOURCE_BYTES);
+        first.profile_config_sha256 = PUBLIC_UPLOAD_PROFILE_HASH.to_string();
+        let mut oversized = first.clone();
+        oversized.expected_source_bytes = U128(PUBLIC_UPLOAD_MAX_SOURCE_BYTES + 1);
+        assert!(std::panic::catch_unwind(|| contract.admit_public_upload(&oversized)).is_err());
+        let mut wrong_profile = first.clone();
+        wrong_profile.profile_config_sha256 = "a".repeat(64);
+        assert!(std::panic::catch_unwind(|| contract.admit_public_upload(&wrong_profile)).is_err());
+        contract.admit_public_upload(&first);
+        let mut job = contract.create_usdc_paid_job(first.clone(), 1_600_000, Some("a".repeat(64)));
+        let mut legacy_job = job.clone();
+        legacy_job.profile_config_sha256 = LEGACY_UPLOAD_PROFILE_HASH.to_string();
+        assert_eq!(
+            contract.require_public_upload_job(&legacy_job),
+            contract.require_public_upload_job(&job)
+        );
+        let mut full_hd_job = job.clone();
+        full_hd_job.profile_config_sha256 = FULL_HD_UPLOAD_PROFILE_HASH.to_string();
+        let deadline = contract.require_public_upload_job(&full_hd_job);
+        let mut full_hd_request = first.clone();
+        full_hd_request.creator_id = account("fullhd.testnet");
+        full_hd_request.job_id = "public-job-fullhd".to_string();
+        full_hd_request.profile_config_sha256 = FULL_HD_UPLOAD_PROFILE_HASH.to_string();
+        assert!(
+            std::panic::catch_unwind(|| contract.admit_public_upload(&full_hd_request)).is_err()
+        );
+        testing_env!(context("admin.testnet").build());
+        contract.bridge_frozen = true;
+        env::storage_write(NEW_PURCHASES_PAUSED_KEY, &[1]);
+        contract.set_public_upload_full_hd(true);
+        contract.admit_public_upload(&full_hd_request);
+        contract.set_public_upload_full_hd(false);
+        assert_eq!(contract.require_public_upload_job(&full_hd_job), deadline);
+        assert!(
+            std::panic::catch_unwind(|| contract.admit_public_upload(&full_hd_request)).is_err()
+        );
+        contract.bridge_frozen = false;
+        env::storage_remove(NEW_PURCHASES_PAUSED_KEY);
+        testing_env!(context(TESTNET_USDC).build());
+        let mut legacy_request = first.clone();
+        legacy_request.profile_config_sha256 = LEGACY_UPLOAD_PROFILE_HASH.to_string();
+        assert!(
+            std::panic::catch_unwind(|| contract.admit_public_upload(&legacy_request)).is_err()
+        );
+        let mut second = first.clone();
+        second.job_id = "public-second".to_string();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || contract.admit_public_upload(&second)
+        ))
+        .is_err());
+        job.status = MediaJobStatus::Published;
+        contract.media_jobs.insert(&job.job_id, &job);
+        contract.admit_public_upload(&second);
+        let mut job =
+            contract.create_usdc_paid_job(second.clone(), 1_600_000, Some("b".repeat(64)));
+        job.status = MediaJobStatus::Published;
+        contract.media_jobs.insert(&job.job_id, &job);
+        second.job_id = "public-third".to_string();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || contract.admit_public_upload(&second)
+        ))
+        .is_err());
+        for index in 1..12 {
+            let mut request = public_beta_request(index, &format!("creator-{index}.testnet"), 1);
+            request.profile_config_sha256 = PUBLIC_UPLOAD_PROFILE_HASH.to_string();
+            contract.admit_public_upload(&request);
+            contract.create_usdc_paid_job(request, 600_000, Some("a".repeat(64)));
+        }
+        let now = 1_785_589_300_000 + 15 * 86_400_000;
+        let mut later = context(TESTNET_USDC);
+        later.block_timestamp(now * 1_000_000);
+        testing_env!(later.build());
+        second.upload_key_expires_at_ms = U64(now + 86_400_000);
+        contract.admit_public_upload(&second);
+        assert!(contract.public_testnet_beta_state().is_none());
+    }
+
+    #[test]
+    fn public_upload_initializer_rejects_mainnet() {
+        let legacy = contract();
+        let config = MarketInitConfig {
+            platform_account_id: legacy.platform_account_id,
+            bridge_account_id: legacy.active_bridge_account_id,
+            takedown_authority_id: legacy.takedown_authority_id,
+            admin_account_id: legacy.admin_account_id,
+            guardian_account_id: legacy.guardian_account_id,
+            quote_public_key: Base64VecU8(legacy.quote_public_key),
+            quote_key_version: legacy.quote_key_version,
+            near_operational_reserve: U128(legacy.near_operational_reserve),
+            tax_account_id: "tax.testnet".parse().unwrap(),
+            vat_public_key: "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF".to_string(),
+            vat_key_version: 1,
+        };
+        let mut mainnet = context("market.near");
+        mainnet.current_account_id(account("market.near"));
+        testing_env!(mainnet.build());
+        assert!(std::panic::catch_unwind(|| Contract::new_public_testnet(config)).is_err());
+        assert!(!env::storage_has_key(PUBLIC_UPLOAD_POLICY_KEY));
+    }
+
+    #[test]
+    fn failed_creator_withdraw_restores_liability() {
+        let mut contract = contract();
+        let creator_id = account("creator.testnet");
+        contract.creator_balances.insert(&creator_id, &1_960_000);
+        testing_env!(context("creator.testnet").build());
+        contract.withdraw_creator_balance();
+        assert!(get_logs()
+            .last()
+            .unwrap()
+            .contains("creator_balance_withdrawal_started"));
+        testing_env!(
+            context("market.testnet").build(),
+            near_sdk::test_vm_config(),
+            near_sdk::RuntimeFeesConfig::test(),
+            Default::default(),
+            vec![PromiseResult::Failed],
+        );
+        assert!(!contract.on_creator_withdraw(
+            creator_id.clone(),
+            U128(1_960_000),
+            "creator-withdrawal:creator.testnet:1960000:1785589300000".to_string(),
+        ));
+        assert_eq!(contract.get_creator_balance(creator_id), U128(1_960_000));
+        assert!(get_logs()
+            .last()
+            .unwrap()
+            .contains("creator_balance_withdrawal_failed"));
+    }
+
+    #[test]
+    fn successful_creator_withdraw_emits_completion_with_the_started_id() {
+        let mut contract = contract();
+        let creator_id = account("creator.testnet");
+        let withdrawal_id = "creator-withdrawal:creator.testnet:1960000:1785589300000".to_string();
+        contract.creator_balances.insert(&creator_id, &1_960_000);
+        testing_env!(context("creator.testnet").build());
+        contract.withdraw_creator_balance();
+        assert!(get_logs().last().unwrap().contains(&withdrawal_id));
+        testing_env!(
+            context("market.testnet").build(),
+            near_sdk::test_vm_config(),
+            near_sdk::RuntimeFeesConfig::test(),
+            Default::default(),
+            vec![PromiseResult::Successful(Vec::new())],
+        );
+
+        assert!(contract.on_creator_withdraw(
+            creator_id.clone(),
+            U128(1_960_000),
+            withdrawal_id.clone(),
+        ));
+        assert_eq!(contract.get_creator_balance(creator_id), U128(0));
+        let completed = get_logs().last().unwrap().to_owned();
+        assert!(completed.contains("creator_balance_withdrawal_succeeded"));
+        assert!(completed.contains(&withdrawal_id));
+    }
+
+    #[test]
+    fn platform_usdc_withdraw_emits_started_event() {
+        let mut contract = contract();
+        contract.platform_balance = 40_000;
+        testing_env!(context("platform.testnet").build());
+
+        contract.withdraw_platform_balance();
+
+        assert_eq!(contract.get_platform_balance(), U128(0));
+        let started = get_logs().last().unwrap().to_owned();
+        assert!(started.contains("platform_withdrawal_started"));
+        assert!(started.contains(r#""asset":"USDC""#));
+    }
+
+    #[test]
+    fn quote_key_rotation_is_platform_only_and_monotonic() {
+        let mut contract = contract();
+        testing_env!(context("attacker.testnet").build());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.rotate_quote_public_key(2, Base64VecU8(vec![2; 32]));
+        }))
+        .is_err());
+        testing_env!(context("platform.testnet").build());
+        contract.rotate_quote_public_key(2, Base64VecU8(vec![2; 32]));
+        assert_eq!(contract.get_quote_key_version(), 2);
+        assert!(get_logs().last().unwrap().contains("quote_key_rotated"));
+    }
+
+    #[test]
+    fn near_withdrawal_preserves_operational_reserve() {
+        let mut contract = contract();
+        contract.platform_near_balance = 100;
+        let mut blocked = context("platform.testnet");
+        blocked.storage_usage(0);
+        blocked.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve + 99,
+        ));
+        testing_env!(blocked.build());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.withdraw_platform_near(U128(100));
+        }))
+        .is_err());
+        assert_eq!(contract.get_platform_near_balance(), U128(100));
+
+        let mut allowed = context("platform.testnet");
+        allowed.storage_usage(0);
+        allowed.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve + 100,
+        ));
+        testing_env!(allowed.build());
+        contract.withdraw_platform_near(U128(100));
+        assert_eq!(contract.get_platform_near_balance(), U128(0));
+        assert!(get_logs()
+            .last()
+            .unwrap()
+            .contains("platform_withdrawal_started"));
+    }
+
+    #[test]
+    fn storage_reserve_status_matches_the_withdrawal_guard() {
+        let contract = contract();
+        let storage_usage = 10;
+        let runway_bytes = PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES;
+        let storage_byte_cost = env::storage_byte_cost().as_yoctonear();
+        let mut covered = context("market.testnet");
+        covered.storage_usage(storage_usage);
+        covered.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve
+                + (u128::from(storage_usage) + runway_bytes) * storage_byte_cost,
+        ));
+        testing_env!(covered.build());
+
+        let status = contract.get_storage_reserve_status();
+        assert_eq!(status.storage_usage_bytes, U64(storage_usage));
+        assert_eq!(
+            status.storage_stake_yocto,
+            U128(u128::from(storage_usage) * storage_byte_cost)
+        );
+        assert_eq!(
+            status.operational_reserve_yocto,
+            U128(contract.near_operational_reserve)
+        );
+        assert_eq!(
+            status.reserve_headroom_yocto,
+            U128(runway_bytes * storage_byte_cost)
+        );
+        assert_eq!(status.reserve_runway_bytes, U128(runway_bytes));
+        assert!(status.reserve_covered);
+        contract.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+
+        let mut below_beta_floor = context("market.testnet");
+        below_beta_floor.storage_usage(storage_usage);
+        below_beta_floor.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve
+                + (u128::from(storage_usage) + runway_bytes - 1) * storage_byte_cost,
+        ));
+        testing_env!(below_beta_floor.build());
+        assert!(std::panic::catch_unwind(|| {
+            contract.assert_runway(PUBLIC_TESTNET_BETA_EMERGENCY_RUNWAY_BYTES);
+        })
+        .is_err());
+
+        let mut uncovered = context("market.testnet");
+        uncovered.storage_usage(storage_usage);
+        uncovered.account_balance(NearToken::from_yoctonear(
+            contract.near_operational_reserve + u128::from(storage_usage) * storage_byte_cost - 1,
+        ));
+        testing_env!(uncovered.build());
+        let status = contract.get_storage_reserve_status();
+        assert!(!status.reserve_covered);
+        assert_eq!(status.reserve_headroom_yocto, U128(0));
+        assert_eq!(status.reserve_runway_bytes, U128(0));
+    }
+}
