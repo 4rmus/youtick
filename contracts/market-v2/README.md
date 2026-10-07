@@ -119,8 +119,11 @@ self-upgrade path are unchanged from V1.
 
 | Gate | Adds |
 |---|---|
-| E3e | Brake for new creators; invite-phase upload fee waiver |
 | Later | Timelocked addition of VAT keys |
+
+There will be no brake for new creators and no upload-fee waiver (owner decision, 2026-10-07).
+Invited creators receive a single-use invite link with USDC credit for upload fees. That is
+handled in onboarding, outside the contract.
 
 ## Checks
 
