@@ -216,6 +216,16 @@ Off unless `MARKET_PROTOCOL=v2` and `LIVEPEER_PLAYBACK_V3_ENABLED=true` (with th
   account must be the V2 contract's active Bridge.
 - **Tokens.** Each token lives at most 180 seconds, and never longer than the device's
   remaining validity.
+- **Escrow release.** With `MARKET_V2_RELEASE_ENABLED=true`, the `scheduled` handler releases
+  purchased crypto tickets older than 30 days.
+  - It reads up to 25 due ticket IDs from `MARKET_READ_MODEL` (`market_v2_tickets`, migration
+    `0010`), leaving out tickets of taken-down publications.
+  - It sends one `release_expired` batch through the operator outbox, with 150 TGas.
+  - The batch is confirmed once none of its tickets is still `purchased`. Confirmed records are
+    deleted, and a failed batch is retried by the next run.
+  - The V2 operator key must also allow `release_expired`.
+  - The V2 deployment config must add a cron trigger (for example every 15 minutes). V1
+    deployments get no trigger.
 - **Client rule.** Sign a playback request only after the viewer presses play. The first
   accepted request settles the ticket, and that ends the viewer's refund right. Any device on the
   ticket can do this; there is no replay cache within the 5-minute request window.
