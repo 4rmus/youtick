@@ -97,7 +97,11 @@ Bridge's `ticket` quote with the user's own account as recipient (a V2 Bridge po
 `NEXT_PUBLIC_V2_CRYPTO_RAIL_DISABLED_LANGUAGES` (comma-separated, default `tr`). The checkout
 sends funnel counts (`lib/v2/funnel.ts`) to the payment service's `/v1/funnel`: a fixed step
 name, the rail and a failure code only, nothing that identifies the user or the screening; with
-Do Not Track or Global Privacy Control set, nothing is sent.
+Do Not Track or Global Privacy Control set, nothing is sent. The V2 ticket player shows a
+moving watermark with the ticket code (the first 8 hex characters of the public ticket id, which
+carries no buyer account). It is a visible deterrent only; full screen applies to the player
+frame so the watermark stays, and picture-in-picture is off. iOS Safari's own full-screen video
+cannot be overlaid.
 Multi-asset payments also default to `off`. `preview` is dry-quote only; `live`
 requires the Bridge to use the same mode and a positive
 `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`.
