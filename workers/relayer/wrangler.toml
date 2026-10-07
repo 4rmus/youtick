@@ -1,0 +1,45 @@
+# Configuration only; deploys run through protected workflows (none exists for the relayer yet).
+name = "youtick-relayer"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[vars]
+RELAYER_ENABLED = "false"
+RELAYER_MUTATIONS_ENABLED = "false"
+NEAR_NETWORK = "testnet"
+NEAR_RPC_URL = "<replace-with-dedicated-near-rpc-url>"
+RELAYER_ACCOUNT_ID = "<replace-with-relayer-account-id>"
+NEAR_AUTH_CLIENT_ID = "<replace-with-near-auth-client-id>"
+CKD_GATE_ACCOUNT_IDS = ""
+# Circle testnet USDC: the only token Market V2 accepts on testnet (TESTNET_USDC in contracts/market-v2).
+USDC_CONTRACT_ID = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af"
+# 0.01 NEAR per new implicit account; storage deposits above 0.01 NEAR are refused.
+ACCOUNT_FUNDING_YOCTO = "10000000000000000000000"
+MAX_STORAGE_DEPOSIT_YOCTO = "10000000000000000000000"
+DAILY_ACCOUNT_LIMIT = "50"
+DAILY_CKD_LIMIT = "500"
+IDENTITY_DAILY_CKD_LIMIT = "20"
+# 100 USDC of invite credit per day.
+DAILY_INVITE_USDC_MICRO_LIMIT = "100000000"
+INVITE_AMOUNTS_USDC_MICRO = "5000000,10000000"
+INVITE_TTL_DAYS = "30"
+ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
+# Secrets (wrangler secret put): RELAYER_PRIVATE_KEY, RELAYER_ADMIN_TOKEN.
+
+[[ratelimits]]
+name = "RELAYER_RATE_LIMITER"
+namespace_id = "3101"
+simple = { limit = 10, period = 60 }
+
+[[durable_objects.bindings]]
+name = "RELAYER_CONTROL"
+class_name = "RelayerControl"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayerControl"]
