@@ -1,13 +1,13 @@
 import { KeyPair, SignedTransaction } from 'near-api-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { LivepeerControl, type Env } from './index';
+import { LivepeerControl, dueReleaseTicketIds, runScheduledRelease, type Env } from './index';
 
 const RPC_URL = 'https://rpc.testnet.near.org';
 const CONTRACT_ID = 'market-v2.youtick.testnet';
 const OPERATOR_ID = 'bridge.testnet';
 const BLOCK_HASH = '11111111111111111111111111111111';
 const TICKET_ID = 'b'.repeat(64);
-const V2_METHODS = ['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched'];
+const V2_METHODS = ['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired'];
 
 function createState() {
     const values = new Map<string, unknown>();
@@ -203,5 +203,98 @@ describe('mark_watched operator outbox (V2 Market)', () => {
         const response = await new LivepeerControl(createState().state, createEnv()).fetch(bad);
         expect(response.status).toBe(400);
         expect(fetcher).not.toHaveBeenCalled();
+    });
+});
+
+async function releaseRequest(ticketIds: string[]): Promise<Request> {
+    const sha = async (text: string) => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))));
+    return new Request('https://object/internal/release-expired', {
+        method: 'POST',
+        body: JSON.stringify({
+            idempotencyKey: `release:${await sha(ticketIds.join(','))}`,
+            payloadSha256: await sha(JSON.stringify({ ticket_ids: ticketIds })),
+            ticketIds,
+        }),
+    });
+}
+
+describe('release_expired (V2 Market)', () => {
+    beforeEach(() => vi.restoreAllMocks());
+    const ids = ['1'.repeat(64), '2'.repeat(64)];
+
+    it('signs one release_expired batch with 150 TGas and deletes the confirmed record', async () => {
+        const sent: string[] = [];
+        let released = false;
+        vi.stubGlobal('fetch', vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body)) as { method: string; params: Record<string, unknown> };
+            if (body.params?.request_type === 'view_access_key') {
+                return Response.json({ result: { nonce: 10, block_hash: BLOCK_HASH, permission: { FunctionCall: {
+                    allowance: '8000000000000000000000', receiver_id: CONTRACT_ID, method_names: V2_METHODS,
+                } } } });
+            }
+            if (body.params?.method_name === 'get_ticket') {
+                return Response.json({ result: { block_hash: BLOCK_HASH, result: Array.from(new TextEncoder().encode(
+                    JSON.stringify({ status: released ? 'released' : 'purchased' }))) } });
+            }
+            if (body.method === 'send_tx') {
+                sent.push(String(body.params.signed_tx_base64));
+                released = true;
+                return Response.json({ result: { status: { SuccessValue: '' } } });
+            }
+            throw new Error(`unexpected_rpc:${body.method}`);
+        }));
+        const state = createState();
+        const response = await new LivepeerControl(state.state, createEnv()).fetch(await releaseRequest(ids));
+        expect(response.status).toBe(200);
+        expect(sent).toHaveLength(1);
+        const call = SignedTransaction.decode(Buffer.from(sent[0], 'base64')).transaction.actions[0].functionCall!;
+        expect(call.methodName).toBe('release_expired');
+        expect(BigInt(call.gas)).toBe(150_000_000_000_000n);
+        expect(JSON.parse(new TextDecoder().decode(Uint8Array.from(call.args as ArrayLike<number>)))).toEqual({ ticket_ids: ids });
+        expect(state.values.size).toBeLessThanOrEqual(1);
+    });
+
+    it('rejects unsorted, duplicate, oversized or malformed batches before any RPC', async () => {
+        const fetcher = vi.fn();
+        vi.stubGlobal('fetch', fetcher);
+        for (const batch of [[ids[1], ids[0]], [ids[0], ids[0]], Array.from({ length: 26 }, (_, i) => i.toString(16).padStart(64, '0')), ['x']]) {
+            const response = await new LivepeerControl(createState().state, createEnv()).fetch(await releaseRequest(batch));
+            expect(response.status).toBe(400);
+        }
+        expect(fetcher).not.toHaveBeenCalled();
+    });
+
+    it('selects due crypto tickets from the read model, excluding taken-down publications', async () => {
+        const bound: unknown[][] = [];
+        const env = createEnv({
+            MARKET_V2_RELEASE_ENABLED: 'true',
+            MARKET_READ_MODEL: {
+                prepare: (sql: string) => ({
+                    bind: (...values: unknown[]) => {
+                        bound.push([sql, ...values]);
+                        return { all: async () => ({ results: [{ ticket_id: ids[0] }, { ticket_id: 'not-a-ticket' }] }) };
+                    },
+                }),
+            } as unknown as D1Database,
+        });
+        const now = 1_800_000_000_000;
+        expect(await dueReleaseTicketIds(env, now)).toEqual([ids[0]]);
+        const [sql, network, contract, cutoff, limit] = bound[0] as [string, string, string, number, number];
+        expect(sql).toContain("t.rail = 'crypto' AND t.status = 'purchased'");
+        expect(sql).toContain("p.availability = 'TAKEDOWN'");
+        expect([network, contract, cutoff, limit]).toEqual(['testnet', CONTRACT_ID, now - 30 * 24 * 60 * 60 * 1000, 25]);
+    });
+
+    it('does nothing unless the V2 protocol and the release flag are on', async () => {
+        const prepare = vi.fn();
+        const database = { prepare } as unknown as D1Database;
+        for (const overrides of [
+            { MARKET_PROTOCOL: undefined, MARKET_V2_RELEASE_ENABLED: 'true', MARKET_READ_MODEL: database },
+            { MARKET_V2_RELEASE_ENABLED: 'false', MARKET_READ_MODEL: database },
+            { MARKET_V2_RELEASE_ENABLED: 'true' },
+        ]) {
+            expect(await runScheduledRelease(createEnv(overrides))).toEqual({ released: 0, status: null });
+        }
+        expect(prepare).not.toHaveBeenCalled();
     });
 });
