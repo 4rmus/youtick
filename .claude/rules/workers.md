@@ -6,7 +6,8 @@ paths:
 
 # Livepeer Bridge worker and read model
 
-- The Bridge is a control plane only: Livepeer upload, webhook, and short-lived playback tokens. NEAR stays authoritative for paid jobs, publications, purchases, entitlements, and Play grants; Livepeer readiness alone can never authorize a sale or playback.
+- The Bridge is a control plane: Livepeer upload, webhook, and short-lived playback tokens. NEAR stays authoritative for paid jobs, publications, purchases, entitlements, tickets, and Play grants; Livepeer readiness alone can never authorize a sale or playback.
+- With `MARKET_PROTOCOL=v2` the Bridge also signs `mark_watched` (escrow settlement) through the operator outbox before a ticket's first playback token. Keep it the only money-moving call the Bridge makes, and never issue a token before it is confirmed from final state.
 - D1 (`read-model/`, rebuilt by the repo-root `scripts/apply-market-read-model-d1.mjs` and `scripts/bootstrap-market-read-model-d1.mjs`) is a derived read model rebuilt deterministically from final events. Do not make it a source of truth and do not write to a remote D1 from a local session; `wrangler d1 execute --remote` and both scripts need explicit approval.
 - Payment settlement in `workers/livepeer-bridge/src/payments.ts` calls 1Click (`/v0/quote`, `/v0/status`) and follows the contract path; the multi-asset mode defaults to `off`. Treat repeated notifications, timeouts, and unknown broadcast outcomes separately from confirmed failure, and reconcile before any retry.
 - Secrets live in `.dev.vars` (gitignored) and Cloudflare; never read, print, or copy them. `npm run canary:*` scripts call live providers with those credentials and need approval; `test:provider-canary` is the local variant.
