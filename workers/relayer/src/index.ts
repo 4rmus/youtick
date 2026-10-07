@@ -5,7 +5,8 @@
 // It never sees ticket keys or CKD secrets; the CKD response is encrypted to the browser's key.
 import { relayerConfig, type Env, type RelayerConfig } from './env';
 import { ckdGateNonce, createJwtVerifier, identityHash, type VerifiedIdentity } from './jwt';
-import { createNearClient, fastAuthAccount, type NearClient } from './near';
+import { createNearClient, fastAuthAccount, fastAuthKey, type NearClient } from './near';
+import { MAX_DELEGATE_TTL_BLOCKS, parsePurchaseFields, purchaseDelegate, sameBytes } from './purchase';
 
 export { RelayerControl } from './control';
 export type { Env } from './env';
@@ -15,7 +16,7 @@ const BLS_G1 = /^bls12381g1:[1-9A-HJ-NP-Za-km-z]{60,70}$/;
 const BLS_G2 = /^bls12381g2:[1-9A-HJ-NP-Za-km-z]{120,135}$/;
 
 export interface RelayerDeps {
-    verify?: (token: unknown) => Promise<VerifiedIdentity>;
+    verify?: (token: unknown, options?: { audience?: string }) => Promise<VerifiedIdentity>;
     near?: NearClient;
 }
 
@@ -164,6 +165,33 @@ export async function handle(request: Request, env: Env, deps: RelayerDeps = {})
                 args: { jwt: args!.jwt, app_public_key: { pk1: key.pk1, pk2: key.pk2 } },
             }, cors);
         }
+        if (url.pathname === '/v1/purchases') {
+            const { access_token: accessToken, ...rest } = body;
+            const fields = parsePurchaseFields(rest, config.marketContractId);
+            const identity = await verify(accessToken, { audience: config.provider.signingAudience });
+            if (!identity.fatxn) return json({ error: 'invalid_token' }, 401, cors);
+            const key = await fastAuthKey(near, config.provider, identity.sub);
+            const { bytes } = purchaseDelegate({ senderId: key.accountId, publicKey: key.publicKey, usdcContractId: config.usdcContractId, fields });
+            // The user approved exactly these bytes, or nothing is signed.
+            if (!sameBytes(bytes, identity.fatxn)) return json({ error: 'approval_mismatch' }, 400, cors);
+            // Checks that save gas: the chain would reject these after fast-auth already signed.
+            const accessKey = await near.accessKey(key.accountId, key.publicKey);
+            const maxHeight = BigInt(fields.max_block_height);
+            if (BigInt(fields.nonce) <= accessKey.nonce || accessKey.blockHeight === undefined
+                || maxHeight <= BigInt(accessKey.blockHeight) || maxHeight > BigInt(accessKey.blockHeight) + MAX_DELEGATE_TTL_BLOCKS) {
+                return json({ error: 'delegate_stale' }, 409, cors);
+            }
+            const balance = await near.view<unknown>(config.usdcContractId, 'ft_balance_of', { account_id: key.accountId });
+            if (typeof balance !== 'string' || !/^[0-9]{1,39}$/.test(balance) || BigInt(balance) < BigInt(fields.args.amount)) {
+                return json({ error: 'insufficient_balance' }, 409, cors);
+            }
+            let binary = '';
+            for (const byte of bytes) binary += String.fromCharCode(byte);
+            return forward(env, '/purchase', {
+                identityHash: await identityHash(identity), accountId: key.accountId, userPublicKey: key.publicKey,
+                accessToken, fields: { args: fields.args, nonce: fields.nonce, max_block_height: fields.max_block_height }, bytes: btoa(binary),
+            }, cors);
+        }
         if (url.pathname === '/v1/invites/redeem') {
             if (!exactKeys(body, ['id_token', 'code']) || typeof body.code !== 'string' || !/^yt_[A-Za-z0-9_-]{24}$/.test(body.code)) {
                 return json({ error: 'invalid_request' }, 400, cors);
@@ -177,6 +205,7 @@ export async function handle(request: Request, env: Env, deps: RelayerDeps = {})
     } catch (error) {
         const code = error instanceof Error ? error.message : '';
         if (code === 'invalid_token') return json({ error: 'invalid_token' }, 401, cors);
+        if (code === 'invalid_request') return json({ error: 'invalid_request' }, 400, cors);
         if (['jwks_unavailable', 'rpc_unavailable', 'provider_configuration_changed'].includes(code)) {
             return json({ error: 'dependency_unavailable' }, 503, cors);
         }

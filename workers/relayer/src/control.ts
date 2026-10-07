@@ -1,14 +1,17 @@
 // RelayerControl: the single Durable Object that owns the relayer key's nonces, the per-identity
 // records, invite codes and the daily spending counters. The front Worker verifies tokens and
 // derives accounts; this object only receives verified, minimal inputs (never raw subjects).
-import { KeyPairSigner, actions, baseDecode, baseEncode, createTransaction } from 'near-api-js';
+import { KeyPairSigner, Signature, actions, baseDecode, baseEncode, createTransaction } from 'near-api-js';
 import type { Env } from './env';
 import { relayerConfig, type RelayerConfig } from './env';
 import { createNearClient, type NearClient, type TxOutcome } from './near';
+import { purchaseDelegate, sameBytes, type PurchaseFields } from './purchase';
 
 const CKD_GAS = 150_000_000_000_000n;
 const STORAGE_DEPOSIT_GAS = 30_000_000_000_000n;
 const FT_TRANSFER_GAS = 30_000_000_000_000n;
+/** fast-auth `sign` forwards to the MPC network; the spike used the full 300 TGas and 1 yocto. */
+const FAST_AUTH_SIGN_GAS = 300_000_000_000_000n;
 const ONE_YOCTO = 1n;
 /** Before this, an unconfirmed transaction is simply still in flight. */
 const RESEND_AFTER_MS = 30 * 1000;
@@ -112,6 +115,7 @@ export class RelayerControl {
                 case '/invite/create': return await this.createInvite(config, body);
                 case '/invite/redeem': return await this.redeemInvite(config, body);
                 case '/invite/status': return await this.inviteStatus(body);
+                case '/purchase': return await this.relayPurchase(config, body);
                 default: return json({ error: 'not_found' }, 404);
             }
         } catch (error) {
@@ -120,7 +124,7 @@ export class RelayerControl {
                 daily_limit_reached: 429, identity_limit_reached: 429, identity_conflict: 409, account_required: 409,
                 invite_unavailable: 409, invite_already_used: 409, ckd_already_requested: 409, tx_failed: 502,
                 tx_needs_review: 503, mutations_disabled: 503, relayer_key_invalid: 503, rpc_unavailable: 503,
-                payload_conflict: 409, invalid_request: 400,
+                payload_conflict: 409, invalid_request: 400, purchase_already_submitted: 409, mpc_signature_invalid: 502,
             };
             if (known[code]) return json({ error: code }, known[code]);
             console.error(JSON.stringify({ event: 'relayer_internal_error', path }));
@@ -128,21 +132,26 @@ export class RelayerControl {
         }
     }
 
-    /** Strips the id_token from CKD records that outlived their TTL and drops settled ones. */
+    /** Strips tokens from CKD and fast-auth sign records that outlived their TTL and drops settled ones. */
     async alarm(): Promise<void> {
         const config = relayerConfig(this.env);
-        const records = await this.state.storage.list<TxRecord>({ prefix: 'tx:ckd:' });
+        const records = new Map([
+            ...await this.state.storage.list<TxRecord>({ prefix: 'tx:ckd:' }),
+            ...await this.state.storage.list<TxRecord>({ prefix: 'tx:sign:' }),
+        ]);
         let pending = false;
         for (const [key, record] of records) {
-            const nonce = key.slice('tx:ckd:'.length);
+            const finish = key.startsWith('tx:ckd:')
+                ? () => this.finishCkd(key.slice('tx:ckd:'.length), record)
+                : () => this.finishSign(key.slice('tx:sign:'.length), record);
             if (record.state !== 'BROADCAST') {
-                await this.finishCkd(nonce, record);
+                await finish();
                 continue;
             }
             if (config) {
                 const outcome = await this.near.txStatus(record.txHash, config.accountId);
                 if (outcome.kind === 'success' || outcome.kind === 'failed') {
-                    await this.finishCkd(nonce, record);
+                    await finish();
                     continue;
                 }
             }
@@ -240,6 +249,83 @@ export class RelayerControl {
             if (record && current && current.txHash !== record.txHash) return;
             await txn.put(`ckd-done:${nonce}`, { atMs: this.now(), txHash: current?.txHash ?? null });
             await txn.delete(`tx:ckd:${nonce}`);
+        });
+    }
+
+    /**
+     * A NEAR Auth purchase: fast-auth `sign` turns the user's approval token into an MPC signature
+     * over the delegate the user approved; the relayer then submits it as a signed delegate. The
+     * delegate's own nonce means the purchase can execute at most once, whatever the relayer retries.
+     */
+    private async relayPurchase(config: RelayerConfig, body: Record<string, unknown>): Promise<Response> {
+        const identity = requireHex64(body.identityHash);
+        const accountId = requireHex64(body.accountId);
+        const userPublicKey = body.userPublicKey;
+        const token = body.accessToken;
+        const fields = body.fields as PurchaseFields | undefined;
+        if (typeof userPublicKey !== 'string' || typeof token !== 'string' || !fields || typeof body.bytes !== 'string') {
+            throw new Error('invalid_request');
+        }
+        const { delegateAction, bytes } = purchaseDelegate({ senderId: accountId, publicKey: userPublicKey, usdcContractId: config.usdcContractId, fields });
+        if (!sameBytes(bytes, Uint8Array.from(atob(body.bytes), (char) => char.charCodeAt(0)))) throw new Error('invalid_request');
+        const id = await sha256Hex(bytesToBase64(bytes));
+        await this.state.storage.transaction(async (txn) => {
+            if (await txn.get(`tx:sign:${id}`) || await txn.get(`purchase-sig:${id}`)) return;
+            if (await txn.get(`purchase-done:${id}`)) throw new Error('purchase_already_submitted');
+            const identityKey = `count:${this.day()}:purchase:${identity}`;
+            const used = BigInt(await txn.get<string>(identityKey) ?? '0');
+            if (used >= BigInt(config.identityDailyPurchaseLimit)) throw new Error('identity_limit_reached');
+            await this.consumeDaily(txn, 'purchases', 1n, BigInt(config.dailyPurchaseLimit));
+            await txn.put(identityKey, String(used + 1n));
+        });
+
+        let signatureB64 = await this.state.storage.get<string>(`purchase-sig:${id}`);
+        if (!signatureB64) {
+            await this.state.storage.setAlarm(this.now() + CKD_RECORD_TTL_MS);
+            const sign = await this.submit(config, `tx:sign:${id}`, config.provider.fastAuthContractId, `sign|${id}`,
+                () => [actions.functionCall('sign', {
+                    guard_id: `jwt#${config.provider.issuer}`, verify_payload: token, sign_payload: Array.from(bytes), algorithm: 'eddsa',
+                }, FAST_AUTH_SIGN_GAS, ONE_YOCTO)], { recovery: 'resign' });
+            if (!sign.done) return json({ pending: true }, 202);
+            signatureB64 = bytesToBase64(await this.verifiedMpcSignature(sign.value, bytes, userPublicKey));
+            // The signature is public once relayed; the token-bearing sign record is not kept.
+            await this.state.storage.put(`purchase-sig:${id}`, signatureB64);
+            await this.finishSign(id);
+        }
+        const signature = Uint8Array.from(atob(signatureB64), (char) => char.charCodeAt(0));
+        const done = await this.submit(config, `tx:relay:${id}`, accountId, `relay|${id}`,
+            () => [actions.signedDelegate({ delegateAction, signature: new Signature({ keyType: 0, data: signature }) })],
+            { recovery: 'resign' });
+        const relay = await this.state.storage.get<TxRecord>(`tx:relay:${id}`);
+        if (!done.done) return json({ pending: true, txHash: relay?.txHash ?? null }, 202);
+        await this.state.storage.put(`purchase-done:${id}`, { atMs: this.now(), txHash: relay?.txHash ?? null });
+        // The relay landed; whether the Market accepted or refunded is read from `get_ticket` by the client.
+        return json({ submitted: true, txHash: relay?.txHash ?? null });
+    }
+
+    private async verifiedMpcSignature(value: string | null, bytes: Uint8Array, userPublicKey: string): Promise<Uint8Array> {
+        let signature: Uint8Array;
+        try {
+            const reply = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(value ?? ''), (char) => char.charCodeAt(0)))) as { signature?: unknown };
+            if (!Array.isArray(reply.signature) || reply.signature.length !== 64) throw new Error('shape');
+            signature = Uint8Array.from(reply.signature as number[]);
+        } catch {
+            throw new Error('mpc_signature_invalid');
+        }
+        const raw = baseDecode(userPublicKey.slice('ed25519:'.length));
+        const key = await crypto.subtle.importKey('raw', raw as BufferSource, 'Ed25519', false, ['verify']);
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource));
+        if (!await crypto.subtle.verify('Ed25519', key, signature as BufferSource, digest)) throw new Error('mpc_signature_invalid');
+        return signature;
+    }
+
+    /** The fast-auth sign record carries the approval token; keep only its hash once it is used. */
+    private async finishSign(id: string, record?: TxRecord): Promise<void> {
+        await this.state.storage.transaction(async (txn) => {
+            const current = await txn.get<TxRecord>(`tx:sign:${id}`);
+            if (record && current && current.txHash !== record.txHash) return;
+            await txn.put(`sign-done:${id}`, { atMs: this.now(), txHash: current?.txHash ?? null });
+            await txn.delete(`tx:sign:${id}`);
         });
     }
 

@@ -1,4 +1,4 @@
-import { KeyPair, SignedTransaction, baseEncode } from 'near-api-js';
+import { KeyPair, SignedTransaction, baseEncode, encodeDelegateAction } from 'near-api-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RelayerControl } from './control';
 import type { Env } from './env';
@@ -16,6 +16,10 @@ const BLOCK_HASH = '11111111111111111111111111111111';
 const PK1 = `bls12381g1:${'2'.repeat(66)}`;
 const PK2 = `bls12381g2:${'3'.repeat(132)}`;
 const DAY = 86_400_000;
+const MARKET = 'v2-market.youtick.testnet';
+/** Buyers with a real key, so the fake fast-auth `sign` can produce a verifiable MPC signature. */
+const buyers = new Map<string, KeyPair>();
+const buyer = (sub: string) => { if (!buyers.has(sub)) buyers.set(sub, KeyPair.fromRandom('ed25519')); return buyers.get(sub)!; };
 
 function createState() {
     const values = new Map<string, unknown>();
@@ -58,7 +62,13 @@ function createChain() {
         statusUnavailable: false,
         expireResends: false,
         failMethod: '' as string,
+        lastSigner: '' as string,
         ckdValue: { account_id: 'x', derivation_path: 'v1/x', response: { big_y: 'y', big_c: 'c' } } as unknown,
+        usdcBalance: '100000000',
+        userKeyNonce: 7n,
+        /** fast-auth replies with a signature from the wrong key. */
+        forgeMpc: false,
+        relayed: [] as Record<string, unknown>[],
     };
     const near: NearClient = {
         async view<T>(contractId: string, method: string, args: Record<string, unknown>): Promise<T> {
@@ -67,6 +77,7 @@ function createChain() {
             if (method === 'mpc_domain_id') return 1 as T;
             if (method === 'derived_public_key') {
                 const sub = String(args.path).split('#')[2];
+                if (sub.startsWith('buyer')) return buyer(sub).getPublicKey().toString() as T;
                 const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sub)));
                 return `ed25519:${baseEncode(digest)}` as T;
             }
@@ -74,10 +85,14 @@ function createChain() {
                 return (usdcRegistered.has(String(args.account_id)) ? { total: '1', available: '0' } : null) as T;
             }
             if (contractId === USDC && method === 'storage_balance_bounds') return { min: '1250000000000000000000', max: null } as T;
+            if (contractId === USDC && method === 'ft_balance_of') return chain.usdcBalance as T;
             throw new Error(`unexpected view ${contractId}.${method}`);
         },
         async accountExists(accountId) { return accounts.has(accountId); },
-        async accessKey() { return { nonce: chain.keyNonce, blockHash: BLOCK_HASH, fullAccess: true }; },
+        async accessKey(accountId) {
+            if (accountId !== RELAYER) return { nonce: chain.userKeyNonce, blockHash: BLOCK_HASH, blockHeight: 1_000, fullAccess: true };
+            return { nonce: chain.keyNonce, blockHash: BLOCK_HASH, fullAccess: true };
+        },
         async sendTx(signedTxBase64) {
             const signed = SignedTransaction.decode(Buffer.from(signedTxBase64, 'base64'));
             const hash = baseEncode(new Uint8Array(await crypto.subtle.digest('SHA-256', signed.transaction.encode())));
@@ -105,6 +120,16 @@ function createChain() {
             } else if (call?.methodName === 'ft_transfer') {
                 usdcTransfers.push({ receiver: args.receiver_id, amount: args.amount });
                 outcomes.set(hash, { kind: 'success', value: '' });
+            } else if (call?.methodName === 'sign') {
+                const payload = Uint8Array.from(args.sign_payload as number[]);
+                const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', payload));
+                const sub = [...buyers.entries()].find(([, key]) => key.getPublicKey().toString() === chain.lastSigner)?.[0];
+                const signer = chain.forgeMpc ? KeyPair.fromRandom('ed25519') : buyer(sub ?? 'buyer');
+                const { signature } = signer.sign(digest);
+                outcomes.set(hash, { kind: 'success', value: btoa(JSON.stringify({ signature: Array.from(signature) })) });
+            } else if (action.signedDelegate) {
+                chain.relayed.push(action.signedDelegate as Record<string, unknown>);
+                outcomes.set(hash, { kind: 'success', value: btoa('"5000000"') });
             } else if (call?.methodName === 'request_key') {
                 outcomes.set(hash, { kind: 'success', value: btoa(JSON.stringify(chain.ckdValue)) });
             }
@@ -126,7 +151,7 @@ function setup(overrides: Partial<Env> = {}) {
     const env: Env = {
         RELAYER_ENABLED: 'true', RELAYER_MUTATIONS_ENABLED: 'true', NEAR_NETWORK: 'testnet', NEAR_RPC_URL: 'https://rpc.test',
         RELAYER_ACCOUNT_ID: RELAYER, RELAYER_PRIVATE_KEY: KeyPair.fromRandom('ed25519').toString(), NEAR_AUTH_CLIENT_ID: 'client-1',
-        CKD_GATE_ACCOUNT_IDS: GATE, USDC_CONTRACT_ID: USDC, ACCOUNT_FUNDING_YOCTO: '10000000000000000000000',
+        CKD_GATE_ACCOUNT_IDS: GATE, USDC_CONTRACT_ID: USDC, MARKET_V2_CONTRACT_ID: MARKET, DAILY_PURCHASE_LIMIT: '5', IDENTITY_DAILY_PURCHASE_LIMIT: '2', ACCOUNT_FUNDING_YOCTO: '10000000000000000000000',
         MAX_STORAGE_DEPOSIT_YOCTO: '10000000000000000000000', DAILY_ACCOUNT_LIMIT: '3', DAILY_CKD_LIMIT: '5',
         IDENTITY_DAILY_CKD_LIMIT: '2', DAILY_INVITE_USDC_MICRO_LIMIT: '15000000', INVITE_AMOUNTS_USDC_MICRO: '5000000,10000000',
         INVITE_TTL_DAYS: '30', ALLOWED_ORIGINS: ORIGIN, RELAYER_ADMIN_TOKEN: ADMIN,
@@ -138,10 +163,18 @@ function setup(overrides: Partial<Env> = {}) {
         get: () => ({ fetch: (request: Request) => control.fetch(request) }),
     } as unknown as DurableObjectNamespace;
     // Tokens in tests are "sub|nonce"; the real verifier is covered in jwt.test.ts.
-    const verify = vi.fn(async (token: unknown): Promise<VerifiedIdentity> => {
+    const verify = vi.fn(async (token: unknown, options?: { audience?: string }): Promise<VerifiedIdentity> => {
+        // Signing tokens in tests are JSON strings { sub, fatxn } for the guard audience.
+        if (typeof token === 'string' && token.startsWith('{')) {
+            const value = JSON.parse(token) as { sub: string; fatxn: number[]; audience?: string };
+            if (options?.audience !== 'auth0.jwt.fast-auth.testnet' || value.audience === 'wrong') throw new Error('invalid_token');
+            chain.lastSigner = buyer(value.sub).getPublicKey().toString();
+            return { iss: ISSUER, sub: value.sub, exp: clock / 1000 + 600, nonce: null, fatxn: Uint8Array.from(value.fatxn) };
+        }
+        if (options?.audience) throw new Error('invalid_token');
         const [sub, nonce] = String(token).split('|');
         if (!sub || sub === 'bad') throw new Error('invalid_token');
-        return { iss: ISSUER, sub, exp: clock / 1000 + 600, nonce: nonce || null };
+        return { iss: ISSUER, sub, exp: clock / 1000 + 600, nonce: nonce || null, fatxn: null };
     });
     const call = async (path: string, body: unknown, headers: Record<string, string> = {}) => {
         const response = await handle(new Request(`https://relayer.test${path}`, {
@@ -312,6 +345,69 @@ describe('invites', () => {
         }), env);
         expect(denied.status).toBe(401);
         expect((await admin('/internal/invites', { amount_usdc_micro: '7000000' })).status).toBe(400);
+    });
+});
+
+describe('NEAR Auth purchases', () => {
+    async function purchase(sub: string, overrides: { amount?: string; receiver?: string; action?: string; nonce?: string; tamper?: boolean; audience?: string } = {}) {
+        const msg = JSON.stringify({ action: overrides.action ?? 'buy_ticket_v2', publication_id: 'job-001', ticket_public_key: 'ed25519:x' });
+        const fields = { args: { receiver_id: overrides.receiver ?? MARKET, amount: overrides.amount ?? '5000000', msg }, nonce: overrides.nonce ?? '8', max_block_height: '1100' };
+        const { purchaseDelegate } = await import('./purchase');
+        const accountId = Array.from(buyer(sub).getPublicKey().data, (b) => b.toString(16).padStart(2, '0')).join('');
+        const { bytes } = purchaseDelegate({ senderId: accountId, publicKey: buyer(sub).getPublicKey().toString(), usdcContractId: USDC, fields });
+        const fatxn = Array.from(bytes);
+        if (overrides.tamper) fatxn[fatxn.length - 40] ^= 1;
+        return { body: { access_token: JSON.stringify({ sub, fatxn, audience: overrides.audience }), ...fields }, accountId, bytes };
+    }
+
+    it('signs through fast-auth, verifies the MPC signature and relays exactly the approved delegate', async () => {
+        const { call, chain, values } = setup();
+        const request = await purchase('buyer-1');
+        expect(await call('/v1/purchases', request.body)).toMatchObject({ status: 200, body: { submitted: true } });
+        const sign = chain.sent.find((tx) => (tx.action.functionCall as Record<string, unknown> | undefined)?.methodName === 'sign')!;
+        expect(sign.receiverId).toBe('fast-auth.testnet');
+        const signArgs = JSON.parse(new TextDecoder().decode(Uint8Array.from((sign.action.functionCall as { args: ArrayLike<number> }).args)));
+        expect(signArgs).toMatchObject({ guard_id: `jwt#${ISSUER}`, algorithm: 'eddsa', sign_payload: Array.from(request.bytes) });
+        const relay = chain.sent.at(-1)!;
+        expect(relay.receiverId).toBe(request.accountId);
+        expect(Array.from(encodeDelegateAction(chain.relayed[0].delegateAction as never))).toEqual(Array.from(request.bytes));
+        // The approval token does not stay in storage once the signature exists.
+        expect([...values.keys()].some((key) => key.startsWith('tx:sign:'))).toBe(false);
+        // A retry of the same approval is idempotent: same relay, no new transaction.
+        const sentBefore = chain.sent.length;
+        const again = await call('/v1/purchases', request.body);
+        expect(again).toEqual({ status: 200, body: { submitted: true, txHash: relay.hash } });
+        expect(chain.sent).toHaveLength(sentBefore);
+    });
+
+    it('sponsors nothing but a buy_ticket_v2 transfer to this Market that matches the approval', async () => {
+        const { call, chain } = setup();
+        const cases: [Parameters<typeof purchase>[1], number, string][] = [
+            [{ receiver: 'other-market.testnet' }, 400, 'invalid_request'],
+            [{ action: 'withdraw' }, 400, 'invalid_request'],
+            [{ tamper: true }, 400, 'approval_mismatch'],
+            [{ audience: 'wrong' }, 401, 'invalid_token'],
+            [{ nonce: '7' }, 409, 'delegate_stale'],
+            [{ amount: '200000000' }, 409, 'insufficient_balance'],
+        ];
+        for (const [overrides, status, error] of cases) {
+            expect(await call('/v1/purchases', (await purchase('buyer-2', overrides)).body)).toEqual({ status, body: { error } });
+        }
+        expect(chain.sent).toEqual([]);
+        const login = await call('/v1/purchases', { ...(await purchase('buyer-2')).body, access_token_extra: 1 });
+        expect(login.status).toBe(400);
+    });
+
+    it('refuses an MPC signature that does not verify against the buyer key, and limits purchases per identity', async () => {
+        const forged = setup();
+        forged.chain.forgeMpc = true;
+        expect(await forged.call('/v1/purchases', (await purchase('buyer-3')).body)).toEqual({ status: 502, body: { error: 'mpc_signature_invalid' } });
+        expect(forged.chain.relayed).toEqual([]);
+
+        const limited = setup();
+        for (const nonce of ['8', '9']) expect((await limited.call('/v1/purchases', (await purchase('buyer-4', { nonce })).body)).status).toBe(200);
+        expect(await limited.call('/v1/purchases', (await purchase('buyer-4', { nonce: '10' })).body))
+            .toEqual({ status: 429, body: { error: 'identity_limit_reached' } });
     });
 });
 
