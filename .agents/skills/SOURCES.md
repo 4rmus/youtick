@@ -5,7 +5,7 @@ Selection follows the corrected recommendation in the [shared conversation](http
 
 The five upstream-derived SKILL.md entrypoints (near-api-js, near-dapp, near-smart-contracts, near-contract-audit, near-intents) are local YouTick adaptations with narrow triggers and on-demand references. Original entrypoints are retained verbatim as UPSTREAM.md; all upstream references/rules remain verbatim. `upstream-lock.json` records original paths and SHA-256 checksums (SKILL.md maps to UPSTREAM.md locally). Upstream near-smart-contracts declares MIT in its original frontmatter; no repository-wide LICENSE was present at this revision. No broader license is inferred.
 
-The youtick-* skills (youtick-contract-review, youtick-payment-flow) are local workflows based on current source. They do not freeze historical runtime claims or duplicate the whole project contract. Local file references may include ongoing uncommitted work; recheck availability and versions in the checkout being used.
+The youtick-* skills (youtick-contract-review, youtick-payment-flow, youtick-near-auth) are local workflows based on current source. They do not freeze historical runtime claims or duplicate the whole project contract. Local file references may include ongoing uncommitted work; recheck availability and versions in the checkout being used.
 
 Do not bulk-update these files from a floating branch. Fetch a candidate revision outside the repository, compare entrypoints and referenced files, review changes against root AGENTS.md and installed dependency versions, then update this revision and checksums together. Preserve the scoped entrypoints and authorization boundaries.
 
@@ -28,3 +28,7 @@ Codex discovery location: [official skills documentation](https://learn.chatgpt.
 ## Retirement — 2026-10-06
 
 - `youtick-near-auth` removed: it described a Google/Auth0/MPC login lab (`apps/web/lib/near-auth-lab*.ts`, `near-auth-signing*.ts`, `app/api/auth-lab/`) that commit `ad84ba2` (wallet-only V1 testnet candidate) deleted; `apps/web` has no Auth0/jose dependency and no `test:near-auth-types` script. Wallet sign-in now lives in `near-dapp`; the historical `docs/architecture/near-auth-*.md` files remain as documents, not current instructions. The skill text is recoverable from Git history.
+
+## V2 return — 2026-10-07
+
+- `youtick-near-auth` added back as a new local workflow for the V2 sign-in (roadmap E5): `apps/web/lib/near-auth/` and `apps/web/lib/ticket-keys/`. It does not restore the retired V1 lab text; that lab code stays deleted. `AGENTS.md`, `near-dapp` and `.claude/rules/web.md` point V2 sign-in work here.

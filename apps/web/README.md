@@ -80,6 +80,28 @@ npm run build
 ```
 
 Copy `.env.example` to `.env.local` for development. Market and access IDs are required and have no fallback. The Livepeer, sponsored-upload and native-NEAR fee flags remain closed until their release gates are approved.
+V2 NEAR Auth sign-in (`lib/near-auth/`) stays off unless `NEXT_PUBLIC_ENABLE_NEAR_AUTH_V2=true`
+and `NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID` is set; only testnet has a pinned provider, and no
+`ckd-gate` is trusted until one is added to `CKD_TRUST_ROOTS` in `lib/ticket-keys/ckd.ts`.
+The V2 pages `/tickets` and `/invite` also need `NEXT_PUBLIC_MARKET_V2_CONTRACT_ID`,
+`NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID`, `NEXT_PUBLIC_RELAYER_URL` (HTTPS origin) and
+`NEXT_PUBLIC_LIVEPEER_BRIDGE_URL`; otherwise they return 404.
+`/tickets/buy?publication=<id>` (crypto checkout through one NEAR Auth approval) also needs
+`NEXT_PUBLIC_PAYMENT_SERVICE_URL` (HTTPS origin of the VAT attestation service); without it the
+page says sales are not open. The relayer turns the approval into an MPC signature and relays
+it; the ticket is confirmed only by `get_ticket`. When the balance is too low and
+`NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE` is not `off`, the page offers a 1Click top-up: the
+Bridge's `ticket` quote with the user's own account as recipient (a V2 Bridge points
+`MARKET_CONTRACT_ID` at Market V2). Only the account's USDC balance counts as funded, never a
+1Click `SUCCESS`. The crypto rail is off for browser languages in
+`NEXT_PUBLIC_V2_CRYPTO_RAIL_DISABLED_LANGUAGES` (comma-separated, default `tr`). The checkout
+sends funnel counts (`lib/v2/funnel.ts`) to the payment service's `/v1/funnel`: a fixed step
+name, the rail and a failure code only, nothing that identifies the user or the screening; with
+Do Not Track or Global Privacy Control set, nothing is sent. The V2 ticket player shows a
+moving watermark with the ticket code (the first 8 hex characters of the public ticket id, which
+carries no buyer account). It is a visible deterrent only; full screen applies to the player
+frame so the watermark stays, and picture-in-picture is off. iOS Safari's own full-screen video
+cannot be overlaid.
 Multi-asset payments also default to `off`. `preview` is dry-quote only; `live`
 requires the Bridge to use the same mode and a positive
 `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`.

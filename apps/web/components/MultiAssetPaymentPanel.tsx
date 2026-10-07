@@ -369,7 +369,7 @@ export function MultiAssetPaymentPanel({
     );
 }
 
-function QuoteDetails({ quote }: { quote: PaymentQuoteResponse }) {
+export function QuoteDetails({ quote }: { quote: PaymentQuoteResponse }) {
     const value = quote.quote_response.quote;
     const request = quote.quote_response.quoteRequest;
     return (
@@ -389,7 +389,7 @@ function QuoteDetails({ quote }: { quote: PaymentQuoteResponse }) {
     );
 }
 
-function CopyField({ label, value }: { label: string; value: string }) {
+export function CopyField({ label, value }: { label: string; value: string }) {
     return (
         <div>
             <p className="text-xs text-zinc-500">{label}</p>
@@ -461,7 +461,7 @@ function errorCode(reason: unknown): string {
     return reason instanceof Error ? reason.message : 'payment_unknown_error';
 }
 
-function paymentErrorMessage(code: string): string {
+export function paymentErrorMessage(code: string): string {
     if (code === 'another_payment_checkout_active' || code === 'payment_checkout_active') {
         return 'Another conversion is active for this NEAR account. Complete it before starting a new one.';
     }
