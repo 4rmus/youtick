@@ -17,7 +17,7 @@ export type TxOutcome =
 export interface NearClient {
     view<T>(contractId: string, method: string, args: Record<string, unknown>): Promise<T>;
     accountExists(accountId: string): Promise<boolean>;
-    accessKey(accountId: string, publicKey: string): Promise<{ nonce: bigint; blockHash: string; fullAccess: boolean }>;
+    accessKey(accountId: string, publicKey: string): Promise<{ nonce: bigint; blockHash: string; blockHeight?: number; fullAccess: boolean }>;
     sendTx(signedTxBase64: string): Promise<TxOutcome>;
     txStatus(txHash: string, senderId: string): Promise<TxOutcome>;
 }
@@ -75,10 +75,11 @@ export function createNearClient(rpcUrl: string, fetcher: typeof fetch = (...arg
         return body;
     }
 
-    async function query(params: Record<string, unknown>, allowUnknownAccount = false) {
+    /** `missing` names the "does not exist" errors that are an answer rather than a failure. */
+    async function query(params: Record<string, unknown>, missing?: RegExp) {
         const body = await rpc('query', { ...params, finality: 'final' });
         const cause = JSON.stringify(body.error ?? (body.result as { error?: unknown } | undefined)?.error ?? '');
-        if (allowUnknownAccount && /UNKNOWN_ACCOUNT|does not exist while viewing/.test(cause)) return null;
+        if (missing?.test(cause)) return null;
         if (body.error || !body.result || typeof body.result !== 'object' || 'error' in body.result) throw new Error('rpc_unavailable');
         return body.result as Record<string, unknown>;
     }
@@ -97,15 +98,20 @@ export function createNearClient(rpcUrl: string, fetcher: typeof fetch = (...arg
             return JSON.parse(new TextDecoder().decode(Uint8Array.from(bytes as number[]))) as T;
         },
         async accountExists(accountId) {
-            return (await query({ request_type: 'view_account', account_id: accountId }, true)) !== null;
+            return (await query({ request_type: 'view_account', account_id: accountId }, /UNKNOWN_ACCOUNT|does not exist while viewing/)) !== null;
         },
         async accessKey(accountId, publicKey) {
-            const result = await query({ request_type: 'view_access_key', account_id: accountId, public_key: publicKey });
-            if (!result || typeof result.nonce !== 'number' || !Number.isSafeInteger(result.nonce)
+            const result = await query({ request_type: 'view_access_key', account_id: accountId, public_key: publicKey },
+                /UNKNOWN_ACCESS_KEY|UNKNOWN_ACCOUNT|does not exist while viewing/);
+            if (result === null) throw new Error('access_key_missing');
+            if (typeof result.nonce !== 'number' || !Number.isSafeInteger(result.nonce)
                 || typeof result.block_hash !== 'string') {
                 throw new Error('rpc_unavailable');
             }
-            return { nonce: BigInt(result.nonce), blockHash: result.block_hash, fullAccess: result.permission === 'FullAccess' };
+            return {
+                nonce: BigInt(result.nonce), blockHash: result.block_hash, fullAccess: result.permission === 'FullAccess',
+                ...(Number.isSafeInteger(result.block_height) ? { blockHeight: result.block_height as number } : {}),
+            };
         },
         async sendTx(signedTxBase64) {
             try {
@@ -130,6 +136,8 @@ export function createNearClient(rpcUrl: string, fetcher: typeof fetch = (...arg
 
 export interface FastAuthProvider {
     issuer: string;
+    /** Audience of signing access tokens; it is also the fast-auth JWT guard account. */
+    signingAudience: string;
     fastAuthContractId: string;
     mpcContractId: string;
     fastAuthDomainId: number;
@@ -137,6 +145,10 @@ export interface FastAuthProvider {
 
 /** The fast-auth implicit account for an identity (hex of the MPC key derived at `jwt#<iss>#<sub>`). */
 export async function fastAuthAccount(near: NearClient, provider: FastAuthProvider, sub: string): Promise<string> {
+    return (await fastAuthKey(near, provider, sub)).accountId;
+}
+
+export async function fastAuthKey(near: NearClient, provider: FastAuthProvider, sub: string): Promise<{ accountId: string; publicKey: string }> {
     const [paused, mpcAddress, mpcDomain] = await Promise.all([
         near.view<unknown>(provider.fastAuthContractId, 'paused', {}),
         near.view<unknown>(provider.fastAuthContractId, 'mpc_address', {}),
@@ -156,5 +168,5 @@ export async function fastAuthAccount(near: NearClient, provider: FastAuthProvid
         throw new Error('invalid_public_key');
     }
     if (raw.length !== 32 || `ed25519:${baseEncode(raw)}` !== derived) throw new Error('invalid_public_key');
-    return Array.from(raw, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    return { accountId: Array.from(raw, (byte) => byte.toString(16).padStart(2, '0')).join(''), publicKey: derived };
 }

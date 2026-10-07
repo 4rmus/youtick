@@ -18,6 +18,10 @@ export interface Env {
     DAILY_CKD_LIMIT?: string;
     IDENTITY_DAILY_CKD_LIMIT?: string;
     DAILY_INVITE_USDC_MICRO_LIMIT?: string;
+    /** Market V2: the only receiver the relayer sponsors purchases for. */
+    MARKET_V2_CONTRACT_ID?: string;
+    DAILY_PURCHASE_LIMIT?: string;
+    IDENTITY_DAILY_PURCHASE_LIMIT?: string;
     INVITE_AMOUNTS_USDC_MICRO?: string;
     INVITE_TTL_DAYS?: string;
     ALLOWED_ORIGINS?: string;
@@ -32,6 +36,7 @@ export interface Env {
 export const FAST_AUTH_PROVIDERS: Readonly<Record<'testnet' | 'mainnet', FastAuthProvider | null>> = Object.freeze({
     testnet: Object.freeze({
         issuer: 'https://login.testnet.fast-auth.com/',
+        signingAudience: 'auth0.jwt.fast-auth.testnet',
         fastAuthContractId: 'fast-auth.testnet',
         mpcContractId: 'v1.signer-prod.testnet',
         fastAuthDomainId: 1,
@@ -55,6 +60,9 @@ export interface RelayerConfig {
     dailyCkdLimit: string;
     identityDailyCkdLimit: string;
     dailyInviteUsdcMicroLimit: string;
+    marketContractId: string;
+    dailyPurchaseLimit: string;
+    identityDailyPurchaseLimit: string;
     inviteAmountsMicro: string[];
     inviteTtlMs: number;
     allowedOrigins: string[];
@@ -74,9 +82,10 @@ export function relayerConfig(env: Env): RelayerConfig | null {
     const inviteAmountsMicro = list(env.INVITE_AMOUNTS_USDC_MICRO);
     const allowedOrigins = list(env.ALLOWED_ORIGINS);
     const numbers = [env.ACCOUNT_FUNDING_YOCTO, env.MAX_STORAGE_DEPOSIT_YOCTO, env.DAILY_ACCOUNT_LIMIT, env.DAILY_CKD_LIMIT,
-        env.IDENTITY_DAILY_CKD_LIMIT, env.DAILY_INVITE_USDC_MICRO_LIMIT, env.INVITE_TTL_DAYS];
+        env.IDENTITY_DAILY_CKD_LIMIT, env.DAILY_INVITE_USDC_MICRO_LIMIT, env.INVITE_TTL_DAYS, env.DAILY_PURCHASE_LIMIT,
+        env.IDENTITY_DAILY_PURCHASE_LIMIT];
     if (!env.NEAR_RPC_URL?.startsWith('https://') || !ACCOUNT_ID.test(env.RELAYER_ACCOUNT_ID ?? '')
-        || !ACCOUNT_ID.test(env.USDC_CONTRACT_ID ?? '') || !/^[A-Za-z0-9_-]{1,128}$/.test(env.NEAR_AUTH_CLIENT_ID ?? '')
+        || !ACCOUNT_ID.test(env.USDC_CONTRACT_ID ?? '') || !ACCOUNT_ID.test(env.MARKET_V2_CONTRACT_ID ?? '') || !/^[A-Za-z0-9_-]{1,128}$/.test(env.NEAR_AUTH_CLIENT_ID ?? '')
         || !ckdGates.every((gate) => ACCOUNT_ID.test(gate))
         || !inviteAmountsMicro.length || !inviteAmountsMicro.every((amount) => POSITIVE.test(amount))
         || !allowedOrigins.every((origin) => /^https:\/\/[a-z0-9.-]+(:[0-9]+)?$/.test(origin) || /^http:\/\/localhost:[0-9]+$/.test(origin))
@@ -96,6 +105,8 @@ export function relayerConfig(env: Env): RelayerConfig | null {
         maxStorageDepositYocto: env.MAX_STORAGE_DEPOSIT_YOCTO!, dailyAccountLimit: env.DAILY_ACCOUNT_LIMIT!,
         dailyCkdLimit: env.DAILY_CKD_LIMIT!, identityDailyCkdLimit: env.IDENTITY_DAILY_CKD_LIMIT!,
         dailyInviteUsdcMicroLimit: env.DAILY_INVITE_USDC_MICRO_LIMIT!, inviteAmountsMicro,
+        marketContractId: env.MARKET_V2_CONTRACT_ID!, dailyPurchaseLimit: env.DAILY_PURCHASE_LIMIT!,
+        identityDailyPurchaseLimit: env.IDENTITY_DAILY_PURCHASE_LIMIT!,
         inviteTtlMs: Number(env.INVITE_TTL_DAYS) * 86_400_000, allowedOrigins,
     };
 }
