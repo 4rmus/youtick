@@ -1,6 +1,6 @@
 # youtick relayer
 
-Status: `LOCAL_TEST only / NOT_DEPLOYED`. Roadmap gate E5c, decision D7.
+Status: `LOCAL_TEST only / NOT_DEPLOYED`; V2 testnet deploy path: `.github/workflows/deploy-v2-testnet.yml` (`docs/v2-testnet-runbook.md`, Workers). Roadmap gate E5c, decision D7.
 
 A Cloudflare Worker with its own NEAR account and key, separate from the Livepeer Bridge. It pays
 gas and small amounts for NEAR Auth users so that sign-in and the invite credit need no wallet:
@@ -80,7 +80,7 @@ nothing is signed unless `RELAYER_MUTATIONS_ENABLED=true`.
 
 ## Not done here
 
-- No deploy workflow, no account and no secrets.
+- Deployed only to V2 testnet, through `deploy-v2-testnet.yml`; not run yet.
 - The Bridge does not read the invite allowlist yet (E6).
 - Old daily counters and replay markers are not cleaned up. The storage they use is small, but it
   grows.
