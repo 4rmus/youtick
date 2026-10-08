@@ -1,0 +1,196 @@
+name: V2 Testnet Workers
+
+# Deploys the V2 relayer and payment service to the separate V2 testnet environment.
+# Runbook: docs/v2-testnet-runbook.md (Workers). The Bridge V2 target is a later milestone.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact main commit with successful push CI
+        required: true
+        type: string
+      ci_run_id:
+        description: Successful CI run for this commit
+        required: true
+        type: string
+      mode:
+        description: closed answers 503 everywhere; acceptance opens both Workers to http://localhost:3000
+        type: choice
+        default: closed
+        options: [closed, acceptance]
+      confirmation:
+        description: Type DEPLOY_V2_TESTNET_closed or DEPLOY_V2_TESTNET_acceptance
+        required: true
+        type: string
+
+concurrency:
+  group: v2-testnet-workers
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      attestations: write
+      id-token: write
+    outputs:
+      sha: ${{ steps.authorize.outputs.sha }}
+    steps:
+      - name: Authorize exact main source and CI before checkout
+        id: authorize
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ inputs.sha }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          RELEASE_MODE: ${{ inputs.mode }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$CI_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RELEASE_MODE" =~ ^(closed|acceptance)$ ]]
+          [[ "$CONFIRMATION" == "DEPLOY_V2_TESTNET_${RELEASE_MODE}" ]]
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$RUNNER_TEMP/ci.json"
+          jq -e --arg sha "$REQUESTED_SHA" --arg repo "$GITHUB_REPOSITORY" '
+            .head_sha == $sha and .head_branch == "main" and .event == "push" and
+            .path == ".github/workflows/ci.yml" and .status == "completed" and .conclusion == "success" and
+            .head_repository.full_name == $repo' "$RUNNER_TEMP/ci.json"
+          gh api "repos/${GITHUB_REPOSITORY}/compare/${REQUESTED_SHA}...main" --jq '.status' | grep -Ex 'ahead|identical'
+          printf 'sha=%s\n' "$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.authorize.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            workers/relayer/package-lock.json
+            workers/payment-service/package-lock.json
+      - run: npm ci --no-audit --no-fund --prefer-offline
+        working-directory: workers/relayer
+      - run: npm ci --no-audit --no-fund --prefer-offline
+        working-directory: workers/payment-service
+      - name: Build both Workers without deploying
+        env:
+          SHA: ${{ steps.authorize.outputs.sha }}
+          RELEASE_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          for component in relayer payment-service; do
+            "workers/${component}/node_modules/.bin/wrangler" deploy --dry-run --cwd "workers/${component}" --outdir "$RUNNER_TEMP/build/${component}"
+            mkdir -p "$RUNNER_TEMP/release/${component}"
+            install -m 0644 "$RUNNER_TEMP/build/${component}/index.js" "$RUNNER_TEMP/release/${component}/index.js"
+            node scripts/v2-testnet-release.mjs write-config "$component" "$RUNNER_TEMP/release/${component}"
+          done
+          node scripts/v2-testnet-release.mjs check "$RUNNER_TEMP/release" "$SHA" "$RELEASE_MODE"
+          jq -n --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg run "$(jq -r .id "$RUNNER_TEMP/ci.json")" \
+            '{schema:"youtick.v2-testnet-workers-release.v1", sha:$sha, mode:$mode, ci_run_id:$run}' > "$RUNNER_TEMP/release/manifest.json"
+          (cd "$RUNNER_TEMP/release" && find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
+      - name: Summarize the exact packet for environment approval
+        env:
+          SHA: ${{ steps.authorize.outputs.sha }}
+          RELEASE_MODE: ${{ inputs.mode }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { COMPONENTS, releaseVars } from './scripts/v2-testnet-release.mjs';
+          const packet = Object.fromEntries(Object.entries(COMPONENTS).map(([name, spec]) =>
+            [name, { worker: spec.worker, domain: spec.domain, vars: releaseVars(name, process.env.RELEASE_MODE) }]));
+          const sums = readFileSync(`${process.env.RUNNER_TEMP}/release/SHA256SUMS`, 'utf8');
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `V2 testnet Workers, ${process.env.RELEASE_MODE}, ${process.env.SHA} (no NEAR transaction in this workflow):\n\n` +
+            '```json\n' + JSON.stringify(packet, null, 2) + '\n```\n\n```\n' + sums + '```\n');
+          JS
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/release/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: v2-testnet-workers-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release/
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy:
+    needs: prepare
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: v2-testnet
+      url: https://relayer-v2-testnet.youtick.net
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: workers/relayer/package-lock.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: v2-testnet-workers-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release
+      - name: Verify protected environment, provenance and reviewed packet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/environments/v2-testnet" | jq -e '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length) > 0)'
+          cd "$RUNNER_TEMP/release"
+          sha256sum --strict -c SHA256SUMS
+          [[ "$(find . -type f ! -name SHA256SUMS | wc -l)" == "$(wc -l < SHA256SUMS)" ]]
+          while read -r _ file; do
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/deploy-v2-testnet.yml" --source-digest "$SHA"
+          done < SHA256SUMS
+          jq -e --arg sha "$SHA" --arg mode "$RELEASE_MODE" '.sha == $sha and .mode == $mode' manifest.json
+      - run: npm ci --no-audit --no-fund --prefer-offline
+        working-directory: workers/relayer
+      - name: Fingerprint unrelated root origin
+        run: node scripts/release-smoke.mjs fingerprint https://youtick.net > "$RUNNER_TEMP/root-before.json"
+      - name: Preflight keys on chain, deploy both Workers and smoke them
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
+          NEAR_RPC_URL: ${{ secrets.V2_NEAR_RPC_URL }}
+          RELAYER_PRIVATE_KEY: ${{ secrets.V2_RELAYER_PRIVATE_KEY }}
+          RELAYER_ADMIN_TOKEN: ${{ secrets.V2_RELAYER_ADMIN_TOKEN }}
+          VAT_SIGNER_PRIVATE_KEY: ${{ secrets.V2_VAT_SIGNER_PRIVATE_KEY }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE_MODE: ${{ inputs.mode }}
+        run: node scripts/v2-testnet-release.mjs deploy "$SHA" "$RUNNER_TEMP/release" "$RUNNER_TEMP/v2-testnet-workers-receipt.json" "$RELEASE_MODE"
+      - name: Verify unrelated root origin
+        run: |
+          node scripts/release-smoke.mjs fingerprint https://youtick.net > "$RUNNER_TEMP/root-after.json"
+          node scripts/release-smoke.mjs compare "$RUNNER_TEMP/root-before.json" "$RUNNER_TEMP/root-after.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: v2-testnet-workers-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/v2-testnet-workers-receipt.json
+          if-no-files-found: warn
+          retention-days: 30

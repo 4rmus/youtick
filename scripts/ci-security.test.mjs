@@ -11,6 +11,8 @@ const workflows = [
     'codeql.yml',
     'deploy-preview.yml',
     'deploy-public-testnet.yml',
+    'deploy-v2-testnet.yml',
+    'bootstrap-v2-testnet.yml',
     'bootstrap-public-testnet.yml',
     'preview-market-code-update.yml',
     'promote-production.yml',
