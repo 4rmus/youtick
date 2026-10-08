@@ -133,11 +133,14 @@ test('the pinned USDC account is the one Market V2 hard-codes for testnet', () =
     assert.equal(policy.usdc.contract_id, TESTNET_USDC);
 });
 
-test('the committed policy is a template the workflow refuses', () => {
+test('the committed policy is filled, and template markers are still refused', () => {
     const policy = JSON.parse(readFileSync(new URL('./v2-testnet-bootstrap-policy.json', import.meta.url)));
-    assert.throws(() => validatePolicy(policy), /policy_is_template/);
-    delete policy.status;
-    assert.throws(() => validatePolicy(policy), /ed25519_required|market_keys|wasm_hashes/);
+    validatePolicy(policy);
+    assert.throws(() => validatePolicy({ ...policy, status: 'TEMPLATE' }), /policy_is_template/);
+    const unfilled = structuredClone(policy);
+    unfilled.market.vat_public_key = 'ed25519:REPLACE_VAT_PUBLIC_KEY';
+    unfilled.wasm_sha256.ckd_gate = 'REPLACE_WITH_CI_SHA256';
+    assert.throws(() => validatePolicy(unfilled), /ed25519_required|market_keys|wasm_hashes/);
 });
 
 test('bootstrap creates a keyless ckd-gate, initializes Market V2 and registers USDC accounts', async (t) => {
