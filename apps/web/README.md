@@ -81,8 +81,9 @@ npm run build
 
 Copy `.env.example` to `.env.local` for development. Market and access IDs are required and have no fallback. The Livepeer, sponsored-upload and native-NEAR fee flags remain closed until their release gates are approved.
 V2 NEAR Auth sign-in (`lib/near-auth/`) stays off unless `NEXT_PUBLIC_ENABLE_NEAR_AUTH_V2=true`
-and `NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID` is set; only testnet has a pinned provider, and no
-`ckd-gate` is trusted until one is added to `CKD_TRUST_ROOTS` in `lib/ticket-keys/ckd.ts`.
+and `NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID` is set; only testnet has a pinned provider. The only
+trusted `ckd-gate` is the V2 testnet gate `v2-ckd-gate-261007.youtick-dev-v3.testnet`, pinned in
+`CKD_TRUST_ROOTS` in `lib/ticket-keys/ckd.ts`; mainnet has none.
 The V2 pages `/tickets` and `/invite` also need `NEXT_PUBLIC_MARKET_V2_CONTRACT_ID`,
 `NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID`, `NEXT_PUBLIC_RELAYER_URL` (HTTPS origin) and
 `NEXT_PUBLIC_LIVEPEER_BRIDGE_URL`; otherwise they return 404.

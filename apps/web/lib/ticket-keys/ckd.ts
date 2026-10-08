@@ -122,7 +122,14 @@ export type CkdNetwork = 'testnet' | 'mainnet';
  * tickets stay recoverable.
  */
 export const CKD_TRUST_ROOTS: Readonly<Record<CkdNetwork, readonly CkdTrustRoot[]>> = Object.freeze({
-    testnet: Object.freeze([]),
+    testnet: Object.freeze([
+        // V2 testnet bootstrap, GitHub run 37832347847 (source 9592674): keyless, code hash = CI ckd_gate.wasm.
+        // MPC key: v1.signer-prod.testnet `public_key({ domain_id: 2 })`, domain 2 = ConfidentialKeyDerivation.
+        Object.freeze({
+            gateAccountId: 'v2-ckd-gate-261007.youtick-dev-v3.testnet',
+            mpcPublicKey: 'bls12381g2:xeYho48G2Sr9oJz4gw9sLGZGspeeKpHZvMDAwWvoNTRnVMFJH96GxX98TT2MRhTtsot1wcGR1Ti2Xh8PCsbYJ2enbLNdJXDvTYSK8aTE3nJ5NZXU7Kt1F6mFtReWs5pR4kj',
+        }),
+    ]),
     mainnet: Object.freeze([]),
 });
 
