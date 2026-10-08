@@ -224,10 +224,15 @@ describe('CKD through ckd-gate', () => {
         expect(requestKeyArgs('jwt', key, 'fan.testnet')).toEqual({ jwt: 'jwt', app_public_key: key, account_id: 'fan.testnet' });
     });
 
-    it('trusts no gate until one is pinned', () => {
-        expect(CKD_TRUST_ROOTS.testnet).toEqual([]);
+    it('trusts only the pinned V2 testnet gate and no mainnet gate', () => {
+        expect(CKD_TRUST_ROOTS.testnet.map((root) => root.gateAccountId)).toEqual(['v2-ckd-gate-261007.youtick-dev-v3.testnet']);
+        for (const root of CKD_TRUST_ROOTS.testnet) {
+            expect(() => decodeG2(root.mpcPublicKey)).not.toThrow();
+            expect(Object.isFrozen(root)).toBe(true);
+        }
         expect(CKD_TRUST_ROOTS.mainnet).toEqual([]);
-        expect(Object.isFrozen(CKD_TRUST_ROOTS) && Object.isFrozen(CKD_TRUST_ROOTS.mainnet)).toBe(true);
+        expect(Object.isFrozen(CKD_TRUST_ROOTS) && Object.isFrozen(CKD_TRUST_ROOTS.testnet)
+            && Object.isFrozen(CKD_TRUST_ROOTS.mainnet)).toBe(true);
         const ephemeral = generateEphemeralKeyPV();
         expect(() => decryptCkdKey({
             network: 'mainnet', gateAccountId: 'ckd-gate.near', accountId: 'fan.near', scalar: ephemeral.scalar,

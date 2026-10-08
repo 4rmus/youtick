@@ -333,7 +333,9 @@ describe('CKD sign-in (option C2)', () => {
     });
 
     it('refuses an untrusted gate before opening the provider page', async () => {
-        expect(trustedCkdGates('testnet')).toEqual([]);
+        expect(trustedCkdGates('testnet')).toEqual(['v2-ckd-gate-261007.youtick-dev-v3.testnet']);
+        expect(trustedCkdGates('testnet')).not.toContain(GATE);
+        expect(trustedCkdGates('mainnet')).toEqual([]);
         const roots = { testnet: [{ gateAccountId: 'other-gate.testnet', mpcPublicKey: encodeG2(G2.BASE) }], mainnet: [] };
         for (const trustRoots of [undefined, roots]) {
             const popup = new FakePopup();
