@@ -1,6 +1,6 @@
 # youtick payment service
 
-Status: `LOCAL_TEST only / NOT_DEPLOYED`. Roadmap gate E7a; E8 adds the card path.
+Status: `LOCAL_TEST only / NOT_DEPLOYED`; V2 testnet deploy path: `.github/workflows/deploy-v2-testnet.yml` (`docs/v2-testnet-runbook.md`, Workers). Roadmap gate E7a; E8 adds the card path.
 
 For now this Worker issues **VAT attestations** for V2 crypto purchases
 (`protocol/youtick-market-v2`, "VAT attestation") and counts **checkout funnel steps** (E7e). It

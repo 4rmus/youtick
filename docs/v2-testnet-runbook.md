@@ -1,16 +1,17 @@
 # V2 testnet runbook
 
-Status: `PREPARED / NOT_RUN`. This creates the separate V2 testnet environment (roadmap: E5
+Status: part 1 `PASS` on 2026-10-08 (run 37832347847); Workers `PREPARED / NOT_RUN`. This creates the separate V2 testnet environment (roadmap: E5
 acceptance, decision D9). Nothing here touches the V1 public testnet pilot or mainnet.
 
 The setup has three parts:
 
-1. **NEAR accounts and contracts** (`.github/workflows/bootstrap-v2-testnet.yml`). This part is
-   ready.
-2. **Workers.** The relayer Worker and a separate Bridge V2 environment (`MARKET_PROTOCOL=v2`).
-   This comes in the next gate.
-3. **Web configuration.** Pinning the new ckd-gate in `CKD_TRUST_ROOTS` and setting the V2
-   variables for a local run. This comes after part 1 succeeds.
+1. **NEAR accounts and contracts** (`.github/workflows/bootstrap-v2-testnet.yml`). Done: run
+   37832347847, receipt `PASS`. The policy is single-use; do not run it again.
+2. **Workers.** The relayer and payment service (`.github/workflows/deploy-v2-testnet.yml`, see
+   [Workers](#workers)). A separate Bridge V2 environment (`MARKET_PROTOCOL=v2`) is a later
+   milestone.
+3. **Web configuration.** The ckd-gate is pinned in `CKD_TRUST_ROOTS` (#304). Setting the V2
+   variables for a local run comes after the Workers.
 
 ## What the bootstrap creates
 
@@ -78,22 +79,79 @@ These steps need the owner. They involve keys, secrets and on-chain writes.
 
 Each of these is its own gate, done by Claude Code unless marked.
 
-- **Pin the gate.** Read the CKD domain 2 public key from `v1.signer-prod.testnet`, then pin
-  `{ gateAccountId, mpcPublicKey }` in `apps/web/lib/ticket-keys/ckd.ts` (`CKD_TRUST_ROOTS.testnet`)
-  through a PR.
-- **Deploy the Workers** (next gate):
-  - Relayer: `CKD_GATE_ACCOUNT_IDS` set to the gate, secrets `RELAYER_PRIVATE_KEY` and
-    `RELAYER_ADMIN_TOKEN`.
-  - Bridge V2: `MARKET_PROTOCOL=v2`, `MARKET_CONTRACT_ID` set to `market_v2`, and the operator
-    function-call key.
+- **Pin the gate.** Done in #304: `v2-ckd-gate-261007.youtick-dev-v3.testnet` with the
+  `v1.signer-prod.testnet` domain 2 key.
+- **Deploy the relayer and payment service.** See [Workers](#workers).
+- **Bridge V2** (later milestone): `MARKET_PROTOCOL=v2`, `MARKET_CONTRACT_ID` set to `market_v2`,
+  and the operator function-call key. The quote key needs converting to base64 PKCS8 first.
 - **Owner:** send a little NEAR and Circle testnet USDC (from Circle's testnet faucet) to the
   relayer account, for gas and invite credits.
 - **Local acceptance.** The shared NEAR Auth testnet client only allows `http://localhost:3000`,
   so run `apps/web` there with the V2 variables (`apps/web/README.md`).
   - Purchases need E7 (checkout and the VAT service).
 
+## Workers
+
+`.github/workflows/deploy-v2-testnet.yml` deploys two Workers from the exact `main` commit. The
+release logic is `scripts/v2-testnet-release.mjs`.
+
+| Worker | Domain |
+|---|---|
+| `youtick-relayer-v2-testnet` | `relayer-v2-testnet.youtick.net` |
+| `youtick-payment-service-v2-testnet` | `pay-v2-testnet.youtick.net` |
+
+What the workflow does:
+- **Prepare job** (no secrets):
+  - builds both Workers with `wrangler deploy --dry-run`;
+  - writes the deployed `wrangler.toml`: entry `index.js`, `workers_dev` and preview URLs off, and
+    no `NEAR_RPC_URL` var;
+  - dry-runs the exact deploy command;
+  - attests the files.
+- **Deploy job** (environment `v2-testnet`):
+  - verifies the attestations and checksums;
+  - checks on chain that the relayer key is a full-access key of `v2-relayer-261007` and that the
+    VAT key equals Market V2 `get_vat_public_key({ key_version: 1 })`;
+  - deploys each Worker with `--domain`;
+  - runs a smoke test and writes `v2-testnet-workers-receipt-<run>`.
+- **Modes:**
+  - `closed`: every route answers 503.
+  - `acceptance`: both Workers accept only `http://localhost:3000`.
+- **Public vars** (fixed in the script): the V2 accounts, the pinned gate and the shared NEAR Auth
+  testnet client.
+- **Smoke test:** a CORS preflight from the allowed origin, a refused foreign origin, and for the
+  payment service an unknown publication that must return 404 (this proves the RPC works and the
+  VAT key is registered).
+- **No rollback.** A failed smoke marks the receipt `FAILED` and leaves the new version live. Deploy
+  `closed` to shut both Workers.
+
+### Owner steps
+
+1. **Add the environment secrets.** Add these to GitHub environment `v2-testnet`. Pipe each value
+   so it is never printed:
+   ```bash
+   jq -r .private_key ~/youtick-v2-testnet-keys/relayer.json | gh secret set V2_RELAYER_PRIVATE_KEY --env v2-testnet --repo 4rmus/youtick
+   jq -r .private_key ~/youtick-v2-testnet-keys/vat.json | gh secret set V2_VAT_SIGNER_PRIVATE_KEY --env v2-testnet --repo 4rmus/youtick
+   openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n' | gh secret set V2_RELAYER_ADMIN_TOKEN --env v2-testnet --repo 4rmus/youtick
+   ```
+   Then add these three in the GitHub UI:
+   - `V2_CLOUDFLARE_ACCOUNT_ID`;
+   - `V2_CLOUDFLARE_API_TOKEN`: Workers Scripts edit, Workers Custom Domains (or Routes) and DNS
+     edit on `youtick.net`;
+   - `V2_NEAR_RPC_URL`: a dedicated HTTPS testnet RPC, not `rpc.testnet.near.org`.
+
+   Keep a copy of the admin token offline. It is needed for `POST /internal/invites`.
+2. **Fund the relayer.** Send Circle testnet USDC from the faucet to
+   `v2-relayer-261007.youtick-dev-v3.testnet`. It already has 5 NEAR for gas.
+3. **Run the workflow.** Start *V2 Testnet Workers* on `main` with these inputs, then approve the
+   environment:
+   - `sha` and `ci_run_id`: the current main commit and its CI run;
+   - `mode`: `acceptance`, or `closed` to shut both Workers;
+   - `confirmation`: `DEPLOY_V2_TESTNET_<mode>`.
+
 ## Evidence
 
-The scripts and workflow are covered by `workers/livepeer-bridge/scripts/v2-testnet-bootstrap.test.mjs`
-against a simulated chain (LOCAL_TEST). Nothing has run against testnet yet. A workflow `PASS`
-counts as PROVIDER (testnet) evidence only. It is never mainnet evidence.
+The bootstrap is covered by `workers/livepeer-bridge/scripts/v2-testnet-bootstrap.test.mjs`
+against a simulated chain (LOCAL_TEST), and its workflow ran with `PASS` on testnet (PROVIDER).
+The Workers release is covered by `scripts/v2-testnet-release.test.mjs` with a simulated chain,
+Wrangler and Workers (LOCAL_TEST). It has not run against Cloudflare yet. A workflow `PASS` counts
+as PROVIDER (testnet) evidence only. It is never mainnet evidence.

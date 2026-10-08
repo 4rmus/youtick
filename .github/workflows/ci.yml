@@ -206,7 +206,7 @@ jobs:
                   protocol=true
                   docs=true
                   ;;
-                scripts/cloudflare-release.mjs|scripts/cloudflare-release.test.mjs|scripts/release-metadata.mjs|scripts/release-metadata.test.mjs|scripts/release-smoke.mjs|scripts/release-smoke.test.mjs)
+                scripts/cloudflare-release.mjs|scripts/cloudflare-release.test.mjs|scripts/v2-testnet-release.mjs|scripts/v2-testnet-release.test.mjs|scripts/release-metadata.mjs|scripts/release-metadata.test.mjs|scripts/release-smoke.mjs|scripts/release-smoke.test.mjs)
                   : # Release tooling is tested by the required CI Gate.
                   ;;
                 .claude/*|.agents/*|claudedocs/*|AGENTS.md|README.md|CHANGELOG.md|CONTRIBUTING.md|SECURITY.md|.github/pull_request_template.md)
@@ -777,6 +777,7 @@ jobs:
           scripts/release-metadata.test.mjs
           scripts/release-smoke.test.mjs
           scripts/cloudflare-release.test.mjs
+          scripts/v2-testnet-release.test.mjs
           scripts/ci-security.test.mjs
           scripts/apply-market-read-model-d1.test.mjs
           scripts/fastnear-dev.test.mjs
