@@ -1,7 +1,6 @@
 {
   "schema": "youtick.v2-testnet-bootstrap.v1",
   "operation": "FRESH_V2_ACCOUNTS_DEPLOY_INIT",
-  "status": "TEMPLATE: replace every REPLACE value with the output of v2-testnet-keygen.mjs and the CI WASM hashes; validation rejects this file until then",
   "network": "testnet",
   "rpc_url": "https://test.rpc.fastnear.com",
   "parent": {
@@ -19,10 +18,10 @@
     "guardian": "ed25519:55ANg3regdHCVo8F2WZZ5w1YBVp3EDDzSvDYqxLtig4P"
   },
   "market": {
-    "quote_public_key": "ed25519:REPLACE_QUOTE_PUBLIC_KEY",
-    "quote_public_key_base64": "REPLACE_QUOTE_PUBLIC_KEY_BASE64",
+    "quote_public_key": "ed25519:7ZnEZxQZmb3myPfkSBzfgifbaaQQvou5E2oTRb2Rq4ih",
+    "quote_public_key_base64": "YYvahur/L80hl0moUnEBLkHjv1jNjzIgXQFMs/jkSf4=",
     "quote_key_version": 1,
-    "vat_public_key": "ed25519:REPLACE_VAT_PUBLIC_KEY",
+    "vat_public_key": "ed25519:2kQ6QhyzMNRNhLpqYj7yn1Hc2GqATdwKXzEBUt1RqqEU",
     "vat_key_version": 1,
     "operational_reserve_yocto": "100000000000000000000000"
   },
@@ -44,15 +43,15 @@
   "max_upfront_fees_yocto": "1000000000000000000000000",
   "expected_protocol_version": 87,
   "wasm_sha256": {
-    "market_v2": "REPLACE_WITH_CI_SHA256",
-    "ckd_gate": "REPLACE_WITH_CI_SHA256"
+    "market_v2": "92512d47a84089d80536a2ebfe95fd7eb70d505e9a51150f5ab9e7164f1ce5b5",
+    "ckd_gate": "c79b61629976f069aedaf4b3106e02813c6ef35d18620829de9ba3d55fb7a9c2"
   },
   "accounts": [
     {
       "role": "market_v2",
       "account_id": "v2-market-261007.youtick-dev-v3.testnet",
       "funding_yocto": "6000000000000000000000000",
-      "keys": [{ "public_key": "ed25519:REPLACE_MARKET_V2_PUBLIC_KEY", "permission": "FullAccess" }]
+      "keys": [{ "public_key": "ed25519:6dETbbPJPXgNRB9rrnXt1Ru7QMAqTvwWLcaQ56TYqnEo", "permission": "FullAccess" }]
     },
     {
       "role": "ckd_gate",
@@ -64,16 +63,16 @@
       "role": "relayer",
       "account_id": "v2-relayer-261007.youtick-dev-v3.testnet",
       "funding_yocto": "5000000000000000000000000",
-      "keys": [{ "public_key": "ed25519:REPLACE_RELAYER_PUBLIC_KEY", "permission": "FullAccess" }]
+      "keys": [{ "public_key": "ed25519:4xHFVB1DPniBxkgSS3jjro8DKsPUkE3HtUeuY2kupi2R", "permission": "FullAccess" }]
     },
     {
       "role": "bridge_operator",
       "account_id": "v2-bridge-261007.youtick-dev-v3.testnet",
       "funding_yocto": "1000000000000000000000000",
       "keys": [
-        { "public_key": "ed25519:REPLACE_BRIDGE_MANAGEMENT_PUBLIC_KEY", "permission": "FullAccess" },
+        { "public_key": "ed25519:36LsBSFPx3cPvuS5gd7xgD8rC64FQhxUQMgPj8Fo68tK", "permission": "FullAccess" },
         {
-          "public_key": "ed25519:REPLACE_BRIDGE_OPERATOR_PUBLIC_KEY",
+          "public_key": "ed25519:BDyHUFs1wbkaQJQ2Tq4AcyJWHanaC8j4spLQRwAKiYed",
           "permission": {
             "FunctionCall": {
               "receiver_id": "v2-market-261007.youtick-dev-v3.testnet",
@@ -88,13 +87,13 @@
       "role": "payment_operator",
       "account_id": "v2-payments-261007.youtick-dev-v3.testnet",
       "funding_yocto": "500000000000000000000000",
-      "keys": [{ "public_key": "ed25519:REPLACE_PAYMENT_OPERATOR_PUBLIC_KEY", "permission": "FullAccess" }]
+      "keys": [{ "public_key": "ed25519:AXJoFhX1opFJKeaDpfydUEN7CqehkziQTTbEC67cDJgY", "permission": "FullAccess" }]
     },
     {
       "role": "tax",
       "account_id": "v2-tax-261007.youtick-dev-v3.testnet",
       "funding_yocto": "200000000000000000000000",
-      "keys": [{ "public_key": "ed25519:REPLACE_TAX_PUBLIC_KEY", "permission": "FullAccess" }]
+      "keys": [{ "public_key": "ed25519:EkvueQyerTzjG9rkAWdusHrEvyotJ7Eo5KCyosdUJoUx", "permission": "FullAccess" }]
     }
   ]
 }
