@@ -38,6 +38,38 @@ deadline; a Discover fallback page can perform count and list reads sequentially
 The suite must cover upload processing, purchase, entitlement, creator
 playback, stranger denial, sale suspension, takedown and disabled gates.
 
+### Local run against public testnet (V1)
+
+`next dev` cannot serve the V1 flow. The `/api/near-rpc` proxy needs the
+Cloudflare rate-limit bindings and answers 503 without them, so Discover
+fails to load. Build with OpenNext and run the Worker locally instead.
+`--local` keeps the rate limiters in Miniflare and writes nothing to
+Cloudflare. The `NEXT_PUBLIC_*` values are compiled in, so rebuild after
+changing them.
+
+```bash
+cd apps/web
+export NEXT_PUBLIC_NEAR_NETWORK=testnet \
+  NEXT_PUBLIC_MARKET_CONTRACT_ID=video-market-v1-260907.youtick-dev-v3.testnet \
+  NEXT_PUBLIC_ACCESS_CONTRACT_ID=video-access-v1-260907.youtick-dev-v3.testnet \
+  NEXT_PUBLIC_VIDEO_ENVIRONMENT=public-testnet \
+  NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=true \
+  NEXT_PUBLIC_LIVEPEER_BRIDGE_URL=https://bridge-public-testnet.youtick.net \
+  NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE=false \
+  NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS=false \
+  NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false \
+  NEXT_PUBLIC_ENABLE_NEAR_AUTH_V2=false \
+  NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off
+npx opennextjs-cloudflare build
+npx wrangler dev --env preview --local --ip 127.0.0.1 --port 3000
+```
+
+The contract IDs come from
+`workers/livepeer-bridge/scripts/public-testnet-bootstrap-policy.json`.
+Sign-in, ticket purchase and playback use your own testnet wallet and real
+testnet transactions. Treat the result as a local manual check, not as
+Preview or Production evidence.
+
 ## Livepeer Bridge
 
 ```bash
