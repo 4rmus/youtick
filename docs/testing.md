@@ -59,13 +59,18 @@ export NEXT_PUBLIC_NEAR_NETWORK=testnet \
   NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS=false \
   NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false \
   NEXT_PUBLIC_ENABLE_NEAR_AUTH_V2=false \
-  NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off
+  NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off \
+  NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO=300000000000000000000000 \
+  NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO=300000000000000000000000
 npx opennextjs-cloudflare build
 npx wrangler dev --env preview --local --ip 127.0.0.1 --port 3000
 ```
 
 The contract IDs come from
 `workers/livepeer-bridge/scripts/public-testnet-bootstrap-policy.json`.
+Without the gas reserve, "Check payment options" fails with the generic
+"The upload could not continue" message (`creator_fee_gas_reserve_not_configured`).
+The value matches the `*_GAS_RESERVE_YOCTO` GitHub variables (0.3 NEAR).
 Sign-in, ticket purchase and playback use your own testnet wallet and real
 testnet transactions. Treat the result as a local manual check, not as
 Preview or Production evidence.
