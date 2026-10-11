@@ -258,6 +258,31 @@ describe('Livepeer browser upload', () => {
 
     afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+    it('tells a disabled sponsored path apart from an unsupported wallet on public testnet', async () => {
+        featureFlags.publicTestnetVideoV1 = true;
+        const input = {
+            accountId: 'creator.testnet', jobId: 'job-001', title: 'Paid video', priceUsdc: '2000001',
+            expectedSourceBytes: SOURCE_BYTES,
+        };
+        const plain = createWallet();
+        const delegating = { ...createWallet(), signDelegateActions: vi.fn() };
+
+        featureFlags.enableSponsoredLivepeerUploads = false;
+        await expect(authorizeLivepeerPaidJob(delegating as never, input)).rejects.toThrow('sponsored_upload_unavailable');
+        await expect(authorizeLivepeerPaidJob(delegating as never, { ...input, asset: 'NEAR' })).rejects.toThrow('sponsored_upload_unavailable');
+
+        featureFlags.enableSponsoredLivepeerUploads = true;
+        await expect(authorizeLivepeerPaidJob(delegating as never, { ...input, allowSponsoredUsdc: false }))
+            .rejects.toThrow('sponsored_upload_unavailable');
+        await expect(authorizeLivepeerPaidJob(plain as never, input)).rejects.toThrow('sponsored_upload_wallet_unsupported');
+
+        for (const wallet of [plain, delegating]) {
+            expect(wallet.signAndSendTransaction).not.toHaveBeenCalled();
+            expect(wallet.signAndSendTransactions).not.toHaveBeenCalled();
+        }
+        expect(delegating.signDelegateActions).not.toHaveBeenCalled();
+    });
+
     it.each(titleVectors.filter(({ title, accepted }) => !accepted || !title.trim()))('rejects blank upload title before payment: $name', async ({ title }) => {
         const wallet = createSponsoredWallet();
         const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);

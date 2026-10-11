@@ -95,6 +95,12 @@ describe('publication polling during the Published transition', () => {
     });
 });
 
+it('does not blame the wallet when the sponsored upload path is unavailable', () => {
+    expect(uploadErrorMessage(new Error('sponsored_upload_unavailable'), false))
+        .toBe('Upload payment is not available on this testnet right now. No wallet approval was requested.');
+    expect(uploadErrorMessage(new Error('sponsored_upload_wallet_unsupported'), false)).toContain('Meteor wallet');
+});
+
 it.each([
     ['missing', 'is missing'], ['invalid', 'is invalid'], ['job_mismatch', 'belongs to another upload'],
     ['read_failed', 'could not be read'], ['write_failed', 'could not be saved'],

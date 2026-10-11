@@ -596,9 +596,13 @@ export async function authorizeLivepeerPaidJob(wallet: WalletInstance, input: {
     requireFeature();
     input.signal?.throwIfAborted();
     const asset = input.asset ?? 'USDC';
-    if (FEATURE_FLAGS.publicTestnetVideoV1 && (asset !== 'USDC' || !FEATURE_FLAGS.enableSponsoredLivepeerUploads
-        || input.allowSponsoredUsdc === false || !wallet.signDelegateActions)) {
-        throw new Error('sponsored_upload_wallet_unsupported');
+    if (FEATURE_FLAGS.publicTestnetVideoV1) {
+        // Public testnet pays the upload fee only through the sponsored USDC path. Keep a disabled
+        // or unavailable path apart from a wallet that cannot sign delegate actions.
+        if (asset !== 'USDC' || !FEATURE_FLAGS.enableSponsoredLivepeerUploads || input.allowSponsoredUsdc === false) {
+            throw new Error('sponsored_upload_unavailable');
+        }
+        if (!wallet.signDelegateActions) throw new Error('sponsored_upload_wallet_unsupported');
     }
     if (asset === 'NEAR') requireNearCreatorFee();
     validateJobSessionIdentity(input.accountId, input.jobId);
