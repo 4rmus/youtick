@@ -54,6 +54,7 @@ export NEXT_PUBLIC_NEAR_NETWORK=testnet \
   NEXT_PUBLIC_ACCESS_CONTRACT_ID=video-access-v1-260907.youtick-dev-v3.testnet \
   NEXT_PUBLIC_VIDEO_ENVIRONMENT=public-testnet \
   NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=true \
+  NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2=true \
   NEXT_PUBLIC_LIVEPEER_BRIDGE_URL=https://bridge-public-testnet.youtick.net \
   NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE=false \
   NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS=true \
@@ -80,6 +81,11 @@ public-testnet mode the upload fee is paid only through the sponsored path.
 With sponsored uploads off, "Pay and upload" fails with
 `sponsored_upload_wallet_unsupported` ("This testnet requires a Meteor wallet
 that supports one-step sponsored approval"), even with Meteor.
+With the playback authorizer off, playback falls back to the older per-video
+Play grant and asks for a wallet transaction before each new video.
+Meteor logs two CSP errors for `rsms.me/inter` and `fonts.cdnfonts.com`
+from its sandboxed `about:srcdoc` frame. They are expected: the app CSP
+blocks third-party stylesheets, and Meteor falls back to system fonts.
 Sign-in, ticket purchase and playback use your own testnet wallet and real
 testnet transactions. Treat the result as a local manual check, not as
 Preview or Production evidence.
