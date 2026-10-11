@@ -971,6 +971,9 @@ export function uploadErrorMessage(reason: unknown, availabilityConfirmed: boole
         return `Recovery information ${reason} (${code}). Keep this upload and check any existing signing or payment attempt before retrying.`;
     }
     if (code === 'livepeer_wallet_rejected') return 'Wallet approval was cancelled. You can check this upload again.';
+    if (code === 'sponsored_upload_unavailable') {
+        return 'Upload payment is not available on this testnet right now. No wallet approval was requested.';
+    }
     if (code === 'livepeer_resume_in_progress') return 'This upload is being recovered in another tab. Wait for it to finish.';
     if (code === 'livepeer_resume_browser_unsupported') return 'Use a current Chrome or Edge browser to resume this upload.';
     if (code === 'provider_recovery_not_ready') return 'The original upload source is unavailable. No new upload was created.';

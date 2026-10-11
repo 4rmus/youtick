@@ -105,6 +105,12 @@ it.each([
     expect(uploadErrorMessage(new Error(`livepeer_draft_${code}: private-marker`), true)).not.toContain('private-marker');
 });
 
+it('does not blame the wallet when the sponsored upload path is unavailable', () => {
+    expect(uploadErrorMessage(new Error('sponsored_upload_unavailable'), false))
+        .toBe('Upload payment is not available on this testnet right now. No wallet approval was requested.');
+    expect(uploadErrorMessage(new Error('sponsored_upload_wallet_unsupported'), false)).toContain('Meteor wallet');
+});
+
 const progress = { job: { creator_id: 'creator.testnet' }, publication: null, expired: false };
 const render = () => renderToStaticMarkup(React.createElement(LivepeerUploadStatus, {
     accountId: 'creator.testnet', jobId: 'job-001',

@@ -79,8 +79,9 @@ The derived read model stays off, because `read-public-testnet.youtick.net`
 only allows the deployed origin. Discover then reads from the chain. In
 public-testnet mode the upload fee is paid only through the sponsored path.
 With sponsored uploads off, "Pay and upload" fails with
-`sponsored_upload_wallet_unsupported` ("This testnet requires a Meteor wallet
-that supports one-step sponsored approval"), even with Meteor.
+`sponsored_upload_unavailable` before any wallet approval.
+`sponsored_upload_wallet_unsupported` means the wallet cannot sign the
+one-step sponsored approval; use Meteor.
 With the playback authorizer off, playback falls back to the older per-video
 Play grant and asks for a wallet transaction before each new video.
 Meteor logs two CSP errors for `rsms.me/inter` and `fonts.cdnfonts.com`
