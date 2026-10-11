@@ -105,6 +105,15 @@ it.each([
     expect(uploadErrorMessage(new Error(`livepeer_draft_${code}: private-marker`), true)).not.toContain('private-marker');
 });
 
+it('shows an unmapped error code without echoing extra detail', () => {
+    expect(uploadErrorMessage(new Error('creator_fee_gas_reserve_not_configured'), false))
+        .toBe('The upload could not continue (creator_fee_gas_reserve_not_configured). Keep the original file and check this job before retrying.');
+    for (const reason of [new Error('unknown_code: private-marker'), new Error('Private Marker'), new Error(''), 'unknown_code', null]) {
+        expect(uploadErrorMessage(reason, false))
+            .toBe('The upload could not continue. Keep the original file and check this job before retrying.');
+    }
+});
+
 const progress = { job: { creator_id: 'creator.testnet' }, publication: null, expired: false };
 const render = () => renderToStaticMarkup(React.createElement(LivepeerUploadStatus, {
     accountId: 'creator.testnet', jobId: 'job-001',

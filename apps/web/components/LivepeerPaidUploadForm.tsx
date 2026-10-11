@@ -1007,7 +1007,9 @@ export function uploadErrorMessage(reason: unknown, availabilityConfirmed: boole
     if (code === 'livepeer_upload_key_recovery_unavailable') {
         return 'This upload key is unavailable. Keep the existing job; no new payment or key change has been started.';
     }
-    return 'The upload could not continue. Keep the original file and check this job before retrying.';
+    // Only a bare error code is shown; messages carrying extra text (`code: detail`) are never echoed.
+    const shownCode = /^[a-z][a-z0-9_]{0,79}$/.test(code) ? ` (${code})` : '';
+    return `The upload could not continue${shownCode}. Keep the original file and check this job before retrying.`;
 }
 
 function formatYoctoNear(value: string): string {
