@@ -56,10 +56,11 @@ export NEXT_PUBLIC_NEAR_NETWORK=testnet \
   NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=true \
   NEXT_PUBLIC_LIVEPEER_BRIDGE_URL=https://bridge-public-testnet.youtick.net \
   NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE=false \
-  NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS=false \
+  NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS=true \
   NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false \
   NEXT_PUBLIC_ENABLE_NEAR_AUTH_V2=false \
   NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off \
+  NEXT_PUBLIC_USDC_CONTRACT_ID=3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af \
   NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO=300000000000000000000000 \
   NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO=300000000000000000000000
 npx opennextjs-cloudflare build
@@ -71,6 +72,14 @@ The contract IDs come from
 Without the gas reserve, "Check payment options" fails with the generic
 "The upload could not continue" message (`creator_fee_gas_reserve_not_configured`).
 The value matches the `*_GAS_RESERVE_YOCTO` GitHub variables (0.3 NEAR).
+The flags follow the web side of the `acceptance` mode in
+`publicTestnetFlags` (`scripts/release-metadata.mjs`), with one exception.
+The derived read model stays off, because `read-public-testnet.youtick.net`
+only allows the deployed origin. Discover then reads from the chain. In
+public-testnet mode the upload fee is paid only through the sponsored path.
+With sponsored uploads off, "Pay and upload" fails with
+`sponsored_upload_wallet_unsupported` ("This testnet requires a Meteor wallet
+that supports one-step sponsored approval"), even with Meteor.
 Sign-in, ticket purchase and playback use your own testnet wallet and real
 testnet transactions. Treat the result as a local manual check, not as
 Preview or Production evidence.
