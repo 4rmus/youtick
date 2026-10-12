@@ -91,6 +91,19 @@ Sign-in, ticket purchase and playback use your own testnet wallet and real
 testnet transactions. Treat the result as a local manual check, not as
 Preview or Production evidence.
 
+### V2 creator upload (NEAR Auth)
+
+`/studio` uploads through the relayer instead of a wallet (roadmap E5b). It needs the V2
+endpoints (`NEXT_PUBLIC_ENABLE_NEAR_AUTH_V2`, `NEXT_PUBLIC_RELAYER_URL`,
+`NEXT_PUBLIC_MARKET_V2_CONTRACT_ID`, `NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID`), the V2 Bridge in
+`NEXT_PUBLIC_LIVEPEER_BRIDGE_URL`, `NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=true`, and
+`NEXT_PUBLIC_MARKET_CONTRACT_ID` equal to Market V2, because the Bridge envelopes of the shared
+upload client name that contract. Sponsored uploads and the public-testnet environment stay off.
+The unit coverage is `__tests__/unit/v2-upload.test.ts` (delegates byte-equal to the protocol
+`upload` vector, relayer approval flow, key replacement; LOCAL_TEST). A real upload on the V2
+testnet needs an invited NEAR Auth account that is also in the Bridge allowlist
+(`docs/v2-testnet-runbook.md`, "NEAR Auth creators"); that run is PROVIDER evidence on testnet only.
+
 ## Livepeer Bridge
 
 ```bash

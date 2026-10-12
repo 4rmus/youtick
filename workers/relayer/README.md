@@ -12,6 +12,9 @@ gas and small amounts for NEAR Auth users so that sign-in and the invite credit 
 | `POST /v1/invites/redeem` | `{ id_token, code }` | Pays the code's USDC credit from the relayer account with `ft_transfer` and records the account as an invited creator. A code works once, and an identity can redeem one code. |
 | `POST /v1/purchases` | `{ access_token, args: { receiver_id, amount, msg }, nonce, max_block_height }` | A V2 crypto purchase approved on the NEAR Auth screen (E7b). The relayer **rebuilds** the only delegate it sponsors: the user's account calling USDC `ft_transfer_call` to `MARKET_V2_CONTRACT_ID` with a `buy_ticket_v2` message, 300 TGas and 1 yocto. It requires those bytes to equal the token's `fatxn`. It then gets the MPC signature from `fast-auth.sign` and checks it against the user's key before relaying it as a signed delegate. The delegate's nonce makes the purchase run at most once. Returns `{ purchaseId, state, txHash }`: `200` with `state: "submitted"` once the relay landed, `202` while `signing` or `relaying`. The client reads the result from `get_ticket`. |
 | `POST /v1/purchases/status` | `{ purchase_id }` | Finishes or reads a purchase by the `purchaseId` returned above, without a token: the signing token outlives neither MPC signing nor the relay, and the user's nonce has moved once the relay landed. Same response shape; `404 purchase_not_found` for an unknown id. |
+| `POST /v1/uploads` | `{ access_token, args: { receiver_id, amount, msg }, nonce, max_block_height }` | An upload fee payment approved on the NEAR Auth screen (E5b). Same pattern as purchases: the relayer rebuilds the user's account calling USDC `ft_transfer_call` to `MARKET_V2_CONTRACT_ID` with a plain `create_paid_job` message (protocol `upload_msg`: no sponsor quote, no playback session), 100 TGas and 1 yocto, and requires those bytes to equal the token's `fatxn`. Before signing it checks what the Market would refund or reject: the exact fee, purchases not paused, no public beta or public upload policy (`quote_required`), and no job under this id (`job_exists` when this creator's identical job is already authorized, `job_conflict` otherwise). Returns `{ uploadId, state, txHash }` like purchases. The client reads the result from `get_media_job`. |
+| `POST /v1/upload-keys` | `{ access_token, args: { job_id, new_public_key, expires_at_ms }, nonce, max_block_height }` | `replace_upload_key` on Market V2 for a job this creator owns, when the per-job upload key was lost (E5b). Gas only: 100 TGas, no deposit. Refused unless the job exists, belongs to the creator and is still authorized (`job_not_found`, `job_conflict`, `job_published`). Same response shape and counters as uploads. |
+| `POST /v1/uploads/status` | `{ upload_id }` | Finishes or reads an upload or upload-key relay by its `uploadId`, without a token. `404 upload_not_found` for an unknown id or a purchase id. |
 | `POST /internal/invites` | `{ amount_usdc_micro }`, admin bearer token | Creates a code. The code is returned once; only its SHA-256 is stored. |
 | `GET /internal/invited-accounts/<account>` | admin bearer token | `{ invited }`, for the Bridge upload allowlist (E6). |
 
@@ -63,6 +66,11 @@ nothing is signed unless `RELAYER_MUTATIONS_ENABLED=true`.
     ticket key and the VAT attestation is signed by `get_vat_public_key`. `msg` must be compact
     JSON exactly as `JSON.stringify` writes it, and signatures canonical base64: the Market
     refunds duplicate keys and non-zero trailing bits that a lenient parser would accept.
+  - Uploads and upload-key replacements (E5b) use the same relay path with their own daily and
+    per-identity caps (`DAILY_UPLOAD_LIMIT`, `IDENTITY_DAILY_UPLOAD_LIMIT`, one counter for both),
+    and their own pre-checks against `get_media_job`, `get_public_upload_policy` and the fee
+    formula. An upload relay is refunded by the Market once its upload key has expired, so a
+    relay first sent that late is failed as `upload_key_expired` instead.
   - Limits: a daily cap and a per-identity cap, charged once per purchase in the same storage
     transaction that records it.
   - A purchase is recorded under the SHA-256 of its delegate bytes. The approval token is kept only

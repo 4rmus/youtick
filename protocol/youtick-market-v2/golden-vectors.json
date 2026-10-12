@@ -15,7 +15,15 @@
     "vat_usdc_micro": "833334",
     "vat_key_version": "1",
     "card_payment_reference": "cleeng-test-order-0001",
-    "payment_reference_key_hex": "985faa916db7d663843a6105cbddcc38551be72f5405b10ecece3ced70222951"
+    "payment_reference_key_hex": "985faa916db7d663843a6105cbddcc38551be72f5405b10ecece3ced70222951",
+    "near_auth_creator_id": "a3f1c0b2d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f",
+    "upload_job_id": "lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6",
+    "upload_title": "Stüdyo kaydı: açılış gecesi",
+    "upload_price_usdc_micro": "5000000",
+    "upload_source_bytes": "734003200",
+    "profile_config_sha256": "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77",
+    "delegate_nonce": "187000000000001",
+    "delegate_max_block_height": "187001200"
   },
   "key_derivation": {
     "ckd_key_hex": "51bd31e428a3931b33dec52e544533a8f73455539ff9e2b36e369b9f26e2a162",
@@ -214,6 +222,69 @@
     "message": "youtick.market-v2.playback.v1\ntestnet\nmarket-v2.youtick.testnet\n09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3\ned25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9\nhttps://preview.youtick.net\nc7fb50b34f2635e6d9a8b912be1c74c5\n1791360120000",
     "signature": "1rEaB/RU0uaOqyCkx0rt6pIQcK7UAqK85ChEhoMVDXHL2b4wPisqn4Z+HI+fqRX4FoS6kkssioiyP8lm+J1IDQ=="
   },
+  "upload": {
+    "creator_id": "a3f1c0b2d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f",
+    "creator_public_key": "ed25519:2wxXZ9jfECZ5hZMkqnDdBdGoSq2H2wb1fGX1meokuoue",
+    "msg": {
+      "action": "create_paid_job",
+      "job_id": "lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6",
+      "title": "Stüdyo kaydı: açılış gecesi",
+      "price_usdc": "5000000",
+      "expected_source_bytes": "734003200",
+      "profile_id": "paid-media-livepeer-v1",
+      "profile_config_sha256": "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77",
+      "upload_public_key": "ed25519:9sC7pDVZeDhwwoFvBxvsD76VRUuj8UgqHR3AAws6Z8Sn",
+      "upload_key_expires_at_ms": "1791446400000"
+    },
+    "ft_transfer_call_args": {
+      "receiver_id": "market-v2.youtick.testnet",
+      "amount": "500000",
+      "msg": "{\"action\":\"create_paid_job\",\"job_id\":\"lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6\",\"title\":\"Stüdyo kaydı: açılış gecesi\",\"price_usdc\":\"5000000\",\"expected_source_bytes\":\"734003200\",\"profile_id\":\"paid-media-livepeer-v1\",\"profile_config_sha256\":\"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77\",\"upload_public_key\":\"ed25519:9sC7pDVZeDhwwoFvBxvsD76VRUuj8UgqHR3AAws6Z8Sn\",\"upload_key_expires_at_ms\":\"1791446400000\"}"
+    },
+    "delegate": {
+      "sender_id": "a3f1c0b2d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f",
+      "receiver_id": "usdc.fakes.testnet",
+      "method_name": "ft_transfer_call",
+      "gas": "100000000000000",
+      "deposit_yocto": "1",
+      "nonce": "187000000000001",
+      "max_block_height": "187001200",
+      "public_key": "ed25519:2wxXZ9jfECZ5hZMkqnDdBdGoSq2H2wb1fGX1meokuoue",
+      "args": {
+        "receiver_id": "market-v2.youtick.testnet",
+        "amount": "500000",
+        "msg": "{\"action\":\"create_paid_job\",\"job_id\":\"lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6\",\"title\":\"Stüdyo kaydı: açılış gecesi\",\"price_usdc\":\"5000000\",\"expected_source_bytes\":\"734003200\",\"profile_id\":\"paid-media-livepeer-v1\",\"profile_config_sha256\":\"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77\",\"upload_public_key\":\"ed25519:9sC7pDVZeDhwwoFvBxvsD76VRUuj8UgqHR3AAws6Z8Sn\",\"upload_key_expires_at_ms\":\"1791446400000\"}"
+      },
+      "byte_length": 731,
+      "bytes_base64": "bgEAQEAAAABhM2YxYzBiMmQ0ZTVmNjA3MTgyOTNhNGI1YzZkN2U4ZjkwYTFiMmMzZDRlNWY2MDcxODI5M2E0YjVjNmQ3ZThmEgAAAHVzZGMuZmFrZXMudGVzdG5ldAEAAAACEAAAAGZ0X3RyYW5zZmVyX2NhbGwXAgAAeyJyZWNlaXZlcl9pZCI6Im1hcmtldC12Mi55b3V0aWNrLnRlc3RuZXQiLCJhbW91bnQiOiI1MDAwMDAiLCJtc2ciOiJ7XCJhY3Rpb25cIjpcImNyZWF0ZV9wYWlkX2pvYlwiLFwiam9iX2lkXCI6XCJscC0wZjhjMmE0ZS01YjZkLTRjN2UtOGY5MC1hMWIyYzNkNGU1ZjZcIixcInRpdGxlXCI6XCJTdMO8ZHlvIGtheWTEsTogYcOnxLFsxLHFnyBnZWNlc2lcIixcInByaWNlX3VzZGNcIjpcIjUwMDAwMDBcIixcImV4cGVjdGVkX3NvdXJjZV9ieXRlc1wiOlwiNzM0MDAzMjAwXCIsXCJwcm9maWxlX2lkXCI6XCJwYWlkLW1lZGlhLWxpdmVwZWVyLXYxXCIsXCJwcm9maWxlX2NvbmZpZ19zaGEyNTZcIjpcIjk2MTk3ZjUwMmFiOTc3N2RmMGUxYzEzNjA4MDM0NjFjM2Y3ZTI4MDk0OTVhZDU3NWJmZTMzOGJjNjlmNWJmNzdcIixcInVwbG9hZF9wdWJsaWNfa2V5XCI6XCJlZDI1NTE5OjlzQzdwRFZaZURod3dvRnZCeHZzRDc2VlJVdWo4VWdxSFIzQUF3czZaOFNuXCIsXCJ1cGxvYWRfa2V5X2V4cGlyZXNfYXRfbXNcIjpcIjE3OTE0NDY0MDAwMDBcIn0ifQBAehDzWgAAAQAAAAAAAAAAAAAAAAAAAAGwklQTqgAAcGklCwAAAAAAHO/VwHLWMeJGjVClmyZyeodyPh5iZUGKr6k6cH/A2jU=",
+      "sha256_hex": "f045250d81ce5007d452a2081e96fa9e2fab3d268afd26f1367537eb4481293a"
+    },
+    "replace_upload_key": {
+      "args": {
+        "job_id": "lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6",
+        "new_public_key": "ed25519:FDnDPbxK3sNCv6a1KiePn6y8MhcuwkRinP1rBzCnGBPJ",
+        "expires_at_ms": "1791446400000"
+      },
+      "delegate": {
+        "sender_id": "a3f1c0b2d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f",
+        "receiver_id": "market-v2.youtick.testnet",
+        "method_name": "replace_upload_key",
+        "gas": "100000000000000",
+        "deposit_yocto": "0",
+        "nonce": "187000000000002",
+        "max_block_height": "187001200",
+        "public_key": "ed25519:2wxXZ9jfECZ5hZMkqnDdBdGoSq2H2wb1fGX1meokuoue",
+        "args": {
+          "job_id": "lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6",
+          "new_public_key": "ed25519:FDnDPbxK3sNCv6a1KiePn6y8MhcuwkRinP1rBzCnGBPJ",
+          "expires_at_ms": "1791446400000"
+        },
+        "byte_length": 361,
+        "bytes_base64": "bgEAQEAAAABhM2YxYzBiMmQ0ZTVmNjA3MTgyOTNhNGI1YzZkN2U4ZjkwYTFiMmMzZDRlNWY2MDcxODI5M2E0YjVjNmQ3ZThmGQAAAG1hcmtldC12Mi55b3V0aWNrLnRlc3RuZXQBAAAAAhIAAAByZXBsYWNlX3VwbG9hZF9rZXmcAAAAeyJqb2JfaWQiOiJscC0wZjhjMmE0ZS01YjZkLTRjN2UtOGY5MC1hMWIyYzNkNGU1ZjYiLCJuZXdfcHVibGljX2tleSI6ImVkMjU1MTk6RkRuRFBieEszc05DdjZhMUtpZVBuNnk4TWhjdXdrUmluUDFyQnpDbkdCUEoiLCJleHBpcmVzX2F0X21zIjoiMTc5MTQ0NjQwMDAwMCJ9AEB6EPNaAAAAAAAAAAAAAAAAAAAAAAAAArCSVBOqAABwaSULAAAAAAAc79XActYx4kaNUKWbJnJ6h3I+HmJlQYqvqTpwf8DaNQ==",
+        "sha256_hex": "6eaadbdecd1876a5589c9c4a749be1ed99d7226f5a5b27b58e4814ac0cba0888"
+      }
+    }
+  },
   "events": {
     "ticket_purchased": {
       "standard": "youtick_market",
@@ -372,6 +443,38 @@
       "fatxn_json_bytes": 3810,
       "token_bytes_estimate": 6050,
       "prompt_bytes_estimate": 13533
+    },
+    "upload": {
+      "typical": {
+        "job_id_chars": 39,
+        "title_bytes": 40,
+        "upload_msg_bytes": 443,
+        "ft_transfer_call_args_bytes": 552,
+        "delegate_bytes": 794,
+        "fatxn_json_bytes": 2700,
+        "token_bytes_estimate": 4570,
+        "prompt_bytes_estimate": 9628
+      },
+      "worst": {
+        "job_id_chars": 128,
+        "title_bytes": 200,
+        "upload_msg_bytes": 692,
+        "ft_transfer_call_args_bytes": 801,
+        "delegate_bytes": 1043,
+        "fatxn_json_bytes": 3733,
+        "token_bytes_estimate": 5948,
+        "prompt_bytes_estimate": 12648
+      }
+    },
+    "replace_upload_key": {
+      "worst": {
+        "job_id_chars": 128,
+        "args_bytes": 245,
+        "delegate_bytes": 447,
+        "fatxn_json_bytes": 1562,
+        "token_bytes_estimate": 3053,
+        "prompt_bytes_estimate": 5421
+      }
     }
   }
 }

@@ -57,15 +57,15 @@ function parseMessage(msg: string): PurchaseMessage {
 }
 
 /** The 32 key bytes of a canonical `ed25519:<base58>` key, as the contract parses it. */
-function ed25519Key(value: string): Uint8Array {
-    if (!value.startsWith('ed25519:')) throw new Error('purchase_invalid');
+function ed25519Key(value: string, code = 'purchase_invalid'): Uint8Array {
+    if (!value.startsWith('ed25519:')) throw new Error(code);
     let raw: Uint8Array;
     try {
         raw = baseDecode(value.slice('ed25519:'.length));
     } catch {
-        throw new Error('purchase_invalid');
+        throw new Error(code);
     }
-    if (raw.length !== 32 || baseEncode(raw) !== value.slice('ed25519:'.length)) throw new Error('purchase_invalid');
+    if (raw.length !== 32 || baseEncode(raw) !== value.slice('ed25519:'.length)) throw new Error(code);
     return raw;
 }
 
@@ -160,4 +160,145 @@ export async function checkPurchaseMessage(near: NearClient, input: {
         throw new Error('purchase_invalid');
     }
     return { publicationId: purchase.publication_id, ticketId };
+}
+
+// --- Uploads through NEAR Auth (roadmap E5b.2) ------------------------------------------------
+// Checks a plain `create_paid_job` message the way Market V2's `ft_on_transfer` does, and the
+// `replace_upload_key` arguments the way the Market method does, before the relayer pays for a
+// fast-auth signature and a relay. Both are refunded or rejected on chain otherwise.
+
+/** `upload_msg` keys in protocol order (protocol/youtick-market-v2, "Upload through NEAR Auth"). */
+const UPLOAD_KEYS = 'action,job_id,title,price_usdc,expected_source_bytes,profile_id,profile_config_sha256,upload_public_key,upload_key_expires_at_ms';
+const UPLOAD_PROFILE_ID = 'paid-media-livepeer-v1';
+const IDENTIFIER = /^[A-Za-z0-9._:-]{1,128}$/;
+/** Market V2: PAID_SOURCE_MAX_BYTES, title 1-200 bytes, fee 3/10,000 per byte, at least 0.5 USDC. */
+const MAX_SOURCE_BYTES = 20_000_000_000n;
+const MAX_TITLE_BYTES = 200;
+const UPLOAD_FEE = { numerator: 3n, denominator: 10_000n, minimum: 500_000n };
+
+interface UploadMessage {
+    action: string;
+    job_id: string;
+    title: string;
+    price_usdc: string;
+    expected_source_bytes: string;
+    profile_id: string;
+    profile_config_sha256: string;
+    upload_public_key: string;
+    upload_key_expires_at_ms: string;
+}
+
+interface MediaJobView {
+    job_id?: unknown;
+    creator_id?: unknown;
+    profile_id?: unknown;
+    profile_config_sha256?: unknown;
+    title?: unknown;
+    price_usdc?: unknown;
+    expected_source_bytes?: unknown;
+    status?: unknown;
+    fee_asset?: unknown;
+    fee_amount?: unknown;
+    fee_usd_micro?: unknown;
+    upload_public_key?: unknown;
+    upload_key_expires_at_ms?: unknown;
+    fee_quote_hash?: unknown;
+}
+
+function parseUploadMessage(msg: string): UploadMessage {
+    let value: unknown;
+    try {
+        value = JSON.parse(msg);
+    } catch {
+        throw new Error('upload_invalid');
+    }
+    // Same text after re-serializing: no duplicate keys, no whitespace, protocol key order.
+    if (JSON.stringify(value) !== msg) throw new Error('upload_invalid');
+    const body = value as Record<string, unknown> | null;
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== UPLOAD_KEYS
+        || Object.values(body).some((field) => typeof field !== 'string') || body.action !== 'create_paid_job') {
+        throw new Error('upload_invalid');
+    }
+    return body as unknown as UploadMessage;
+}
+
+/** The contract's fee formula: `max(ceil(bytes * 3 / 10,000), 500,000)` micro-USDC. */
+export function uploadFeeUsdcMicro(sourceBytes: string): string {
+    const bytes = BigInt(sourceBytes);
+    const fee = (bytes * UPLOAD_FEE.numerator + UPLOAD_FEE.denominator - 1n) / UPLOAD_FEE.denominator;
+    return `${fee > UPLOAD_FEE.minimum ? fee : UPLOAD_FEE.minimum}`;
+}
+
+function futureMs(value: string, nowMs: number, code: string): number {
+    if (!DECIMAL.test(value)) throw new Error('upload_invalid');
+    const expires = Number(value);
+    if (!Number.isSafeInteger(expires)) throw new Error('upload_invalid');
+    if (expires <= nowMs + EXPIRY_MARGIN_MS) throw new Error(code);
+    return expires;
+}
+
+/** The upload-key expiry of a message `checkUploadMessage` accepted; the Market refunds after it. */
+export function uploadExpiresAtMs(msg: string): number {
+    return Number(parseUploadMessage(msg).upload_key_expires_at_ms);
+}
+
+/**
+ * Throws a client error code unless Market V2 would create this paid job now: well-formed fields,
+ * the exact fee, purchases not paused, no public beta or public upload policy (those need the
+ * quoted V1 path), and no existing job under this id other than this creator's identical one.
+ */
+export async function checkUploadMessage(near: NearClient, input: {
+    marketContractId: string; accountId: string; amount: string; msg: string; nowMs: number;
+}): Promise<{ jobId: string }> {
+    const upload = parseUploadMessage(input.msg);
+    if (!IDENTIFIER.test(upload.job_id) || upload.title.trim() === '' || new TextEncoder().encode(upload.title).length > MAX_TITLE_BYTES
+        || /[\p{Cc}]/u.test(upload.title) || !DECIMAL.test(upload.price_usdc) || BigInt(upload.price_usdc) < MIN_TICKET_PRICE_USDC
+        || !DECIMAL.test(upload.expected_source_bytes) || BigInt(upload.expected_source_bytes) < 1n
+        || BigInt(upload.expected_source_bytes) > MAX_SOURCE_BYTES || upload.profile_id !== UPLOAD_PROFILE_ID
+        || !HEX64.test(upload.profile_config_sha256)) {
+        throw new Error('upload_invalid');
+    }
+    ed25519Key(upload.upload_public_key, 'upload_invalid');
+    futureMs(upload.upload_key_expires_at_ms, input.nowMs, 'upload_key_expired');
+    if (input.amount !== uploadFeeUsdcMicro(upload.expected_source_bytes)) throw new Error('fee_mismatch');
+
+    const [governance, beta, policy, job] = await Promise.all([
+        near.view<{ new_purchases_paused?: unknown } | null>(input.marketContractId, 'get_governance_state', {}),
+        near.view<unknown>(input.marketContractId, 'get_public_testnet_beta_state', {}),
+        near.view<unknown>(input.marketContractId, 'get_public_upload_policy', {}),
+        near.view<MediaJobView | null>(input.marketContractId, 'get_media_job', { job_id: upload.job_id }),
+    ]);
+    if (governance?.new_purchases_paused !== false) throw new Error('uploads_paused');
+    // Either mode refunds a message without a sponsor quote; the relayer path carries none.
+    if (beta !== null || policy !== null) throw new Error('quote_required');
+    if (job !== null) {
+        const identical = job.creator_id === input.accountId && job.title === upload.title && job.price_usdc === upload.price_usdc
+            && job.expected_source_bytes === upload.expected_source_bytes && job.profile_id === upload.profile_id
+            && job.profile_config_sha256 === upload.profile_config_sha256 && job.upload_public_key === upload.upload_public_key
+            && job.upload_key_expires_at_ms === upload.upload_key_expires_at_ms && job.fee_asset === 'USDC'
+            && job.fee_amount === input.amount && job.fee_usd_micro === input.amount && job.fee_quote_hash === null;
+        // An identical job is already authorized (the transfer would only be refunded); anything else panics.
+        throw new Error(identical ? 'job_exists' : 'job_conflict');
+    }
+    return { jobId: upload.job_id };
+}
+
+/**
+ * Throws a client error code unless Market V2 would replace the upload key now: the job exists,
+ * belongs to this creator, is still authorized (not published), the new expiry is in the future
+ * and no public upload policy adds a deadline the relayer path does not know.
+ */
+export async function checkUploadKeyArgs(near: NearClient, input: {
+    marketContractId: string; accountId: string; args: { job_id: string; new_public_key: string; expires_at_ms: string }; nowMs: number;
+}): Promise<void> {
+    ed25519Key(input.args.new_public_key, 'upload_invalid');
+    futureMs(input.args.expires_at_ms, input.nowMs, 'upload_key_expired');
+    const [job, policy] = await Promise.all([
+        near.view<MediaJobView | null>(input.marketContractId, 'get_media_job', { job_id: input.args.job_id }),
+        near.view<unknown>(input.marketContractId, 'get_public_upload_policy', {}),
+    ]);
+    if (job === null) throw new Error('job_not_found');
+    if (job.creator_id !== input.accountId) throw new Error('job_conflict');
+    if (job.status !== 'Authorized') throw new Error('job_published');
+    if (policy !== null) throw new Error('quote_required');
 }

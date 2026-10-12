@@ -3073,6 +3073,40 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(externalFetch).not.toHaveBeenCalled();
     });
 
+    it('admits a NEAR Auth implicit account named in the V2 testnet creator allowlist (E5b.3)', async () => {
+        // Invited creators sign in with Google or a passkey and hold a 64-hex implicit account; the
+        // static allowlist (decision D11) names them next to the wallet test accounts.
+        const creator = 'a3f1c0b2d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f';
+        const admissionState = createState();
+        let admission!: LivepeerControl;
+        const namespace = {
+            idFromName: (name: string) => ({ toString: () => name }),
+            get: () => ({ fetch: (request: Request) => admission.fetch(request) }),
+        } as unknown as DurableObjectNamespace;
+        const env = createEnv({
+            LIVEPEER_BRIDGE_ENABLED: 'true',
+            MARKET_PROTOCOL: 'v2',
+            VIDEO_ENVIRONMENT: 'v2-testnet',
+            LIVEPEER_CREATOR_ALLOWLIST: `ticks.testnet, ${creator}`,
+            LIVEPEER_CONTROL: namespace,
+        });
+        admission = new LivepeerControl(admissionState.state, env);
+
+        const available = await handler.fetch(uploadPreflightRequest({ creator_id: creator }), env);
+        expect(available.status).toBe(200);
+        expect(await available.json()).toEqual({ available: true });
+
+        const other = await handler.fetch(uploadPreflightRequest({ creator_id: 'b'.repeat(64) }), env);
+        expect(other.status).toBe(503);
+        expect(await other.json()).toEqual({ error: 'admission_closed' });
+
+        // One malformed entry disables the whole list (the wildcard is refused later, at the on-chain job check).
+        const closed = await handler.fetch(uploadPreflightRequest({ creator_id: creator }), { ...env, LIVEPEER_CREATOR_ALLOWLIST: `${creator},Not An Account` });
+        expect(closed.status).toBe(503);
+        expect(await closed.json()).toEqual({ error: 'runtime_not_configured' });
+        expect(admissionState.values.size).toBe(0);
+    });
+
     it('checks active capacity without reserving the preflight job', async () => {
         const admissionState = createState();
         let admission!: LivepeerControl;

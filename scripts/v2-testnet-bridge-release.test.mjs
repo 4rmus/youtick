@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-    BRIDGE, CREATOR_ALLOWLIST, FIXED_VARS, FLAGS, JWT_PUBLIC_KEY, OPERATOR_METHODS, RATE_LIMIT_NAMESPACE, SECRETS,
+    BRIDGE, CREATOR_ALLOWLIST, FIXED_VARS, FLAGS, JWT_PUBLIC_KEY, NEAR_AUTH_CREATOR_ALLOWLIST, OPERATOR_METHODS, RATE_LIMIT_NAMESPACE, SECRETS,
+    WALLET_CREATOR_ALLOWLIST,
     deployRelease, jwtKeyMatches, quotePublicKey, releaseSecrets, releaseVars, sanitizeBridgeConfig, wranglerArgs,
 } from './v2-testnet-bridge-release.mjs';
 import { ACCEPTANCE_ORIGIN, MARKET_V2, base58Encode } from './v2-testnet-release.mjs';
@@ -116,7 +117,8 @@ test('the repository Bridge config sanitizes to Market V2 vars with no Queue, D1
     assert.match(config, /^MARKET_V2_RELEASE_ENABLED = "false"$/m);
     assert.match(config, /^LIVEPEER_WEBHOOK_QUEUE_ENABLED = "false"$/m);
     assert.match(config, /^MULTI_ASSET_PAYMENTS_MODE = "off"$/m);
-    assert.match(config, /^LIVEPEER_CREATOR_ALLOWLIST = "ticks\.testnet,soteri\.testnet,utick\.testnet"$/m);
+    assert.ok(config.includes(`LIVEPEER_CREATOR_ALLOWLIST = ${JSON.stringify(CREATOR_ALLOWLIST.join(','))}\n`));
+    assert.match(config, /^LIVEPEER_CREATOR_ALLOWLIST = "ticks\.testnet,soteri\.testnet,utick\.testnet[^"]*"$/m);
     assert.match(config, /\[\[durable_objects\.bindings\]\]\nname = "LIVEPEER_CONTROL"/);
     assert.throws(() => sanitizeBridgeConfig('main = "x"\n[vars]\nNEW_ID = "<replace-me>"\n[[ratelimits]]\nnamespace_id = "1"\n'), /config_placeholder_NEW_ID/);
     assert.throws(() => sanitizeBridgeConfig('main = "x"\n[vars]\nLIVEPEER_API_KEY = "k"\n[[ratelimits]]\nnamespace_id = "1"\n'), /config_secret_in_vars/);
@@ -131,6 +133,13 @@ test('the repository Bridge config sanitizes to Market V2 vars with no Queue, D1
 test('the allowlist names accounts only and never a wildcard', () => {
     assert.ok(CREATOR_ALLOWLIST.length > 0);
     for (const account of CREATOR_ALLOWLIST) assert.match(account, /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/);
+});
+
+test('NEAR Auth creators are implicit accounts listed once, after the wallet accounts', () => {
+    for (const account of NEAR_AUTH_CREATOR_ALLOWLIST) assert.match(account, /^[0-9a-f]{64}$/);
+    for (const account of WALLET_CREATOR_ALLOWLIST) assert.doesNotMatch(account, /^[0-9a-f]{64}$/);
+    assert.deepEqual([...CREATOR_ALLOWLIST], [...WALLET_CREATOR_ALLOWLIST, ...NEAR_AUTH_CREATOR_ALLOWLIST]);
+    assert.equal(new Set(CREATOR_ALLOWLIST).size, CREATOR_ALLOWLIST.length);
 });
 
 test('closed turns every Bridge flag off and acceptance turns them on; only flags travel as --var', () => {

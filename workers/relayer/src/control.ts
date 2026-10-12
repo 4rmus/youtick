@@ -5,8 +5,9 @@ import { KeyPairSigner, Signature, actions, baseDecode, baseEncode, createTransa
 import type { Env } from './env';
 import { relayerConfig, type RelayerConfig } from './env';
 import { createNearClient, type NearClient, type TxOutcome } from './near';
-import { purchaseExpiresAtMs } from './market';
-import { purchaseDelegate, sameBytes, type PurchaseFields } from './purchase';
+import { purchaseExpiresAtMs, uploadExpiresAtMs } from './market';
+import { parsePurchaseFields, purchaseDelegate, sameBytes, type PurchaseFields } from './purchase';
+import { parseUploadFields, parseUploadKeyFields, uploadDelegate, uploadKeyDelegate, type UploadFields, type UploadKeyFields } from './upload';
 
 const CKD_GAS = 150_000_000_000_000n;
 const STORAGE_DEPOSIT_GAS = 30_000_000_000_000n;
@@ -44,17 +45,23 @@ interface TxRecord {
     broadcastAtMs: number;
 }
 
+/** What the relayed delegate does; a record without `kind` predates uploads and is a purchase. */
+type RelayKind = 'purchase' | 'upload' | 'upload_key';
+type RelayFields = PurchaseFields | UploadFields | UploadKeyFields;
+
 /**
- * One NEAR Auth purchase, keyed by the SHA-256 of its delegate bytes. `signing` holds the approval
- * token until fast-auth has signed; `relaying` holds the MPC signature instead. `retryable` marks
- * a failure before anything was relayed, so a new approval of the same bytes may start again.
+ * One NEAR Auth relay (a purchase, an upload fee payment or an upload-key replacement), keyed by
+ * the SHA-256 of its delegate bytes. `signing` holds the approval token until fast-auth has
+ * signed; `relaying` holds the MPC signature instead. `retryable` marks a failure before anything
+ * was relayed, so a new approval of the same bytes may start again.
  */
 interface PurchaseRecord {
     state: 'signing' | 'relaying' | 'submitted' | 'failed';
+    kind?: RelayKind;
     identityHash: string;
     accountId: string;
     userPublicKey: string;
-    fields: PurchaseFields;
+    fields: RelayFields;
     token?: string;
     signature?: string;
     /** The fast-auth sign transaction of a purchase that expired; its signature may still be on chain. */
@@ -145,8 +152,11 @@ export class RelayerControl {
                 case '/invite/create': return await this.createInvite(config, body);
                 case '/invite/redeem': return await this.redeemInvite(config, body);
                 case '/invite/status': return await this.inviteStatus(body);
-                case '/purchase': return await this.relayPurchase(config, body);
-                case '/purchase/status': return await this.advancePurchase(config, requireHex64(body.purchaseId));
+                case '/purchase': return await this.relayDelegate(config, body, 'purchase');
+                case '/purchase/status': return await this.advancePurchase(config, requireHex64(body.purchaseId), 'purchase');
+                case '/upload': return await this.relayDelegate(config, body, 'upload');
+                case '/upload-key': return await this.relayDelegate(config, body, 'upload_key');
+                case '/upload/status': return await this.advancePurchase(config, requireHex64(body.uploadId), 'upload');
                 default: return json({ error: 'not_found' }, 404);
             }
         } catch (error) {
@@ -156,7 +166,7 @@ export class RelayerControl {
                 invite_unavailable: 409, invite_already_used: 409, ckd_already_requested: 409, tx_failed: 502,
                 tx_needs_review: 503, mutations_disabled: 503, relayer_key_invalid: 503, rpc_unavailable: 503,
                 payload_conflict: 409, invalid_request: 400, purchase_not_found: 404, approval_rejected: 409,
-                approval_expired: 409, relay_failed: 502, signature_expired: 409,
+                approval_expired: 409, relay_failed: 502, signature_expired: 409, upload_not_found: 404, upload_key_expired: 409,
             };
             if (known[code]) return json({ error: code }, known[code]);
             // The object only reads the relayer's own access key.
@@ -311,24 +321,48 @@ export class RelayerControl {
         });
     }
 
+    /** Rebuilds the one delegate a record (or a request of that kind) stands for. */
+    private delegateFor(config: RelayerConfig, kind: RelayKind, record: { accountId: string; userPublicKey: string; fields: RelayFields }) {
+        const base = { senderId: record.accountId, publicKey: record.userPublicKey };
+        if (kind === 'upload') return uploadDelegate({ ...base, usdcContractId: config.usdcContractId, fields: record.fields as UploadFields });
+        if (kind === 'upload_key') return uploadKeyDelegate({ ...base, marketContractId: config.marketContractId, fields: record.fields as UploadKeyFields });
+        return purchaseDelegate({ ...base, usdcContractId: config.usdcContractId, fields: record.fields as PurchaseFields });
+    }
+
+    /** When the chain would refund or reject the relay even with a valid signature. */
+    private static expiresAtMs(kind: RelayKind, fields: RelayFields): number {
+        if (kind === 'upload') return uploadExpiresAtMs((fields as UploadFields).args.msg);
+        if (kind === 'upload_key') return Number((fields as UploadKeyFields).args.expires_at_ms);
+        return purchaseExpiresAtMs((fields as PurchaseFields).args.msg);
+    }
+
+    private static reply(kind: RelayKind, id: string, state: string, txHash: string | null, status = 200): Response {
+        return json(kind === 'purchase' ? { purchaseId: id, state, txHash } : { uploadId: id, state, txHash }, status);
+    }
+
     /**
-     * A NEAR Auth purchase: fast-auth `sign` turns the user's approval token into an MPC signature
+     * A NEAR Auth relay: fast-auth `sign` turns the user's approval token into an MPC signature
      * over the delegate the user approved; the relayer then submits it as a signed delegate. The
-     * delegate's own nonce means the purchase can execute at most once, whatever the relayer retries.
-     * The record is written with the limit charge, so one purchase is charged once.
+     * delegate's own nonce means it can execute at most once, whatever the relayer retries.
+     * The record is written with the limit charge, so one relay is charged once.
      */
-    private async relayPurchase(config: RelayerConfig, body: Record<string, unknown>): Promise<Response> {
+    private async relayDelegate(config: RelayerConfig, body: Record<string, unknown>, kind: RelayKind): Promise<Response> {
         const identity = requireHex64(body.identityHash);
         const accountId = requireHex64(body.accountId);
         const userPublicKey = body.userPublicKey;
         const token = body.accessToken;
-        const fields = body.fields as PurchaseFields | undefined;
-        if (typeof userPublicKey !== 'string' || typeof token !== 'string' || !fields || typeof body.bytes !== 'string') {
+        if (typeof userPublicKey !== 'string' || typeof token !== 'string' || !body.fields || typeof body.bytes !== 'string') {
             throw new Error('invalid_request');
         }
-        const { bytes } = purchaseDelegate({ senderId: accountId, publicKey: userPublicKey, usdcContractId: config.usdcContractId, fields });
+        const fields: RelayFields = kind === 'upload' ? strip(parseUploadFields(body.fields, config.marketContractId))
+            : kind === 'upload_key' ? parseUploadKeyFields(body.fields)
+                : strip(parsePurchaseFields(body.fields, config.marketContractId));
+        const { bytes } = this.delegateFor(config, kind, { accountId, userPublicKey, fields });
         if (!sameBytes(bytes, Uint8Array.from(atob(body.bytes), (char) => char.charCodeAt(0)))) throw new Error('invalid_request');
         const id = await sha256Hex(bytes);
+        const counter = kind === 'purchase' ? 'purchase' : 'upload';
+        const dailyLimit = kind === 'purchase' ? config.dailyPurchaseLimit : config.dailyUploadLimit;
+        const identityLimit = kind === 'purchase' ? config.identityDailyPurchaseLimit : config.identityDailyUploadLimit;
         await this.state.storage.transaction(async (txn) => {
             const existing = await txn.get<PurchaseRecord>(`purchase:${id}`);
             if (existing?.state === 'signing' && !await txn.get(`tx:sign:${id}`)) {
@@ -337,33 +371,34 @@ export class RelayerControl {
                 return;
             }
             if (existing && !(existing.state === 'failed' && existing.retryable)) return;
-            const identityKey = `count:${this.day()}:purchase:${identity}`;
+            const identityKey = `count:${this.day()}:${counter}:${identity}`;
             const used = BigInt(await txn.get<string>(identityKey) ?? '0');
-            if (used >= BigInt(config.identityDailyPurchaseLimit)) throw new Error('identity_limit_reached');
-            await this.consumeDaily(txn, 'purchases', 1n, BigInt(config.dailyPurchaseLimit));
+            if (used >= BigInt(identityLimit)) throw new Error('identity_limit_reached');
+            await this.consumeDaily(txn, `${counter}s`, 1n, BigInt(dailyLimit));
             await txn.put(identityKey, String(used + 1n));
             const record: PurchaseRecord = {
-                state: 'signing', identityHash: identity, accountId, userPublicKey, fields, token,
+                state: 'signing', kind, identityHash: identity, accountId, userPublicKey, fields, token,
                 createdAtMs: this.now(), updatedAtMs: this.now(),
             };
             await txn.put(`purchase:${id}`, record);
         });
         await this.ensureAlarm();
-        return this.advancePurchase(config, id);
+        return this.advancePurchase(config, id, kind);
     }
 
     /**
      * Moves a purchase on from its stored record, so the status route and the alarm need no token:
      * sign, verify and keep the MPC signature, relay, record the relay. Each step is idempotent.
      */
-    private async advancePurchase(config: RelayerConfig, id: string): Promise<Response> {
+    private async advancePurchase(config: RelayerConfig, id: string, expect?: RelayKind): Promise<Response> {
         let record = await this.state.storage.get<PurchaseRecord>(`purchase:${id}`);
-        if (!record) throw new Error('purchase_not_found');
+        const kind: RelayKind = record?.kind ?? 'purchase';
+        // The upload status route reads upload and upload-key records; the purchase route only purchases.
+        const family = (value: RelayKind) => (value === 'purchase' ? 'purchase' : 'upload');
+        if (!record || (expect && family(expect) !== family(kind))) throw new Error(expect === 'purchase' || !expect ? 'purchase_not_found' : 'upload_not_found');
         if (record.state === 'failed') throw new Error(record.error ?? 'relay_failed');
-        if (record.state === 'submitted') return json({ purchaseId: id, state: 'submitted', txHash: record.txHash ?? null });
-        const { delegateAction, bytes } = purchaseDelegate({
-            senderId: record.accountId, publicKey: record.userPublicKey, usdcContractId: config.usdcContractId, fields: record.fields,
-        });
+        if (record.state === 'submitted') return RelayerControl.reply(kind, id, 'submitted', record.txHash ?? null);
+        const { delegateAction, bytes } = this.delegateFor(config, kind, record);
 
         if (record.state === 'signing') {
             const token = record.token ?? '';
@@ -377,7 +412,7 @@ export class RelayerControl {
                 if (error instanceof Error && error.message === 'tx_failed') return this.failPurchase(id, 'approval_rejected', true);
                 throw error;
             }
-            if (!sign.done) return json({ purchaseId: id, state: 'signing', txHash: null }, 202);
+            if (!sign.done) return RelayerControl.reply(kind, id, 'signing', null, 202);
             let signature: Uint8Array;
             try {
                 // A guard that rejects the token still lets `sign` succeed, with no signature in the value.
@@ -395,14 +430,14 @@ export class RelayerControl {
                 await txn.delete(`tx:sign:${id}`);
                 return next;
             });
-            if (!record) throw new Error('purchase_not_found');
-            if (record.state !== 'relaying') return this.advancePurchase(config, id);
+            if (!record) throw new Error(kind === 'purchase' ? 'purchase_not_found' : 'upload_not_found');
+            if (record.state !== 'relaying') return this.advancePurchase(config, id, expect);
         }
 
         const signature = Uint8Array.from(atob(record.signature ?? ''), (char) => char.charCodeAt(0));
         // A relay first sent after a signature expired would only be refunded.
         if (!await this.state.storage.get(`tx:relay:${id}`)
-            && purchaseExpiresAtMs(record.fields.args.msg) <= this.now() + RELAY_EXPIRY_MARGIN_MS) {
+            && RelayerControl.expiresAtMs(kind, record.fields) <= this.now() + RELAY_EXPIRY_MARGIN_MS) {
             return this.failPurchase(id, 'signature_expired', false);
         }
         let done: { done: boolean };
@@ -416,14 +451,14 @@ export class RelayerControl {
             throw error;
         }
         const relay = await this.state.storage.get<TxRecord>(`tx:relay:${id}`);
-        if (!done.done) return json({ purchaseId: id, state: 'relaying', txHash: relay?.txHash ?? null }, 202);
+        if (!done.done) return RelayerControl.reply(kind, id, 'relaying', relay?.txHash ?? null, 202);
         await this.state.storage.transaction(async (txn) => {
             const current = await txn.get<PurchaseRecord>(`purchase:${id}`);
             if (current?.state !== 'relaying') return;
             await txn.put(`purchase:${id}`, { ...current, state: 'submitted', txHash: relay?.txHash ?? null, updatedAtMs: this.now() });
         });
-        // The relay landed; whether the Market accepted or refunded is read from `get_ticket` by the client.
-        return json({ purchaseId: id, state: 'submitted', txHash: relay?.txHash ?? null });
+        // The relay landed; whether the Market accepted or refunded is read by the client (`get_ticket`, `get_media_job`).
+        return RelayerControl.reply(kind, id, 'submitted', relay?.txHash ?? null);
     }
 
     /** Ends a purchase that is not done yet, keeping neither its token nor its sign record. */
@@ -440,7 +475,7 @@ export class RelayerControl {
         });
         const current = await this.state.storage.get<PurchaseRecord>(`purchase:${id}`);
         // Another request may have finished it meanwhile.
-        if (current?.state === 'submitted') return json({ purchaseId: id, state: 'submitted', txHash: current.txHash ?? null });
+        if (current?.state === 'submitted') return RelayerControl.reply(current.kind ?? 'purchase', id, 'submitted', current.txHash ?? null);
         throw new Error(current?.error ?? error);
     }
 
@@ -660,6 +695,11 @@ export class RelayerControl {
         this.lock = run.catch(() => undefined);
         return run;
     }
+}
+
+/** Drops the parse helpers' extra lookup fields so the stored record holds the relayed fields only. */
+function strip<T extends { args: unknown; nonce: string; max_block_height: string }>(fields: T): { args: T['args']; nonce: string; max_block_height: string } {
+    return { args: fields.args, nonce: fields.nonce, max_block_height: fields.max_block_height };
 }
 
 function requireHex64(value: unknown): string {

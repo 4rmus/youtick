@@ -35,8 +35,13 @@ const LIVEPEER_PROJECT_ID = '53baeeda-930d-45be-bda6-a41090e6d25e';
 export const JWT_PUBLIC_KEY = 'LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFVloycGFyMkxFSnZ3Nll4N2M2VVlFMkdjOHBkZAp1bkRVdmRiTHpzMGsrUkNKamZQUHpIYXBiTGxyNFhOblZrTzFBdmZ4N1BjMFk3WHBnRWZzZVlxWEJ3PT0KLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==';
 /** The public halves every deploy secret must match; tests pass their own. */
 export const EXPECTED_KEYS = Object.freeze({ operator: OPERATOR_PUBLIC_KEY, jwt: JWT_PUBLIC_KEY, quote: QUOTE_PUBLIC_KEY_BASE64 });
-// Owner-named creators allowed to upload (2026-10-12); never a wildcard.
-export const CREATOR_ALLOWLIST = Object.freeze(['ticks.testnet', 'soteri.testnet', 'utick.testnet']);
+// Owner-named wallet creators allowed to upload (2026-10-12); never a wildcard.
+export const WALLET_CREATOR_ALLOWLIST = Object.freeze(['ticks.testnet', 'soteri.testnet', 'utick.testnet']);
+// NEAR Auth creators (E5b.3, decision D11): the implicit account of each invited creator, added here
+// after the invite code is redeemed and checked with the relayer's /internal/invited-accounts/<id>.
+// Each entry is a 64-character hex account id; a deploy follows every change.
+export const NEAR_AUTH_CREATOR_ALLOWLIST = Object.freeze([]);
+export const CREATOR_ALLOWLIST = Object.freeze([...WALLET_CREATOR_ALLOWLIST, ...NEAR_AUTH_CREATOR_ALLOWLIST]);
 // Unused by any other Worker (1001-2002 web, 3001 Bridge, 3101/3201 V2 Workers, 5001-5003 public-testnet).
 export const RATE_LIMIT_NAMESPACE = '6003';
 

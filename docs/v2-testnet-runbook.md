@@ -165,8 +165,9 @@ What differs from the Workers release:
     `NEAR_OPERATOR_ACCOUNT_ID=v2-bridge-261007…`;
   - Livepeer project `youtick-paid-media-canary`, API token name `youtick-v2-testnet-bridge`, and
     the public half of the V2 signing key;
-  - creator allowlist `ticks.testnet`, `soteri.testnet`, `utick.testnet`, a 20 USD monthly budget
-    and a 2 USD reservation per job.
+  - creator allowlist `ticks.testnet`, `soteri.testnet`, `utick.testnet` (wallet test accounts) plus
+    the NEAR Auth creators in `NEAR_AUTH_CREATOR_ALLOWLIST` (none yet; see "NEAR Auth creators"
+    below), a 20 USD monthly budget and a 2 USD reservation per job.
 - **Always off in W2:** webhook Queue, D1 archives, sponsored uploads, V1 stateless playback,
   multi-asset payments and `MARKET_V2_RELEASE_ENABLED` (the 30-day `release_expired` job needs the
   V2 read model, milestone W3).
@@ -200,6 +201,24 @@ Done on 2026-10-12:
 To deploy, start *V2 Testnet Bridge* on `main` with the current commit, its CI run, a mode and
 `confirmation` `DEPLOY_V2_TESTNET_BRIDGE_<mode>`, then approve the environment. To change the
 allowlist or the signing key, change the script and deploy again.
+
+### NEAR Auth creators (E5b, decision D11)
+
+A creator who signed in with Google or a passkey uploads from their implicit account: the fee
+goes through the relayer (`POST /v1/uploads`, a plain `create_paid_job` with no sponsor quote),
+and the Bridge admits the upload only if that account is in `LIVEPEER_CREATOR_ALLOWLIST`. The
+list is static in this phase:
+
+1. The creator redeems the invite code on `/invite`; the web shows the account id (64 hex
+   characters).
+2. Confirm it with the relayer: `GET /internal/invited-accounts/<account id>` with the admin
+   token must report the invite as paid.
+3. Add the account id to `NEAR_AUTH_CREATOR_ALLOWLIST` in `scripts/v2-testnet-bridge-release.mjs`
+   (the test refuses anything but a 64-character hex id), merge the PR and deploy `acceptance`
+   again. One deploy per added creator; a signed attestation from the relayer replaces this list
+   after the Gala.
+
+Sponsored uploads stay off: the V2 upload path needs no Bridge quote and no sponsor relay.
 
 ## Evidence
 

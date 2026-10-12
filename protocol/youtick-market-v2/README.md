@@ -130,6 +130,49 @@ For example, 5 USDC with 833,334 VAT gives net 4,166,666, platform 208,333 and c
 
 The buyer account is not part of the ticket.
 
+## Upload through NEAR Auth
+
+A creator who signed in with Google or a passkey holds an implicit account whose only signing
+path is a NEAR Auth approval (`fatxn`) that the relayer turns into an MPC signature. Two upload
+steps need that signature; every other upload step is signed by the per-job upload key.
+
+**Paying the upload fee.** `ft_transfer_call` on the USDC contract with
+`receiver_id = <market>`, `amount = fee` and `msg` = JSON `upload_msg`, keys in this order:
+
+```json
+{
+  "action": "create_paid_job",
+  "job_id": "…",
+  "title": "…",
+  "price_usdc": "…",
+  "expected_source_bytes": "…",
+  "profile_id": "paid-media-livepeer-v1",
+  "profile_config_sha256": "…",
+  "upload_public_key": "ed25519:…",
+  "upload_key_expires_at_ms": "…"
+}
+```
+
+- `fee = max(ceil(expected_source_bytes × 3 / 10,000), 500,000)` micro-USDC, the contract's
+  formula. `price_usdc` is at least 5,000,000; `expected_source_bytes` is 1 to 20,000,000,000;
+  `title` is 1-200 UTF-8 bytes, not blank, without control characters.
+- The arguments are `{ receiver_id, amount, msg }` with no `memo`. There is no sponsor quote and
+  no `playback_session`: the relayer sponsors gas, and Market V2 has no public beta or public
+  upload policy, so the contract charges the plain fee. The creator is `sender_id`.
+- Gas 100 Tgas, deposit 1 yoctoNEAR.
+
+**Replacing a lost upload key.** `replace_upload_key { job_id, new_public_key, expires_at_ms }`
+on the Market, gas 100 Tgas, deposit 0.
+
+**Delegate bytes.** Each step is one delegate action with one FunctionCall, encoded as
+near-api-js `encodeDelegateAction` does: the NEP-461 prefix (`2^30 + 366`, little-endian u32)
+followed by the Borsh `DelegateAction` (`sender_id`, `receiver_id`, the action, `nonce`,
+`max_block_height`, `public_key`). The web client builds these bytes, the NEAR Auth screen
+approves them, and the relayer rebuilds them from the submitted fields and refuses anything
+that is not byte-equal. `upload_id = sha256(delegate bytes)` identifies the submission. The
+`upload` vector holds both delegates with fixed nonce, block height and keys; the relayer and
+web tests must reproduce `bytes_base64` exactly.
+
 ## Card tickets
 
 The payment operator writes card tickets without moving tokens:
@@ -151,6 +194,7 @@ could be reversed.
 | `refund_unwatched` | `{ ticket_id, refund_to, expires_at_ms, signature }` |
 | `mark_watched` (Bridge role) | `{ ticket_id }` |
 | `release_expired` (anyone) | `{ ticket_ids: [1..25] }`; NEAR caps one call's logs at 16,384 bytes |
+| `replace_upload_key` (job creator) | `{ job_id, new_public_key, expires_at_ms }`; see "Upload through NEAR Auth" |
 
 ## Contract rules this protocol relies on
 
@@ -221,7 +265,8 @@ change.
 
 ## Size budget for NEAR Auth signing
 
-A crypto purchase is one NEAR Auth (MPC) signature over a delegate action. Two limits apply:
+A crypto purchase, an upload fee payment and an upload-key replacement are each one NEAR Auth
+(MPC) signature over a delegate action. Two limits apply:
 
 - **Approval token:** the token carries the delegate bytes as a JSON array of decimals
   (`fatxn`), and the guard rejects tokens above 7,168 bytes.
@@ -229,21 +274,29 @@ A crypto purchase is one NEAR Auth (MPC) signature over a delegate action. Two l
   The measured ratio is 27,101 prompt bytes for a 2,235-byte delegate
   (`docs/architecture/near-auth-prompt-size.md`).
 
-The checker builds two delegates:
-- the worst case, with a 128-character publication ID;
-- a typical case, with `lp-` + UUID (39 characters).
+The checker builds these delegates:
+- purchase, worst case with a 128-character publication ID, and typical with `lp-` + UUID
+  (39 characters);
+- upload fee, worst case with a 128-character job ID, a 200-byte title and the maximum source
+  size, and typical with `lp-` + UUID and a 40-byte title;
+- `replace_upload_key`, worst case with a 128-character job ID.
 
-It requires the worst case to fit both limits, and the typical case to stay under 85% of each.
+It requires every worst case to fit both limits, and each typical case to stay under 85% of each.
 
 | Case | Delegate | Token (estimate) | Prompt (estimate) |
 |---|---:|---:|---:|
-| Typical | 1,027 B | ~5,525 / 7,168 B | ~12,454 / 24,576 B |
-| Worst | 1,116 B | ~6,050 / 7,168 B | ~13,533 / 24,576 B |
+| Purchase, typical | 1,027 B | ~5,525 / 7,168 B | ~12,454 / 24,576 B |
+| Purchase, worst | 1,116 B | ~6,050 / 7,168 B | ~13,533 / 24,576 B |
+| Upload, typical | 794 B | ~4,570 / 7,168 B | ~9,628 / 24,576 B |
+| Upload, worst | 1,043 B | ~5,948 / 7,168 B | ~12,648 / 24,576 B |
+| `replace_upload_key`, worst | 447 B | ~3,053 / 7,168 B | ~5,421 / 24,576 B |
 
 - The token estimate uses illustrative values for every claim other than `fatxn`.
 - It is UNPROVEN until it is compared with a live NEAR Auth token, which needs the mainnet
   tenant.
-- Headroom is limited, so any field added to `purchase_msg` must keep this check passing.
+- Headroom is limited, so any field added to `purchase_msg` or `upload_msg` must keep this check
+  passing. The V1 upload message with its sponsor quote measured 9,815 bytes, which is why the
+  V2 upload carries no quote.
 
 ## Evidence
 
@@ -251,7 +304,9 @@ LOCAL_TEST: the checker reproduces every vector, verifies every signature and ch
 - each signature binds its network, contract and action;
 - the card signature binds the payment reference;
 - the VAT attestation binds the VAT amount and the network;
-- the split adds up to the gross amount.
+- the split adds up to the gross amount;
+- the upload and `replace_upload_key` delegates rebuild byte-for-byte from their fields and
+  bind the nonce and the sender, and the upload amount equals the fee formula.
 
 It rejects:
 - a gross amount below the minimum
