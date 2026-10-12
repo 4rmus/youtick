@@ -23,7 +23,7 @@ import type { UploadRecoveryStage } from '@/lib/livepeer-upload-state';
 import { measureVideoOperation, observeVideoState } from '@/lib/video-measurements';
 
 const LIVEPEER_TUS_ORIGIN = 'https://origin.livepeer.com';
-const PROFILE_ID = 'paid-media-livepeer-v1';
+export const PROFILE_ID = 'paid-media-livepeer-v1';
 const LIVEPEER_SESSION_STORAGE_PREFIX = 'youtick:livepeer-job-session:';
 const LIVEPEER_DRAFT_STORAGE_PREFIX = 'youtick:livepeer-ui-draft:';
 const LIVEPEER_LAST_JOB_STORAGE_PREFIX = 'youtick:livepeer-last-job:';
@@ -153,7 +153,7 @@ type SignedSponsoredUploadQuote = {
     quote: SponsoredUploadQuote;
     signature: string;
 };
-type LivepeerJobSession = {
+export type LivepeerJobSession = {
     keyPair: KeyPair;
     uploadKeyExpiresAtMs: string;
     sponsoredDelegateBase64?: string;
@@ -505,7 +505,7 @@ export function clearLivepeerUploadDraft(accountId: string): void {
     storage.removeItem(key);
 }
 
-function setUploadDraftFlag(accountId: string, jobId: string, flag: 'paymentAttempted' | 'keyReplacementPending', value: boolean): void {
+export function setUploadDraftFlag(accountId: string, jobId: string, flag: 'paymentAttempted' | 'keyReplacementPending', value: boolean): void {
     const draft = requireStoredUploadDraft(accountId, jobId);
     writeLivepeerUploadDraft(accountId, { ...draft, [flag]: value });
     if (flag === 'paymentAttempted' && value) rememberLivepeerUploadJob(accountId, jobId);
@@ -1615,19 +1615,19 @@ function requireNearCreatorFee(): void {
     }
 }
 
-function validateJobSessionIdentity(accountId: string, jobId: string): void {
+export function validateJobSessionIdentity(accountId: string, jobId: string): void {
     if (!ACCOUNT_ID_PATTERN.test(accountId) || !JOB_ID_PATTERN.test(jobId)) {
         throw new Error('invalid_livepeer_session');
     }
 }
 
-function livepeerJobSessionStorageKey(accountId: string, jobId: string): string {
+export function livepeerJobSessionStorageKey(accountId: string, jobId: string): string {
     return FEATURE_FLAGS.publicTestnetVideoV1
         ? `${LIVEPEER_SESSION_STORAGE_PREFIX}${NEAR_NETWORK}:${NEAR_CONFIG.marketContractId}:${accountId}:${jobId}`
         : `${LIVEPEER_SESSION_STORAGE_PREFIX}${accountId}:${jobId}`;
 }
 
-function persistLivepeerJobSessionKey(
+export function persistLivepeerJobSessionKey(
     accountId: string,
     jobId: string,
     keyPair: KeyPair,
@@ -1686,7 +1686,7 @@ function clearSponsoredDelegate(accountId: string, jobId: string): void {
     }
 }
 
-function loadLivepeerJobSessionKey(accountId: string, jobId: string): LivepeerJobSession | null {
+export function loadLivepeerJobSessionKey(accountId: string, jobId: string): LivepeerJobSession | null {
     if (typeof window === 'undefined') return null;
     const storageKey = livepeerJobSessionStorageKey(accountId, jobId);
     const raw = sessionStorage.getItem(storageKey);
@@ -1810,7 +1810,7 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
     throw new Error('invalid_livepeer_control_response');
 }
 
-function storedProfileHash(job: Record<string, unknown> | null): string {
+export function storedProfileHash(job: Record<string, unknown> | null): string {
     const hash = job?.profile_config_sha256;
     if (job?.profile_id !== PROFILE_ID || !Object.values(profiles).some((entry) => entry.hash === hash)) {
         throw new Error('livepeer_paid_job_conflict');
