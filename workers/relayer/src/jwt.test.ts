@@ -37,6 +37,8 @@ describe('id_token verification', () => {
         const verify = createJwtVerifier({ issuer: ISSUER, clientId: CLIENT, fetch: fetcher as unknown as typeof fetch, now: () => now });
         await expect(verify(await sign(first, claims()))).resolves.toEqual({ iss: ISSUER, sub: 'google-oauth2|42', exp: NOW / 1000 + 600, nonce: 'n', fatxn: null });
         expect(String(fetcher.mock.calls[0]![0 as never])).toBe(`${ISSUER}.well-known/jwks.json`);
+        // The Workers runtime at this compatibility date throws on a `cache` field.
+        expect(fetcher.mock.calls[0]![1 as never]).not.toHaveProperty('cache');
         keys = [first.jwk, second.jwk];
         now += 61_000;
         await expect(verify(await sign(second, claims({ nonce: undefined, iat: now / 1000 })))).resolves.toMatchObject({ nonce: null });

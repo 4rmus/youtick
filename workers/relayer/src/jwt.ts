@@ -50,8 +50,9 @@ export function createJwtVerifier(config: JwtVerifierConfig) {
 
     async function loadKeys(force: boolean): Promise<Map<string, CryptoKey>> {
         if (cache && now() - cache.fetchedAt < (force ? JWKS_FORCED_REFRESH_MS : JWKS_TTL_MS)) return cache.keys;
+        // No `cache` option: before compatibility date 2024-11-11 the Workers runtime throws on it.
         const response = await fetcher(new URL('.well-known/jwks.json', config.issuer), {
-            cache: 'no-store', signal: AbortSignal.timeout(5_000),
+            signal: AbortSignal.timeout(5_000),
         });
         if (!response.ok) throw new Error('jwks_unavailable');
         const body = await response.json().catch(() => null) as { keys?: unknown } | null;
