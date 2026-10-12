@@ -31,6 +31,10 @@ INVITE_AMOUNTS_USDC_MICRO = "5000000,10000000"
 MARKET_V2_CONTRACT_ID = "<replace-with-market-v2-contract-id>"
 DAILY_PURCHASE_LIMIT = "500"
 IDENTITY_DAILY_PURCHASE_LIMIT = "20"
+# Uploads (E5b): USDC ft_transfer_call with create_paid_job, and replace_upload_key, both to this Market.
+# The identity cap covers fee payments and key replacements together (roadmap D12).
+DAILY_UPLOAD_LIMIT = "100"
+IDENTITY_DAILY_UPLOAD_LIMIT = "5"
 INVITE_TTL_DAYS = "30"
 ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
 # Secrets (wrangler secret put): RELAYER_PRIVATE_KEY, RELAYER_ADMIN_TOKEN.

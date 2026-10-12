@@ -82,6 +82,8 @@ function createChain() {
         tickets: new Set<string>(),
         purchasesPaused: false,
         beta: null as null | { ends_at_ms: string; closed_at_ms: string | null },
+        mediaJobs: new Map<string, Record<string, unknown>>(),
+        uploadPolicy: null as unknown,
     };
     const near: NearClient = {
         async view<T>(contractId: string, method: string, args: Record<string, unknown>): Promise<T> {
@@ -104,6 +106,8 @@ function createChain() {
             if (contractId === MARKET && method === 'get_governance_state') return { new_purchases_paused: chain.purchasesPaused } as T;
             if (contractId === MARKET && method === 'get_public_testnet_beta_state') return chain.beta as T;
             if (contractId === MARKET && method === 'get_vat_public_key') return (args.key_version === 1 ? VAT_KEY.getPublicKey().toString() : null) as T;
+            if (contractId === MARKET && method === 'get_media_job') return (chain.mediaJobs.get(String(args.job_id)) ?? null) as T;
+            if (contractId === MARKET && method === 'get_public_upload_policy') return chain.uploadPolicy as T;
             throw new Error(`unexpected view ${contractId}.${method}`);
         },
         async accountExists(accountId) { return accounts.has(accountId); },
@@ -171,6 +175,7 @@ function setup(overrides: Partial<Env> = {}) {
         RELAYER_ENABLED: 'true', RELAYER_MUTATIONS_ENABLED: 'true', NEAR_NETWORK: 'testnet', NEAR_RPC_URL: 'https://rpc.test',
         RELAYER_ACCOUNT_ID: RELAYER, RELAYER_PRIVATE_KEY: KeyPair.fromRandom('ed25519').toString(), NEAR_AUTH_CLIENT_ID: 'client-1',
         CKD_GATE_ACCOUNT_IDS: GATE, USDC_CONTRACT_ID: USDC, MARKET_V2_CONTRACT_ID: MARKET, DAILY_PURCHASE_LIMIT: '5', IDENTITY_DAILY_PURCHASE_LIMIT: '2', ACCOUNT_FUNDING_YOCTO: '10000000000000000000000',
+        DAILY_UPLOAD_LIMIT: '4', IDENTITY_DAILY_UPLOAD_LIMIT: '2',
         MAX_STORAGE_DEPOSIT_YOCTO: '10000000000000000000000', DAILY_ACCOUNT_LIMIT: '3', DAILY_CKD_LIMIT: '5',
         IDENTITY_DAILY_CKD_LIMIT: '2', DAILY_INVITE_USDC_MICRO_LIMIT: '15000000', INVITE_AMOUNTS_USDC_MICRO: '5000000,10000000',
         INVITE_TTL_DAYS: '30', ALLOWED_ORIGINS: ORIGIN, RELAYER_ADMIN_TOKEN: ADMIN,
@@ -635,6 +640,160 @@ describe('NEAR Auth purchases', () => {
         const near = chain as unknown as { userKeyMissing?: boolean };
         near.userKeyMissing = true;
         expect(await call('/v1/purchases', (await purchase('buyer-11')).body)).toEqual({ status: 409, body: { error: 'account_not_ready' } });
+    });
+});
+
+describe('NEAR Auth uploads', () => {
+    const hex = async (bytes: Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), (b) => b.toString(16).padStart(2, '0')).join('');
+    const accountOfBuyer = (sub: string) => Array.from(buyer(sub).getPublicKey().data, (b) => b.toString(16).padStart(2, '0')).join('');
+    const PROFILE_HASH = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
+
+    /** A `create_paid_job` message Market V2 would accept, in protocol key order; 2 GB costs 0.6 USDC. */
+    function uploadMessage(overrides: Partial<Record<string, string>> = {}) {
+        const uploadKey = KeyPair.fromRandom('ed25519').getPublicKey().toString();
+        return JSON.stringify({
+            action: 'create_paid_job', job_id: 'lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6', title: 'Stüdyo kaydı', price_usdc: '5000000',
+            expected_source_bytes: '2000000000', profile_id: 'paid-media-livepeer-v1', profile_config_sha256: PROFILE_HASH,
+            upload_public_key: uploadKey, upload_key_expires_at_ms: String(clock + DAY), ...overrides,
+        });
+    }
+
+    async function upload(sub: string, overrides: { amount?: string; receiver?: string; msg?: string; tamper?: boolean } = {}) {
+        const fields = {
+            args: { receiver_id: overrides.receiver ?? MARKET, amount: overrides.amount ?? '600000', msg: overrides.msg ?? uploadMessage() },
+            nonce: '8', max_block_height: '1100',
+        };
+        const { uploadDelegate } = await import('./upload');
+        const accountId = accountOfBuyer(sub);
+        const { bytes } = uploadDelegate({ senderId: accountId, publicKey: buyer(sub).getPublicKey().toString(), usdcContractId: USDC, fields });
+        const fatxn = Array.from(bytes);
+        if (overrides.tamper) fatxn[fatxn.length - 40] ^= 1;
+        return { body: { access_token: JSON.stringify({ sub, fatxn }), ...fields }, accountId, bytes, msg: JSON.parse(fields.args.msg) as Record<string, string> };
+    }
+
+    async function uploadKey(sub: string, overrides: Partial<{ job_id: string; new_public_key: string; expires_at_ms: string }> = {}) {
+        const fields = {
+            args: {
+                job_id: 'lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6', new_public_key: KeyPair.fromRandom('ed25519').getPublicKey().toString(),
+                expires_at_ms: String(clock + DAY), ...overrides,
+            },
+            nonce: '9', max_block_height: '1100',
+        };
+        const { uploadKeyDelegate } = await import('./upload');
+        const accountId = accountOfBuyer(sub);
+        const { bytes } = uploadKeyDelegate({ senderId: accountId, publicKey: buyer(sub).getPublicKey().toString(), marketContractId: MARKET, fields });
+        return { body: { access_token: JSON.stringify({ sub, fatxn: Array.from(bytes) }), ...fields }, accountId, bytes };
+    }
+
+    const authorizedJob = (creatorId: string, msg: Record<string, string>, amount = '600000') => ({
+        job_id: msg.job_id, creator_id: creatorId, profile_id: msg.profile_id, profile_config_sha256: msg.profile_config_sha256, title: msg.title,
+        price_usdc: msg.price_usdc, expected_source_bytes: msg.expected_source_bytes, generation: 1, status: 'Authorized', created_at_ms: clock,
+        published_at_ms: null, fee_asset: 'USDC', fee_amount: amount, fee_usd_micro: amount, upload_public_key: msg.upload_public_key,
+        upload_key_expires_at_ms: msg.upload_key_expires_at_ms, fee_quote_hash: null,
+    });
+
+    it('signs the upload fee transfer through fast-auth and relays exactly the approved delegate', async () => {
+        const { call, chain, values } = setup();
+        const request = await upload('buyer-u1');
+        const first = await call('/v1/uploads', request.body);
+        expect(first).toMatchObject({ status: 200, body: { state: 'submitted', uploadId: await hex(request.bytes) } });
+        expect(first.body).not.toHaveProperty('purchaseId');
+        const sign = chain.sent.find((tx) => (tx.action.functionCall as Record<string, unknown> | undefined)?.methodName === 'sign')!;
+        const signArgs = JSON.parse(new TextDecoder().decode(Uint8Array.from((sign.action.functionCall as { args: ArrayLike<number> }).args)));
+        expect(signArgs).toMatchObject({ guard_id: `jwt#${ISSUER}`, algorithm: 'eddsa', sign_payload: Array.from(request.bytes) });
+        expect(chain.sent.at(-1)!.receiverId).toBe(request.accountId);
+        expect(Array.from(encodeDelegateAction(chain.relayed[0].delegateAction as never))).toEqual(Array.from(request.bytes));
+        const relayed = chain.relayed[0].delegateAction as { receiverId: string; actions: { functionCall: { methodName: string; gas: bigint; deposit: bigint } }[] };
+        expect(relayed.receiverId).toBe(USDC);
+        expect(relayed.actions[0].functionCall).toMatchObject({ methodName: 'ft_transfer_call', gas: 100_000_000_000_000n, deposit: 1n });
+        expect(JSON.stringify([...values.values()])).not.toContain('fatxn');
+        const sentBefore = chain.sent.length;
+        const expected = { status: 200, body: { uploadId: first.body.uploadId, state: 'submitted', txHash: chain.sent.at(-1)!.hash } };
+        expect(await call('/v1/uploads', request.body)).toEqual(expected);
+        expect(await call('/v1/uploads/status', { upload_id: first.body.uploadId })).toEqual(expected);
+        // Upload records are not purchases.
+        expect(await call('/v1/purchases/status', { purchase_id: first.body.uploadId })).toEqual({ status: 404, body: { error: 'purchase_not_found' } });
+        expect(chain.sent).toHaveLength(sentBefore);
+    });
+
+    it('refuses before signing an upload Market V2 would refund or reject', async () => {
+        const { call, chain } = setup();
+        const creator = accountOfBuyer('buyer-u2');
+        const base = await upload('buyer-u2');
+        const expired = uploadMessage({ upload_key_expires_at_ms: String(clock + 30_000) });
+        const longTitle = uploadMessage({ title: 'ş'.repeat(101) });
+        const unordered = JSON.stringify({ job_id: base.msg.job_id, ...base.msg });
+        const cases: [Parameters<typeof upload>[1], number, string][] = [
+            [{ receiver: 'other-market.testnet' }, 400, 'invalid_request'],
+            [{ msg: JSON.stringify({ action: 'buy_ticket_v2', publication_id: 'job-001' }) }, 400, 'invalid_request'],
+            [{ tamper: true }, 400, 'approval_mismatch'],
+            [{ amount: '500000' }, 409, 'fee_mismatch'],
+            [{ msg: expired }, 409, 'upload_key_expired'],
+            [{ msg: longTitle }, 400, 'upload_invalid'],
+            [{ msg: unordered }, 400, 'upload_invalid'],
+        ];
+        for (const [overrides, status, error] of cases) {
+            expect(await call('/v1/uploads', (await upload('buyer-u2', overrides)).body)).toEqual({ status, body: { error } });
+        }
+        chain.usdcBalance = '599999';
+        expect(await call('/v1/uploads', base.body)).toEqual({ status: 409, body: { error: 'insufficient_balance' } });
+        chain.usdcBalance = '100000000';
+        chain.purchasesPaused = true;
+        expect(await call('/v1/uploads', base.body)).toEqual({ status: 503, body: { error: 'uploads_paused' } });
+        chain.purchasesPaused = false;
+        chain.beta = { ends_at_ms: String(clock + DAY), closed_at_ms: null };
+        expect(await call('/v1/uploads', base.body)).toEqual({ status: 409, body: { error: 'quote_required' } });
+        chain.beta = null;
+        chain.uploadPolicy = { max_source_bytes: '1' };
+        expect(await call('/v1/uploads', base.body)).toEqual({ status: 409, body: { error: 'quote_required' } });
+        chain.uploadPolicy = null;
+        chain.mediaJobs.set(base.msg.job_id, authorizedJob(creator, base.msg));
+        expect(await call('/v1/uploads', base.body)).toEqual({ status: 409, body: { error: 'job_exists' } });
+        chain.mediaJobs.set(base.msg.job_id, { ...authorizedJob(creator, base.msg), title: 'other' });
+        expect(await call('/v1/uploads', base.body)).toEqual({ status: 409, body: { error: 'job_conflict' } });
+        chain.mediaJobs.set(base.msg.job_id, authorizedJob(accountOfBuyer('buyer-u3'), base.msg));
+        expect(await call('/v1/uploads', base.body)).toEqual({ status: 409, body: { error: 'job_conflict' } });
+        expect(chain.sent).toEqual([]);
+    });
+
+    it('limits uploads per identity and per day, apart from purchases', async () => {
+        const { call, chain } = setup();
+        expect((await call('/v1/uploads', (await upload('buyer-u4', { msg: uploadMessage({ job_id: 'job-a' }) })).body)).status).toBe(200);
+        expect((await call('/v1/uploads', (await upload('buyer-u4', { msg: uploadMessage({ job_id: 'job-b' }) })).body)).status).toBe(200);
+        expect(await call('/v1/uploads', (await upload('buyer-u4', { msg: uploadMessage({ job_id: 'job-c' }) })).body))
+            .toEqual({ status: 429, body: { error: 'identity_limit_reached' } });
+        // Purchases have their own counter.
+        expect(chain.relayed).toHaveLength(2);
+        expect((await call('/v1/uploads', (await upload('buyer-u5', { msg: uploadMessage({ job_id: 'job-d' }) })).body)).status).toBe(200);
+        expect((await call('/v1/uploads', (await upload('buyer-u6', { msg: uploadMessage({ job_id: 'job-e' }) })).body)).status).toBe(200);
+        expect(await call('/v1/uploads', (await upload('buyer-u7', { msg: uploadMessage({ job_id: 'job-f' }) })).body))
+            .toEqual({ status: 429, body: { error: 'daily_limit_reached' } });
+    });
+
+    it('relays replace_upload_key for the creator of an authorized job only', async () => {
+        const { call, chain } = setup();
+        const creator = accountOfBuyer('buyer-u8');
+        const request = await uploadKey('buyer-u8');
+        expect(await call('/v1/upload-keys', request.body)).toEqual({ status: 404, body: { error: 'job_not_found' } });
+        chain.mediaJobs.set(request.body.args.job_id, authorizedJob(accountOfBuyer('buyer-u9'), JSON.parse(uploadMessage()) as Record<string, string>));
+        expect(await call('/v1/upload-keys', request.body)).toEqual({ status: 409, body: { error: 'job_conflict' } });
+        chain.mediaJobs.set(request.body.args.job_id, { ...authorizedJob(creator, JSON.parse(uploadMessage()) as Record<string, string>), status: 'Published' });
+        expect(await call('/v1/upload-keys', request.body)).toEqual({ status: 409, body: { error: 'job_published' } });
+        chain.mediaJobs.set(request.body.args.job_id, authorizedJob(creator, JSON.parse(uploadMessage()) as Record<string, string>));
+        expect(await call('/v1/upload-keys', (await uploadKey('buyer-u8', { expires_at_ms: String(clock + 1_000) })).body))
+            .toEqual({ status: 409, body: { error: 'upload_key_expired' } });
+        expect(chain.sent).toEqual([]);
+        const first = await call('/v1/upload-keys', request.body);
+        expect(first).toMatchObject({ status: 200, body: { state: 'submitted', uploadId: await hex(request.bytes) } });
+        expect(Array.from(encodeDelegateAction(chain.relayed[0].delegateAction as never))).toEqual(Array.from(request.bytes));
+        const relayed = chain.relayed[0].delegateAction as { receiverId: string; actions: { functionCall: { methodName: string; deposit: bigint } }[] };
+        expect(relayed.receiverId).toBe(MARKET);
+        expect(relayed.actions[0].functionCall).toMatchObject({ methodName: 'replace_upload_key', deposit: 0n });
+        expect(await call('/v1/uploads/status', { upload_id: first.body.uploadId })).toMatchObject({ status: 200, body: { state: 'submitted' } });
+        // A key replacement shares the identity's upload counter.
+        expect((await call('/v1/uploads', (await upload('buyer-u8', { msg: uploadMessage({ job_id: 'job-g' }) })).body)).status).toBe(200);
+        expect(await call('/v1/uploads', (await upload('buyer-u8', { msg: uploadMessage({ job_id: 'job-h' }) })).body))
+            .toEqual({ status: 429, body: { error: 'identity_limit_reached' } });
     });
 });
 

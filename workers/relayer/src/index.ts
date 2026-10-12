@@ -2,13 +2,15 @@
 // - opens a NEAR Auth user's implicit account once per identity and registers it with USDC,
 // - submits ckd-gate `request_key` (rule a) and returns the encrypted CKD response,
 // - pays invite credits (single-use codes, one per identity) and records invited creators,
-// - relays NEAR Auth ticket purchases signed through fast-auth (roadmap E7b).
+// - relays NEAR Auth ticket purchases signed through fast-auth (roadmap E7b),
+// - relays NEAR Auth upload fee payments and upload-key replacements for invited creators (roadmap E5b).
 // It never sees ticket keys or CKD secrets; the CKD response is encrypted to the browser's key.
 import { relayerConfig, type Env, type RelayerConfig } from './env';
 import { ckdGateNonce, createJwtVerifier, identityHash, type VerifiedIdentity } from './jwt';
 import { createNearClient, fastAuthAccount, fastAuthKey, type NearClient } from './near';
-import { checkPurchaseMessage } from './market';
+import { checkPurchaseMessage, checkUploadKeyArgs, checkUploadMessage } from './market';
 import { MAX_DELEGATE_TTL_BLOCKS, NONCE_RANGE_MULTIPLIER, parsePurchaseFields, purchaseDelegate, sameBytes } from './purchase';
+import { parseUploadFields, parseUploadKeyFields, uploadDelegate, uploadKeyDelegate } from './upload';
 
 export { RelayerControl } from './control';
 export type { Env } from './env';
@@ -16,10 +18,14 @@ export type { Env } from './env';
 const MAX_BODY_BYTES = 16 * 1024;
 const BLS_G1 = /^bls12381g1:[1-9A-HJ-NP-Za-km-z]{60,70}$/;
 const BLS_G2 = /^bls12381g2:[1-9A-HJ-NP-Za-km-z]{120,135}$/;
-/** Purchase errors the client can act on; each means "Market V2 would refund this now". */
+/** Relay errors the client can act on; each means "Market V2 would refund or reject this now". */
 const PURCHASE_REJECTIONS: Record<string, number> = {
     purchase_invalid: 400, purchases_paused: 503, publication_unavailable: 409, price_mismatch: 409, ticket_exists: 409,
     signature_expired: 409,
+    // Uploads (E5b): `job_exists` means this creator's identical job is already authorized.
+    upload_invalid: 400, uploads_paused: 503, quote_required: 409, fee_mismatch: 409, upload_key_expired: 409, job_exists: 409,
+    job_conflict: 409, job_not_found: 404, job_published: 409,
+    approval_mismatch: 400, delegate_stale: 409, insufficient_balance: 409,
 };
 
 export interface RelayerDeps {
@@ -149,6 +155,39 @@ export async function handle(request: Request, env: Env, deps: RelayerDeps = {})
         return { identity, identityHash: await identityHash(identity), accountId: await fastAuthAccount(near, config!.provider, identity.sub) };
     }
 
+    /**
+     * A NEAR Auth approval of one delegate: the token must carry `fatxn`, the rebuilt delegate must
+     * equal it byte for byte, and the delegate's nonce and height must still be usable (checks that
+     * save gas: the chain would reject these after fast-auth already signed).
+     */
+    async function approvedDelegate(accessToken: unknown, fields: { nonce: string; max_block_height: string },
+        build: (key: { accountId: string; publicKey: string }) => { bytes: Uint8Array }) {
+        const identity = await verify(accessToken, { audience: config!.provider.signingAudience });
+        if (!identity.fatxn) throw new Error('invalid_token');
+        const key = await fastAuthKey(near, config!.provider, identity.sub);
+        const { bytes } = build(key);
+        // The user approved exactly these bytes, or nothing is signed.
+        if (!sameBytes(bytes, identity.fatxn)) throw new Error('approval_mismatch');
+        const accessKey = await near.accessKey(key.accountId, key.publicKey);
+        const maxHeight = BigInt(fields.max_block_height);
+        const nonce = BigInt(fields.nonce);
+        if (nonce <= accessKey.nonce || accessKey.blockHeight === undefined
+            || nonce >= BigInt(accessKey.blockHeight) * NONCE_RANGE_MULTIPLIER
+            || maxHeight <= BigInt(accessKey.blockHeight) || maxHeight > BigInt(accessKey.blockHeight) + MAX_DELEGATE_TTL_BLOCKS) {
+            throw new Error('delegate_stale');
+        }
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        return { identity, identityHash: await identityHash(identity), key, bytesBase64: btoa(binary) };
+    }
+
+    async function requireUsdcBalance(accountId: string, amount: string) {
+        const balance = await near.view<unknown>(config!.usdcContractId, 'ft_balance_of', { account_id: accountId });
+        if (typeof balance !== 'string' || !/^[0-9]{1,39}$/.test(balance) || BigInt(balance) < BigInt(amount)) {
+            throw new Error('insufficient_balance');
+        }
+    }
+
     try {
         if (url.pathname === '/v1/accounts') {
             if (!exactKeys(body, ['id_token'])) return json({ error: 'invalid_request' }, 400, cors);
@@ -176,34 +215,55 @@ export async function handle(request: Request, env: Env, deps: RelayerDeps = {})
         if (url.pathname === '/v1/purchases') {
             const { access_token: accessToken, ...rest } = body;
             const fields = parsePurchaseFields(rest, config.marketContractId);
-            const identity = await verify(accessToken, { audience: config.provider.signingAudience });
-            if (!identity.fatxn) return json({ error: 'invalid_token' }, 401, cors);
-            const key = await fastAuthKey(near, config.provider, identity.sub);
-            const { bytes } = purchaseDelegate({ senderId: key.accountId, publicKey: key.publicKey, usdcContractId: config.usdcContractId, fields });
-            // The user approved exactly these bytes, or nothing is signed.
-            if (!sameBytes(bytes, identity.fatxn)) return json({ error: 'approval_mismatch' }, 400, cors);
-            // Checks that save gas: the chain would reject these after fast-auth already signed.
-            const accessKey = await near.accessKey(key.accountId, key.publicKey);
-            const maxHeight = BigInt(fields.max_block_height);
-            const nonce = BigInt(fields.nonce);
-            if (nonce <= accessKey.nonce || accessKey.blockHeight === undefined
-                || nonce >= BigInt(accessKey.blockHeight) * NONCE_RANGE_MULTIPLIER
-                || maxHeight <= BigInt(accessKey.blockHeight) || maxHeight > BigInt(accessKey.blockHeight) + MAX_DELEGATE_TTL_BLOCKS) {
-                return json({ error: 'delegate_stale' }, 409, cors);
-            }
-            const balance = await near.view<unknown>(config.usdcContractId, 'ft_balance_of', { account_id: key.accountId });
-            if (typeof balance !== 'string' || !/^[0-9]{1,39}$/.test(balance) || BigInt(balance) < BigInt(fields.args.amount)) {
-                return json({ error: 'insufficient_balance' }, 409, cors);
-            }
+            const approved = await approvedDelegate(accessToken, fields, (key) => purchaseDelegate({
+                senderId: key.accountId, publicKey: key.publicKey, usdcContractId: config!.usdcContractId, fields,
+            }));
+            await requireUsdcBalance(approved.key.accountId, fields.args.amount);
             await checkPurchaseMessage(near, {
                 marketContractId: config.marketContractId, amount: fields.args.amount, msg: fields.args.msg, nowMs: (deps.now ?? Date.now)(),
             });
-            let binary = '';
-            for (const byte of bytes) binary += String.fromCharCode(byte);
             return forward(env, '/purchase', {
-                identityHash: await identityHash(identity), accountId: key.accountId, userPublicKey: key.publicKey,
-                accessToken, fields: { args: fields.args, nonce: fields.nonce, max_block_height: fields.max_block_height }, bytes: btoa(binary),
+                identityHash: approved.identityHash, accountId: approved.key.accountId, userPublicKey: approved.key.publicKey,
+                accessToken, fields: { args: fields.args, nonce: fields.nonce, max_block_height: fields.max_block_height }, bytes: approved.bytesBase64,
             }, cors);
+        }
+        if (url.pathname === '/v1/uploads') {
+            // An upload fee payment (E5b): USDC `ft_transfer_call` to Market V2 with a plain `create_paid_job` message.
+            const { access_token: accessToken, ...rest } = body;
+            const fields = parseUploadFields(rest, config.marketContractId);
+            const approved = await approvedDelegate(accessToken, fields, (key) => uploadDelegate({
+                senderId: key.accountId, publicKey: key.publicKey, usdcContractId: config!.usdcContractId, fields,
+            }));
+            await requireUsdcBalance(approved.key.accountId, fields.args.amount);
+            await checkUploadMessage(near, {
+                marketContractId: config.marketContractId, accountId: approved.key.accountId, amount: fields.args.amount, msg: fields.args.msg,
+                nowMs: (deps.now ?? Date.now)(),
+            });
+            return forward(env, '/upload', {
+                identityHash: approved.identityHash, accountId: approved.key.accountId, userPublicKey: approved.key.publicKey,
+                accessToken, fields: { args: fields.args, nonce: fields.nonce, max_block_height: fields.max_block_height }, bytes: approved.bytesBase64,
+            }, cors);
+        }
+        if (url.pathname === '/v1/upload-keys') {
+            // `replace_upload_key` on Market V2 for a job this creator owns (E5b); gas only, no token transfer.
+            const { access_token: accessToken, ...rest } = body;
+            const fields = parseUploadKeyFields(rest);
+            const approved = await approvedDelegate(accessToken, fields, (key) => uploadKeyDelegate({
+                senderId: key.accountId, publicKey: key.publicKey, marketContractId: config!.marketContractId, fields,
+            }));
+            await checkUploadKeyArgs(near, {
+                marketContractId: config.marketContractId, accountId: approved.key.accountId, args: fields.args, nowMs: (deps.now ?? Date.now)(),
+            });
+            return forward(env, '/upload-key', {
+                identityHash: approved.identityHash, accountId: approved.key.accountId, userPublicKey: approved.key.publicKey,
+                accessToken, fields, bytes: approved.bytesBase64,
+            }, cors);
+        }
+        if (url.pathname === '/v1/uploads/status') {
+            if (!exactKeys(body, ['upload_id']) || typeof body.upload_id !== 'string' || !/^[0-9a-f]{64}$/.test(body.upload_id)) {
+                return json({ error: 'invalid_request' }, 400, cors);
+            }
+            return forward(env, '/upload/status', { uploadId: body.upload_id }, cors);
         }
         if (url.pathname === '/v1/purchases/status') {
             // No token: the id (SHA-256 of the approved delegate) only lets the caller finish or read
