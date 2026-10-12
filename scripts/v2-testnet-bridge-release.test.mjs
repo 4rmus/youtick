@@ -122,6 +122,10 @@ test('the repository Bridge config sanitizes to Market V2 vars with no Queue, D1
     assert.throws(() => sanitizeBridgeConfig('main = "x"\n[vars]\nLIVEPEER_API_KEY = "k"\n[[ratelimits]]\nnamespace_id = "1"\n'), /config_secret_in_vars/);
     assert.throws(() => sanitizeBridgeConfig('main = "x"\nroute = "y"\n'), /config_routing_unexpected/);
     assert.throws(() => sanitizeBridgeConfig('main = "x"\n[vars]\n'), /config_rate_limit_missing/);
+    assert.throws(() => sanitizeBridgeConfig('main = "x"\n[[ratelimits]]\nnamespace_id = "1"\n'), /config_vars_missing/);
+    // [vars] as the last section still receives every fixed value.
+    const last = sanitizeBridgeConfig('main = "x"\n[[ratelimits]]\nnamespace_id = "1"\n[vars]\nNEAR_NETWORK = "mainnet"\n');
+    for (const [key, value] of Object.entries(FIXED_VARS)) assert.ok(last.includes(`${key} = ${JSON.stringify(value)}`), key);
 });
 
 test('the allowlist names accounts only and never a wildcard', () => {

@@ -103,17 +103,20 @@ export function sanitizeBridgeConfig(source) {
     let section = '';
     let mainSeen = false;
     let namespaceSeen = false;
+    let varsSeen = false;
     const written = new Set();
     const out = [];
+    const appendMissingVars = () => {
+        for (const [key, value] of Object.entries(FIXED_VARS)) {
+            if (!written.has(key)) out.push(`${key} = ${JSON.stringify(value)}`);
+        }
+    };
     for (const line of source.split('\n')) {
         const header = /^\s*\[+([^\]]+)\]+\s*$/.exec(line);
         if (header) {
-            if (section === 'vars') {
-                for (const [key, value] of Object.entries(FIXED_VARS)) {
-                    if (!written.has(key)) out.push(`${key} = ${JSON.stringify(value)}`);
-                }
-            }
+            if (section === 'vars') appendMissingVars();
             section = header[1].trim();
+            if (section === 'vars') varsSeen = true;
         }
         if (DROPPED_SECTIONS.has(section)) continue;
         if (!section && /^main\s*=/.test(line)) {
@@ -140,7 +143,9 @@ export function sanitizeBridgeConfig(source) {
         }
         out.push(line);
     }
+    if (section === 'vars') appendMissingVars();
     if (!mainSeen) fail('config_main_missing');
+    if (!varsSeen) fail('config_vars_missing');
     if (!namespaceSeen) fail('config_rate_limit_missing');
     const config = out.join('\n');
     if (/queues|d1_databases|database_id/.test(config)) fail('config_binding_unexpected');
