@@ -807,7 +807,7 @@ const bridgeWorker = {
                     && env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED === 'true',
                 operatorMutationEnabled: env.LIVEPEER_BRIDGE_ENABLED === 'true'
                     && env.LIVEPEER_OPERATOR_MUTATIONS_ENABLED === 'true'
-                    && (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env)
+                    && (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env) || isMarketV2TestnetCreatorScope(env)
                         || (JOB_ID_PATTERN.test(env.LIVEPEER_OPERATOR_JOB_ID || '')
                             && creatorAllowlist(env).size === 1)),
                 operatorJobFingerprint: JOB_ID_PATTERN.test(env.LIVEPEER_OPERATOR_JOB_ID || '')
@@ -3373,10 +3373,20 @@ function isPublicBetaPacket(env: Env): boolean {
         && (allowlist.has('*') || allowlist.size === 2);
 }
 
+// V2 testnet (separate Bridge, decision D9): any job of an explicitly named creator; never a wildcard or mainnet.
+function isMarketV2TestnetCreatorScope(env: Env): boolean {
+    const allowlist = creatorAllowlist(env);
+    return isMarketV2(env)
+        && env.NEAR_NETWORK === 'testnet'
+        && !isPublicTestnetEnvironment(env)
+        && allowlist.size > 0
+        && !allowlist.has('*');
+}
+
 function operatorJobAllowed(env: Env, jobId: string, creator?: string): boolean {
     return isPublicTestnetEnvironment(env)
         ? JOB_ID_PATTERN.test(jobId) && (creator === undefined || ACCOUNT_ID_PATTERN.test(creator))
-        : isPublicBetaPacket(env)
+        : isPublicBetaPacket(env) || isMarketV2TestnetCreatorScope(env)
         ? creator === undefined || creatorAllowed(env, creator)
         : env.LIVEPEER_OPERATOR_JOB_ID === jobId
             && (creator === undefined || creatorAllowed(env, creator));

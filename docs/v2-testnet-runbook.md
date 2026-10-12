@@ -82,8 +82,7 @@ Each of these is its own gate, done by Claude Code unless marked.
 - **Pin the gate.** Done in #304: `v2-ckd-gate-261007.youtick-dev-v3.testnet` with the
   `v1.signer-prod.testnet` domain 2 key.
 - **Deploy the relayer and payment service.** See [Workers](#workers).
-- **Bridge V2** (later milestone): `MARKET_PROTOCOL=v2`, `MARKET_CONTRACT_ID` set to `market_v2`,
-  and the operator function-call key. The quote key needs converting to base64 PKCS8 first.
+- **Deploy the Bridge on Market V2.** See [Bridge](#bridge).
 - **Owner:** send a little NEAR and Circle testnet USDC (from Circle's testnet faucet) to the
   relayer account, for gas and invite credits.
 - **Local acceptance.** The shared NEAR Auth testnet client only allows `http://localhost:3000`,
@@ -148,10 +147,66 @@ What the workflow does:
    - `mode`: `acceptance`, or `closed` to shut both Workers;
    - `confirmation`: `DEPLOY_V2_TESTNET_<mode>`.
 
+## Bridge
+
+`.github/workflows/deploy-v2-testnet-bridge.yml` deploys the Livepeer Bridge on Market V2 from the
+exact `main` commit, separately from the relayer and payment service. The release logic is
+`scripts/v2-testnet-bridge-release.mjs`.
+
+| Worker | Domain |
+|---|---|
+| `youtick-livepeer-bridge-v2-testnet` | `bridge-v2-testnet.youtick.net` |
+
+What differs from the Workers release:
+- **Deployed config.** The repository `wrangler.toml` without the V1 Queue, DLQ and read-model D1
+  bindings, with its own rate-limit namespace (`6003`), and with the fixed V2 values written into
+  `[vars]`:
+  - `MARKET_PROTOCOL=v2`, `VIDEO_ENVIRONMENT=v2-testnet`, `MARKET_CONTRACT_ID=v2-market-261007…`,
+    `NEAR_OPERATOR_ACCOUNT_ID=v2-bridge-261007…`;
+  - Livepeer project `youtick-paid-media-canary`, API token name `youtick-v2-testnet-bridge`, and
+    the public half of the V2 signing key;
+  - creator allowlist `ticks.testnet`, `soteri.testnet`, `utick.testnet`, a 20 USD monthly budget
+    and a 2 USD reservation per job.
+- **Always off in W2:** webhook Queue, D1 archives, sponsored uploads, V1 stateless playback,
+  multi-asset payments and `MARKET_V2_RELEASE_ENABLED` (the 30-day `release_expired` job needs the
+  V2 read model, milestone W3).
+- **Modes:**
+  - `closed`: the Bridge reports `DISABLED`.
+  - `acceptance`: uploads (USDC or NEAR with a signed quote) for the allowlisted creators, webhooks,
+    operator finalization and `/v3/playback-tokens` for `http://localhost:3000`.
+- **Checks before Wrangler runs:** the JWT private key matches the committed public key; the
+  operator key is the Bridge account's function-call key on chain for Market V2 with exactly
+  `finalize_livepeer_publication`, `suspend_livepeer_sales`, `mark_watched` and `release_expired`;
+  the quote key derives to the Market V2 quote key and `get_quote_key_version` is 1.
+- **Smoke test:** `/__health` must come from the new version and name Market V2. In `acceptance`
+  it must report uploads, control plane, playback and operator mutations ready and everything
+  above off; `/v3/playback-tokens` must accept only the allowed origin and answer an empty body
+  with 4xx, not 503.
+
+### Owner steps
+
+Done on 2026-10-12:
+- In Livepeer project `youtick-paid-media-canary`: API key and signing key
+  `youtick-v2-testnet-bridge`, and a webhook to
+  `https://bridge-v2-testnet.youtick.net/v1/livepeer-webhooks` for `asset.ready`, `asset.failed`,
+  `asset.updated` and `asset.deleted`. The Preview and public-testnet webhooks are unchanged.
+- Environment `v2-testnet` secrets: `V2_LIVEPEER_API_KEY`, `V2_LIVEPEER_JWT_PRIVATE_KEY`,
+  `V2_LIVEPEER_WEBHOOK_SECRET`, `V2_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN`,
+  `V2_BRIDGE_NEAR_OPERATOR_PRIVATE_KEY` (`bridge_operator.json`) and
+  `V2_CREATOR_FEE_QUOTE_PRIVATE_KEY`. The last one is converted from `quote.json` by
+  `workers/livepeer-bridge/scripts/v2-testnet-quote-key.mjs`, which refuses a key that does not
+  match the Market V2 quote key.
+
+To deploy, start *V2 Testnet Bridge* on `main` with the current commit, its CI run, a mode and
+`confirmation` `DEPLOY_V2_TESTNET_BRIDGE_<mode>`, then approve the environment. To change the
+allowlist or the signing key, change the script and deploy again.
+
 ## Evidence
 
 The bootstrap is covered by `workers/livepeer-bridge/scripts/v2-testnet-bootstrap.test.mjs`
 against a simulated chain (LOCAL_TEST), and its workflow ran with `PASS` on testnet (PROVIDER).
 The Workers release is covered by `scripts/v2-testnet-release.test.mjs` with a simulated chain,
-Wrangler and Workers (LOCAL_TEST). It has not run against Cloudflare yet. A workflow `PASS` counts
+Wrangler and Workers (LOCAL_TEST); its workflow ran with `PASS` on 2026-10-11 (PROVIDER). The
+Bridge release is covered by `scripts/v2-testnet-bridge-release.test.mjs` in the same way
+(LOCAL_TEST) and has not run against Cloudflare yet. A workflow `PASS` counts
 as PROVIDER (testnet) evidence only. It is never mainnet evidence.

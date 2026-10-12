@@ -1364,6 +1364,45 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(testState.values.get('job:v1')).toEqual(ready);
     });
 
+    it.each([
+        // [case, overrides, finalizes this job, health reports the creator scope]
+        ['an allowlisted creator', {}, true, true],
+        ['a creator outside the allowlist', { LIVEPEER_CREATOR_ALLOWLIST: 'other.testnet' }, false, true],
+        ['a wildcard allowlist', { LIVEPEER_CREATOR_ALLOWLIST: '*' }, false, false],
+        ['mainnet', { NEAR_NETWORK: 'mainnet' }, false, false],
+        ['a V1 market', { MARKET_PROTOCOL: undefined }, false, false],
+    ] as const)('finalizes V2 testnet jobs without a job scope only for %s', async (_case, overrides, allowed, scoped) => {
+        const now = 1_785_600_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        const testState = createState();
+        testState.values.set('job:v1', {
+            ...(await publishedJob()),
+            state: 'FINALIZE_RETRY',
+            finalizeRetry: { attempts: 1, lastHttpStatus: 503, nextAttemptAtMs: now },
+        });
+        const finalized: string[] = [];
+        const operatorFetch = vi.fn(async (request: Request) => {
+            if (new URL(request.url).pathname === '/internal/finalize') finalized.push(request.url);
+            return Response.json({ accepted: true, finalized: true });
+        });
+        const env = createEnv({
+            MARKET_PROTOCOL: 'v2',
+            LIVEPEER_OPERATOR_JOB_ID: '',
+            LIVEPEER_CREATOR_ALLOWLIST: 'creator.testnet,second.testnet',
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+            ...overrides,
+        });
+
+        await new LivepeerControl(testState.state, env).alarm();
+        const health = await handler.fetch(new Request('https://bridge.youtick.net/__health'), env);
+
+        expect(finalized).toHaveLength(allowed ? 1 : 0);
+        expect(await health.json()).toMatchObject({ operatorMutationEnabled: scoped });
+    });
+
     it('persists FINALIZE_RETRY on a failed outbox call and resumes the same publication', async () => {
         let now = 1_785_600_000_000;
         vi.spyOn(Date, 'now').mockImplementation(() => now);
