@@ -23,6 +23,20 @@ export const MIN_GROSS_USDC_MICRO = 5_000_000n;
 export const PLATFORM_DIVISOR = 20n;
 export const MAX_VAT_RATE_BPS = 2_700n;
 export const MAX_SIGNATURE_TTL_MS = 3_600_000n;
+// Upload through NEAR Auth (roadmap E5b.1): the creator's implicit account calls USDC
+// `ft_transfer_call` to the Market with a plain `create_paid_job` message. No sponsor quote and
+// no playback session: the relayer sponsors gas, and Market V2 has no public beta or public
+// upload policy. Values mirror contracts/market-v2 (fee 3/10,000 per byte, minimum 0.5 USDC).
+export const UPLOAD_ACTION = "create_paid_job";
+export const UPLOAD_PROFILE_ID = "paid-media-livepeer-v1";
+export const UPLOAD_FEE = { numerator: 3n, denominator: 10_000n, minimum_usdc_micro: 500_000n };
+export const MAX_SOURCE_BYTES = 20_000_000_000n;
+export const MAX_TITLE_BYTES = 200;
+export const MIN_TICKET_PRICE_USDC_MICRO = 5_000_000n;
+export const UPLOAD_DELEGATE_GAS = 100_000_000_000_000n;
+export const UPLOAD_DELEGATE_DEPOSIT_YOCTO = 1n;
+export const REPLACE_UPLOAD_KEY_GAS = 100_000_000_000_000n;
+export const REPLACE_UPLOAD_KEY_DEPOSIT_YOCTO = 0n;
 const U32_MAX = 0xffffffffn;
 const U64_MAX = 0xffffffffffffffffn;
 const U128_MAX = (1n << 128n) - 1n;
@@ -122,6 +136,65 @@ function decimal(value, max) {
   return text;
 }
 
+// --- Upload through NEAR Auth ---------------------------------------------------------------
+
+export function uploadFeeUsdcMicro(sourceBytes) {
+  const bytes = BigInt(decimal(sourceBytes, MAX_SOURCE_BYTES));
+  assert(bytes >= 1n, "expected_source_bytes must be at least 1");
+  const fee = (bytes * UPLOAD_FEE.numerator + UPLOAD_FEE.denominator - 1n) / UPLOAD_FEE.denominator;
+  return `${fee > UPLOAD_FEE.minimum_usdc_micro ? fee : UPLOAD_FEE.minimum_usdc_micro}`;
+}
+
+// The `create_paid_job` message, with its keys in this exact order: the relayer rebuilds the
+// delegate from these fields and compares bytes, so a different key order is a different message.
+export function uploadMessage({ job_id, title, price_usdc, expected_source_bytes, profile_config_sha256, upload_public_key, upload_key_expires_at_ms }) {
+  assert(typeof job_id === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(job_id), "job_id must be 1-128 identifier characters");
+  assert(typeof title === "string" && title.trim() !== "" && Buffer.byteLength(title) <= MAX_TITLE_BYTES
+    && !/[\p{Cc}]/u.test(title), `title must be 1-${MAX_TITLE_BYTES} bytes without control characters`);
+  assert(BigInt(decimal(price_usdc, U128_MAX)) >= MIN_TICKET_PRICE_USDC_MICRO, "price_usdc must be at least 5.000000");
+  assert(BigInt(decimal(expected_source_bytes, MAX_SOURCE_BYTES)) >= 1n, "expected_source_bytes must be at least 1");
+  assert(/^[0-9a-f]{64}$/.test(profile_config_sha256), "profile_config_sha256 must be lower-case hex");
+  publicKeyRaw(upload_public_key);
+  return {
+    action: UPLOAD_ACTION,
+    job_id,
+    title,
+    price_usdc: decimal(price_usdc, U128_MAX),
+    expected_source_bytes: decimal(expected_source_bytes, MAX_SOURCE_BYTES),
+    profile_id: UPLOAD_PROFILE_ID,
+    profile_config_sha256,
+    upload_public_key,
+    upload_key_expires_at_ms: decimal(upload_key_expires_at_ms, U64_MAX),
+  };
+}
+
+export function uploadTransferArgs(marketContractId, message) {
+  return { receiver_id: marketContractId, amount: uploadFeeUsdcMicro(message.expected_source_bytes), msg: JSON.stringify(message) };
+}
+
+export function replaceUploadKeyArgs({ job_id, new_public_key, expires_at_ms }) {
+  assert(/^[A-Za-z0-9._:-]{1,128}$/.test(job_id), "job_id must be 1-128 identifier characters");
+  publicKeyRaw(new_public_key);
+  return { job_id, new_public_key, expires_at_ms: decimal(expires_at_ms, U64_MAX) };
+}
+
+// A delegate action with one FunctionCall, as near-api-js `encodeDelegateAction` serializes it:
+// the NEP-461 prefix (2^30 + 366) followed by the Borsh DelegateAction.
+export function delegateBytes({ sender_id, receiver_id, method_name, args, gas, deposit_yocto, nonce, max_block_height, public_key }) {
+  const argBytes = Buffer.from(JSON.stringify(args));
+  return Buffer.concat([
+    u32(2 ** 30 + 366), str(sender_id), str(receiver_id), u32(1), Buffer.from([2]), str(method_name), u32(argBytes.length), argBytes,
+    u64(BigInt(decimal(gas, U64_MAX))), u128(BigInt(decimal(deposit_yocto, U128_MAX))),
+    u64(BigInt(decimal(nonce, U64_MAX))), u64(BigInt(decimal(max_block_height, U64_MAX))), Buffer.from([0]), publicKeyRaw(public_key),
+  ]);
+}
+
+function delegateVector(input) {
+  const bytes = delegateBytes(input);
+  const { args, ...fields } = input;
+  return { ...fields, args, byte_length: bytes.length, bytes_base64: bytes.toString("base64"), sha256_hex: sha256Hex(bytes) };
+}
+
 // --- Fixture --------------------------------------------------------------------------------
 
 const FIXTURE = {
@@ -140,6 +213,15 @@ const FIXTURE = {
   vat_key_version: "1",
   card_payment_reference: "cleeng-test-order-0001",
   payment_reference_key_hex: sha256Hex("youtick.market-v2.test.payment-reference-key"),
+  // Upload through NEAR Auth: the creator is an implicit account opened by the relayer.
+  near_auth_creator_id: "a3f1c0b2d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f",
+  upload_job_id: "lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6",
+  upload_title: "Stüdyo kaydı: açılış gecesi",
+  upload_price_usdc_micro: "5000000",
+  upload_source_bytes: "734003200",
+  profile_config_sha256: "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77",
+  delegate_nonce: "187000000000001",
+  delegate_max_block_height: "187001200",
 };
 
 const testKey = (label) => keyPairFromSeed(createHash("sha256").update(`youtick.market-v2.test.${label}`).digest());
@@ -265,8 +347,46 @@ export function buildVectors() {
       message: playbackCanonical,
       signature: signText(playbackCanonical, sessionKey.privateKey),
     },
+    upload: buildUpload(),
     events: buildEvents({ ticket, cardTicket, split, paymentReferenceHmac, session, secondSession }),
     size_budget: sizeBudget(),
+  };
+}
+
+function buildUpload() {
+  const creatorKey = nearPublicKey(testKey("near-auth-creator").publicKey);
+  const uploadKey = nearPublicKey(testKey("upload-session").publicKey);
+  const replacementKey = nearPublicKey(testKey("upload-session-replacement").publicKey);
+  const uploadKeyExpiry = `${BigInt(FIXTURE.issued_at_ms) + 86_400_000n}`;
+  const msg = uploadMessage({
+    job_id: FIXTURE.upload_job_id,
+    title: FIXTURE.upload_title,
+    price_usdc: FIXTURE.upload_price_usdc_micro,
+    expected_source_bytes: FIXTURE.upload_source_bytes,
+    profile_config_sha256: FIXTURE.profile_config_sha256,
+    upload_public_key: uploadKey,
+    upload_key_expires_at_ms: uploadKeyExpiry,
+  });
+  const args = uploadTransferArgs(FIXTURE.contract_id, msg);
+  const replaceArgs = replaceUploadKeyArgs({ job_id: FIXTURE.upload_job_id, new_public_key: replacementKey, expires_at_ms: uploadKeyExpiry });
+  return {
+    creator_id: FIXTURE.near_auth_creator_id,
+    creator_public_key: creatorKey,
+    msg,
+    ft_transfer_call_args: args,
+    delegate: delegateVector({
+      sender_id: FIXTURE.near_auth_creator_id, receiver_id: FIXTURE.usdc_contract_id, method_name: "ft_transfer_call", args,
+      gas: `${UPLOAD_DELEGATE_GAS}`, deposit_yocto: `${UPLOAD_DELEGATE_DEPOSIT_YOCTO}`,
+      nonce: FIXTURE.delegate_nonce, max_block_height: FIXTURE.delegate_max_block_height, public_key: creatorKey,
+    }),
+    replace_upload_key: {
+      args: replaceArgs,
+      delegate: delegateVector({
+        sender_id: FIXTURE.near_auth_creator_id, receiver_id: FIXTURE.contract_id, method_name: "replace_upload_key", args: replaceArgs,
+        gas: `${REPLACE_UPLOAD_KEY_GAS}`, deposit_yocto: `${REPLACE_UPLOAD_KEY_DEPOSIT_YOCTO}`,
+        nonce: `${BigInt(FIXTURE.delegate_nonce) + 1n}`, max_block_height: FIXTURE.delegate_max_block_height, public_key: creatorKey,
+      }),
+    },
   };
 }
 
@@ -324,7 +444,39 @@ function sizeBudget() {
     // Web job IDs are `lp-` + UUID (39 chars); 128 is the schema maximum.
     typical: sizeCase(`lp-${"0".repeat(8)}-${"0".repeat(4)}-${"0".repeat(4)}-${"0".repeat(4)}-${"0".repeat(12)}`),
     worst: sizeCase("j".repeat(128)),
+    // Upload through NEAR Auth: the message is the plain `create_paid_job` JSON without a quote.
+    // A typical job is `lp-` + UUID with a 40-byte title; the worst case uses the 128-character
+    // job ID and a 200-byte title, both limits the contract enforces.
+    upload: {
+      typical: uploadSizeCase(`lp-${"0".repeat(8)}-${"0".repeat(4)}-${"0".repeat(4)}-${"0".repeat(4)}-${"0".repeat(12)}`, "t".repeat(40)),
+      worst: uploadSizeCase("j".repeat(128), "t".repeat(MAX_TITLE_BYTES)),
+    },
+    replace_upload_key: { worst: replaceKeySizeCase("j".repeat(128)) },
   };
+}
+
+function uploadSizeCase(jobId, title) {
+  const msg = JSON.stringify({
+    action: UPLOAD_ACTION, job_id: jobId, title, price_usdc: "9".repeat(12), expected_source_bytes: `${MAX_SOURCE_BYTES}`,
+    profile_id: UPLOAD_PROFILE_ID, profile_config_sha256: "f".repeat(64), upload_public_key: `ed25519:${"z".repeat(44)}`,
+    upload_key_expires_at_ms: "9".repeat(13),
+  });
+  const args = JSON.stringify({ receiver_id: SIZE_ASSUMPTIONS.market_contract_id, amount: "9".repeat(12), msg });
+  const delegate = encodeDelegate({
+    sender_id: SIZE_ASSUMPTIONS.sender_id, receiver_id: SIZE_ASSUMPTIONS.usdc_contract_id, method_name: "ft_transfer_call",
+    args: Buffer.from(args), gas: UPLOAD_DELEGATE_GAS, deposit: UPLOAD_DELEGATE_DEPOSIT_YOCTO,
+  });
+  return { job_id_chars: jobId.length, title_bytes: Buffer.byteLength(title), upload_msg_bytes: Buffer.byteLength(msg),
+    ft_transfer_call_args_bytes: Buffer.byteLength(args), ...tokenEstimate(delegate) };
+}
+
+function replaceKeySizeCase(jobId) {
+  const args = JSON.stringify({ job_id: jobId, new_public_key: `ed25519:${"z".repeat(44)}`, expires_at_ms: "9".repeat(13) });
+  const delegate = encodeDelegate({
+    sender_id: SIZE_ASSUMPTIONS.sender_id, receiver_id: SIZE_ASSUMPTIONS.market_contract_id, method_name: "replace_upload_key",
+    args: Buffer.from(args), gas: REPLACE_UPLOAD_KEY_GAS, deposit: REPLACE_UPLOAD_KEY_DEPOSIT_YOCTO,
+  });
+  return { job_id_chars: jobId.length, args_bytes: Buffer.byteLength(args), ...tokenEstimate(delegate) };
 }
 
 function sizeCase(publicationId) {
@@ -345,6 +497,15 @@ function sizeCase(publicationId) {
     gas: 300_000_000_000_000n,
     deposit: 1n,
   });
+  return {
+    publication_id_chars: publicationId.length,
+    purchase_msg_bytes: Buffer.byteLength(msg),
+    ft_transfer_call_args_bytes: Buffer.byteLength(args),
+    ...tokenEstimate(delegate),
+  };
+}
+
+function tokenEstimate(delegate) {
   const header = { alg: "RS256", typ: "JWT", kid: "k".repeat(43) };
   const payload = {
     iss: "https://youtick-auth.example-tenant.auth0.com/",
@@ -360,9 +521,6 @@ function sizeCase(publicationId) {
   const tokenBytes = b64url(JSON.stringify(header)).length + 1 + b64url(JSON.stringify(payload)).length + 1 + 342;
   const promptBytes = Math.ceil(delegate.length * PROMPT_RATIO.prompt_bytes / PROMPT_RATIO.delegate_bytes);
   return {
-    publication_id_chars: publicationId.length,
-    purchase_msg_bytes: Buffer.byteLength(msg),
-    ft_transfer_call_args_bytes: Buffer.byteLength(args),
     delegate_bytes: delegate.length,
     fatxn_json_bytes: JSON.stringify(payload.fatxn).length,
     token_bytes_estimate: tokenBytes,
@@ -391,6 +549,7 @@ function check(vectors) {
   validate(schema.$defs.issue_card_ticket_args, vectors.card_ticket.issue_card_ticket_args, "$.card_ticket.issue_card_ticket_args");
   validate(schema.$defs.void_card_ticket_args, vectors.card_ticket.void_card_ticket_args, "$.card_ticket.void_card_ticket_args");
   for (const [name, args] of Object.entries(vectors.calls)) validate(schema.$defs[name], args, `$.calls.${name}`);
+  checkUpload(vectors.upload);
   for (const [name, event] of Object.entries(vectors.events)) {
     validate(schema.$defs.event, event, `$.events.${name}`);
     validate(schema.$defs[`event_${name}`], event.data[0], `$.events.${name}.data[0]`);
@@ -453,13 +612,51 @@ function check(vectors) {
   splitAmounts("12700000", "2700000");
 
   const budget = vectors.size_budget;
-  for (const [name, ratio] of [["worst", 1], ["typical", SIZE_LIMITS.headroom_ratio]]) {
-    const item = budget[name];
+  const cases = [
+    ["worst purchase", budget.worst, 1], ["typical purchase", budget.typical, SIZE_LIMITS.headroom_ratio],
+    ["worst upload", budget.upload.worst, 1], ["typical upload", budget.upload.typical, SIZE_LIMITS.headroom_ratio],
+    ["worst replace_upload_key", budget.replace_upload_key.worst, 1],
+  ];
+  for (const [name, item, ratio] of cases) {
     assert(item.token_bytes_estimate <= budget.token_limit_bytes * ratio,
-      `${name} purchase token estimate ${item.token_bytes_estimate} exceeds ${ratio * 100}% of ${budget.token_limit_bytes}`);
+      `${name} token estimate ${item.token_bytes_estimate} exceeds ${ratio * 100}% of ${budget.token_limit_bytes}`);
     assert(item.prompt_bytes_estimate <= budget.prompt_limit_bytes * ratio,
-      `${name} purchase prompt estimate ${item.prompt_bytes_estimate} exceeds ${ratio * 100}% of ${budget.prompt_limit_bytes}`);
+      `${name} prompt estimate ${item.prompt_bytes_estimate} exceeds ${ratio * 100}% of ${budget.prompt_limit_bytes}`);
   }
+}
+
+function checkUpload(upload) {
+  assert(upload, "missing upload vector");
+  validate(schema.$defs.upload_msg, upload.msg, "$.upload.msg");
+  validate(schema.$defs.upload_ft_transfer_call_args, upload.ft_transfer_call_args, "$.upload.ft_transfer_call_args");
+  validate(schema.$defs.upload_msg, JSON.parse(upload.ft_transfer_call_args.msg), "$.upload.ft_transfer_call_args.msg");
+  validate(schema.$defs.replace_upload_key_args, upload.replace_upload_key.args, "$.upload.replace_upload_key.args");
+  assert(upload.ft_transfer_call_args.msg === JSON.stringify(upload.msg), "upload msg must serialize in the vector's key order");
+  assert(upload.ft_transfer_call_args.amount === uploadFeeUsdcMicro(upload.msg.expected_source_bytes), "upload amount must equal the fee");
+  assert(Buffer.byteLength(upload.msg.title) <= MAX_TITLE_BYTES, "upload title must stay within 200 bytes");
+  for (const [label, vector] of [["upload", upload.delegate], ["replace_upload_key", upload.replace_upload_key.delegate]]) {
+    const bytes = Buffer.from(vector.bytes_base64, "base64");
+    assert(bytes.length === vector.byte_length, `${label} delegate byte_length must match`);
+    assert(sha256Hex(bytes) === vector.sha256_hex, `${label} delegate sha256 must match`);
+    assert(bytes.readUInt32LE(0) === 2 ** 30 + 366, `${label} delegate must start with the NEP-461 prefix`);
+    assert(delegateBytes(vector).equals(bytes), `${label} delegate must rebuild from its fields`);
+    assert(!delegateBytes({ ...vector, nonce: `${BigInt(vector.nonce) + 1n}` }).equals(bytes), `${label} delegate must bind the nonce`);
+    assert(!delegateBytes({ ...vector, sender_id: "other.testnet" }).equals(bytes), `${label} delegate must bind the sender`);
+  }
+  assert(upload.delegate.receiver_id !== upload.replace_upload_key.delegate.receiver_id, "upload pays USDC; replace_upload_key calls the Market");
+  assert(upload.delegate.deposit_yocto === "1" && upload.replace_upload_key.delegate.deposit_yocto === "0", "delegate deposits");
+  rejects(() => uploadMessage({ ...upload.msg, title: " \n " }), "blank upload title");
+  rejects(() => uploadMessage({ ...upload.msg, title: "ş".repeat(101) }), "upload title above 200 bytes");
+  rejects(() => uploadMessage({ ...upload.msg, price_usdc: "4999999" }), "upload price below 5 USDC");
+  rejects(() => uploadMessage({ ...upload.msg, expected_source_bytes: `${MAX_SOURCE_BYTES + 1n}` }), "source above the maximum");
+  rejects(() => uploadMessage({ ...upload.msg, expected_source_bytes: "0" }), "zero source bytes");
+  rejects(() => uploadMessage({ ...upload.msg, job_id: "job/1" }), "slash in job_id");
+  rejects(() => uploadMessage({ ...upload.msg, upload_public_key: "ed25519:11111111" }), "short upload key");
+  rejects(() => replaceUploadKeyArgs({ ...upload.replace_upload_key.args, expires_at_ms: "01" }), "non-canonical expiry");
+  assert(uploadFeeUsdcMicro("1") === "500000", "minimum upload fee");
+  assert(uploadFeeUsdcMicro("10000") === "500000", "fee below the minimum rounds up to it");
+  assert(uploadFeeUsdcMicro("2000000000") === "600000", "fee is 3 micro-USDC per 10,000 bytes, rounded up");
+  assert(uploadFeeUsdcMicro("2000000001") === "600001", "fee rounds up");
 }
 
 function rejects(fn, label) {
@@ -546,5 +743,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   assert(JSON.stringify(stored) === JSON.stringify(built), "golden-vectors.json drifted from the reference implementation; rerun with --write and review");
   check(stored);
   const { typical, worst, token_limit_bytes: tokenLimit } = stored.size_budget;
-  console.log(`youtick-market-v2 protocol OK (purchase token ~${typical.token_bytes_estimate} typical / ~${worst.token_bytes_estimate} worst of ${tokenLimit} B; delegate ${typical.delegate_bytes}/${worst.delegate_bytes} B)`);
+  const upload = stored.size_budget.upload;
+  const replaceKey = stored.size_budget.replace_upload_key.worst;
+  console.log(`youtick-market-v2 protocol OK (purchase token ~${typical.token_bytes_estimate} typical / ~${worst.token_bytes_estimate} worst of ${tokenLimit} B; delegate ${typical.delegate_bytes}/${worst.delegate_bytes} B; `
+    + `upload token ~${upload.typical.token_bytes_estimate} typical / ~${upload.worst.token_bytes_estimate} worst; delegate ${upload.typical.delegate_bytes}/${upload.worst.delegate_bytes} B; `
+    + `replace_upload_key token ~${replaceKey.token_bytes_estimate} worst; delegate ${replaceKey.delegate_bytes} B)`);
 }

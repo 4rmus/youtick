@@ -613,6 +613,99 @@
     "positive_u64": {
       "type": "string",
       "pattern": "^[1-9][0-9]{0,19}$"
+    },
+    "upload_title": {
+      "type": "string",
+      "pattern": "^(?=.*\\S)[^\\p{Cc}]{1,200}$",
+      "description": "1-200 UTF-8 bytes (the byte limit is enforced by the contract and the reference checker), not blank, no control characters."
+    },
+    "source_bytes": {
+      "type": "string",
+      "pattern": "^([1-9][0-9]{0,9}|1[0-9]{10}|20000000000)$"
+    },
+    "upload_msg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "job_id",
+        "title",
+        "price_usdc",
+        "expected_source_bytes",
+        "profile_id",
+        "profile_config_sha256",
+        "upload_public_key",
+        "upload_key_expires_at_ms"
+      ],
+      "properties": {
+        "action": {
+          "const": "create_paid_job"
+        },
+        "job_id": {
+          "$ref": "#/$defs/publication_id"
+        },
+        "title": {
+          "$ref": "#/$defs/upload_title"
+        },
+        "price_usdc": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "expected_source_bytes": {
+          "$ref": "#/$defs/source_bytes"
+        },
+        "profile_id": {
+          "const": "paid-media-livepeer-v1"
+        },
+        "profile_config_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "upload_public_key": {
+          "$ref": "#/$defs/ed25519_public_key"
+        },
+        "upload_key_expires_at_ms": {
+          "$ref": "#/$defs/decimal_u64"
+        }
+      }
+    },
+    "upload_ft_transfer_call_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receiver_id",
+        "amount",
+        "msg"
+      ],
+      "properties": {
+        "receiver_id": {
+          "$ref": "#/$defs/account_id"
+        },
+        "amount": {
+          "$ref": "#/$defs/decimal_u128"
+        },
+        "msg": {
+          "type": "string"
+        }
+      }
+    },
+    "replace_upload_key_args": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "new_public_key",
+        "expires_at_ms"
+      ],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/publication_id"
+        },
+        "new_public_key": {
+          "$ref": "#/$defs/ed25519_public_key"
+        },
+        "expires_at_ms": {
+          "$ref": "#/$defs/decimal_u64"
+        }
+      }
     }
   }
 }
