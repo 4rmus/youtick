@@ -13,13 +13,13 @@ import process from 'node:process';
 
 export const WRANGLER_VERSION = '4.147.0';
 export const MODES = Object.freeze(['closed', 'acceptance']);
-const PARENT = 'youtick-dev-v3.testnet';
-const MARKET_V2 = `v2-market-261007.${PARENT}`;
+export const PARENT = 'youtick-dev-v3.testnet';
+export const MARKET_V2 = `v2-market-261007.${PARENT}`;
 const RELAYER = `v2-relayer-261007.${PARENT}`;
 const CKD_GATE = `v2-ckd-gate-261007.${PARENT}`;
 // The shared NEAR Auth testnet client only allows this origin (docs/v2-testnet-runbook.md).
 export const ACCEPTANCE_ORIGIN = 'http://localhost:3000';
-const DENIED_ORIGIN = 'https://release-smoke.invalid';
+export const DENIED_ORIGIN = 'https://release-smoke.invalid';
 const VAT_KEY_VERSION = '1';
 
 export const COMPONENTS = Object.freeze({
@@ -218,7 +218,7 @@ export function wranglerArgs(component, releaseDir, sha, mode) {
     ];
 }
 
-function runProcess(command, args, env) {
+export function runProcess(command, args, env) {
     return new Promise((resolvePromise, rejectPromise) => {
         const child = spawn(command, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
         let stderr = '';
@@ -252,7 +252,7 @@ export function wranglerRunner(binary, cloudflare, tempRoot) {
     };
 }
 
-async function request(fetchImpl, url, init) {
+export async function request(fetchImpl, url, init) {
     try {
         const response = await fetchImpl(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(15_000) });
         const text = await response.text();
@@ -296,7 +296,7 @@ export async function smoke(component, mode, fetchImpl) {
     return result;
 }
 
-async function retry(fn, delays, sleep) {
+export async function retry(fn, delays, sleep) {
     let last;
     for (const delay of delays) {
         if (delay) await sleep(delay);
@@ -310,7 +310,7 @@ async function retry(fn, delays, sleep) {
 }
 
 // A new custom domain needs DNS and a certificate before it answers.
-const SMOKE_DELAYS_MS = [0, 5_000, 10_000, 15_000, 30_000, 30_000, 60_000];
+export const SMOKE_DELAYS_MS = [0, 5_000, 10_000, 15_000, 30_000, 30_000, 60_000];
 
 export async function deployRelease({
     sha, releaseDir, receiptPath, mode, env = process.env, fetchImpl = fetch,

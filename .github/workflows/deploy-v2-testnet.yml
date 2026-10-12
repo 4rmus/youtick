@@ -1,7 +1,7 @@
 name: V2 Testnet Workers
 
 # Deploys the V2 relayer and payment service to the separate V2 testnet environment.
-# Runbook: docs/v2-testnet-runbook.md (Workers). The Bridge V2 target is a later milestone.
+# Runbook: docs/v2-testnet-runbook.md (Workers). The Bridge V2 deploys from deploy-v2-testnet-bridge.yml.
 on:
   workflow_dispatch:
     inputs:
