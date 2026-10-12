@@ -233,6 +233,10 @@ Off unless `MARKET_PROTOCOL=v2` and `LIVEPEER_PLAYBACK_V3_ENABLED=true` (with th
   operator object's record budget does not grow with tickets. The final ticket status on chain is
   the durable record. A failed transaction on a ticket that is still `purchased` clears its
   record, and the next play signs a fresh one.
+- **Upload scope on the V2 testnet.** With `MARKET_PROTOCOL=v2`, `NEAR_NETWORK=testnet`, a
+  `VIDEO_ENVIRONMENT` other than `public-testnet` and a `LIVEPEER_CREATOR_ALLOWLIST` of named
+  accounts, the operator finalizes any job of an allowlisted creator; `LIVEPEER_OPERATOR_JOB_ID`
+  is not needed. A `*` allowlist, mainnet and V1 deployments keep the single-job scope.
 
 ## Commands
 
