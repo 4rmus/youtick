@@ -84,6 +84,18 @@ function transientAsset404Error() {
     ].join('\n'));
 }
 
+/** The Deploy Preview failure of 2026-10-12 (run 38296557761): each asset 404 came with Chrome's MIME refusal. */
+function transientAssetMimeRefusalError() {
+    return new Error([
+        'release_smoke_browser_errors',
+        "/:console:Refused to apply style from 'https://preview.youtick.net/_next/static/css/7c809099b8156ae7.css' because its MIME type ('text/plain') is not a supported stylesheet MIME type, and strict MIME checking is enabled.",
+        '/:console:Failed to load resource: the server responded with a status of 404 ()',
+        "/:console:Refused to execute script from 'https://preview.youtick.net/_next/static/chunks/9734-86eb0933d6885be0.js' because its MIME type ('text/plain') is not executable, and strict MIME type checking is enabled.",
+        '/:console:Failed to load resource: the server responded with a status of 404 ()',
+        "/:console:Refused to execute script from 'https://preview.youtick.net/_next/static/chunks/app/(site)/error-fed1a557b002980b.js' because its MIME type ('text/plain') is not executable, and strict MIME type checking is enabled.",
+    ].join('\n'));
+}
+
 function canonicalJson(value) {
     return `${JSON.stringify(value, null, 2)}\n`;
 }
@@ -1873,6 +1885,53 @@ test('post-promotion smoke retries transient stable Web asset propagation', asyn
     assert.equal(smokeCalls, 4);
     assert.deepEqual(delays, [1_000]);
     assert.equal(receipt.web.versionId, 'web-new');
+});
+
+test('post-promotion smoke retries asset 404s that Chrome reports as MIME refusals', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS.preview.web.worker]: {
+                traffic: [{ version_id: 'web-old', percentage: 100 }],
+            },
+            [TARGETS.preview.bridge.worker]: {
+                traffic: [{ version_id: 'bridge-old', percentage: 100 }],
+            },
+        },
+        uploadFailures: {},
+    });
+    const delays = [];
+    let smokeCalls = 0;
+    const receipt = await deployFixture(release, fake, async () => {
+        smokeCalls += 1;
+        if (smokeCalls === 3) throw transientAssetMimeRefusalError();
+        return { ok: true };
+    }, { sleepFn: async (delay) => delays.push(delay) });
+
+    assert.equal(smokeCalls, 4);
+    assert.deepEqual(delays, [1_000]);
+    assert.equal(receipt.web.versionId, 'web-new');
+
+    // A refusal for anything outside the stable asset path is still a real failure.
+    const foreign = makeFakeWrangler(makeRelease(t), {
+        workers: {
+            [TARGETS.preview.web.worker]: { traffic: [{ version_id: 'web-old', percentage: 100 }] },
+            [TARGETS.preview.bridge.worker]: { traffic: [{ version_id: 'bridge-old', percentage: 100 }] },
+        },
+        uploadFailures: {},
+    });
+    let foreignCalls = 0;
+    await assert.rejects(deployFixture(makeRelease(t), foreign, async () => {
+        foreignCalls += 1;
+        if (foreignCalls === 3) {
+            throw new Error([
+                'release_smoke_browser_errors',
+                "/:console:Refused to execute script from 'https://preview.youtick.net/app.js' because its MIME type ('text/plain') is not executable, and strict MIME type checking is enabled.",
+            ].join('\n'));
+        }
+        return { ok: true };
+    }, { sleepFn: async () => undefined }), /release_smoke_browser_errors/);
+    assert.equal(foreignCalls, 3);
 });
 
 test('post-promotion smoke retries a standalone transient asset 404', async (t) => {

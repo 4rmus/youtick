@@ -71,6 +71,12 @@ function transientWebPropagationError(error) {
             hasPropagationSignal = true;
             continue;
         }
+        // Chrome reports the same not-yet-propagated asset a second time: a 404 for a script or
+        // stylesheet is refused by strict MIME checking before it is reported as a failed load.
+        if (/:console:Refused to (?:execute script|apply style) from '[^']*\/_next\/static\/[^']*' because its MIME type \('text\/plain'\)/.test(entry)) {
+            hasPropagationSignal = true;
+            continue;
+        }
         if (entry.includes('Content Security Policy directive: "script-src \'self\' \'unsafe-inline\'"')) {
             hasPropagationSignal = true;
             continue;
