@@ -37,7 +37,8 @@ async function routeMarketReadApi(request, env) {
         return json({
             status: 'ok',
             service: 'market-read-model',
-            ...(env.VIDEO_ENVIRONMENT === 'public-testnet' ? {
+            // The public testnet and the V2 testnet (roadmap W3) are smoke-tested through this document.
+            ...(['public-testnet', 'v2-testnet'].includes(env.VIDEO_ENVIRONMENT) ? {
                 versionId: env.CF_VERSION_METADATA?.id, network: env.READ_MODEL_NETWORK,
                 contractId: env.READ_MODEL_CONTRACT_ID, startBlockHeight: env.READ_MODEL_START_BLOCK_HEIGHT,
                 ingestionEnabled: env.READ_MODEL_INGESTION_ENABLED === 'true',
@@ -152,13 +153,16 @@ function validEnv(env) {
         && env.MARKET_READ_MODEL
         && ['testnet', 'mainnet'].includes(env.READ_MODEL_NETWORK)
         && ACCOUNT_PATTERN.test(env.READ_MODEL_CONTRACT_ID || '')
-        && validWebOrigin(env.READ_MODEL_WEB_ORIGIN);
+        && validWebOrigin(env.READ_MODEL_WEB_ORIGIN, env);
 }
 
-function validWebOrigin(value) {
+/** HTTPS only, except that the V2 testnet (decision D9) serves the local acceptance web at `http://localhost:<port>`. */
+function validWebOrigin(value, env) {
     try {
         const url = new URL(value);
-        return url.protocol === 'https:' && !url.username && !url.password
+        const localAcceptance = env?.VIDEO_ENVIRONMENT === 'v2-testnet'
+            && url.protocol === 'http:' && url.hostname === 'localhost';
+        return (url.protocol === 'https:' || localAcceptance) && !url.username && !url.password
             && url.pathname === '/' && !url.search && !url.hash
             && url.origin === value;
     } catch {
@@ -167,7 +171,7 @@ function validWebOrigin(value) {
 }
 
 function cors(response, env) {
-    if (!validWebOrigin(env.READ_MODEL_WEB_ORIGIN)) return response;
+    if (!validWebOrigin(env.READ_MODEL_WEB_ORIGIN, env)) return response;
     const headers = new Headers(response.headers);
     headers.set('Access-Control-Allow-Origin', env.READ_MODEL_WEB_ORIGIN);
     headers.append('Vary', 'Origin');

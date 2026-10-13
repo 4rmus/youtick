@@ -258,6 +258,26 @@ test('public Discover response names its canonical Market and rejects a mismatch
     sqlite.close();
 });
 
+test('the V2 testnet read model admits only the localhost acceptance origin and reports its identity', async () => {
+    const { sqlite, env } = await environment();
+    Object.assign(env, { VIDEO_ENVIRONMENT: 'v2-testnet', MARKET_CONTRACT_ID: 'market.testnet', READ_MODEL_WEB_ORIGIN: 'http://localhost:3000',
+        CF_VERSION_METADATA: { id: 'read-v2' }, READ_MODEL_START_BLOCK_HEIGHT: '272905000', READ_MODEL_INGESTION_ENABLED: 'true' });
+    const response = await marketReadApi(new Request('https://read.test/v1/publications'), env);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'http://localhost:3000');
+    const health = await (await marketReadApi(new Request('https://read.test/__health'), env)).json();
+    assert.equal(health.versionId, 'read-v2');
+    assert.equal(health.contractId, 'market.testnet');
+    assert.equal(health.startBlockHeight, '272905000');
+    assert.equal(health.ingestionEnabled, true);
+    // Any other plain-HTTP origin, and localhost outside the V2 testnet, stay refused.
+    env.READ_MODEL_WEB_ORIGIN = 'http://127.0.0.1:3000';
+    assert.equal((await marketReadApi(new Request('https://read.test/v1/publications'), env)).status, 503);
+    Object.assign(env, { READ_MODEL_WEB_ORIGIN: 'http://localhost:3000', VIDEO_ENVIRONMENT: undefined });
+    assert.equal((await marketReadApi(new Request('https://read.test/v1/publications'), env)).status, 503);
+    sqlite.close();
+});
+
 test('public read-model health carries the serving version and ingestion identity', async () => {
     const { sqlite, env } = await environment(false);
     Object.assign(env, { VIDEO_ENVIRONMENT: 'public-testnet', CF_VERSION_METADATA: { id: 'read-version' },
