@@ -166,7 +166,7 @@ What differs from the Workers release:
   - Livepeer project `youtick-paid-media-canary`, API token name `youtick-v2-testnet-bridge`, and
     the public half of the V2 signing key;
   - creator allowlist `ticks.testnet`, `soteri.testnet`, `utick.testnet` (wallet test accounts) plus
-    the NEAR Auth creators in `NEAR_AUTH_CREATOR_ALLOWLIST` (none yet; see "NEAR Auth creators"
+    the NEAR Auth creators in `NEAR_AUTH_CREATOR_ALLOWLIST` (one so far; see "NEAR Auth creators"
     below), a 20 USD monthly budget and a 2 USD reservation per job.
 - **Always off in W2:** webhook Queue, D1 archives, sponsored uploads, V1 stateless playback,
   multi-asset payments and `MARKET_V2_RELEASE_ENABLED` (the 30-day `release_expired` job needs the
@@ -227,5 +227,5 @@ against a simulated chain (LOCAL_TEST), and its workflow ran with `PASS` on test
 The Workers release is covered by `scripts/v2-testnet-release.test.mjs` with a simulated chain,
 Wrangler and Workers (LOCAL_TEST); its workflow ran with `PASS` on 2026-10-11 (PROVIDER). The
 Bridge release is covered by `scripts/v2-testnet-bridge-release.test.mjs` in the same way
-(LOCAL_TEST) and has not run against Cloudflare yet. A workflow `PASS` counts
+(LOCAL_TEST); its workflow ran with `PASS` on 2026-10-12 (PROVIDER). A workflow `PASS` counts
 as PROVIDER (testnet) evidence only. It is never mainnet evidence.
