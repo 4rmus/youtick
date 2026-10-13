@@ -21,6 +21,21 @@ const CKD_GATE = `v2-ckd-gate-261007.${PARENT}`;
 export const ACCEPTANCE_ORIGIN = 'http://localhost:3000';
 export const DENIED_ORIGIN = 'https://release-smoke.invalid';
 const VAT_KEY_VERSION = '1';
+// W3: the V2 read model. Market V2's first job, publication and ticket events are after this block
+// (2026-10-13, 15:40 UTC); the Bridge's release job needs tickets and publications, not the bootstrap-only
+// governance events before it. The D1 database is created by the owner and its id is the repository
+// variable V2_READ_MODEL_D1_ID (docs/v2-testnet-runbook.md, W3).
+export const READ_MODEL_START_BLOCK_HEIGHT = '272905000';
+export const READ_MODEL_D1_NAME = 'youtick-market-read-model-v2-testnet';
+export const READ_MODEL_D1_BINDING = 'MARKET_READ_MODEL';
+const V1_READ_MODEL_D1_ID = '50b1e14f-2b06-444b-98cf-b828f11277ef';
+const D1_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function readModelD1Id(value) {
+    if (!D1_ID.test(value ?? '')) fail('read_model_d1_id_invalid');
+    if (value === V1_READ_MODEL_D1_ID) fail('read_model_d1_is_v1');
+    return value;
+}
 
 export const COMPONENTS = Object.freeze({
     relayer: Object.freeze({
@@ -55,6 +70,29 @@ export const COMPONENTS = Object.freeze({
         smokePath: '/v1/vat-attestations',
         disabledError: 'payment_service_disabled',
     }),
+    // W3: the derived read model of Market V2; the Bridge's 30-day release job reads its D1 directly.
+    'read-model': Object.freeze({
+        dir: 'read-model',
+        worker: 'youtick-market-read-model-v2-testnet',
+        domain: 'read-v2-testnet.youtick.net',
+        flags: Object.freeze(['READ_MODEL_ENABLED', 'READ_MODEL_INGESTION_ENABLED']),
+        vars: Object.freeze({
+            VIDEO_ENVIRONMENT: 'v2-testnet',
+            MARKET_CONTRACT_ID: MARKET_V2,
+            READ_MODEL_NETWORK: 'testnet',
+            READ_MODEL_CONTRACT_ID: MARKET_V2,
+            READ_MODEL_START_BLOCK_HEIGHT,
+            READ_MODEL_MAX_BLOCKS_PER_RUN: '180',
+            READ_MODEL_WEB_ORIGIN: ACCEPTANCE_ORIGIN,
+            READ_MODEL_CURRENT_CATALOG_ENABLED: 'false',
+            READ_MODEL_BACKFILL_ENABLED: 'false',
+            READ_MODEL_BACKFILL_CONTINUE_ENABLED: 'false',
+        }),
+        secrets: Object.freeze(['READ_MODEL_NEAR_RPC_URL']),
+        smokePath: '/__health',
+        disabledError: null,
+        d1: Object.freeze({ binding: READ_MODEL_D1_BINDING, name: READ_MODEL_D1_NAME }),
+    }),
 });
 
 function fail(message) {
@@ -66,11 +104,12 @@ function fail(message) {
  * no workers.dev or preview URLs (only the custom domain serves), and NEAR_RPC_URL removed from [vars]
  * because it is uploaded as a secret. Every remaining placeholder must be overridden by the release vars.
  */
-export function sanitizeWranglerConfig(source, component) {
+export function sanitizeWranglerConfig(source, component, { d1Id } = {}) {
     const spec = COMPONENTS[component] ?? fail('component_unknown');
     const lines = source.split('\n');
     let section = '';
     let mainSeen = false;
+    let d1Seen = false;
     const out = [];
     for (const line of lines) {
         const header = /^\s*\[+([^\]]+)\]+\s*$/.exec(line);
@@ -80,7 +119,21 @@ export function sanitizeWranglerConfig(source, component) {
             mainSeen = true;
             continue;
         }
+        // The read model's config already turns these off; the sanitizer writes them next to `main`.
+        if (!section && /^(workers_dev|preview_urls)\s*=\s*false\s*$/.test(line)) continue;
         if (!section && /^(workers_dev|preview_urls|routes|route)\s*=/.test(line)) fail('config_routing_unexpected');
+        if (section === 'd1_databases') {
+            // The V2 instance has its own database; the repository config names the V1 testnet one.
+            if (!spec.d1) fail('config_binding_unexpected');
+            const entry = /^(binding|database_name|database_id)\s*=/.exec(line);
+            if (entry?.[1] === 'binding') out.push(`binding = ${JSON.stringify(spec.d1.binding)}`);
+            else if (entry?.[1] === 'database_name') out.push(`database_name = ${JSON.stringify(spec.d1.name)}`);
+            else if (entry?.[1] === 'database_id') {
+                out.push(`database_id = ${JSON.stringify(readModelD1Id(d1Id))}`);
+                d1Seen = true;
+            } else out.push(line);
+            continue;
+        }
         if (section === 'vars') {
             const entry = /^([A-Z0-9_]+)\s*=\s*"(.*)"\s*$/.exec(line);
             if (entry?.[1] === 'NEAR_RPC_URL') continue;
@@ -90,6 +143,7 @@ export function sanitizeWranglerConfig(source, component) {
         out.push(line);
     }
     if (!mainSeen) fail('config_main_missing');
+    if (spec.d1 && !d1Seen) fail('config_d1_missing');
     return out.join('\n');
 }
 
@@ -170,6 +224,7 @@ export function releaseSecrets(env) {
         vatPublicKey: nearPublicKey(env.VAT_SIGNER_PRIVATE_KEY),
         relayer: { NEAR_RPC_URL: rpc, RELAYER_PRIVATE_KEY: env.RELAYER_PRIVATE_KEY, RELAYER_ADMIN_TOKEN: env.RELAYER_ADMIN_TOKEN },
         'payment-service': { NEAR_RPC_URL: rpc, VAT_SIGNER_PRIVATE_KEY: env.VAT_SIGNER_PRIVATE_KEY },
+        'read-model': { READ_MODEL_NEAR_RPC_URL: rpc },
     };
 }
 
@@ -276,6 +331,20 @@ export async function request(fetchImpl, url, init) {
 export async function smoke(component, mode, fetchImpl) {
     const spec = COMPONENTS[component];
     const url = `https://${spec.domain}${spec.smokePath}`;
+    if (component === 'read-model') {
+        // The read model has no POST route to probe; its health names the instance it serves.
+        const health = await request(fetchImpl, url, { method: 'GET' });
+        if (health.status !== 200) fail(`read-model_smoke_health_${health.status}`);
+        if (mode === 'closed') {
+            if (health.body?.stage !== 'DISABLED') fail('read-model_smoke_closed');
+            return { closed_status: health.status, stage: health.body.stage };
+        }
+        if (health.body?.stage !== 'ENABLED' || health.body.network !== 'testnet' || health.body.contractId !== MARKET_V2
+            || health.body.startBlockHeight !== READ_MODEL_START_BLOCK_HEIGHT || health.body.ingestionEnabled !== true) {
+            fail('read-model_smoke_identity');
+        }
+        return { health_status: health.status, stage: health.body.stage, ingestion_enabled: true };
+    }
     const allowed = await request(fetchImpl, url, { method: 'OPTIONS', headers: { Origin: ACCEPTANCE_ORIGIN } });
     if (mode === 'closed') {
         if (allowed.status !== 503 || allowed.body?.error !== spec.disabledError) fail(`${component}_smoke_closed`);
@@ -369,7 +438,8 @@ async function main(argv) {
         const spec = COMPONENTS[component] ?? fail('component_unknown');
         await stat(join(outdir, 'index.js'));
         const source = await readFile(join(spec.dir, 'wrangler.toml'), 'utf8');
-        await writeFile(join(outdir, 'wrangler.toml'), sanitizeWranglerConfig(source, component), { flag: 'wx', mode: 0o644 });
+        const options = spec.d1 ? { d1Id: process.env.READ_MODEL_D1_ID } : {};
+        await writeFile(join(outdir, 'wrangler.toml'), sanitizeWranglerConfig(source, component, options), { flag: 'wx', mode: 0o644 });
         return;
     }
     if (command === 'check' && args.length === 3) {

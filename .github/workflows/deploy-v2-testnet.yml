@@ -1,6 +1,6 @@
 name: V2 Testnet Workers
 
-# Deploys the V2 relayer and payment service to the separate V2 testnet environment.
+# Deploys the V2 relayer, payment service and read model to the separate V2 testnet environment.
 # Runbook: docs/v2-testnet-runbook.md (Workers). The Bridge V2 deploys from deploy-v2-testnet-bridge.yml.
 on:
   workflow_dispatch:
@@ -83,14 +83,19 @@ jobs:
           cache-dependency-path: |
             workers/relayer/package-lock.json
             workers/payment-service/package-lock.json
+            workers/livepeer-bridge/package-lock.json
       - run: npm ci --no-audit --no-fund --prefer-offline
         working-directory: workers/relayer
       - run: npm ci --no-audit --no-fund --prefer-offline
         working-directory: workers/payment-service
-      - name: Build both Workers without deploying
+      # The read model has no package of its own; its bundle comes from the Bridge's wrangler, as on the public testnet.
+      - run: npm ci --no-audit --no-fund --prefer-offline
+        working-directory: workers/livepeer-bridge
+      - name: Build the three Workers without deploying
         env:
           SHA: ${{ steps.authorize.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
+          READ_MODEL_D1_ID: ${{ vars.V2_READ_MODEL_D1_ID }}
         run: |
           set -euo pipefail
           for component in relayer payment-service; do
@@ -99,6 +104,11 @@ jobs:
             install -m 0644 "$RUNNER_TEMP/build/${component}/index.js" "$RUNNER_TEMP/release/${component}/index.js"
             node scripts/v2-testnet-release.mjs write-config "$component" "$RUNNER_TEMP/release/${component}"
           done
+          workers/livepeer-bridge/node_modules/.bin/wrangler deploy --dry-run --cwd read-model --outdir "$RUNNER_TEMP/build/read-model"
+          mkdir -p "$RUNNER_TEMP/release/read-model/d1"
+          install -m 0644 "$RUNNER_TEMP/build/read-model/worker.js" "$RUNNER_TEMP/release/read-model/index.js"
+          install -m 0644 read-model/d1/*.sql "$RUNNER_TEMP/release/read-model/d1/"
+          node scripts/v2-testnet-release.mjs write-config read-model "$RUNNER_TEMP/release/read-model"
           node scripts/v2-testnet-release.mjs check "$RUNNER_TEMP/release" "$SHA" "$RELEASE_MODE"
           jq -n --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg run "$(jq -r .id "$RUNNER_TEMP/ci.json")" \
             '{schema:"youtick.v2-testnet-workers-release.v1", sha:$sha, mode:$mode, ci_run_id:$run}' > "$RUNNER_TEMP/release/manifest.json"
@@ -172,7 +182,15 @@ jobs:
         working-directory: workers/relayer
       - name: Fingerprint unrelated root origin
         run: node scripts/release-smoke.mjs fingerprint https://youtick.net > "$RUNNER_TEMP/root-before.json"
-      - name: Preflight keys on chain, deploy both Workers and smoke them
+      - name: Apply the V2 read-model D1 migrations
+        # Idempotent: wrangler applies only the migrations the database has not recorded. The attested packet
+        # carries the same d1/*.sql files as the commit.
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: workers/relayer/node_modules/.bin/wrangler d1 migrations apply youtick-market-read-model-v2-testnet --remote --config "$RUNNER_TEMP/release/read-model/wrangler.toml"
+      - name: Preflight keys on chain, deploy the three Workers and smoke them
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
