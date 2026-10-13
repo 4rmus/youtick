@@ -283,10 +283,18 @@ export async function authorizeV2PaidJob(input: {
     }
 }
 
+/** Bridge job states in which the source is still expected from this client. */
+const UPLOADABLE_STATES = ['UPLOAD_READY', 'UPLOADING'];
+/** Bridge job states that end an upload; a new job (and a new fee) is the only way forward. */
+export const TERMINAL_UPLOAD_STATES = ['UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'CANCELLED', 'AUTO_CLOSED'];
+
 /**
  * Resumes an upload whose fee was paid: replaces the upload key through the relayer when this tab
- * no longer holds it (or it expired), then asks the Bridge for a resumable intent. `popup` is used
- * only when a key must be replaced and is closed otherwise.
+ * no longer holds it (or it expired), reads the Bridge's job state (`recovery: 'reconcile'`), and
+ * asks for the upload intent again only while the Bridge still expects the source. The V2 Bridge
+ * has no `recovery: 'resume'` path (that is the public-testnet lease recovery), so a job past the
+ * upload comes back as a status for the caller to wait on. `popup` is used only when a key must be
+ * replaced and is closed otherwise.
  */
 export async function prepareV2UploadResume(input: {
     config: V2Config;
@@ -335,10 +343,13 @@ export async function prepareV2UploadResume(input: {
         }
         setUploadDraftFlag(session.accountId, input.jobId, 'keyReplacementPending', false);
         input.signal?.throwIfAborted();
-        return await requestLivepeerUploadIntent({
+        const intent = {
             accountId: session.accountId, jobId: input.jobId, generation: 1, expectedSourceBytes: input.file.size,
-            sourceType: source.sourceType, sourceFingerprintSha256: draft.sourceFingerprintSha256, recovery: 'resume', signal: input.signal,
-        });
+            sourceType: source.sourceType, sourceFingerprintSha256: draft.sourceFingerprintSha256, signal: input.signal,
+        };
+        const status = await requestLivepeerUploadIntent({ ...intent, recovery: 'reconcile' });
+        if (!UPLOADABLE_STATES.includes(status.state)) return status;
+        return await requestLivepeerUploadIntent(intent);
     } catch (error) {
         closePopup();
         throw toUploadError(error);

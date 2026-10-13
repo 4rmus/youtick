@@ -202,6 +202,34 @@ To deploy, start *V2 Testnet Bridge* on `main` with the current commit, its CI r
 `confirmation` `DEPLOY_V2_TESTNET_BRIDGE_<mode>`, then approve the environment. To change the
 allowlist or the signing key, change the script and deploy again.
 
+### Webhook secret and tokens (lessons of 2026-10-13)
+
+- The V2 webhook's signing secret cannot be revealed in the Livepeer dashboard (the *Reveal*
+  button is disabled for it), and the value set at creation did not match the Bridge: every
+  delivery answered `403 invalid_webhook_signature`, so no upload could be published. Set the
+  secret through the API with a temporary Livepeer API key, write the same value to GitHub, and
+  never type it anywhere else:
+
+  ```bash
+  NEW=$(openssl rand -hex 32); curl -s -o /dev/null -w "%{http_code}\n" -X PATCH https://livepeer.studio/api/webhook/f7a3992a-4f19-4716-8f86-2af1df7a016e -H "Authorization: Bearer $LP_KEY" -H 'Content-Type: application/json' -d "{\"sharedSecret\":\"$NEW\"}" && printf %s "$NEW" | gh secret set V2_LIVEPEER_WEBHOOK_SECRET --env v2-testnet; unset NEW
+  ```
+
+  The release preflight now reads the webhook with the Bridge's API key and refuses to deploy
+  when `sharedSecret` differs from `LIVEPEER_WEBHOOK_SECRET` (`webhook_secret_mismatch`).
+- Livepeer's dashboard *Resend* sends the stored delivery **without** a `Livepeer-Signature`
+  header, so the Bridge always answers 403 to it; it proves nothing about the secret. To make
+  Livepeer sign a fresh event for an asset, update the asset without changing it
+  (`PATCH /api/asset/<id>` with its current `name`): the Bridge treats an `asset.updated` in the
+  `ready` phase as readiness.
+- Keep `V2_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN` and `V2_RELAYER_ADMIN_TOKEN` in a password
+  manager when you create them. GitHub never shows a secret again, and without the operator token
+  the Bridge's job records (`/v1/operations/admission-status`) cannot be read; the token used in
+  W2 was lost and must be rotated with `gh secret set ... --env v2-testnet` and a deploy.
+- The V2 Bridge does not poll Livepeer on its own (`reconcileUpload` runs only in the public
+  modes). A job whose webhooks were all refused stays `Authorized` on chain with its fee spent;
+  the first NEAR Auth upload (`lp-ae49e444-daea-4fdf-a8fe-9d3bc8770360`, asset
+  `b02da4cf-25f5-434b-987d-77918109e308`) ended that way and is left as is.
+
 ### NEAR Auth creators (E5b, decision D11)
 
 A creator who signed in with Google or a passkey uploads from their implicit account: the fee

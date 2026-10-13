@@ -27,7 +27,7 @@ import {
     type LivepeerUploadIntent,
 } from '@/lib/livepeer-upload';
 import { readAccessKey } from '@/lib/v2/near-reads';
-import { authorizeV2PaidJob, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, UploadError } from '@/lib/v2/upload';
+import { authorizeV2PaidJob, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, TERMINAL_UPLOAD_STATES, UploadError } from '@/lib/v2/upload';
 import { useNearAuthV2 } from './NearAuthV2Provider';
 import { SignInPanel } from './SignInPanel';
 
@@ -52,6 +52,10 @@ const ERRORS: Record<string, string> = {
     job_conflict: 'This upload id is already in use. Reload the page and start again.',
     upload_not_confirmed: 'The fee was returned, so no upload was created. Please try again.',
     upload_pending: 'Your payment is still being processed. Wait a minute, then use Resume.',
+    livepeer_processing_timeout: 'The fee is paid and the video is still being processed. Leave this page and come back later; Resume shows where it stands.',
+    livepeer_upload_expired: 'This upload expired before the video was processed. The fee is not refunded; start a new upload.',
+    livepeer_provider_failed: 'The video could not be processed. The fee is not refunded; start a new upload with another file.',
+    provider_recovery_not_ready: 'This upload cannot be resumed from here. Start a new upload.',
     livepeer_resume_required: 'This upload was already paid. Use Resume to continue it.',
     livepeer_already_published: 'This screening is already published.',
     livepeer_resume_file_mismatch: 'Choose the same file you started this upload with.',
@@ -97,6 +101,26 @@ export function UploadForm() {
         setError(message(reason));
     }, []);
 
+    /** Livepeer processing and the Bridge's on-chain publication; the chain is the only source of truth. */
+    const awaitPublication = useCallback(async (accountId: string, activeJobId: string, controller: AbortController) => {
+        setProgress(100);
+        setStep('processing');
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+            const state = await readLivepeerUploadProgress(activeJobId, accountId).catch(() => null);
+            controller.signal.throwIfAborted();
+            if (state?.publication) {
+                clearLivepeerUploadDraft(accountId);
+                clearLivepeerJobSessionKey(accountId, activeJobId);
+                setResumable(false);
+                setStep('published');
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 5_000));
+        }
+        // The fee stays paid and the job stays resumable; only this page stops waiting.
+        throw new UploadError('livepeer_processing_timeout');
+    }, []);
+
     const transfer = useCallback(async (accountId: string, activeJobId: string, intent: LivepeerUploadIntent, controller: AbortController) => {
         if (!file) throw new UploadError('empty_file');
         setStep('uploading');
@@ -108,23 +132,8 @@ export function UploadForm() {
         });
         controller.signal.throwIfAborted();
         advanceLivepeerUploadDraftStage(accountId, activeJobId, 'provider_processing');
-        setProgress(100);
-        setResumable(false);
-        setStep('processing');
-        // Livepeer processing and the Bridge's on-chain publication; the chain is the only source of truth.
-        for (let attempt = 0; attempt < 120; attempt += 1) {
-            const state = await readLivepeerUploadProgress(activeJobId, accountId).catch(() => null);
-            controller.signal.throwIfAborted();
-            if (state?.publication) {
-                clearLivepeerUploadDraft(accountId);
-                clearLivepeerJobSessionKey(accountId, activeJobId);
-                setStep('published');
-                return;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 5_000));
-        }
-        throw new UploadError('livepeer_processing_timeout');
-    }, [file]);
+        await awaitPublication(accountId, activeJobId, controller);
+    }, [file, awaitPublication]);
 
     async function start() {
         if (!signedIn || !file || operation.current) return;
@@ -185,12 +194,17 @@ export function UploadForm() {
                 redirectUri: window.location.origin, deps: { view, accessKey: readAccessKey }, signal: controller.signal,
             });
             if ('state' in result) {
-                setProgress(100);
-                setStep('processing');
-                await transfer(session.accountId, jobId, result as never, controller).catch((reason) => {
-                    // A job already past upload only waits for publication here.
-                    if (!(reason instanceof UploadError && reason.message === 'empty_file')) throw reason;
-                });
+                if (result.state === 'ONCHAIN_PUBLISHED') {
+                    await awaitPublication(session.accountId, jobId, controller);
+                } else if (TERMINAL_UPLOAD_STATES.includes(result.state)) {
+                    // Nothing more can happen on this job; the next attempt is a new job.
+                    setResumable(false);
+                    setJobId(null);
+                    throw new UploadError(result.state === 'PROVIDER_FAILED' ? 'livepeer_provider_failed' : 'livepeer_upload_expired');
+                } else {
+                    // Source received; only Livepeer processing and the Bridge's publication remain.
+                    await awaitPublication(session.accountId, jobId, controller);
+                }
             } else {
                 await transfer(session.accountId, jobId, result, controller);
             }

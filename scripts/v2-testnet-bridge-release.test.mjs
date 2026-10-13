@@ -66,7 +66,7 @@ const HEALTHY = {
 };
 
 /** A chain and the deployed Bridge; `bridge` overrides what /__health reports. */
-function fakeFetch({ methods = OPERATOR_METHODS, receiver = MARKET_V2, quoteVersion = 1, chainId = 'testnet', bridge = {}, v3Status = 400 } = {}) {
+function fakeFetch({ methods = OPERATOR_METHODS, receiver = MARKET_V2, quoteVersion = 1, chainId = 'testnet', bridge = {}, v3Status = 400, webhook = {} } = {}) {
     const calls = [];
     const impl = async (url, init = {}) => {
         calls.push({ url, init });
@@ -81,6 +81,13 @@ function fakeFetch({ methods = OPERATOR_METHODS, receiver = MARKET_V2, quoteVers
             return jsonResponse(200, { result: { result: [...Buffer.from(JSON.stringify(quoteVersion))] } });
         }
         const { pathname } = new URL(url);
+        if (url.startsWith('https://livepeer.studio/api/webhook/')) {
+            if (init.headers?.Authorization !== 'Bearer livepeer-api-key-value') return jsonResponse(401, { errors: ['unauthorized'] });
+            return jsonResponse(webhook.status ?? 200, {
+                id: 'f7a3992a-4f19-4716-8f86-2af1df7a016e', url: 'https://bridge-v2-testnet.youtick.net/v1/livepeer-webhooks',
+                projectId: '53baeeda-930d-45be-bda6-a41090e6d25e', sharedSecret: 'webhook-secret-value', ...webhook,
+            });
+        }
         if (pathname === '/__health') return jsonResponse(200, { versionId: 'v-1', ...HEALTHY, ...bridge });
         const origin = init.headers?.Origin;
         if (origin !== ACCEPTANCE_ORIGIN) return jsonResponse(403, { error: 'origin_denied' });
@@ -208,6 +215,22 @@ test('closed deploy expects a DISABLED Bridge on the new version', async () => {
         receiptPath: join(dir, 'r.json'), mode: 'closed', fetchImpl: fakeFetch({ bridge: { stage: 'DISABLED' } }).impl, makeRunner: fakeRunner([]),
     });
     assert.deepEqual(receipt.smoke, { health_status: 200, stage: 'DISABLED' });
+});
+
+test('preflight refuses a Bridge webhook secret that Livepeer does not sign with, before wrangler', async () => {
+    for (const [webhook, pattern] of [
+        [{ sharedSecret: 'another-secret-value' }, /webhook_secret_mismatch/],
+        [{ sharedSecret: undefined }, /webhook_secret_mismatch/],
+        [{ url: 'https://bridge-preview.youtick.net/v1/livepeer-webhooks' }, /webhook_binding_mismatch/],
+        [{ status: 404 }, /webhook_unreadable_404/],
+    ]) {
+        const dir = await mkdtemp(join(tmpdir(), 'v2-bridge-'));
+        const record = [];
+        await assert.rejects(deploy({
+            receiptPath: join(dir, 'r.json'), mode: 'acceptance', fetchImpl: fakeFetch({ webhook }).impl, makeRunner: fakeRunner(record),
+        }), pattern);
+        assert.equal(record.length, 0);
+    }
 });
 
 test('preflight refuses a chain without the exact operator key or quote key version, before wrangler', async () => {

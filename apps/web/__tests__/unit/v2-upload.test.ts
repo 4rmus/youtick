@@ -230,7 +230,9 @@ describe('NEAR Auth upload resume', () => {
         const h = harness({
             job: (reads) => ({ job_id: JOB, creator_id: session.accountId, status: 'Authorized', upload_public_key: reads >= 3 ? replacement : 'ed25519:old', upload_key_expires_at_ms: String(NOW + 60_000) }),
         });
-        intent.request.mockResolvedValue({ schema: 'youtick.livepeer-upload-intent.v2', job_id: JOB, created: false });
+        intent.request
+            .mockResolvedValueOnce({ job_id: JOB, generation: 1, state: 'UPLOADING' })
+            .mockResolvedValueOnce({ schema: 'youtick.livepeer-upload-intent.v2', job_id: JOB, created: false });
         const pending = prepareV2UploadResume({ config, session, jobId: JOB, file, popup: h.popup, redirectUri: 'https://youtick.test', deps: h.deps });
         pending.catch(() => undefined);
         await vi.waitFor(() => { const stored = loadLivepeerJobSessionKey(session.accountId, JOB); expect(stored).not.toBeNull(); replacement = stored!.keyPair.getPublicKey().toString(); });
@@ -238,7 +240,10 @@ describe('NEAR Auth upload resume', () => {
         await expect(pending).resolves.toMatchObject({ job_id: JOB });
         const relay = h.requests.find((request) => request.url === 'https://relayer.test/v1/upload-keys')!;
         expect(relay.body.args).toEqual({ job_id: JOB, new_public_key: replacement, expires_at_ms: String(NOW + 24 * 60 * 60 * 1000) });
-        expect(intent.request).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB, recovery: 'resume', expectedSourceBytes: file.size }));
+        // The V2 Bridge has no `recovery: 'resume'`: the state is read first, then the plain intent renews the lease.
+        expect(intent.request).toHaveBeenCalledTimes(2);
+        expect(intent.request).toHaveBeenNthCalledWith(1, expect.objectContaining({ jobId: JOB, recovery: 'reconcile', expectedSourceBytes: file.size }));
+        expect(intent.request).toHaveBeenNthCalledWith(2, expect.not.objectContaining({ recovery: expect.anything() }));
     });
 
     it('needs no approval when this tab still holds the job key', async () => {
@@ -249,6 +254,8 @@ describe('NEAR Auth upload resume', () => {
         intent.request.mockResolvedValue({ job_id: JOB, generation: 1, state: 'PROCESSING' });
         await expect(prepareV2UploadResume({ config, session, jobId: JOB, file, popup: h.popup, redirectUri: 'https://youtick.test', deps: h.deps }))
             .resolves.toEqual({ job_id: JOB, generation: 1, state: 'PROCESSING' });
+        // Past the upload, the Bridge is not asked for an intent again.
+        expect(intent.request).toHaveBeenCalledTimes(1);
         expect(h.requests).toEqual([]);
         expect(h.popup.closed).toBe(true);
         const published = harness({ job: () => ({ job_id: JOB, creator_id: session.accountId, status: 'Published', upload_public_key: 'ed25519:old', upload_key_expires_at_ms: '1' }) });

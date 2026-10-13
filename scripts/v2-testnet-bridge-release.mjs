@@ -31,6 +31,11 @@ const QUOTE_PUBLIC_KEY_BASE64 = 'YYvahur/L80hl0moUnEBLkHjv1jNjzIgXQFMs/jkSf4=';
 const QUOTE_KEY_VERSION = '1';
 // Livepeer project youtick-paid-media-canary; V2 has its own API key, signing key and webhook in it.
 const LIVEPEER_PROJECT_ID = '53baeeda-930d-45be-bda6-a41090e6d25e';
+// The V2 Bridge's webhook (youtick-v2-testnet-bridge). Its signing secret cannot be revealed in the
+// Livepeer dashboard, so the release reads it through the API and refuses a Bridge secret that
+// differs: on 2026-10-13 a mismatch made the Bridge answer every delivery with 403.
+export const LIVEPEER_WEBHOOK_ID = 'f7a3992a-4f19-4716-8f86-2af1df7a016e';
+export const LIVEPEER_WEBHOOK_URL = `https://${BRIDGE.domain}/v1/livepeer-webhooks`;
 // Public half of the V2 signing key youtick-v2-testnet-bridge (Livepeer Studio, 2026-10-12).
 export const JWT_PUBLIC_KEY = 'LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFVloycGFyMkxFSnZ3Nll4N2M2VVlFMkdjOHBkZAp1bkRVdmRiTHpzMGsrUkNKamZQUHpIYXBiTGxyNFhOblZrTzFBdmZ4N1BjMFk3WHBnRWZzZVlxWEJ3PT0KLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==';
 /** The public halves every deploy secret must match; tests pass their own. */
@@ -247,6 +252,26 @@ export async function preflight(secrets, fetchImpl) {
         fail('quote_key_version_unreadable');
     }
     if (String(onChain) !== QUOTE_KEY_VERSION) fail('quote_key_version_mismatch');
+    await preflightWebhookSecret(secrets.worker, fetchImpl);
+}
+
+/** The Bridge verifies Livepeer's HMAC with LIVEPEER_WEBHOOK_SECRET; Livepeer signs with the webhook's sharedSecret. */
+export async function preflightWebhookSecret(worker, fetchImpl) {
+    let webhook;
+    try {
+        const response = await fetchImpl(`https://livepeer.studio/api/webhook/${LIVEPEER_WEBHOOK_ID}`, {
+            headers: { Authorization: `Bearer ${worker.LIVEPEER_API_KEY}` },
+        });
+        if (!response.ok) fail(`webhook_unreadable_${response.status}`);
+        webhook = await response.json();
+    } catch (error) {
+        if (error instanceof Error && error.message.startsWith('v2_testnet_bridge_release_')) throw error;
+        fail('webhook_unreadable');
+    }
+    if (webhook?.id !== LIVEPEER_WEBHOOK_ID || webhook.url !== LIVEPEER_WEBHOOK_URL || webhook.projectId !== LIVEPEER_PROJECT_ID) {
+        fail('webhook_binding_mismatch');
+    }
+    if (typeof webhook.sharedSecret !== 'string' || webhook.sharedSecret !== worker.LIVEPEER_WEBHOOK_SECRET) fail('webhook_secret_mismatch');
 }
 
 export function wranglerArgs(releaseDir, sha, mode) {
