@@ -248,6 +248,68 @@ list is static in this phase:
 
 Sponsored uploads stay off: the V2 upload path needs no Bridge quote and no sponsor relay.
 
+## Milestone W3: read model and `release_expired`
+
+The *V2 Testnet Workers* workflow deploys a third Worker, the read model of Market V2, and the
+*V2 Testnet Bridge* workflow binds the Bridge to its database and schedules the 30-day release.
+
+| Worker | Domain |
+|---|---|
+| `youtick-market-read-model-v2-testnet` | `read-v2-testnet.youtick.net` |
+
+What differs from the V1 read model:
+- **Own D1 database** `youtick-market-read-model-v2-testnet`. Its id is the repository variable
+  `V2_READ_MODEL_D1_ID`; both release scripts refuse the V1 testnet id and a missing variable, so
+  **every Bridge deploy after W3 needs the variable set**.
+- **Bundle and config.** Built with the Bridge's wrangler (`--cwd read-model`), as on the public
+  testnet; the repository `read-model/wrangler.toml` is sanitized to `index.js`, the V2 database
+  and the fixed vars: `VIDEO_ENVIRONMENT=v2-testnet`, `READ_MODEL_CONTRACT_ID` and
+  `MARKET_CONTRACT_ID` = Market V2, `READ_MODEL_START_BLOCK_HEIGHT=272905000` (Market V2's first
+  job, publication and ticket events of 2026-10-13 come after it; the bootstrap-only governance
+  events before it are not indexed), `READ_MODEL_WEB_ORIGIN=http://localhost:3000` (the V2
+  instance is the only one that accepts a plain-HTTP origin), one-minute cron, backfill off.
+  `READ_MODEL_NEAR_RPC_URL` is the `V2_NEAR_RPC_URL` secret.
+- **Migrations** `read-model/d1/0001` to `0010` travel in the attested packet and the deploy job
+  applies them with `wrangler d1 migrations apply --remote` before the Workers go out; wrangler
+  skips the ones the database already records.
+- **Modes.** `closed`: `READ_MODEL_ENABLED` and `READ_MODEL_INGESTION_ENABLED` off, health says
+  `DISABLED`. `acceptance`: both on; the smoke test expects `/__health` to report `ENABLED`,
+  `testnet`, Market V2, the start block and `ingestionEnabled: true`.
+- **Bridge.** The Bridge release adds `[[d1_databases]] MARKET_READ_MODEL` (same database) and
+  `[triggers] crons = ["*/15 * * * *"]`; `MARKET_V2_RELEASE_ENABLED` is now a mode flag (`true` in
+  acceptance). Every 15 minutes the Bridge reads up to 25 purchased crypto tickets older than 30
+  days whose publication is not taken down from `market_v2_tickets` and sends `release_expired`
+  through the operator outbox. Nothing is due until 2026-11-12 at the earliest.
+
+### Owner steps (W3)
+
+1. **Create the database** (provider write; wrangler is signed in locally):
+   ```bash
+   cd workers/livepeer-bridge && npx wrangler d1 create youtick-market-read-model-v2-testnet
+   ```
+   Copy the `database_id` from the output.
+2. **Record the id** as a repository variable (not a secret; it is not sensitive):
+   ```bash
+   gh variable set V2_READ_MODEL_D1_ID --repo 4rmus/youtick --body "<database_id>"
+   ```
+3. **Deploy the Workers:** *V2 Testnet Workers* on `main` in `acceptance` (same inputs as W1;
+   the packet now lists three Workers and the D1 migrations run in the deploy job).
+4. **Deploy the Bridge:** *V2 Testnet Bridge* on `main` in `acceptance`, so the Bridge gets the
+   binding and the cron.
+5. **Check:**
+   - `https://read-v2-testnet.youtick.net/__health` → `stage: ENABLED`, `contractId` Market V2,
+     `startBlockHeight: 272905000`, `ingestionEnabled: true`;
+   - `https://read-v2-testnet.youtick.net/v1/publications` with `Origin: http://localhost:3000`
+     → the `lp-bcc8f530…` publication once the scanner has passed block 272924271 (about two
+     hours after the first run at 180 blocks a minute);
+   - the ticket row, from the owner's machine (remote D1 read, approval):
+     ```bash
+     cd read-model && npx wrangler d1 execute youtick-market-read-model-v2-testnet --remote --command "SELECT ticket_id, status, purchased_at_ms, settled_at_ms FROM market_v2_tickets"
+     ```
+     expected: one `watched` ticket of 2026-10-13;
+   - Bridge logs: `market_v2_release_failed` must not appear; `market_v2_release_scheduled`
+     appears only once a ticket is 30 days old.
+
 ## Evidence
 
 The bootstrap is covered by `workers/livepeer-bridge/scripts/v2-testnet-bootstrap.test.mjs`

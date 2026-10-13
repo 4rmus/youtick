@@ -59,6 +59,8 @@ export const FLAGS = Object.freeze([
     'LIVEPEER_PLAYBACK_ISSUANCE_ENABLED',
     'LIVEPEER_PLAYBACK_V3_ENABLED',
     'LIVEPEER_NEAR_CREATOR_FEE_ENABLED',
+    // W3: the 30-day release_expired job, driven by the cron and the V2 read-model database.
+    'MARKET_V2_RELEASE_ENABLED',
 ]);
 
 /** Written into [vars] of the deployed config; empty values are allowed here and never passed as --var. */
@@ -90,7 +92,6 @@ export const FIXED_VARS = Object.freeze({
     OPERATOR_OUTBOX_ARCHIVE_ENABLED: 'false',
     LIVEPEER_SPONSORED_UPLOADS_ENABLED: 'false',
     LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'false',
-    MARKET_V2_RELEASE_ENABLED: 'false',
     MULTI_ASSET_PAYMENTS_MODE: 'off',
 });
 
@@ -98,8 +99,20 @@ export const SECRETS = Object.freeze([
     'NEAR_RPC_URL', 'LIVEPEER_API_KEY', 'LIVEPEER_WEBHOOK_SECRET', 'LIVEPEER_JWT_PRIVATE_KEY',
     'LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN', 'NEAR_OPERATOR_PRIVATE_KEY', 'CREATOR_FEE_QUOTE_PRIVATE_KEY',
 ]);
-// Bindings that W2 must not carry: the V1 testnet Queue/DLQ and the V1 read-model database.
+// Bindings the V2 Bridge must not carry: the V1 testnet Queue/DLQ and the V1 read-model database.
 const DROPPED_SECTIONS = new Set(['queues.producers', 'queues.consumers', 'd1_databases']);
+// W3: the V2 read-model database (created by the owner; id in the repository variable V2_READ_MODEL_D1_ID)
+// feeds the scheduled release_expired scan, which the cron runs every 15 minutes.
+export const READ_MODEL_D1_NAME = 'youtick-market-read-model-v2-testnet';
+export const RELEASE_CRON = '*/15 * * * *';
+const V1_READ_MODEL_D1_ID = '50b1e14f-2b06-444b-98cf-b828f11277ef';
+const D1_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function readModelD1Id(value) {
+    if (!D1_ID.test(value ?? '')) fail('read_model_d1_id_invalid');
+    if (value === V1_READ_MODEL_D1_ID) fail('read_model_d1_is_v1');
+    return value;
+}
 
 function fail(message) {
     throw new Error(`v2_testnet_bridge_release_${message}`);
@@ -107,10 +120,11 @@ function fail(message) {
 
 /**
  * The deployed config is the repository wrangler.toml with: the bundled `index.js` as entry, no workers.dev
- * or preview URLs, no Queue or D1 bindings, its own rate-limit namespace, NEAR_RPC_URL moved to secrets and
- * every FIXED_VARS value written into [vars]. Any placeholder left after that is refused.
+ * or preview URLs, no Queue binding, the V2 read-model D1 binding and the release cron in place of the V1
+ * ones, its own rate-limit namespace, NEAR_RPC_URL moved to secrets and every FIXED_VARS value written
+ * into [vars]. Any placeholder left after that is refused.
  */
-export function sanitizeBridgeConfig(source) {
+export function sanitizeBridgeConfig(source, { d1Id } = {}) {
     let section = '';
     let mainSeen = false;
     let namespaceSeen = false;
@@ -158,9 +172,10 @@ export function sanitizeBridgeConfig(source) {
     if (!mainSeen) fail('config_main_missing');
     if (!varsSeen) fail('config_vars_missing');
     if (!namespaceSeen) fail('config_rate_limit_missing');
-    const config = out.join('\n');
-    if (/queues|d1_databases|database_id/.test(config)) fail('config_binding_unexpected');
-    return config;
+    if (/queues|d1_databases|database_id|\[triggers\]/.test(out.join('\n'))) fail('config_binding_unexpected');
+    out.push('', '[triggers]', `crons = [${JSON.stringify(RELEASE_CRON)}]`, '', '[[d1_databases]]', 'binding = "MARKET_READ_MODEL"',
+        `database_name = ${JSON.stringify(READ_MODEL_D1_NAME)}`, `database_id = ${JSON.stringify(readModelD1Id(d1Id))}`, '');
+    return out.join('\n');
 }
 
 export function releaseVars(mode) {
@@ -382,7 +397,7 @@ async function main(argv) {
         const [outdir] = args;
         await stat(join(outdir, 'index.js'));
         const source = await readFile(join(BRIDGE.dir, 'wrangler.toml'), 'utf8');
-        await writeFile(join(outdir, 'wrangler.toml'), sanitizeBridgeConfig(source), { flag: 'wx', mode: 0o644 });
+        await writeFile(join(outdir, 'wrangler.toml'), sanitizeBridgeConfig(source, { d1Id: process.env.READ_MODEL_D1_ID }), { flag: 'wx', mode: 0o644 });
         return;
     }
     if (command === 'check' && args.length === 3) {

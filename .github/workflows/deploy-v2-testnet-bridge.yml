@@ -87,6 +87,7 @@ jobs:
         env:
           SHA: ${{ steps.authorize.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
+          READ_MODEL_D1_ID: ${{ vars.V2_READ_MODEL_D1_ID }}
         run: |
           set -euo pipefail
           workers/livepeer-bridge/node_modules/.bin/wrangler deploy --dry-run --cwd workers/livepeer-bridge --outdir "$RUNNER_TEMP/build"

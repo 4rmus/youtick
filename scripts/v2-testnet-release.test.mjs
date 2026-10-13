@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-    ACCEPTANCE_ORIGIN, COMPONENTS, base58Decode, base58Encode, deployRelease, nearPublicKey, releaseSecrets,
-    releaseVars, sanitizeWranglerConfig, validateRpcUrl, wranglerArgs,
+    ACCEPTANCE_ORIGIN, COMPONENTS, READ_MODEL_D1_NAME, READ_MODEL_START_BLOCK_HEIGHT, base58Decode, base58Encode, deployRelease,
+    nearPublicKey, readModelD1Id, releaseSecrets, releaseVars, sanitizeWranglerConfig, validateRpcUrl, wranglerArgs,
 } from './v2-testnet-release.mjs';
 
 const SHA = 'a'.repeat(40);
+const D1_ID = '0123abcd-4567-89ef-0123-456789abcdef';
+const MARKET_V2 = COMPONENTS['read-model'].vars.READ_MODEL_CONTRACT_ID;
 
 function nearKeyPair() {
     const { privateKey, publicKey } = generateKeyPairSync('ed25519');
@@ -50,6 +52,12 @@ function fakeFetch({ vatOnChain = vatKey.public, relayerKeyOnChain = true, chain
         }
         const { hostname } = new URL(url);
         const component = Object.keys(COMPONENTS).find((name) => COMPONENTS[name].domain === hostname);
+        if (component === 'read-model') {
+            return jsonResponse(200, workers === 'closed' ? { status: 'ok', stage: 'DISABLED' } : {
+                status: 'ok', stage: 'ENABLED', versionId: 'v-3', network: 'testnet', contractId: MARKET_V2,
+                startBlockHeight: READ_MODEL_START_BLOCK_HEIGHT, ingestionEnabled: true, backfillEnabled: false,
+            });
+        }
         if (workers === 'closed') return jsonResponse(503, { error: COMPONENTS[component].disabledError });
         const origin = init.headers?.Origin;
         if (origin !== ACCEPTANCE_ORIGIN) return jsonResponse(403, { error: 'origin_denied' });
@@ -70,13 +78,29 @@ function fakeRunner(record) {
 test('the repository wrangler configs sanitize to index.js, no workers.dev and no RPC URL var', async () => {
     for (const [component, spec] of Object.entries(COMPONENTS)) {
         const source = await readFile(new URL(`../${spec.dir}/wrangler.toml`, import.meta.url), 'utf8');
-        const config = sanitizeWranglerConfig(source, component);
+        const config = sanitizeWranglerConfig(source, component, { d1Id: D1_ID });
         assert.match(config, /^main = "index\.js"\nworkers_dev = false\npreview_urls = false$/m);
         assert.doesNotMatch(config, /^NEAR_RPC_URL\s*=/m);
-        assert.doesNotMatch(config, /src\/index\.ts/);
+        assert.doesNotMatch(config, /src\/index\.ts|worker\.mjs/);
         // Every remaining placeholder is replaced by a release var.
         for (const [, key] of config.matchAll(/^([A-Z0-9_]+)\s*=\s*"[^"]*<[^"]*"$/gm)) assert.ok(Object.hasOwn(spec.vars, key), key);
+        if (component === 'read-model') {
+            // The V2 instance keeps the one-minute cron and gets its own database, never the V1 testnet one.
+            assert.match(config, /^crons = \["\* \* \* \* \*"\]$/m);
+            assert.match(config, /^binding = "MARKET_READ_MODEL"$/m);
+            assert.match(config, new RegExp(`^database_name = "${READ_MODEL_D1_NAME}"$`, 'm'));
+            assert.match(config, new RegExp(`^database_id = "${D1_ID}"$`, 'm'));
+            assert.doesNotMatch(config, /50b1e14f|read-model-v1-testnet/);
+        } else {
+            assert.doesNotMatch(config, /d1_databases/);
+        }
     }
+    const readModel = await readFile(new URL('../read-model/wrangler.toml', import.meta.url), 'utf8');
+    assert.throws(() => sanitizeWranglerConfig(readModel, 'read-model'), /read_model_d1_id_invalid/);
+    assert.throws(() => sanitizeWranglerConfig(readModel, 'read-model', { d1Id: '50b1e14f-2b06-444b-98cf-b828f11277ef' }), /read_model_d1_is_v1/);
+    assert.throws(() => sanitizeWranglerConfig('main = "x"\n[[d1_databases]]\nbinding = "X"\n', 'relayer'), /config_binding_unexpected/);
+    assert.throws(() => sanitizeWranglerConfig('main = "x"\n[vars]\n', 'read-model', { d1Id: D1_ID }), /config_d1_missing/);
+    assert.equal(readModelD1Id(D1_ID), D1_ID);
     assert.throws(() => sanitizeWranglerConfig('main = "x"\n[vars]\nNEW_ID = "<replace-me>"\n', 'relayer'), /config_placeholder_NEW_ID/);
     assert.throws(() => sanitizeWranglerConfig('main = "x"\n[vars]\nRELAYER_PRIVATE_KEY = "ed25519:x"\n', 'relayer'), /config_secret_in_vars/);
     assert.throws(() => sanitizeWranglerConfig('main = "x"\nworkers_dev = true\n', 'relayer'), /config_routing_unexpected/);
@@ -88,6 +112,11 @@ test('closed mode turns every Worker flag off and acceptance turns it on; public
         ...COMPONENTS.relayer.vars, RELAYER_ENABLED: 'false', RELAYER_MUTATIONS_ENABLED: 'false',
     });
     assert.equal(releaseVars('payment-service', 'acceptance').PAYMENT_SERVICE_ENABLED, 'true');
+    assert.deepEqual(releaseVars('read-model', 'acceptance'), {
+        ...COMPONENTS['read-model'].vars, READ_MODEL_ENABLED: 'true', READ_MODEL_INGESTION_ENABLED: 'true',
+    });
+    assert.equal(releaseVars('read-model', 'closed').READ_MODEL_INGESTION_ENABLED, 'false');
+    assert.equal(COMPONENTS['read-model'].vars.READ_MODEL_WEB_ORIGIN, ACCEPTANCE_ORIGIN);
     assert.equal(COMPONENTS.relayer.vars.CKD_GATE_ACCOUNT_IDS, 'v2-ckd-gate-261007.youtick-dev-v3.testnet');
     assert.throws(() => releaseVars('relayer', 'open'), /mode_invalid/);
     const args = wranglerArgs('relayer', '/r', SHA, 'acceptance');
@@ -126,10 +155,13 @@ test('acceptance deploy: preflight, one deploy per Worker with its own secrets, 
     assert.equal(receipt.status, 'PASS');
     assert.deepEqual(receipt.workers.map((w) => [w.worker, w.status, w.version_id]), [
         ['youtick-relayer-v2-testnet', 'VERIFIED', 'v-1'], ['youtick-payment-service-v2-testnet', 'VERIFIED', 'v-2'],
+        ['youtick-market-read-model-v2-testnet', 'VERIFIED', 'v-3'],
     ]);
     assert.equal(receipt.workers[1].smoke.unknown_publication_status, 404);
+    assert.deepEqual(receipt.workers[2].smoke, { health_status: 200, stage: 'ENABLED', ingestion_enabled: true });
     assert.deepEqual(Object.keys(record[0].secrets).sort(), ['NEAR_RPC_URL', 'RELAYER_ADMIN_TOKEN', 'RELAYER_PRIVATE_KEY']);
     assert.deepEqual(Object.keys(record[1].secrets).sort(), ['NEAR_RPC_URL', 'VAT_SIGNER_PRIVATE_KEY']);
+    assert.deepEqual(record[2].secrets, { READ_MODEL_NEAR_RPC_URL: 'https://rpc.testnet.example-provider.net/key' });
     const written = await readFile(receiptPath, 'utf8');
     for (const secret of [relayerKey.secret, vatKey.secret, 'A'.repeat(48), 'cf-token', 'example-provider']) assert.ok(!written.includes(secret));
     await assert.rejects(readdir(record[0].tempRoot), /ENOENT/);
@@ -142,7 +174,8 @@ test('closed deploy expects 503 from both Workers', async () => {
         sha: SHA, releaseDir: '/r', receiptPath: join(dir, 'r.json'), mode: 'closed', env: env(), fetchImpl: impl,
         sleep: async () => {}, makeRunner: fakeRunner([]),
     });
-    assert.deepEqual(receipt.workers.map((w) => w.smoke.closed_status), [503, 503]);
+    assert.deepEqual(receipt.workers.map((w) => w.smoke.closed_status), [503, 503, 200]);
+    assert.equal(receipt.workers[2].smoke.stage, 'DISABLED');
 });
 
 test('preflight refuses keys the chain does not hold, before any wrangler call', async () => {
