@@ -15,6 +15,10 @@ import { marketReadApi } from './api.mjs';
 
 const ACCOUNT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const MAX_BLOCKS_PER_RUN = 180;
+// Environments whose scanner keeps a cursor, proves each block's predecessor and paces its fetches, so a
+// skipped height (neardata `null`) is crossed through the next linked block instead of failing the run:
+// the public testnet and, since W3.4, the V2 testnet. The V1 testnet keeps the strict one-block scan.
+const LINKED_SCAN_ENVIRONMENTS = new Set(['public-testnet', 'v2-testnet']);
 const MAX_RPC_RESPONSE_BYTES = 256 * 1024;
 const TELEMETRY_SCHEMA = 'youtick.read-model-ingestion.v1';
 const BACKFILL_TELEMETRY_SCHEMA = 'youtick.read-model-backfill.v1';
@@ -75,9 +79,9 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
         throw new Error('invalid_read_model_final_height');
     }
 
-    const isPublic = env.VIDEO_ENVIRONMENT === 'public-testnet';
-    let position = isPublic ? await readMarketReadModelScanCursor(env.MARKET_READ_MODEL, config) : null;
-    if (isPublic && position.storedScanHeight !== null
+    const linkedScan = LINKED_SCAN_ENVIRONMENTS.has(env.VIDEO_ENVIRONMENT);
+    let position = linkedScan ? await readMarketReadModelScanCursor(env.MARKET_READ_MODEL, config) : null;
+    if (linkedScan && position.storedScanHeight !== null
         && position.scanHeight > finalBlockHeight && position.nextBlockHeight <= finalBlockHeight) {
         await resetMarketReadModelScanCursor(env.MARKET_READ_MODEL, config, position);
         position = await readMarketReadModelScanCursor(env.MARKET_READ_MODEL, config);
@@ -103,7 +107,7 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
     const sleep = dependencies.sleepFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     const started = dependencies.startedAt ?? now();
     let lastFetchAt = started - 350;
-    const limit = isPublic ? 150 : MAX_BLOCKS_PER_RUN;
+    const limit = linkedScan ? 150 : MAX_BLOCKS_PER_RUN;
     let scanHeight = position?.scanHeight ?? nextBlockHeight;
     let requestCount = 0;
     let remainingQueries = dependencies.queryBudget ?? MAX_FINAL_BATCH_QUERIES;
@@ -114,24 +118,24 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
         const blocks = [];
         let batchQueries = 0;
         let budgetReached = false;
-        while (blocks.length < (isPublic ? MAX_FINAL_BLOCKS_PER_BATCH : 1) && requestCount < limit
-            && scanHeight <= finalBlockHeight && (!isPublic || now() - started < 50_000)) {
+        while (blocks.length < (linkedScan ? MAX_FINAL_BLOCKS_PER_BATCH : 1) && requestCount < limit
+            && scanHeight <= finalBlockHeight && (!linkedScan || now() - started < 50_000)) {
             let block = carried;
             carried = null;
             if (!block) {
-                if (isPublic) {
+                if (linkedScan) {
                     await sleep(Math.min(Math.max(0, 350 - (now() - lastFetchAt)), Math.max(0, 50_000 - (now() - started))));
                     if (now() - started >= 50_000) break;
                     lastFetchAt = now();
                 }
                 block = await fetchBlock({ network: config.network, contractId: config.contractId,
-                    blockHeight: scanHeight, ...(isPublic ? { requirePredecessor: true } : {}) });
+                    blockHeight: scanHeight, ...(linkedScan ? { requirePredecessor: true } : {}) });
                 requestCount += 1;
             }
             if (block === null) {
-                if (!isPublic || scanHeight === config.startBlockHeight) throw new Error('invalid_neardata_block');
+                if (!linkedScan || scanHeight === config.startBlockHeight) throw new Error('invalid_neardata_block');
             } else {
-                if (block.block_height !== scanHeight || (isPublic && (block.prev_block_height === undefined
+                if (block.block_height !== scanHeight || (linkedScan && (block.prev_block_height === undefined
                     || block.prev_block_hash === undefined))) throw new Error('invalid_neardata_block');
                 if (!Array.isArray(block.events)) throw new Error('invalid_d1_final_block');
                 // ponytail: reserve the worst-case three queries per event; count exact costs if this wastes material capacity.
@@ -167,7 +171,7 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
         try {
             await applyFinalMarketBlockBatch(env.MARKET_READ_MODEL, blocks, remainingQueries);
         } catch (error) {
-            if (isPublic) await resetMarketReadModelScanCursor(env.MARKET_READ_MODEL, config, position);
+            if (linkedScan) await resetMarketReadModelScanCursor(env.MARKET_READ_MODEL, config, position);
             throw error;
         }
         remainingQueries -= batchQueries;
@@ -179,7 +183,7 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
             storedScanHeight: null };
         if (budgetReached) break;
     }
-    if (isPublic && scanHeight > nextBlockHeight && scanHeight > position.scanHeight
+    if (linkedScan && scanHeight > nextBlockHeight && scanHeight > position.scanHeight
         && position.anchorHeight !== null) {
         await advanceMarketReadModelScanCursor(env.MARKET_READ_MODEL, config, position, scanHeight);
     }
@@ -293,7 +297,7 @@ export async function fetchNearFinalBlockHeight(env, fetchImpl = fetch) {
 
 function ingestionConfig(env) {
     const startBlockHeight = Number(env.READ_MODEL_START_BLOCK_HEIGHT);
-    if ((env.VIDEO_ENVIRONMENT === 'public-testnet'
+    if ((LINKED_SCAN_ENVIRONMENTS.has(env.VIDEO_ENVIRONMENT)
             && (env.MARKET_CONTRACT_ID !== env.READ_MODEL_CONTRACT_ID || !env.READ_MODEL_CONTRACT_ID?.endsWith('.testnet')))
         || env.READ_MODEL_NETWORK !== 'testnet'
         || !ACCOUNT_PATTERN.test(env.READ_MODEL_CONTRACT_ID || '')
