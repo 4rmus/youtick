@@ -1385,6 +1385,38 @@ test('public ingestion crosses missing heights only through actual linked blocks
     db.sqlite.close();
 });
 
+test('the V2 testnet scans like the public one and crosses skipped heights, while the V1 testnet stays strict (W3.4)', async () => {
+    const db = await database(true);
+    await applyFinalMarketBlock(db, emptyBlock(99));
+    const env = { ...publicIngestionEnv(db), VIDEO_ENVIRONMENT: 'v2-testnet' };
+    const requested = [];
+    const deps = { now: () => 0, sleepFn: async () => {}, fetchFinalHeight: async () => 104,
+        fetchBlock: async ({ blockHeight, requirePredecessor }) => {
+            assert.equal(requirePredecessor, true);
+            requested.push(blockHeight);
+            if ([101, 102].includes(blockHeight)) return null;
+            return { ...linkedBlock(blockHeight, blockHeight === 103 ? 100 : blockHeight - 1),
+                events: blockHeight === 100 ? [authorized] : [] };
+        } };
+    const result = await ingestMarketReadModelBatch(env, deps);
+    assert.equal(result.block_count, 3);
+    assert.equal(result.block_height, 104);
+    assert.equal(result.remaining_blocks, 0);
+    assert.deepEqual(requested, [100, 101, 102, 103, 104]);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM media_jobs').get().n, 1);
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 104);
+    // Without a linked-scan environment the one-block scan still treats a null height as a fatal fetch.
+    await assert.rejects(() => ingestMarketReadModelBatch({ ...env, VIDEO_ENVIRONMENT: undefined }, { ...deps,
+        fetchFinalHeight: async () => 106,
+        fetchBlock: async ({ blockHeight, requirePredecessor }) => {
+            assert.equal(requirePredecessor, undefined);
+            return blockHeight === 106 ? null : linkedBlock(blockHeight);
+        },
+    }), /invalid_neardata_block/);
+    assert.equal(db.sqlite.prepare('SELECT block_height FROM finality_watermarks').get().block_height, 105);
+    db.sqlite.close();
+});
+
 test('unconfirmed null tails never advance the watermark or escape the public request budget', async () => {
     const db = await database(true);
     await applyFinalMarketBlock(db, emptyBlock(99));

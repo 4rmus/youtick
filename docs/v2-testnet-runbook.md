@@ -135,7 +135,8 @@ What the workflow does:
    Then add these three in the GitHub UI:
    - `V2_CLOUDFLARE_ACCOUNT_ID`;
    - `V2_CLOUDFLARE_API_TOKEN`: Workers Scripts edit, Workers Custom Domains (or Routes) and DNS
-     edit on `youtick.net`;
+     edit on `youtick.net`, and since W3 **D1 edit** (the deploy job applies the read-model
+     migrations; without it the job stops with Cloudflare error 7403 before any Worker is touched);
    - `V2_NEAR_RPC_URL`: a dedicated HTTPS testnet RPC, not `rpc.testnet.near.org`.
 
    Keep a copy of the admin token offline. It is needed for `POST /internal/invites`.
@@ -269,6 +270,10 @@ What differs from the V1 read model:
   events before it are not indexed), `READ_MODEL_WEB_ORIGIN=http://localhost:3000` (the V2
   instance is the only one that accepts a plain-HTTP origin), one-minute cron, backfill off.
   `READ_MODEL_NEAR_RPC_URL` is the `V2_NEAR_RPC_URL` secret.
+- **Scanner (W3.4).** `v2-testnet` scans like the public testnet: a scan cursor, predecessor
+  proof on every block, at most 150 fetches a run paced at one per 350 ms, and a skipped height
+  (neardata `null`) crossed through the next linked block. Before W3.4 it used the V1 one-block
+  scan, which fails the run on a skipped height and never advances past it.
 - **Migrations** `read-model/d1/0001` to `0010` travel in the attested packet and the deploy job
   applies them with `wrangler d1 migrations apply --remote` before the Workers go out; wrangler
   skips the ones the database already records.
@@ -301,7 +306,8 @@ What differs from the V1 read model:
      `startBlockHeight: 272905000`, `ingestionEnabled: true`;
    - `https://read-v2-testnet.youtick.net/v1/publications` with `Origin: http://localhost:3000`
      → the `lp-bcc8f530…` publication once the scanner has passed block 272924271 (about two
-     hours after the first run at 180 blocks a minute);
+     hours after the first run at 150 blocks a minute); until the first run commits a watermark
+     the endpoint answers 503 `read_model_unavailable`;
    - the ticket row, from the owner's machine (remote D1 read, approval):
      ```bash
      cd read-model && npx wrangler d1 execute youtick-market-read-model-v2-testnet --remote --command "SELECT ticket_id, status, purchased_at_ms, settled_at_ms FROM market_v2_tickets"
@@ -336,3 +342,18 @@ the relayer at `938e706`, the Bridge at `c463f04` and Market V2 `v2-market-26100
 Not covered by this walk: the upload resume after a closed tab, a refund, the 30-day release,
 and anything on Preview, Production or mainnet. The first upload of the day
 (`lp-ae49e444…`) is the stranded job described under "Webhook secret and tokens".
+
+### W3 deploy, 2026-10-13 (PROVIDER, testnet)
+
+| Step | Evidence |
+|---|---|
+| D1 created and recorded | `youtick-market-read-model-v2-testnet` (`66b1c905…`), repository variable set 19:36 UTC |
+| Two Workers runs fail before any deploy | runs 38461890976 and 38463105753: `wrangler d1 migrations apply` → `code: 7403`; the V2 API token had no D1 permission (D1 edit added to the token, no secret change) |
+| Workers run 38474775574 `PASS` (22:03 UTC) | migrations 0001–0010 applied; relayer `085a8378`, payment service `b76b0918`, read model `d8dc8dc6` with the `MARKET_READ_MODEL` binding and `schedule: * * * * *` |
+| Read-model health | `/__health` → `ENABLED`, `testnet`, Market V2, `startBlockHeight 272905000`, `ingestionEnabled true` |
+| First scan | not observed: the cron never fired in the first 32 minutes (no Cron Events, 0 subrequests) during the Cloudflare incident "Cron Trigger Activation Issues" (`cbvocc87nsne`, open since 15:18 UTC; new or modified schedules do not run). `/v1/publications` stayed 503 `read_model_unavailable` |
+| Bridge acceptance deploy | not run yet (its new `*/15` cron would meet the same incident) |
+
+Open after this walk: the first watermark and the `lp-bcc8f530…` publication in `/v1/publications`,
+the `watched` ticket row, the Bridge binding and cron, and the 30-day release (earliest
+2026-11-12).
