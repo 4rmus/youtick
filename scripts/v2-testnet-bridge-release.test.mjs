@@ -5,13 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-    BRIDGE, CREATOR_ALLOWLIST, FIXED_VARS, FLAGS, JWT_PUBLIC_KEY, NEAR_AUTH_CREATOR_ALLOWLIST, OPERATOR_METHODS, RATE_LIMIT_NAMESPACE, SECRETS,
-    WALLET_CREATOR_ALLOWLIST,
+    BRIDGE, CREATOR_ALLOWLIST, FIXED_VARS, FLAGS, JWT_PUBLIC_KEY, NEAR_AUTH_CREATOR_ALLOWLIST, OPERATOR_METHODS, RATE_LIMIT_NAMESPACE,
+    READ_MODEL_D1_NAME, RELEASE_CRON, SECRETS, WALLET_CREATOR_ALLOWLIST,
     deployRelease, jwtKeyMatches, quotePublicKey, releaseSecrets, releaseVars, sanitizeBridgeConfig, wranglerArgs,
 } from './v2-testnet-bridge-release.mjs';
 import { ACCEPTANCE_ORIGIN, MARKET_V2, base58Encode } from './v2-testnet-release.mjs';
 
 const SHA = 'b'.repeat(40);
+const D1_ID = '0123abcd-4567-89ef-0123-456789abcdef';
 
 function nearKeyPair() {
     const { privateKey, publicKey } = generateKeyPairSync('ed25519');
@@ -109,10 +110,18 @@ const deploy = (options) => deployRelease({ sha: SHA, releaseDir: '/r', sleep: a
 
 test('the repository Bridge config sanitizes to Market V2 vars with no Queue, D1 or shared rate-limit namespace', async () => {
     const source = await readFile(new URL(`../${BRIDGE.dir}/wrangler.toml`, import.meta.url), 'utf8');
-    const config = sanitizeBridgeConfig(source);
+    const config = sanitizeBridgeConfig(source, { d1Id: D1_ID });
     assert.match(config, /^main = "index\.js"\nworkers_dev = false\npreview_urls = false$/m);
     assert.doesNotMatch(config, /^NEAR_RPC_URL\s*=/m);
-    assert.doesNotMatch(config, /<replace|queues|d1_databases|database_id|youtick-market-read-model/);
+    assert.doesNotMatch(config, /<replace|queues|50b1e14f|read-model-v1-testnet/);
+    // W3: the V2 read-model database and the release cron, nothing from the V1 testnet.
+    assert.equal(config.match(/\[\[d1_databases\]\]/g).length, 1);
+    assert.match(config, /^binding = "MARKET_READ_MODEL"$/m);
+    assert.match(config, new RegExp(`^database_name = "${READ_MODEL_D1_NAME}"$`, 'm'));
+    assert.match(config, new RegExp(`^database_id = "${D1_ID}"$`, 'm'));
+    assert.match(config, new RegExp(`^crons = \\["${RELEASE_CRON.replace(/\*/g, '\\*')}"\\]$`, 'm'));
+    assert.throws(() => sanitizeBridgeConfig(source), /read_model_d1_id_invalid/);
+    assert.throws(() => sanitizeBridgeConfig(source, { d1Id: '50b1e14f-2b06-444b-98cf-b828f11277ef' }), /read_model_d1_is_v1/);
     assert.match(config, new RegExp(`^namespace_id = "${RATE_LIMIT_NAMESPACE}"$`, 'm'));
     assert.doesNotMatch(config, /namespace_id = "3001"/);
     for (const [key, value] of Object.entries(FIXED_VARS)) {
@@ -121,7 +130,8 @@ test('the repository Bridge config sanitizes to Market V2 vars with no Queue, D1
     }
     assert.match(config, /^MARKET_PROTOCOL = "v2"$/m);
     assert.match(config, /^VIDEO_ENVIRONMENT = "v2-testnet"$/m);
-    assert.match(config, /^MARKET_V2_RELEASE_ENABLED = "false"$/m);
+    // W3: the release flag travels as a mode flag, not a fixed var.
+    assert.doesNotMatch(config, /^MARKET_V2_RELEASE_ENABLED\s*=/m);
     assert.match(config, /^LIVEPEER_WEBHOOK_QUEUE_ENABLED = "false"$/m);
     assert.match(config, /^MULTI_ASSET_PAYMENTS_MODE = "off"$/m);
     assert.ok(config.includes(`LIVEPEER_CREATOR_ALLOWLIST = ${JSON.stringify(CREATOR_ALLOWLIST.join(','))}\n`));
@@ -133,7 +143,7 @@ test('the repository Bridge config sanitizes to Market V2 vars with no Queue, D1
     assert.throws(() => sanitizeBridgeConfig('main = "x"\n[vars]\n'), /config_rate_limit_missing/);
     assert.throws(() => sanitizeBridgeConfig('main = "x"\n[[ratelimits]]\nnamespace_id = "1"\n'), /config_vars_missing/);
     // [vars] as the last section still receives every fixed value.
-    const last = sanitizeBridgeConfig('main = "x"\n[[ratelimits]]\nnamespace_id = "1"\n[vars]\nNEAR_NETWORK = "mainnet"\n');
+    const last = sanitizeBridgeConfig('main = "x"\n[[ratelimits]]\nnamespace_id = "1"\n[vars]\nNEAR_NETWORK = "mainnet"\n', { d1Id: D1_ID });
     for (const [key, value] of Object.entries(FIXED_VARS)) assert.ok(last.includes(`${key} = ${JSON.stringify(value)}`), key);
 });
 
@@ -153,7 +163,9 @@ test('closed turns every Bridge flag off and acceptance turns them on; only flag
     assert.deepEqual(Object.values(releaseVars('closed')), FLAGS.map(() => 'false'));
     assert.deepEqual(Object.values(releaseVars('acceptance')), FLAGS.map(() => 'true'));
     assert.ok(FLAGS.includes('LIVEPEER_PLAYBACK_V3_ENABLED'));
-    for (const off of ['LIVEPEER_SPONSORED_UPLOADS_ENABLED', 'LIVEPEER_WEBHOOK_QUEUE_ENABLED', 'MARKET_V2_RELEASE_ENABLED']) {
+    assert.ok(FLAGS.includes('MARKET_V2_RELEASE_ENABLED'));
+    assert.equal(releaseVars('acceptance').MARKET_V2_RELEASE_ENABLED, 'true');
+    for (const off of ['LIVEPEER_SPONSORED_UPLOADS_ENABLED', 'LIVEPEER_WEBHOOK_QUEUE_ENABLED']) {
         assert.ok(!FLAGS.includes(off), off);
     }
     assert.throws(() => releaseVars('open'), /mode_invalid/);
