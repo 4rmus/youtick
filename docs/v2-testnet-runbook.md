@@ -257,3 +257,20 @@ Wrangler and Workers (LOCAL_TEST); its workflow ran with `PASS` on 2026-10-11 (P
 Bridge release is covered by `scripts/v2-testnet-bridge-release.test.mjs` in the same way
 (LOCAL_TEST); its workflow ran with `PASS` on 2026-10-12 (PROVIDER). A workflow `PASS` counts
 as PROVIDER (testnet) evidence only. It is never mainnet evidence.
+
+### E5b acceptance, 2026-10-13 (PROVIDER, testnet)
+
+Run from `http://localhost:3000` (docs/testing.md, "Local run against the V2 testnet") with
+the relayer at `938e706`, the Bridge at `c463f04` and Market V2 `v2-market-261007…`:
+
+| Step | Evidence |
+|---|---|
+| Google creator (`37729f76…c23d9`) pays the upload fee | relayer `/v1/uploads` 200 at 18:07:21 UTC; USDC 5.1 → 4.6; job `lp-bcc8f530-a21d-4413-9812-8a544306ab82` `Authorized` with `fee_quote_hash: null` |
+| Livepeer processes the 17 MB AV1 source | asset `c8337aa2-2d13-4d12-91bc-7d0f905dcde5`, `asset.ready` at 18:11:30; every V2 webhook delivery 2xx |
+| Bridge publishes | operator key nonce +1; `get_publication` `ACTIVE`, playback `c8336t5rvxsr5dl3`, `published_at_ms` 1791915092282 (18:11:32) |
+| Passkey buyer (`9db6cbd9…d21a`) buys the ticket | relayer `/v1/purchases` 200 at 18:47:37; USDC 21.4 → 16.4 |
+| First play settles the escrow | operator key nonce +1 (`mark_watched`); creator USDC 4.6 → 8.558333, exactly the protocol split of a 5 USDC gross ticket (VAT 0.833334, platform 0.208333, creator 3.958333) |
+
+Not covered by this walk: the upload resume after a closed tab, a refund, the 30-day release,
+and anything on Preview, Production or mainnet. The first upload of the day
+(`lp-ae49e444…`) is the stranded job described under "Webhook secret and tokens".

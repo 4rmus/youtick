@@ -119,7 +119,8 @@ export NEXT_PUBLIC_NEAR_NETWORK=testnet \
   NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS=false \
   NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false \
   NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off \
-  NEXT_PUBLIC_USDC_CONTRACT_ID=3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af
+  NEXT_PUBLIC_USDC_CONTRACT_ID=3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af \
+  NEXT_PUBLIC_V2_CRYPTO_RAIL_DISABLED_LANGUAGES=xx
 unset NEXT_PUBLIC_VIDEO_ENVIRONMENT
 npx opennextjs-cloudflare build
 npx wrangler dev --env preview --local --ip 127.0.0.1 --port 3000
@@ -134,6 +135,13 @@ What each value does:
   sponsored upload path, which the V2 Bridge keeps off.
 - `NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=true` enables the shared upload client that
   `/studio` reuses for preflight, intent, tus upload and heartbeat.
+- `NEXT_PUBLIC_V2_CRYPTO_RAIL_DISABLED_LANGUAGES=xx` lifts the product rule that hides the
+  crypto checkout from a Turkish browser (the default list is `tr`, roadmap E7); without it a
+  Turkish-language browser sees "Ticket sales are not available here yet" on `/tickets/buy`.
+  Leave it out to test the rule itself.
+- Open the app as `http://localhost:3000`, never `127.0.0.1:3000`: the NEAR Auth client allows
+  only that origin, and the Claude desktop browser pane blocks the sign-in pop-up, so sign in
+  from a normal browser.
 
 Acceptance walk (PROVIDER evidence on testnet only; nothing here is Preview or Production
 evidence):
@@ -152,6 +160,14 @@ evidence):
 
 The unit coverage is `__tests__/unit/v2-upload.test.ts` (delegates byte-equal to the protocol
 `upload` vector, relayer approval flow, key replacement; LOCAL_TEST).
+
+Walked on 2026-10-13 (PROVIDER, testnet; details in `docs/v2-testnet-runbook.md`, Evidence):
+Google creator upload published in 4.5 minutes after the fee approval, passkey buyer paid
+5 USDC, played the screening and the creator received the 3.958333 USDC share on first play.
+Two things to expect: a passkey's first sign-in can end with "Sign-in did not complete" while
+the passkey itself is created, and the second attempt signs in; and a fresh passkey account
+needs USDC from the Circle faucet (https://faucet.circle.com, NEAR Testnet) when no invite
+code is at hand.
 
 ## Livepeer Bridge
 
