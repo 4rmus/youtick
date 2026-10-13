@@ -110,7 +110,10 @@ canlı market sonucu ile eşleştirilmelidir.
 
 ## Akış
 
-1. Her başarılı `main` CI, exact SHA ve başarılı `CI Gate` ile Preview akışını tetikler.
+1. `Deploy Preview` elle başlatılır (2026-10-13'ten beri): Actions'ta güncel `main` SHA'sı, o
+   commit'in başarılı push CI koşusunun kimliği ve `DEPLOY_PREVIEW` onayı girilir. Workflow,
+   SHA'nın `main`'in ucu olduğunu ve CI koşusunun `CI Gate` ile başarıyla bittiğini doğrular;
+   eski bir SHA veya başka bir dal reddedilir. Her `main` push'unda kendiliğinden koşu açılmaz.
 2. `Deploy Preview`, son başarılı Preview SHA'sından güncel `main` SHA'sına kümülatif diff alır. Yalnız
    deploy-relevant değişiklik varsa aynı SHA'dan Preview Web, Production Web ve tek Bridge bundle'ını
    paralel üretir; yalnız docs/contract değişikliği varsa temiz biçimde atlar.

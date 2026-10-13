@@ -91,18 +91,67 @@ Sign-in, ticket purchase and playback use your own testnet wallet and real
 testnet transactions. Treat the result as a local manual check, not as
 Preview or Production evidence.
 
-### V2 creator upload (NEAR Auth)
+### Local run against the V2 testnet
 
-`/studio` uploads through the relayer instead of a wallet (roadmap E5b). It needs the V2
-endpoints (`NEXT_PUBLIC_ENABLE_NEAR_AUTH_V2`, `NEXT_PUBLIC_RELAYER_URL`,
-`NEXT_PUBLIC_MARKET_V2_CONTRACT_ID`, `NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID`), the V2 Bridge in
-`NEXT_PUBLIC_LIVEPEER_BRIDGE_URL`, `NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=true`, and
-`NEXT_PUBLIC_MARKET_CONTRACT_ID` equal to Market V2, because the Bridge envelopes of the shared
-upload client name that contract. Sponsored uploads and the public-testnet environment stay off.
+The V2 pages (`/tickets`, `/invite`, `/studio`) need the V2 Workers and Market V2 compiled in,
+and the shared NEAR Auth testnet client only allows `http://localhost:3000`. Like the V1 run,
+build with OpenNext and serve the Worker locally; `--local` keeps the rate limiters in
+Miniflare. Rebuild after changing any `NEXT_PUBLIC_*` value. Account ids are the V2 testnet
+bootstrap of 2026-10-07 (`docs/v2-testnet-runbook.md`); the relayer, payment service and
+Bridge must be deployed in `acceptance` mode.
+
+```bash
+cd apps/web
+export NEXT_PUBLIC_NEAR_NETWORK=testnet \
+  NEXT_PUBLIC_MARKET_CONTRACT_ID=v2-market-261007.youtick-dev-v3.testnet \
+  NEXT_PUBLIC_MARKET_V2_CONTRACT_ID=v2-market-261007.youtick-dev-v3.testnet \
+  NEXT_PUBLIC_ACCESS_CONTRACT_ID=v2-market-261007.youtick-dev-v3.testnet \
+  NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID=v2-ckd-gate-261007.youtick-dev-v3.testnet \
+  NEXT_PUBLIC_ENABLE_NEAR_AUTH_V2=true \
+  NEXT_PUBLIC_NEAR_AUTH_CLIENT_ID=np8paqIpMWmNbzT4xAvOOapZBjsOpptl \
+  NEXT_PUBLIC_RELAYER_URL=https://relayer-v2-testnet.youtick.net \
+  NEXT_PUBLIC_PAYMENT_SERVICE_URL=https://pay-v2-testnet.youtick.net \
+  NEXT_PUBLIC_LIVEPEER_BRIDGE_URL=https://bridge-v2-testnet.youtick.net \
+  NEXT_PUBLIC_APP_URL=http://localhost:3000 \
+  NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=true \
+  NEXT_PUBLIC_ENABLE_PLAYBACK_AUTHORIZER_V2=false \
+  NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE=false \
+  NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS=false \
+  NEXT_PUBLIC_ENABLE_DERIVED_READ_MODEL=false \
+  NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off \
+  NEXT_PUBLIC_USDC_CONTRACT_ID=3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af
+unset NEXT_PUBLIC_VIDEO_ENVIRONMENT
+npx opennextjs-cloudflare build
+npx wrangler dev --env preview --local --ip 127.0.0.1 --port 3000
+```
+
+What each value does:
+- `NEXT_PUBLIC_MARKET_CONTRACT_ID` must equal Market V2. The upload client signs its Bridge
+  envelopes with it, and the V2 Bridge is bound to Market V2; `/studio` refuses to run when the
+  two differ. `NEXT_PUBLIC_ACCESS_CONTRACT_ID` is only required to be set; V2 has no
+  access-control contract, so Market V2 stands in, as in the V2 Bridge release.
+- `NEXT_PUBLIC_VIDEO_ENVIRONMENT` stays unset: the public-testnet mode would demand the
+  sponsored upload path, which the V2 Bridge keeps off.
+- `NEXT_PUBLIC_ENABLE_PAID_MEDIA_LIVEPEER_V1=true` enables the shared upload client that
+  `/studio` reuses for preflight, intent, tus upload and heartbeat.
+
+Acceptance walk (PROVIDER evidence on testnet only; nothing here is Preview or Production
+evidence):
+1. `/invite?code=…` with a code from `POST /internal/invites` (owner, admin token): sign in with
+   Google or a passkey; the account opens, the credit is paid, `/tickets` loads.
+2. `/studio`: pick a short MP4, a title and a price of at least 5 USDC, approve the fee once on
+   the NEAR Auth screen. The creator's implicit account must be in the Bridge allowlist
+   (`docs/v2-testnet-runbook.md`, "NEAR Auth creators"); otherwise preflight answers
+   `admission_closed`. Expected chain: relayer `/v1/uploads` → `get_media_job` shows the job →
+   tus upload → Bridge finalization → the publication appears on `/discover`.
+3. A second account (passkey) buys the ticket on `/tickets/buy?publication=<job id>` and plays
+   it from `/tickets`.
+4. Resume: close the tab after the fee is paid, reopen `/studio` with the same file and use
+   *Resume this upload*; the relayer replaces the upload key (`/v1/upload-keys`) before the
+   Bridge resumes.
+
 The unit coverage is `__tests__/unit/v2-upload.test.ts` (delegates byte-equal to the protocol
-`upload` vector, relayer approval flow, key replacement; LOCAL_TEST). A real upload on the V2
-testnet needs an invited NEAR Auth account that is also in the Bridge allowlist
-(`docs/v2-testnet-runbook.md`, "NEAR Auth creators"); that run is PROVIDER evidence on testnet only.
+`upload` vector, relayer approval flow, key replacement; LOCAL_TEST).
 
 ## Livepeer Bridge
 

@@ -1,13 +1,23 @@
 name: Deploy Preview
 
+# Manual since 2026-10-13: every main push used to queue a Preview run that waited for the
+# environment approval. Start it from Actions with the current main commit, its successful CI
+# run and the typed confirmation; the rest of the flow is unchanged (docs/cloudflare-release.md).
 on:
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact main commit with successful push CI (must be the current main head)
+        required: true
+        type: string
+      ci_run_id:
+        description: Successful CI run for this commit
+        required: true
+        type: string
+      confirmation:
+        description: Type DEPLOY_PREVIEW
+        required: true
+        type: string
 
 concurrency:
   group: deploy-preview
@@ -122,10 +132,8 @@ jobs:
     name: Authorize current main
     if: >
       vars.DEPLOY_PREVIEW_ENABLED == 'true' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      github.ref == 'refs/heads/main' &&
+      inputs.confirmation == 'DEPLOY_PREVIEW'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -136,17 +144,20 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.sha }}
           fetch-depth: 0
       - id: authorize
         name: Verify CI provenance and cumulative release changes
         env:
           GH_TOKEN: ${{ github.token }}
-          CI_RUN_ID: ${{ github.event.workflow_run.id }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          SHA: ${{ inputs.sha }}
         run: |
           set -euo pipefail
           [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${CI_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          # The run's own head_sha names the artifacts; the requested commit must be that head.
+          [[ "${SHA}" == "${GITHUB_SHA}" ]]
 
           run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}")"
           jq -e \
@@ -201,7 +212,7 @@ jobs:
               --argjson run_id "${candidate_run_id}" \
               '.id == $run_id
                 and .conclusion == "success"
-                and .event == "workflow_run"
+                and (.event == "workflow_dispatch" or .event == "workflow_run")
                 and .head_branch == "main"
                 and .head_sha == $sha
                 and .head_repository.full_name == $repo

@@ -163,7 +163,7 @@ jobs:
           jq -e \
             --arg sha "${REQUESTED_SHA}" \
             '.conclusion == "success"
-              and .event == "workflow_run"
+              and (.event == "workflow_dispatch" or .event == "workflow_run")
               and .head_sha == $sha
               and .path == ".github/workflows/deploy-preview.yml"' \
             <<< "${preview_run_json}" > /dev/null
