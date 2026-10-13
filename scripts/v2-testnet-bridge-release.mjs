@@ -40,7 +40,8 @@ export const WALLET_CREATOR_ALLOWLIST = Object.freeze(['ticks.testnet', 'soteri.
 // NEAR Auth creators (E5b.3, decision D11): the implicit account of each invited creator, added here
 // after the invite code is redeemed and checked with the relayer's /internal/invited-accounts/<id>.
 // Each entry is a 64-character hex account id; a deploy follows every change.
-export const NEAR_AUTH_CREATOR_ALLOWLIST = Object.freeze([]);
+// 2026-10-12: owner's Google test account; invite paid in 2em5fQA65TnPYSE22mKzsU1hyPZiXYi5ygLJzk1GLyrU.
+export const NEAR_AUTH_CREATOR_ALLOWLIST = Object.freeze(['37729f76f581ce6e2cc9cc08e48b9f098158cf4bd044d62fe2a9f4bfd06c23d9']);
 export const CREATOR_ALLOWLIST = Object.freeze([...WALLET_CREATOR_ALLOWLIST, ...NEAR_AUTH_CREATOR_ALLOWLIST]);
 // Unused by any other Worker (1001-2002 web, 3001 Bridge, 3101/3201 V2 Workers, 5001-5003 public-testnet).
 export const RATE_LIMIT_NAMESPACE = '6003';
