@@ -3448,27 +3448,25 @@ fn protocol_golden_vectors_are_accepted_byte_for_byte() {
     );
     assert_eq!(governance_event(), vectors["events"]["card_ticket_voided"]);
 
-    // Settlement events match the protocol vectors too.
+    // Settlement events and the refund call match the protocol vectors too.
     let mut bridge = context("bridge.testnet");
     bridge.block_timestamp(issued_at * 1_000_000);
     testing_env!(bridge.build());
-    let _ = market.mark_watched(ticket_id.to_string());
+    assert!(market.mark_watched(ticket_id.to_string()));
     assert_eq!(governance_event(), vectors["events"]["ticket_watched"]);
-    withdraw_callback_env(near_sdk::PromiseResult::Failed);
-    market.on_creator_payout(
-        ticket_id.to_string(),
-        account(fixture["creator_id"].as_str().unwrap()),
-        U128(
-            split["creator_usdc_micro"]
-                .as_str()
-                .unwrap()
-                .parse()
-                .unwrap(),
-        ),
+    let refund = &calls["refund_ticket_args"];
+    let mut operator = context("payments.testnet");
+    operator.block_timestamp(issued_at * 1_000_000);
+    testing_env!(operator.build());
+    let _ = market.refund_ticket(
+        refund["ticket_id"].as_str().unwrap().to_string(),
+        account(refund["refund_to"].as_str().unwrap()),
+        refund["expires_at_ms"].as_str().unwrap().to_string(),
+        refund["signature"].as_str().unwrap().to_string(),
     );
     assert_eq!(
-        governance_event(),
-        vectors["events"]["creator_payout_credited"]
+        market.get_ticket(ticket_id.to_string()).unwrap().status,
+        youtick_market_v2::TicketStatus::Refunded
     );
 }
 
@@ -3549,13 +3547,16 @@ fn refund_signature(label: &str, ticket_id: &str, refund_to: &str, expires: &str
             "youtick.market-v2.ticket-sig.v1",
             "testnet",
             "market.testnet",
-            "refund_unwatched",
+            "refund_ticket",
             ticket_id,
             expires,
             refund_to,
         ],
     )
 }
+
+const OPERATOR: &str = "payments.testnet";
+const DAY_MS: u64 = 86_400_000;
 
 fn last_event() -> serde_json::Value {
     governance_event()
@@ -3567,72 +3568,40 @@ const PLATFORM: u128 = 208_333;
 const CREATOR: u128 = 3_958_334;
 
 #[test]
-fn watched_ticket_settles_vat_and_platform_and_pushes_the_creator_share() {
+fn watching_a_crypto_ticket_records_the_watch_and_keeps_the_money_in_escrow() {
     let (mut market, purchase) = bought("job-watch", "watch");
     let platform_before = market.get_platform_balance().0;
     testing_env!(context("bridge.testnet").build());
-    assert!(matches!(
-        market.mark_watched(purchase.ticket_id.clone()),
-        PromiseOrValue::Promise(_)
-    ));
+    assert!(market.mark_watched(purchase.ticket_id.clone()));
     let watched = last_event();
     assert_eq!(watched["version"], "2.0.0");
     assert_eq!(watched["event"], "ticket_watched");
     assert_eq!(watched["data"][0]["rail"], "crypto");
+    assert_eq!(watched["data"][0]["settled"], false);
     assert_eq!(
         watched["data"][0]["creator_usdc_micro"],
         CREATOR.to_string()
     );
     let ticket = market.get_ticket(purchase.ticket_id.clone()).unwrap();
-    assert_eq!(ticket.status, youtick_market_v2::TicketStatus::Watched);
-    assert_eq!(market.get_escrow_balance(), U128(0));
-    assert_eq!(market.get_tax_balance(), U128(VAT));
     assert_eq!(
-        market.get_platform_balance(),
-        U128(platform_before + PLATFORM)
+        ticket.status,
+        youtick_market_v2::TicketStatus::WatchedInEscrow
     );
-    // The creator share is in flight, not credited.
+    assert_eq!(market.get_escrow_balance(), U128(GROSS));
+    assert_eq!(market.get_tax_balance(), U128(0));
+    assert_eq!(market.get_platform_balance(), U128(platform_before));
     assert_eq!(
         market.get_creator_balance(account("creator.testnet")),
         U128(0)
     );
     assert_eq!(VAT + PLATFORM + CREATOR, GROSS);
 
-    withdraw_callback_env(near_sdk::PromiseResult::Successful(Vec::new()));
-    assert!(market.on_creator_payout(
-        purchase.ticket_id.clone(),
-        account("creator.testnet"),
-        U128(CREATOR)
-    ));
+    // A second mark_watched is a no-op.
+    assert!(!market.mark_watched(purchase.ticket_id.clone()));
+    assert_eq!(market.get_escrow_balance(), U128(GROSS));
     assert_eq!(
-        market.get_creator_balance(account("creator.testnet")),
-        U128(0)
-    );
-
-    withdraw_callback_env(near_sdk::PromiseResult::Failed);
-    assert!(!market.on_creator_payout(
-        purchase.ticket_id.clone(),
-        account("creator.testnet"),
-        U128(CREATOR)
-    ));
-    assert_eq!(
-        market.get_creator_balance(account("creator.testnet")),
-        U128(CREATOR)
-    );
-    let credited = last_event();
-    assert_eq!(credited["event"], "creator_payout_credited");
-    assert_eq!(credited["data"][0]["ticket_id"], purchase.ticket_id);
-
-    // A second mark_watched is a no-op and never settles twice.
-    testing_env!(context("bridge.testnet").build());
-    assert!(matches!(
-        market.mark_watched(purchase.ticket_id),
-        PromiseOrValue::Value(false)
-    ));
-    assert_eq!(market.get_tax_balance(), U128(VAT));
-    assert_eq!(
-        market.get_platform_balance(),
-        U128(platform_before + PLATFORM)
+        market.get_ticket(purchase.ticket_id).unwrap().status,
+        youtick_market_v2::TicketStatus::WatchedInEscrow
     );
 }
 
@@ -3683,13 +3652,32 @@ fn only_an_unfrozen_bridge_marks_watched_and_never_after_takedown() {
 }
 
 #[test]
-fn refund_requires_the_ticket_key_and_restores_on_a_failed_transfer() {
+fn refund_requires_the_ticket_key_and_the_payment_operator_and_restores_on_a_failed_transfer() {
     let (mut market, purchase) = bought("job-refund", "refund");
     let ticket_id = purchase.ticket_id.clone();
     let expires = (NOW_MS + 600_000).to_string();
     let good = refund_signature("refund", &ticket_id, "buyer.testnet", &expires);
-    testing_env!(context("relayer.testnet").build());
-    // Wrong key, other recipient, expired, too far ahead.
+    // Before a takedown only the payment operator submits, even with a valid signature.
+    for actor in [
+        "buyer.testnet",
+        "relayer.testnet",
+        "bridge.testnet",
+        "platform.testnet",
+        "admin.testnet",
+    ] {
+        testing_env!(context(actor).build());
+        must_fail(|| {
+            let _ = market.refund_ticket(
+                ticket_id.clone(),
+                account("buyer.testnet"),
+                expires.clone(),
+                good.clone(),
+            );
+        });
+    }
+    testing_env!(context(OPERATOR).build());
+    // Wrong key, other recipient, expired, too far ahead (7 days is the refund limit).
+    let too_far = (NOW_MS + 7 * DAY_MS + 1).to_string();
     for (refund_to, expires_at, signature) in [
         (
             "buyer.testnet",
@@ -3704,17 +3692,12 @@ fn refund_requires_the_ticket_key_and_restores_on_a_failed_transfer() {
         ),
         (
             "buyer.testnet",
-            (NOW_MS + 3_600_001).to_string(),
-            refund_signature(
-                "refund",
-                &ticket_id,
-                "buyer.testnet",
-                &(NOW_MS + 3_600_001).to_string(),
-            ),
+            too_far.clone(),
+            refund_signature("refund", &ticket_id, "buyer.testnet", &too_far),
         ),
     ] {
         must_fail(|| {
-            let _ = market.refund_unwatched(
+            let _ = market.refund_ticket(
                 ticket_id.clone(),
                 account(refund_to),
                 expires_at.clone(),
@@ -3724,24 +3707,28 @@ fn refund_requires_the_ticket_key_and_restores_on_a_failed_transfer() {
     }
     assert_eq!(market.get_escrow_balance(), U128(GROSS));
 
-    let _ = market.refund_unwatched(
+    // A signature made three days earlier still works: the request waits for the decision.
+    let week = (NOW_MS + 7 * DAY_MS).to_string();
+    let request = refund_signature("refund", &ticket_id, "buyer.testnet", &week);
+    at(OPERATOR, NOW_MS + 3 * DAY_MS);
+    let _ = market.refund_ticket(
         ticket_id.clone(),
         account("buyer.testnet"),
-        expires.clone(),
-        good.clone(),
+        week.clone(),
+        request.clone(),
     );
     assert_eq!(
         market.get_ticket(ticket_id.clone()).unwrap().status,
         youtick_market_v2::TicketStatus::Refunded
     );
     assert_eq!(market.get_escrow_balance(), U128(0));
-    // A pending or completed refund cannot be repeated, and the Bridge cannot settle it.
+    // A pending or completed refund cannot be repeated, and the Bridge cannot play it.
     must_fail(|| {
-        let _ = market.refund_unwatched(
+        let _ = market.refund_ticket(
             ticket_id.clone(),
             account("buyer.testnet"),
-            expires.clone(),
-            good.clone(),
+            week.clone(),
+            request.clone(),
         );
     });
     testing_env!(context("bridge.testnet").build());
@@ -3750,16 +3737,26 @@ fn refund_requires_the_ticket_key_and_restores_on_a_failed_transfer() {
     });
 
     withdraw_callback_env(near_sdk::PromiseResult::Failed);
-    assert!(!market.on_ticket_refund(ticket_id.clone(), account("buyer.testnet"), U128(GROSS)));
+    assert!(!market.on_ticket_refund(
+        ticket_id.clone(),
+        account("buyer.testnet"),
+        U128(GROSS),
+        Some(youtick_market_v2::TicketStatus::Purchased)
+    ));
     let restored = market.get_ticket(ticket_id.clone()).unwrap();
     assert_eq!(restored.status, youtick_market_v2::TicketStatus::Purchased);
     assert_eq!(restored.devices.len(), 1);
     assert_eq!(market.get_escrow_balance(), U128(GROSS));
 
-    testing_env!(context("relayer.testnet").build());
-    let _ = market.refund_unwatched(ticket_id.clone(), account("buyer.testnet"), expires, good);
+    at(OPERATOR, NOW_MS + 3 * DAY_MS);
+    let _ = market.refund_ticket(ticket_id.clone(), account("buyer.testnet"), week, request);
     withdraw_callback_env(near_sdk::PromiseResult::Successful(Vec::new()));
-    assert!(market.on_ticket_refund(ticket_id.clone(), account("buyer.testnet"), U128(GROSS)));
+    assert!(market.on_ticket_refund(
+        ticket_id.clone(),
+        account("buyer.testnet"),
+        U128(GROSS),
+        Some(youtick_market_v2::TicketStatus::Purchased)
+    ));
     let refunded = market.get_ticket(ticket_id.clone()).unwrap();
     assert_eq!(refunded.status, youtick_market_v2::TicketStatus::Refunded);
     assert!(refunded.devices.is_empty());
@@ -3775,7 +3772,62 @@ fn refund_requires_the_ticket_key_and_restores_on_a_failed_transfer() {
 }
 
 #[test]
-fn watched_tickets_cannot_be_refunded_but_takedown_keeps_the_refund_open() {
+fn a_watched_ticket_is_refunded_in_full_and_a_failed_transfer_restores_the_watch() {
+    let (mut market, purchase) = bought("job-refund-watched", "refund-watched");
+    let ticket_id = purchase.ticket_id.clone();
+    testing_env!(context("bridge.testnet").build());
+    assert!(market.mark_watched(ticket_id.clone()));
+    let expires = (NOW_MS + 600_000).to_string();
+    let signature = refund_signature("refund-watched", &ticket_id, "buyer.testnet", &expires);
+    testing_env!(context(OPERATOR).build());
+    let _ = market.refund_ticket(
+        ticket_id.clone(),
+        account("buyer.testnet"),
+        expires.clone(),
+        signature.clone(),
+    );
+    assert_eq!(market.get_escrow_balance(), U128(0));
+    withdraw_callback_env(near_sdk::PromiseResult::Failed);
+    assert!(!market.on_ticket_refund(
+        ticket_id.clone(),
+        account("buyer.testnet"),
+        U128(GROSS),
+        Some(youtick_market_v2::TicketStatus::WatchedInEscrow)
+    ));
+    assert_eq!(
+        market.get_ticket(ticket_id.clone()).unwrap().status,
+        youtick_market_v2::TicketStatus::WatchedInEscrow
+    );
+    assert_eq!(market.get_escrow_balance(), U128(GROSS));
+
+    testing_env!(context(OPERATOR).build());
+    let _ = market.refund_ticket(
+        ticket_id.clone(),
+        account("buyer.testnet"),
+        expires,
+        signature,
+    );
+    withdraw_callback_env(near_sdk::PromiseResult::Successful(Vec::new()));
+    assert!(market.on_ticket_refund(
+        ticket_id.clone(),
+        account("buyer.testnet"),
+        U128(GROSS),
+        Some(youtick_market_v2::TicketStatus::WatchedInEscrow)
+    ));
+    assert_eq!(
+        market.get_ticket(ticket_id).unwrap().status,
+        youtick_market_v2::TicketStatus::Refunded
+    );
+    assert_eq!(market.get_escrow_balance(), U128(0));
+    assert_eq!(
+        market.get_creator_balance(account("creator.testnet")),
+        U128(0)
+    );
+    assert_eq!(market.get_tax_balance(), U128(0));
+}
+
+#[test]
+fn after_a_takedown_the_buyer_refunds_without_the_operator_and_without_a_time_limit() {
     let (mut market, watched) = bought("job-refund-rules", "refund-watched");
     testing_env!(context(TESTNET_USDC).build());
     let unwatched = v2::purchase("job-refund-rules", "refund-unwatched", GROSS, NOW_MS);
@@ -3785,22 +3837,7 @@ fn watched_tickets_cannot_be_refunded_but_takedown_keeps_the_refund_open() {
         unwatched.msg.to_string(),
     );
     testing_env!(context("bridge.testnet").build());
-    let _ = market.mark_watched(watched.ticket_id.clone());
-    let expires = (NOW_MS + 600_000).to_string();
-    testing_env!(context("relayer.testnet").build());
-    must_fail(|| {
-        let _ = market.refund_unwatched(
-            watched.ticket_id.clone(),
-            account("buyer.testnet"),
-            expires.clone(),
-            refund_signature(
-                "refund-watched",
-                &watched.ticket_id,
-                "buyer.testnet",
-                &expires,
-            ),
-        );
-    });
+    assert!(market.mark_watched(watched.ticket_id.clone()));
     testing_env!(context("governance.testnet").build());
     market.takedown_livepeer_publication(
         "job-refund-rules".to_string(),
@@ -3809,37 +3846,53 @@ fn watched_tickets_cannot_be_refunded_but_takedown_keeps_the_refund_open() {
         FINGERPRINT.to_string(),
         U64(NOW_MS),
     );
-    // Long after the takedown and past the 30-day release point, the refund is still open.
-    let later = NOW_MS + 90 * 86_400_000;
+    // Long after the takedown and past the 30-day release point, the refund is still open, and
+    // anyone (normally the relayer) may submit the buyer's signature.
+    let later = NOW_MS + 90 * DAY_MS;
     let late_expiry = (later + 600_000).to_string();
     at("relayer.testnet", later);
-    assert_eq!(market.release_expired(vec![unwatched.ticket_id.clone()]), 0);
-    let _ = market.refund_unwatched(
-        unwatched.ticket_id.clone(),
-        account("buyer.testnet"),
-        late_expiry.clone(),
-        refund_signature(
-            "refund-unwatched",
-            &unwatched.ticket_id,
-            "buyer.testnet",
-            &late_expiry,
-        ),
-    );
     assert_eq!(
-        market.get_ticket(unwatched.ticket_id).unwrap().status,
-        youtick_market_v2::TicketStatus::Refunded
+        market.release_expired(vec![unwatched.ticket_id.clone(), watched.ticket_id.clone()]),
+        0
     );
+    for (label, purchase) in [
+        ("refund-unwatched", &unwatched),
+        ("refund-watched", &watched),
+    ] {
+        let _ = market.refund_ticket(
+            purchase.ticket_id.clone(),
+            account("buyer.testnet"),
+            late_expiry.clone(),
+            refund_signature(label, &purchase.ticket_id, "buyer.testnet", &late_expiry),
+        );
+        assert_eq!(
+            market
+                .get_ticket(purchase.ticket_id.clone())
+                .unwrap()
+                .status,
+            youtick_market_v2::TicketStatus::Refunded
+        );
+    }
+    assert_eq!(market.get_escrow_balance(), U128(0));
 }
 
 #[test]
-fn unwatched_tickets_release_to_the_creator_balance_after_thirty_days() {
+fn watched_and_unwatched_tickets_release_to_the_creator_balance_after_thirty_days() {
     let (mut market, purchase) = bought("job-release", "release");
+    testing_env!(context(TESTNET_USDC).build());
+    let seen = v2::purchase("job-release", "release-seen", GROSS, NOW_MS);
+    market.ft_on_transfer(account("buyer.testnet"), U128(GROSS), seen.msg.to_string());
+    testing_env!(context("bridge.testnet").build());
+    assert!(market.mark_watched(seen.ticket_id.clone()));
     let platform_before = market.get_platform_balance().0;
-    at("anyone.testnet", NOW_MS + 30 * 86_400_000 - 1);
-    assert_eq!(market.release_expired(vec![purchase.ticket_id.clone()]), 0);
-    assert_eq!(market.get_escrow_balance(), U128(GROSS));
+    at("anyone.testnet", NOW_MS + 30 * DAY_MS - 1);
+    assert_eq!(
+        market.release_expired(vec![purchase.ticket_id.clone(), seen.ticket_id.clone()]),
+        0
+    );
+    assert_eq!(market.get_escrow_balance(), U128(2 * GROSS));
 
-    at("anyone.testnet", NOW_MS + 30 * 86_400_000);
+    at("anyone.testnet", NOW_MS + 30 * DAY_MS);
     must_fail(|| {
         market.release_expired(vec![]);
     });
@@ -3850,9 +3903,10 @@ fn unwatched_tickets_release_to_the_creator_balance_after_thirty_days() {
         market.release_expired(vec![
             purchase.ticket_id.clone(),
             "0".repeat(64),
-            purchase.ticket_id.clone()
+            purchase.ticket_id.clone(),
+            seen.ticket_id.clone(),
         ]),
-        1
+        2
     );
     let released = last_event();
     assert_eq!(released["event"], "ticket_released");
@@ -3863,37 +3917,48 @@ fn unwatched_tickets_release_to_the_creator_balance_after_thirty_days() {
     assert_eq!(market.get_escrow_balance(), U128(0));
     assert_eq!(
         market.get_creator_balance(account("creator.testnet")),
-        U128(CREATOR)
+        U128(2 * CREATOR)
     );
-    assert_eq!(market.get_tax_balance(), U128(VAT));
+    assert_eq!(market.get_tax_balance(), U128(2 * VAT));
     assert_eq!(
         market.get_platform_balance(),
-        U128(platform_before + PLATFORM)
+        U128(platform_before + 2 * PLATFORM)
     );
-    // A released ticket stays playable; a later mark_watched pays nothing again.
+    // Released tickets stay playable; a later mark_watched pays nothing again, and the operator
+    // can no longer refund them.
     let mut bridge = context("bridge.testnet");
-    bridge.block_timestamp((NOW_MS + 31 * 86_400_000) * 1_000_000);
+    bridge.block_timestamp((NOW_MS + 31 * DAY_MS) * 1_000_000);
     testing_env!(bridge.build());
-    assert!(matches!(
-        market.mark_watched(purchase.ticket_id.clone()),
-        PromiseOrValue::Value(false)
-    ));
+    assert!(!market.mark_watched(purchase.ticket_id.clone()));
     assert_eq!(
-        market.get_ticket(purchase.ticket_id).unwrap().status,
+        market
+            .get_ticket(purchase.ticket_id.clone())
+            .unwrap()
+            .status,
         youtick_market_v2::TicketStatus::Released
     );
+    let expires = (NOW_MS + 31 * DAY_MS + 600_000).to_string();
+    at(OPERATOR, NOW_MS + 31 * DAY_MS);
+    must_fail(|| {
+        let _ = market.refund_ticket(
+            seen.ticket_id.clone(),
+            account("buyer.testnet"),
+            expires.clone(),
+            refund_signature("release-seen", &seen.ticket_id, "buyer.testnet", &expires),
+        );
+    });
     assert_eq!(
         market.get_creator_balance(account("creator.testnet")),
-        U128(CREATOR)
+        U128(2 * CREATOR)
     );
-    assert_eq!(market.get_tax_balance(), U128(VAT));
+    assert_eq!(market.get_tax_balance(), U128(2 * VAT));
 }
 
 #[test]
 fn only_the_tax_or_platform_account_withdraws_vat_and_failures_restore_it() {
     let (mut market, purchase) = bought("job-tax", "tax");
-    testing_env!(context("bridge.testnet").build());
-    let _ = market.mark_watched(purchase.ticket_id);
+    at("anyone.testnet", NOW_MS + 30 * DAY_MS);
+    assert_eq!(market.release_expired(vec![purchase.ticket_id]), 1);
     for actor in ["creator.testnet", "bridge.testnet", "admin.testnet"] {
         testing_env!(context(actor).build());
         must_fail(|| {
@@ -3917,13 +3982,79 @@ fn only_the_tax_or_platform_account_withdraws_vat_and_failures_restore_it() {
 }
 
 #[test]
+fn the_purchase_pause_stops_operator_refunds_but_not_takedown_refunds() {
+    let (mut market, purchase) = bought("job-refund-pause", "refund-pause");
+    let ticket_id = purchase.ticket_id.clone();
+    let expires = (NOW_MS + 600_000).to_string();
+    let signature = refund_signature("refund-pause", &ticket_id, "buyer.testnet", &expires);
+    testing_env!(context("guardian.testnet").build());
+    market.pause_new_purchases();
+    testing_env!(context(OPERATOR).build());
+    must_fail(|| {
+        let _ = market.refund_ticket(
+            ticket_id.clone(),
+            account("buyer.testnet"),
+            expires.clone(),
+            signature.clone(),
+        );
+    });
+    assert_eq!(market.get_escrow_balance(), U128(GROSS));
+    testing_env!(context("governance.testnet").build());
+    market.takedown_livepeer_publication(
+        "job-refund-pause".to_string(),
+        "LEGAL_REQUIREMENT".to_string(),
+        "incident-refund-pause".to_string(),
+        FINGERPRINT.to_string(),
+        U64(NOW_MS),
+    );
+    testing_env!(context("relayer.testnet").build());
+    let _ = market.refund_ticket(
+        ticket_id.clone(),
+        account("buyer.testnet"),
+        expires,
+        signature,
+    );
+    assert_eq!(
+        market.get_ticket(ticket_id).unwrap().status,
+        youtick_market_v2::TicketStatus::Refunded
+    );
+}
+
+#[test]
+fn a_refund_callback_from_the_earlier_code_restores_a_purchased_ticket() {
+    let (mut market, purchase) = bought("job-refund-legacy", "refund-legacy");
+    let ticket_id = purchase.ticket_id.clone();
+    let expires = (NOW_MS + 600_000).to_string();
+    testing_env!(context(OPERATOR).build());
+    let _ = market.refund_ticket(
+        ticket_id.clone(),
+        account("buyer.testnet"),
+        expires.clone(),
+        refund_signature("refund-legacy", &ticket_id, "buyer.testnet", &expires),
+    );
+    // The earlier refund_unwatched scheduled the callback without `restore_status` (None).
+    withdraw_callback_env(near_sdk::PromiseResult::Failed);
+    assert!(!market.on_ticket_refund(
+        ticket_id.clone(),
+        account("buyer.testnet"),
+        U128(GROSS),
+        None
+    ));
+    assert_eq!(
+        market.get_ticket(ticket_id).unwrap().status,
+        youtick_market_v2::TicketStatus::Purchased
+    );
+    assert_eq!(market.get_escrow_balance(), U128(GROSS));
+}
+
+#[test]
 fn refund_window_closes_at_thirty_days_unless_taken_down() {
     let (mut market, purchase) = bought("job-window", "window");
-    let closing = NOW_MS + 30 * 86_400_000;
+    let closing = NOW_MS + 30 * DAY_MS;
     let expires = (closing + 600_000).to_string();
-    at("relayer.testnet", closing);
+    at(OPERATOR, closing);
     must_fail(|| {
-        let _ = market.refund_unwatched(
+        let _ = market.refund_ticket(
             purchase.ticket_id.clone(),
             account("buyer.testnet"),
             expires.clone(),
@@ -3931,8 +4062,8 @@ fn refund_window_closes_at_thirty_days_unless_taken_down() {
         );
     });
     let early = (closing - 1 + 600_000).to_string();
-    at("relayer.testnet", closing - 1);
-    let _ = market.refund_unwatched(
+    at(OPERATOR, closing - 1);
+    let _ = market.refund_ticket(
         purchase.ticket_id.clone(),
         account("buyer.testnet"),
         early.clone(),
@@ -4156,7 +4287,8 @@ fn add_device_rejects_foreign_keys_wrong_fields_and_unplayable_tickets() {
 
     // Refunded tickets cannot hold devices.
     let refund_expires = (NOW_MS + 600_000).to_string();
-    let _ = market.refund_unwatched(
+    testing_env!(context(OPERATOR).build());
+    let _ = market.refund_ticket(
         id.clone(),
         account("buyer.testnet"),
         refund_expires.clone(),
@@ -4415,10 +4547,11 @@ fn payment_operator_issues_card_tickets_without_moving_money() {
 
     // Watching a card ticket records it but moves no money; refunds and releases are crypto only.
     testing_env!(context("bridge.testnet").build());
-    assert!(matches!(
-        market.mark_watched(sale.ticket_id.clone()),
-        PromiseOrValue::Value(true)
-    ));
+    assert!(market.mark_watched(sale.ticket_id.clone()));
+    assert_eq!(
+        market.get_ticket(sale.ticket_id.clone()).unwrap().status,
+        youtick_market_v2::TicketStatus::Watched
+    );
     assert_eq!(market.get_tax_balance(), U128(0));
     assert_eq!(
         market.get_creator_balance(account("creator.testnet")),

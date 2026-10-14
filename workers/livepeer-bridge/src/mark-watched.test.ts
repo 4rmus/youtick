@@ -97,7 +97,7 @@ describe('mark_watched operator outbox (V2 Market)', () => {
 
     it('signs mark_watched with 100 TGas and confirms from the final ticket status', async () => {
         const sent: string[] = [];
-        vi.stubGlobal('fetch', rpc({ statusAfterSend: 'watched', onSend: (tx) => sent.push(tx) }));
+        vi.stubGlobal('fetch', rpc({ statusAfterSend: 'watched_in_escrow', onSend: (tx) => sent.push(tx) }));
         const state = createState();
         const response = await new LivepeerControl(state.state, createEnv()).fetch(await markWatchedRequest());
         expect(response.status).toBe(200);
@@ -119,14 +119,16 @@ describe('mark_watched operator outbox (V2 Market)', () => {
         expect([...state.values.keys()].filter((key) => key.startsWith('outbox:'))).toEqual([]);
     });
 
-    it('creates no record and sends nothing for an already settled ticket', async () => {
-        const sent: string[] = [];
-        vi.stubGlobal('fetch', rpc({ initialStatus: 'released', statusAfterSend: 'released', onSend: (tx) => sent.push(tx) }));
-        const state = createState();
-        const response = await new LivepeerControl(state.state, createEnv()).fetch(await markWatchedRequest());
-        expect(response.status).toBe(200);
-        expect(sent).toEqual([]);
-        expect(state.values.size).toBe(0);
+    it('creates no record and sends nothing for an already watched or released ticket', async () => {
+        for (const status of ['released', 'watched', 'watched_in_escrow']) {
+            const sent: string[] = [];
+            vi.stubGlobal('fetch', rpc({ initialStatus: status, statusAfterSend: status, onSend: (tx) => sent.push(tx) }));
+            const state = createState();
+            const response = await new LivepeerControl(state.state, createEnv()).fetch(await markWatchedRequest());
+            expect(response.status).toBe(200);
+            expect(sent).toEqual([]);
+            expect(state.values.size).toBe(0);
+        }
     });
 
     it('keeps the operator record budget flat across many first plays', async () => {
@@ -225,6 +227,8 @@ describe('release_expired (V2 Market)', () => {
     it('signs one release_expired batch with 150 TGas and deletes the confirmed record', async () => {
         const sent: string[] = [];
         let released = false;
+        // The second ticket was watched: its money is still in escrow until release.
+        const before: Record<string, string> = { [ids[0]]: 'purchased', [ids[1]]: 'watched_in_escrow' };
         vi.stubGlobal('fetch', vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
             const body = JSON.parse(String(init?.body)) as { method: string; params: Record<string, unknown> };
             if (body.params?.request_type === 'view_access_key') {
@@ -234,7 +238,7 @@ describe('release_expired (V2 Market)', () => {
             }
             if (body.params?.method_name === 'get_ticket') {
                 return Response.json({ result: { block_hash: BLOCK_HASH, result: Array.from(new TextEncoder().encode(
-                    JSON.stringify({ status: released ? 'released' : 'purchased' }))) } });
+                    JSON.stringify({ status: released ? 'released' : before[String(JSON.parse(atob(String(body.params.args_base64))).ticket_id)] }))) } });
             }
             if (body.method === 'send_tx') {
                 sent.push(String(body.params.signed_tx_base64));
@@ -280,7 +284,8 @@ describe('release_expired (V2 Market)', () => {
         const now = 1_800_000_000_000;
         expect(await dueReleaseTicketIds(env, now)).toEqual([ids[0]]);
         const [sql, network, contract, cutoff, limit] = bound[0] as [string, string, string, number, number];
-        expect(sql).toContain("t.rail = 'crypto' AND t.status = 'purchased'");
+        expect(sql).toContain("t.rail = 'crypto'");
+        expect(sql).toContain("t.status IN ('purchased', 'watched') AND t.settled_at_ms IS NULL");
         expect(sql).toContain("p.availability = 'TAKEDOWN'");
         expect([network, contract, cutoff, limit]).toEqual(['testnet', CONTRACT_ID, now - 30 * 24 * 60 * 60 * 1000, 25]);
     });

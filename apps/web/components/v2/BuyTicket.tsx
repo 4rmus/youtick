@@ -158,7 +158,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
 
     if (state === 'done') {
         return <ScreenState tone="success" icon={<CheckCircle2 className="h-7 w-7" />} title="Your ticket is ready"
-            description="It is linked to this device. You can refund it until you start watching.">
+            description="It is linked to this device. If the video does not play properly, you can request a refund within 27 days.">
             <div className="mt-6 flex justify-center"><Button asChild><Link href="/tickets">Go to My tickets</Link></Button></div>
         </ScreenState>;
     }
@@ -178,7 +178,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
             {state === 'buying' && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {state === 'buying' ? 'Waiting for your approval…' : `Buy for ${formatUsdc(item.price_usdc)} USDC`}
         </Button>
-        <p className="text-xs text-white/50">Unwatched tickets can be refunded for 30 days. Starting playback uses the ticket.</p>
+        <p className="text-xs text-white/50">Refunds are for technical problems (the video does not play or is not as described) and can be requested within 27 days. A change of mind is not refunded.</p>
         {state === 'error' && <p className="text-sm text-red-300" role="alert">{error}</p>}
     </Card>;
 }

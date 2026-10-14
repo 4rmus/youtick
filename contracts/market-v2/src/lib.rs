@@ -17,6 +17,8 @@ const MIN_TICKET_PRICE_USDC: u128 = 5_000_000;
 const PLATFORM_DIVISOR: u128 = 20;
 const MAX_VAT_RATE_BPS: u128 = 2_700;
 const MAX_SIGNATURE_TTL_MS: u64 = 3_600_000;
+// A refund request waits for youtick's decision (72 hours), so its signature may live longer.
+const MAX_REFUND_SIGNATURE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const TICKET_SIGNATURE_DOMAIN: &str = "youtick.market-v2.ticket-sig.v1";
 const VAT_DOMAIN: &str = "youtick.market-v2.vat.v1";
 const BUY_TICKET_V2_ACTION: &str = "buy_ticket_v2";
@@ -351,6 +353,10 @@ pub enum TicketStatus {
     Refunded,
     Released,
     Voided,
+    /// A crypto ticket watched while its gross amount is still in escrow. Appended last so the
+    /// Borsh discriminants of the earlier statuses do not change. A crypto ticket in `Watched`
+    /// was settled on watch by the earlier code (testnet only) and is never refunded or released.
+    WatchedInEscrow,
 }
 
 #[near(serializers = [borsh, json])]
@@ -549,10 +555,11 @@ struct CreatorWithdrawCallbackArgs {
 
 #[derive(Serialize)]
 #[serde(crate = "near_sdk::serde")]
-struct TicketTransferCallbackArgs {
+struct TicketRefundCallbackArgs {
     ticket_id: String,
     receiver_id: AccountId,
     amount: U128,
+    restore_status: Option<TicketStatus>,
 }
 
 #[derive(Serialize)]
@@ -2204,18 +2211,20 @@ impl Contract {
         U128(self.tax_balance)
     }
 
-    /// Bridge only, before the first playback token. A purchased crypto ticket settles: VAT to
-    /// the tax balance, the platform share to the platform balance and the creator share pushed
-    /// to the creator (credited to their balance if the transfer fails). Watched and released
+    /// Bridge only, before the first playback token. Records the watch and moves no money: a
+    /// crypto ticket becomes `watched_in_escrow` and its gross amount stays in escrow until
+    /// `release_expired` or a refund; a card ticket becomes `watched`. Watched and released
     /// tickets are a no-op; refunded or voided tickets and taken-down publications fail.
-    pub fn mark_watched(&mut self, ticket_id: String) -> PromiseOrValue<bool> {
+    pub fn mark_watched(&mut self, ticket_id: String) -> bool {
         self.assert_bridge();
         let mut ticket = self
             .tickets
             .get(&ticket_id)
             .unwrap_or_else(|| env::panic_str("Ticket not found"));
         match ticket.status {
-            TicketStatus::Watched | TicketStatus::Released => return PromiseOrValue::Value(false),
+            TicketStatus::Watched | TicketStatus::WatchedInEscrow | TicketStatus::Released => {
+                return false
+            }
             TicketStatus::Refunded | TicketStatus::Voided => {
                 env::panic_str("Ticket is not playable")
             }
@@ -2229,22 +2238,22 @@ impl Contract {
             publication.availability != PublicationAvailability::Takedown,
             "Publication is taken down"
         );
-        ticket.status = TicketStatus::Watched;
+        ticket.status = match ticket.rail {
+            TicketRail::Crypto => TicketStatus::WatchedInEscrow,
+            TicketRail::Card => TicketStatus::Watched,
+        };
         self.tickets.insert(&ticket_id, &ticket);
-        emit_market_v2_event("ticket_watched", settled_event_data(&ticket, true));
-        if ticket.rail == TicketRail::Card {
-            return PromiseOrValue::Value(true);
-        }
-        match self.settle_ticket(&ticket, true) {
-            Some(payout) => PromiseOrValue::Promise(payout),
-            None => PromiseOrValue::Value(true),
-        }
+        let mut data = settled_event_data(&ticket, true);
+        data["settled"] = near_sdk::serde_json::json!(false);
+        emit_market_v2_event("ticket_watched", data);
+        true
     }
 
-    /// The ticket key signs where an unwatched crypto ticket's whole gross amount goes. Allowed
-    /// for 30 days after purchase, and indefinitely after a takedown. A failed transfer restores
-    /// the ticket.
-    pub fn refund_unwatched(
+    /// Refunds a crypto ticket's whole gross amount, watched or not, to the account the ticket
+    /// key signed. youtick decides (technical failure only), so the payment operator submits;
+    /// after a takedown anyone may submit. Allowed for 30 days after purchase, and indefinitely
+    /// after a takedown. A failed transfer restores the ticket.
+    pub fn refund_ticket(
         &mut self,
         ticket_id: String,
         refund_to: AccountId,
@@ -2255,9 +2264,14 @@ impl Contract {
             .tickets
             .get(&ticket_id)
             .unwrap_or_else(|| env::panic_str("Ticket not found"));
+        let restore_status = ticket.status;
         require!(
-            ticket.status == TicketStatus::Purchased && ticket.rail == TicketRail::Crypto,
-            "Only unwatched crypto tickets can be refunded"
+            ticket.rail == TicketRail::Crypto
+                && matches!(
+                    restore_status,
+                    TicketStatus::Purchased | TicketStatus::WatchedInEscrow
+                ),
+            "Only crypto tickets still in escrow can be refunded"
         );
         let now = env::block_timestamp_ms();
         let taken_down = self
@@ -2266,6 +2280,17 @@ impl Contract {
             .is_some_and(|publication| {
                 publication.availability == PublicationAvailability::Takedown
             });
+        require!(
+            taken_down || env::predecessor_account_id() == self.payment_operator_id,
+            "Only the payment operator can refund before a takedown"
+        );
+        // Like card voids, the guardian's purchase pause stops operator refunds, so a compromised
+        // operator cannot run old or declined buyer requests while its rotation timelock runs.
+        // After a takedown the buyer's own refund stays open.
+        require!(
+            taken_down || !self.new_purchases_paused(),
+            "New purchases are paused"
+        );
         // The refund window is the escrow period; after a takedown it stays open indefinitely.
         require!(
             taken_down
@@ -2277,14 +2302,14 @@ impl Contract {
                         .expect("Time overflow"),
             "Refund window has closed"
         );
-        parse_signature_expiry(&expires_at_ms, now);
+        parse_signature_expiry_within(&expires_at_ms, now, MAX_REFUND_SIGNATURE_TTL_MS);
         let network = self.network_id();
         let contract_id = env::current_account_id();
         let message = signed_lines(&[
             TICKET_SIGNATURE_DOMAIN,
             &network,
             contract_id.as_str(),
-            "refund_unwatched",
+            "refund_ticket",
             &ticket_id,
             &expires_at_ms,
             refund_to.as_str(),
@@ -2303,12 +2328,26 @@ impl Contract {
             .checked_sub(amount)
             .expect("Escrow balance underflow");
         self.ft_transfer(refund_to.clone(), amount, "ticket refund")
-            .then(self.ticket_transfer_callback("on_ticket_refund", ticket_id, refund_to, amount))
+            .then(
+                Promise::new(env::current_account_id()).function_call(
+                    "on_ticket_refund".to_string(),
+                    near_sdk::serde_json::to_vec(&TicketRefundCallbackArgs {
+                        ticket_id,
+                        receiver_id: refund_to,
+                        amount: U128(amount),
+                        restore_status: Some(restore_status),
+                    })
+                    .expect("Failed to serialize callback"),
+                    NearToken::from_yoctonear(0),
+                    TICKET_CALLBACK_GAS,
+                ),
+            )
     }
 
-    /// Anyone may release unwatched crypto tickets older than 30 days. The creator share is
-    /// credited to the creator balance (no push, so batches stay within gas and log limits).
-    /// Ineligible IDs are skipped. Returns how many tickets were released.
+    /// Anyone may release crypto tickets still in escrow (watched or not) 30 days after purchase.
+    /// VAT and the platform share move to their balances and the creator share is credited to
+    /// the creator balance (no push, so batches stay within gas and log limits). Ineligible IDs
+    /// are skipped. Returns how many tickets were released.
     pub fn release_expired(&mut self, ticket_ids: Vec<String>) -> u32 {
         require!(
             !ticket_ids.is_empty() && ticket_ids.len() <= MAX_RELEASE_BATCH,
@@ -2331,8 +2370,10 @@ impl Contract {
                     .is_some_and(|publication| {
                         publication.availability == PublicationAvailability::Takedown
                     });
-            if ticket.status != TicketStatus::Purchased
-                || ticket.rail != TicketRail::Crypto
+            if !matches!(
+                ticket.status,
+                TicketStatus::Purchased | TicketStatus::WatchedInEscrow
+            ) || ticket.rail != TicketRail::Crypto
                 || now < due
                 || taken_down
             {
@@ -2340,7 +2381,7 @@ impl Contract {
             }
             ticket.status = TicketStatus::Released;
             self.tickets.insert(&ticket_id, &ticket);
-            self.settle_ticket(&ticket, false);
+            self.settle_ticket(&ticket);
             emit_market_v2_event("ticket_released", settled_event_data(&ticket, false));
             released += 1;
         }
@@ -2693,40 +2734,16 @@ impl Contract {
         false
     }
 
-    /// A failed creator push is credited to the creator balance, so the share is never lost.
-    #[private]
-    pub fn on_creator_payout(
-        &mut self,
-        ticket_id: String,
-        receiver_id: AccountId,
-        amount: U128,
-    ) -> bool {
-        require!(
-            env::promise_results_count() == 1,
-            "Expected one payout result"
-        );
-        if matches!(env::promise_result(0), PromiseResult::Successful(_)) {
-            return true;
-        }
-        self.credit_creator(&receiver_id, amount.0);
-        emit_market_v2_event(
-            "creator_payout_credited",
-            near_sdk::serde_json::json!({
-                "ticket_id": ticket_id,
-                "creator_id": receiver_id,
-                "creator_usdc_micro": amount.0.to_string(),
-            }),
-        );
-        false
-    }
-
-    /// A completed refund clears the ticket's devices; a failed one restores the ticket.
+    /// A completed refund clears the ticket's devices; a failed one restores the ticket to the
+    /// status it had before the refund. `restore_status` is absent only in a callback scheduled
+    /// by the earlier `refund_unwatched`, which refunded `purchased` tickets alone.
     #[private]
     pub fn on_ticket_refund(
         &mut self,
         ticket_id: String,
         receiver_id: AccountId,
         amount: U128,
+        restore_status: Option<TicketStatus>,
     ) -> bool {
         require!(
             env::promise_results_count() == 1,
@@ -2748,7 +2765,7 @@ impl Contract {
             );
             return true;
         }
-        ticket.status = TicketStatus::Purchased;
+        ticket.status = restore_status.unwrap_or(TicketStatus::Purchased);
         self.tickets.insert(&ticket_id, &ticket);
         self.escrow_balance = self
             .escrow_balance
@@ -3514,10 +3531,14 @@ fn parse_canonical_decimal(label: &str, value: &str, max: u128) -> u128 {
 }
 
 fn parse_signature_expiry(value: &str, now_ms: u64) -> u64 {
+    parse_signature_expiry_within(value, now_ms, MAX_SIGNATURE_TTL_MS)
+}
+
+fn parse_signature_expiry_within(value: &str, now_ms: u64, max_ttl_ms: u64) -> u64 {
     let expires = parse_canonical_decimal("expires_at_ms", value, u64::MAX as u128) as u64;
     require!(expires > now_ms, "Signature expired");
     require!(
-        expires - now_ms <= MAX_SIGNATURE_TTL_MS,
+        expires - now_ms <= max_ttl_ms,
         "Signature expiry is too far ahead"
     );
     expires
@@ -3584,7 +3605,10 @@ impl Contract {
         require!(
             matches!(
                 ticket.status,
-                TicketStatus::Purchased | TicketStatus::Watched | TicketStatus::Released
+                TicketStatus::Purchased
+                    | TicketStatus::Watched
+                    | TicketStatus::WatchedInEscrow
+                    | TicketStatus::Released
             ),
             "Ticket is not playable"
         );
@@ -3646,8 +3670,9 @@ impl Contract {
         );
     }
 
-    /// Moves a settled crypto ticket out of escrow. Returns the creator push when requested.
-    fn settle_ticket(&mut self, ticket: &Ticket, push_creator: bool) -> Option<Promise> {
+    /// Moves a released crypto ticket out of escrow: VAT and platform shares to their balances,
+    /// the creator share to the creator balance.
+    fn settle_ticket(&mut self, ticket: &Ticket) {
         self.escrow_balance = self
             .escrow_balance
             .checked_sub(ticket.gross_usdc_micro.0)
@@ -3660,20 +3685,7 @@ impl Contract {
             .platform_balance
             .checked_add(ticket.platform_usdc_micro.0)
             .expect("Platform balance overflow");
-        let creator_amount = ticket.creator_usdc_micro.0;
-        if !push_creator {
-            self.credit_creator(&ticket.creator_id, creator_amount);
-            return None;
-        }
-        Some(
-            self.ft_transfer(ticket.creator_id.clone(), creator_amount, "ticket watched")
-                .then(self.ticket_transfer_callback(
-                    "on_creator_payout",
-                    ticket.ticket_id.clone(),
-                    ticket.creator_id.clone(),
-                    creator_amount,
-                )),
-        )
+        self.credit_creator(&ticket.creator_id, ticket.creator_usdc_micro.0);
     }
 
     fn credit_creator(&mut self, creator_id: &AccountId, amount: u128) {
@@ -3684,26 +3696,6 @@ impl Contract {
             .checked_add(amount)
             .expect("Creator balance overflow");
         self.creator_balances.insert(creator_id, &balance);
-    }
-
-    fn ticket_transfer_callback(
-        &self,
-        method: &str,
-        ticket_id: String,
-        receiver_id: AccountId,
-        amount: u128,
-    ) -> Promise {
-        Promise::new(env::current_account_id()).function_call(
-            method.to_string(),
-            near_sdk::serde_json::to_vec(&TicketTransferCallbackArgs {
-                ticket_id,
-                receiver_id,
-                amount: U128(amount),
-            })
-            .expect("Failed to serialize callback"),
-            NearToken::from_yoctonear(0),
-            TICKET_CALLBACK_GAS,
-        )
     }
 
     fn buy_ticket_v2(&mut self, amount: U128, purchase: PurchaseMessageV2) -> PromiseOrValue<U128> {

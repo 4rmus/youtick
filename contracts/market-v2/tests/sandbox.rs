@@ -38,6 +38,16 @@ async fn load_mock_ft_wasm() -> anyhow::Result<&'static Vec<u8>> {
         .await
 }
 
+const PAYMENT_OPERATOR: &str = "payments.testnet";
+
+fn payment_operator(worker: &Worker<Sandbox>) -> anyhow::Result<Account> {
+    Ok(Account::from_secret_key(
+        PAYMENT_OPERATOR.parse()?,
+        SecretKey::from_seed(KeyType::ED25519, PAYMENT_OPERATOR),
+        worker,
+    ))
+}
+
 async fn init() -> anyhow::Result<(Contract, Account, Account, Account, Contract)> {
     let (contract, bridge, guardian, creator, usdc, _admin) = init_with_admin().await?;
     Ok((contract, bridge, guardian, creator, usdc))
@@ -87,6 +97,17 @@ async fn init_with_worker() -> anyhow::Result<(
         .transact()
         .await?;
     let usdc = Contract::from_secret_key(usdc_id, usdc_key, &worker);
+    // The payment operator signs refunds (`refund_ticket`), so it needs a key in the sandbox.
+    let operator_id: near_workspaces::AccountId = PAYMENT_OPERATOR.parse()?;
+    worker
+        .patch(&operator_id)
+        .account(AccountDetailsPatch::default().balance(NearToken::from_near(10)))
+        .access_key(
+            SecretKey::from_seed(KeyType::ED25519, PAYMENT_OPERATOR).public_key(),
+            AccessKey::full_access(),
+        )
+        .transact()
+        .await?;
     usdc.call("new")
         .args_json(json!({
             "owner_id": creator.id(),
@@ -110,7 +131,7 @@ async fn init_with_worker() -> anyhow::Result<(
                 "tax_account_id": governance.id(),
                 "vat_public_key": near_key(&test_key("vat-signer")),
                 "vat_key_version": 1,
-                "payment_operator_id": "payments.testnet",
+                "payment_operator_id": PAYMENT_OPERATOR,
             },
         }))
         .transact()
@@ -762,8 +783,10 @@ async fn self_upgrade_reverts_a_failed_migrate_then_deploys_the_proposed_code() 
 }
 
 #[tokio::test]
-async fn watched_ticket_pays_the_creator_and_refund_returns_gross_on_chain() -> anyhow::Result<()> {
-    let (contract, bridge, _guardian, creator, usdc) = init().await?;
+async fn watched_ticket_stays_in_escrow_and_the_operator_refunds_gross_on_chain(
+) -> anyhow::Result<()> {
+    let (worker, contract, bridge, _guardian, creator, usdc, _admin) = init_with_worker().await?;
+    let operator = payment_operator(&worker)?;
     let buyer = creator
         .create_subaccount("buyer")
         .initial_balance(NearToken::from_near(5))
@@ -887,7 +910,7 @@ async fn watched_ticket_pays_the_creator_and_refund_returns_gross_on_chain() -> 
         .json()?;
     assert_eq!(with_device["devices"].as_array().unwrap().len(), 2);
 
-    // Watch: the creator receives 3,958,334 (5 USDC, 833,333 VAT, 5% of net to the platform).
+    // Watch: the watch is recorded and the money stays in escrow until release or refund.
     let creator_before: u128 = ft_balance(&usdc, creator.id()).await?.parse()?;
     bridge
         .call(contract.id(), "mark_watched")
@@ -897,11 +920,17 @@ async fn watched_ticket_pays_the_creator_and_refund_returns_gross_on_chain() -> 
         .await?
         .into_result()?;
     let creator_after: u128 = ft_balance(&usdc, creator.id()).await?.parse()?;
-    assert_eq!(creator_after - creator_before, 3_958_334);
+    assert_eq!(creator_after, creator_before);
     let tax: String = contract.view("get_tax_balance").await?.json()?;
-    assert_eq!(tax, "833333");
+    assert_eq!(tax, "0");
     let escrow: String = contract.view("get_escrow_balance").await?.json()?;
-    assert_eq!(escrow, "5000000");
+    assert_eq!(escrow, "10000000");
+    let watched: serde_json::Value = contract
+        .view("get_ticket")
+        .args_json(json!({ "ticket_id": tickets[0] }))
+        .await?
+        .json()?;
+    assert_eq!(watched["status"], "watched_in_escrow");
 
     // A refund to an account without USDC storage fails in the token and is restored.
     let unregistered = creator
@@ -917,14 +946,14 @@ async fn watched_ticket_pays_the_creator_and_refund_returns_gross_on_chain() -> 
             "youtick.market-v2.ticket-sig.v1",
             "testnet",
             contract.id().as_str(),
-            "refund_unwatched",
+            "refund_ticket",
             &tickets[1],
             &expires,
             unregistered.id().as_str(),
         ],
     );
-    let failed = creator
-        .call(contract.id(), "refund_unwatched")
+    let failed = operator
+        .call(contract.id(), "refund_ticket")
         .args_json(json!({
             "ticket_id": tickets[1],
             "refund_to": unregistered.id(),
@@ -944,9 +973,9 @@ async fn watched_ticket_pays_the_creator_and_refund_returns_gross_on_chain() -> 
         .json()?;
     assert_eq!(restored["status"], "purchased");
     let escrow: String = contract.view("get_escrow_balance").await?.json()?;
-    assert_eq!(escrow, "5000000");
+    assert_eq!(escrow, "10000000");
 
-    // Refund: the ticket key sends the whole gross amount back to the buyer.
+    // Refund: the ticket key names the buyer and the operator sends the whole gross amount.
     let buyer_before: u128 = ft_balance(&usdc, buyer.id()).await?.parse()?;
     let signature = sign_lines(
         &test_key("sandbox-refund"),
@@ -954,14 +983,14 @@ async fn watched_ticket_pays_the_creator_and_refund_returns_gross_on_chain() -> 
             "youtick.market-v2.ticket-sig.v1",
             "testnet",
             contract.id().as_str(),
-            "refund_unwatched",
+            "refund_ticket",
             &tickets[1],
             &expires,
             buyer.id().as_str(),
         ],
     );
-    creator
-        .call(contract.id(), "refund_unwatched")
+    operator
+        .call(contract.id(), "refund_ticket")
         .args_json(json!({
             "ticket_id": tickets[1],
             "refund_to": buyer.id(),
@@ -982,6 +1011,6 @@ async fn watched_ticket_pays_the_creator_and_refund_returns_gross_on_chain() -> 
     assert_eq!(refunded["status"], "refunded");
     assert_eq!(refunded["devices"], json!([]));
     let escrow: String = contract.view("get_escrow_balance").await?.json()?;
-    assert_eq!(escrow, "0");
+    assert_eq!(escrow, "5000000");
     Ok(())
 }

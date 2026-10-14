@@ -105,7 +105,7 @@ describe('ticket-key signatures and call arguments', () => {
             deviceEpoch: revoked.device_epoch,
         })).toEqual(revoked);
 
-        const refund = vectors.calls.refund_unwatched_args;
+        const refund = vectors.calls.refund_ticket_args;
         expect(buildRefundArgs({ binding, ticket: first, expiresAtMs, refundTo: refund.refund_to })).toEqual(refund);
     });
 
@@ -132,7 +132,7 @@ describe('ticket-key signatures and call arguments', () => {
             session_public_key: fields.session_public_key, certificate_sha256: fields.certificate_sha256,
             device_epoch: '4294967296',
         })).toThrow('invalid_ticket_message');
-        const refund = (refundTo: string) => () => ticketMessage(binding, 'refund_unwatched', first.ticketId, expiresAtMs,
+        const refund = (refundTo: string) => () => ticketMessage(binding, 'refund_ticket', first.ticketId, expiresAtMs,
             { refund_to: refundTo });
         for (const account of ['Fan.testnet', 'fan.testnet.', 'a', 'fan testnet']) expect(refund(account)).toThrow('invalid_ticket_message');
         const card = vectors.ticket_signatures.card_purchase.fields;

@@ -360,13 +360,15 @@ async function ingestSparseMarketReadModelBatch(env, dependencies, config, { bou
     if (!last) return result;
     Object.assign(result, { block_height: last.block_height, block_hash: last.block_hash, event_count: last.events.length });
 
-    // Escrow holds the gross of every purchased crypto ticket; a gap in the index shows up here.
+    // Escrow holds the gross of every crypto ticket not yet settled, refunded or released
+    // (purchased, or watched with the money still in escrow); a gap in the index shows up here.
     // The check only reports: the blocks above are already written.
     try {
         const chain = await fetchEscrow(last.block_height);
         const rows = await db.prepare(`
             SELECT gross_amount FROM market_v2_tickets
-            WHERE network = ? AND contract_id = ? AND rail = 'crypto' AND status = 'purchased'
+            WHERE network = ? AND contract_id = ? AND rail = 'crypto'
+              AND status IN ('purchased', 'watched') AND settled_at_ms IS NULL
         `).bind(config.network, config.contractId).all();
         const readModel = (rows?.results ?? []).reduce((sum, row) => sum + BigInt(row.gross_amount), 0n).toString();
         result.escrow = { chain_usdc_micro: chain, read_model_usdc_micro: readModel, matched: chain === readModel };

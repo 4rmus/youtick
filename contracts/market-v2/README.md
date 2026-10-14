@@ -43,28 +43,41 @@ The byte formats it accepts are defined in `protocol/youtick-market-v2`.
 Upload, publication, takedown, roles, timelocks, guardian controls, withdrawals and the hash-first
 self-upgrade path are unchanged from V1.
 
-## Settlement (gate E3b)
+## Settlement (gate E3b, refund rule 2026-10-14)
+
+Refund rule (owner decision 2026-10-10, the same as Cleeng's standard policy for card sales):
+refunds are for technical failure, content not as described, or takedown; not for a change of
+mind. youtick decides, so the creator share stays in escrow until the refund window closes.
 
 - **`mark_watched(ticket_id)`** — Bridge role only, unfrozen; the Bridge calls it before the
-  first playback token.
-  - A purchased crypto ticket becomes `watched`. VAT moves to the tax balance and the platform
-    share to the platform balance.
-  - The creator share is pushed to the creator. If that transfer fails, the
-    `on_creator_payout` callback credits the creator balance and emits `creator_payout_credited`.
-  - On a watched or released ticket it does nothing. A refunded or voided ticket, or a
-    taken-down publication, makes it fail.
-- **`refund_unwatched(ticket_id, refund_to, expires_at_ms, signature)`** — anyone may submit it
-  with a ticket-key signature.
-  - The whole gross amount goes to `refund_to`.
-  - It is allowed for 30 days after purchase, and with no time limit after a takedown.
-  - A failed transfer restores the ticket and the escrow. A completed refund clears the devices
-    and emits `ticket_refunded`.
-- **`release_expired(ticket_ids)`** — anyone, 1–25 tickets per call (NEAR caps a call's logs at 16,384 bytes). A purchased crypto ticket
-  older than 30 days becomes `released` and its creator share is credited to the creator balance.
+  first playback token. It records the watch and moves no money.
+  - A purchased crypto ticket becomes `watched_in_escrow`; a card ticket becomes `watched`.
+  - `ticket_watched` carries `settled: false`.
+  - On a watched, watched-in-escrow or released ticket it does nothing. A refunded or voided
+    ticket, or a taken-down publication, makes it fail.
+- **`refund_ticket(ticket_id, refund_to, expires_at_ms, signature)`** — the ticket key signs
+  where the whole gross amount goes; the payment operator submits once youtick approves.
+  - Allowed for `purchased` and `watched_in_escrow` crypto tickets, for 30 days after purchase.
+  - After a takedown anyone may submit the signature, with no time limit.
+  - The signature may be up to 7 days ahead (other ticket signatures: 1 hour), so a request
+    signed by the buyer survives the 72-hour decision.
+  - A failed transfer restores the ticket's previous status and the escrow. A completed refund
+    clears the devices and emits `ticket_refunded`.
+  - The payment operator cannot change the recipient. Like card voids, the guardian's purchase
+    pause stops operator refunds (a compromised operator could otherwise run old or declined
+    requests during its rotation timelock); after a takedown the buyer's own refund stays open.
+- **`release_expired(ticket_ids)`** — anyone, 1–25 tickets per call (NEAR caps a call's logs at
+  16,384 bytes). A `purchased` or `watched_in_escrow` crypto ticket older than 30 days becomes
+  `released`: VAT to the tax balance, the platform share to the platform balance and the creator
+  share to the creator balance.
   - Ineligible IDs are skipped, including tickets of taken-down publications.
-  - A released ticket stays playable, and a later `mark_watched` pays nothing again.
+  - A released ticket stays playable, and a later `mark_watched` pays nothing.
 - **`withdraw_tax_balance()`** — the tax or platform account sends the VAT to `tax_account_id`.
   A failed transfer restores the balance.
+- **Testnet tickets from the earlier code.** That code settled a crypto ticket on
+  `mark_watched` and pushed the creator share (`creator_payout_credited` on a failed push). Such
+  tickets stay `watched`: they play, and they are never refunded or released.
+  `watched_in_escrow` is appended last to `TicketStatus`, so the stored tickets still decode.
 
 ## Devices (gate E3c)
 
@@ -73,7 +86,7 @@ self-upgrade path are unchanged from V1.
   transaction.
   - At most 3 devices are active, each valid for 30 days. Re-adding a key renews it, and a
     fourth device replaces the oldest.
-  - It works for purchased, watched and released tickets. It fails for refunded or voided
+  - It works for purchased, watched, watched-in-escrow and released tickets. It fails for refunded or voided
     tickets and for taken-down publications.
 - **`revoke_device(...)`** — signed by the holder.
 - **`platform_revoke_device(ticket_id, session_public_key)`** — platform account only, for

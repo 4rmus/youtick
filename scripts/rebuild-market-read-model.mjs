@@ -85,6 +85,13 @@ const ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 const DECIMAL_PATTERN = /^(0|[1-9][0-9]{0,39})$/;
 
+/** `ticket_watched.settled`: absent on the earlier testnet code, which settled on watch. */
+export function watchSettled(data) {
+    if (data.settled === undefined) return true;
+    if (typeof data.settled !== 'boolean') throw new Error('invalid_event_data');
+    return data.settled;
+}
+
 export function rebuildMarketReadModel(rawRecords) {
     const records = normalizeFinalMarketEvents(rawRecords);
     const blockHashes = new Map();
@@ -295,7 +302,9 @@ function applyProjection(record, data, stores) {
         stores.tickets.set(key(data.ticket_id), {
             ...ticket,
             status,
-            settled_at_ms: ['watched', 'released'].includes(status)
+            // A watch settles only on the earlier testnet code (no `settled` field); current
+            // code keeps the money in escrow until release or refund (same as D1).
+            settled_at_ms: status === 'released' || (status === 'watched' && watchSettled(data))
                 ? Number(requiredDecimal(data.block_timestamp_ms)) : ticket.settled_at_ms,
             source_block_height: record.block_height,
         });

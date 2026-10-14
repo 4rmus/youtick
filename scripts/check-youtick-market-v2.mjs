@@ -23,6 +23,8 @@ export const MIN_GROSS_USDC_MICRO = 5_000_000n;
 export const PLATFORM_DIVISOR = 20n;
 export const MAX_VAT_RATE_BPS = 2_700n;
 export const MAX_SIGNATURE_TTL_MS = 3_600_000n;
+// `refund_ticket` waits for youtick's decision (72 hours), so its signature may live 7 days.
+export const MAX_REFUND_SIGNATURE_TTL_MS = 604_800_000n;
 // Upload through NEAR Auth (roadmap E5b.1): the creator's implicit account calls USDC
 // `ft_transfer_call` to the Market with a plain `create_paid_job` message. No sponsor quote and
 // no playback session: the relayer sponsors gas, and Market V2 has no public beta or public
@@ -48,7 +50,7 @@ export const TICKET_FIELDS = {
     ["payment_reference_hmac", "hex"], ["gross_minor", "u64"], ["currency", "currency"]],
   add_device: [["session_public_key", "key"], ["certificate_sha256", "hex"], ["device_epoch", "u32"]],
   revoke_device: [["session_public_key", "key"], ["device_epoch", "u32"]],
-  refund_unwatched: [["refund_to", "text"]],
+  refund_ticket: [["refund_to", "text"]],
 };
 const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -98,9 +100,10 @@ export function playbackMessage({ network, contract_id, ticket_id, session_publi
     decimal(expires_at_ms, U64_MAX)]);
 }
 
-// The whole gross amount stays in the ticket's escrow until it settles. On `mark_watched` or
-// `release_expired`, VAT goes to the tax account, the platform share to the platform balance and
-// the creator share to the creator. `refund_unwatched` returns the whole gross amount.
+// The whole gross amount stays in the ticket's escrow until it settles. `mark_watched` only
+// records the watch (`watched_in_escrow`). On `release_expired`, 30 days after purchase, VAT goes
+// to the tax balance, the platform share to the platform balance and the creator share to the
+// creator balance. `refund_ticket` returns the whole gross amount, watched or not.
 export function splitAmounts(gross, vat) {
   const grossValue = BigInt(decimal(gross, U128_MAX));
   const vatValue = BigInt(decimal(vat, U128_MAX));
@@ -260,7 +263,7 @@ export function buildVectors() {
     { session_public_key: secondSession, certificate_sha256: FIXTURE.certificate_sha256, device_epoch: "0" });
   const revokeDevice = signTicket(cryptoKey, ticket.public_key, ticket.ticket_id, "revoke_device",
     { session_public_key: secondSession, device_epoch: "0" });
-  const refund = signTicket(cryptoKey, ticket.public_key, ticket.ticket_id, "refund_unwatched", { refund_to: FIXTURE.buyer_id });
+  const refund = signTicket(cryptoKey, ticket.public_key, ticket.ticket_id, "refund_ticket", { refund_to: FIXTURE.buyer_id });
 
   const vatInput = {
     network: FIXTURE.network,
@@ -305,7 +308,7 @@ export function buildVectors() {
       card_purchase: cardPurchase,
       add_device: addDevice,
       revoke_device: revokeDevice,
-      refund_unwatched: refund,
+      refund_ticket: refund,
     },
     vat_attestation: {
       signer_public_key: nearPublicKey(vatSigner.publicKey),
@@ -338,7 +341,7 @@ export function buildVectors() {
         ticket_id: ticket.ticket_id, session_public_key: secondSession, device_epoch: "0", expires_at_ms: expires, signature: revokeDevice.signature,
       },
       platform_revoke_device_args: { ticket_id: ticket.ticket_id, session_public_key: secondSession },
-      refund_unwatched_args: { ticket_id: ticket.ticket_id, refund_to: FIXTURE.buyer_id, expires_at_ms: expires, signature: refund.signature },
+      refund_ticket_args: { ticket_id: ticket.ticket_id, refund_to: FIXTURE.buyer_id, expires_at_ms: expires, signature: refund.signature },
       mark_watched_args: { ticket_id: ticket.ticket_id },
       release_expired_args: { ticket_ids: [ticket.ticket_id] },
     },
@@ -406,16 +409,13 @@ function buildEvents({ ticket, cardTicket, split, paymentReferenceHmac, session,
     }),
     // The add_device call vector adds the second session at epoch 0.
     device_added: event("device_added", { ticket_id: ticket.ticket_id, session_public_key: secondSession, device_epoch: "0", expires_at_ms: deviceExpiry }),
-    ticket_watched: event("ticket_watched", { ticket_id: ticket.ticket_id, publication_id: FIXTURE.publication_id, rail: "crypto", ...settled }),
+    ticket_watched: event("ticket_watched", { ticket_id: ticket.ticket_id, publication_id: FIXTURE.publication_id, rail: "crypto", ...settled, settled: false }),
     ticket_refunded: event("ticket_refunded", {
       ticket_id: ticket.ticket_id, publication_id: FIXTURE.publication_id, rail: "crypto", refunded_usdc_micro: FIXTURE.gross_usdc_micro,
     }),
     ticket_released: event("ticket_released", { ticket_id: ticket.ticket_id, publication_id: FIXTURE.publication_id, ...settled }),
     card_ticket_voided: event("card_ticket_voided", { ticket_id: cardTicket.ticket_id, publication_id: FIXTURE.publication_id, reason: "chargeback" }),
     device_revoked: event("device_revoked", { ticket_id: ticket.ticket_id, session_public_key: secondSession, device_epoch: "1" }),
-    creator_payout_credited: event("creator_payout_credited", {
-      ticket_id: ticket.ticket_id, creator_id: FIXTURE.creator_id, creator_usdc_micro: split.creator_usdc_micro,
-    }),
   };
 }
 
@@ -601,10 +601,10 @@ function check(vectors) {
   rejects(() => splitAmounts("12700000", "2700001"), "VAT above the 27% inclusive rate");
   rejects(() => splitAmounts("05000000", "0"), "non-canonical decimal");
   rejects(() => splitAmounts(`${1n << 128n}`, "0"), "u128 overflow");
-  rejects(() => message("refund_unwatched", { refund_to: "evil\nadd_device" }), "line break in a field");
+  rejects(() => message("refund_ticket", { refund_to: "evil\nadd_device" }), "line break in a field");
   rejects(() => message("withdraw", {}), "unknown action");
-  rejects(() => message("refund_unwatched", { refund_to: "a.testnet" }, { ticket_id: "A".repeat(64) }), "upper-case ticket_id");
-  rejects(() => message("refund_unwatched", { refund_to: "a.testnet" }, { expires_at_ms: `${1n << 64n}` }), "u64 overflow");
+  rejects(() => message("refund_ticket", { refund_to: "a.testnet" }, { ticket_id: "A".repeat(64) }), "upper-case ticket_id");
+  rejects(() => message("refund_ticket", { refund_to: "a.testnet" }, { expires_at_ms: `${1n << 64n}` }), "u64 overflow");
   rejects(() => message("revoke_device", { session_public_key: vectors.calls.revoke_device_args.session_public_key, device_epoch: "01" }),
     "non-canonical device epoch");
   rejects(() => message("revoke_device", { session_public_key: "ed25519:11111111", device_epoch: "0" }),

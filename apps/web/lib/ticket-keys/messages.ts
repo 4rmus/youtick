@@ -8,6 +8,8 @@ export const TICKET_SIGNATURE_DOMAIN = 'youtick.market-v2.ticket-sig.v1';
 export const PLAYBACK_DOMAIN = 'youtick.market-v2.playback.v1';
 /** The contract rejects a signature whose expiry is more than one hour ahead of block time. */
 export const MAX_SIGNATURE_TTL_MS = 3_600_000;
+/** A `refund_ticket` signature may be up to 7 days ahead: the request waits for youtick's decision. */
+export const MAX_REFUND_SIGNATURE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** The Bridge rejects a playback request expiring more than five minutes ahead. */
 export const MAX_PLAYBACK_REQUEST_TTL_MS = 5 * 60 * 1000;
 
@@ -29,7 +31,7 @@ export const TICKET_FIELDS = {
         ['payment_reference_hmac', 'hex'], ['gross_minor', 'positive_u64'], ['currency', 'currency']],
     add_device: [['session_public_key', 'key'], ['certificate_sha256', 'hex'], ['device_epoch', 'u32']],
     revoke_device: [['session_public_key', 'key'], ['device_epoch', 'u32']],
-    refund_unwatched: [['refund_to', 'account']],
+    refund_ticket: [['refund_to', 'account']],
 } as const satisfies Record<string, readonly (readonly [string, FieldType])[]>;
 
 export type TicketAction = keyof typeof TICKET_FIELDS;
@@ -110,10 +112,15 @@ export function playbackMessage(request: PlaybackRequest): string {
 /** Room for a client clock running ahead of block time. */
 export const CLOCK_SKEW_MARGIN_MS = 5 * 60 * 1000;
 
-/** A signature expiry `ttlMs` after `nowMs`, kept a skew margin below the contract's one-hour limit. */
-export function signatureExpiry(nowMs: number, ttlMs = 10 * 60 * 1000): string {
+/** A signature expiry `ttlMs` after `nowMs`, kept a skew margin below the contract's limit. */
+export function signatureExpiry(nowMs: number, ttlMs = 10 * 60 * 1000, maxTtlMs = MAX_SIGNATURE_TTL_MS): string {
     if (!Number.isSafeInteger(nowMs) || nowMs <= 0 || !Number.isSafeInteger(ttlMs) || ttlMs <= 0) fail();
-    return `${nowMs + Math.min(ttlMs, MAX_SIGNATURE_TTL_MS - CLOCK_SKEW_MARGIN_MS)}`;
+    return `${nowMs + Math.min(ttlMs, maxTtlMs - CLOCK_SKEW_MARGIN_MS)}`;
+}
+
+/** The longest expiry a refund request can carry (7 days less the skew margin). */
+export function refundRequestExpiry(nowMs: number): string {
+    return signatureExpiry(nowMs, MAX_REFUND_SIGNATURE_TTL_MS, MAX_REFUND_SIGNATURE_TTL_MS);
 }
 
 export interface DeviceBinding {
@@ -251,7 +258,7 @@ export function buildRefundArgs(input: {
     expiresAtMs: string;
 }) {
     const { binding, ticket } = input;
-    const signature = ticket.sign(ticketMessage(binding, 'refund_unwatched', ticket.ticketId, input.expiresAtMs, {
+    const signature = ticket.sign(ticketMessage(binding, 'refund_ticket', ticket.ticketId, input.expiresAtMs, {
         refund_to: input.refundTo,
     }));
     return { ticket_id: ticket.ticketId, refund_to: input.refundTo, expires_at_ms: input.expiresAtMs, signature };

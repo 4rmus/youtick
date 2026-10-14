@@ -66,7 +66,7 @@ youtick.market-v2.ticket-sig.v1
 | `card_purchase` | `publication_id`, `session_public_key`, `certificate_sha256`, `payment_reference_hmac`, `gross_minor`, `currency` | `issue_card_ticket.device` |
 | `add_device` | `session_public_key`, `certificate_sha256`, `device_epoch` | `add_device` (any caller; the relayer submits) |
 | `revoke_device` | `session_public_key`, `device_epoch` | holder-signed `revoke_device` |
-| `refund_unwatched` | `refund_to` | `refund_unwatched` |
+| `refund_ticket` | `refund_to` | `refund_ticket` (the payment operator submits; anyone after a takedown) |
 
 `network` and `contract_id` stop reuse across networks and contracts, including on implicit
 accounts that exist on both networks. The action line stops reuse across calls.
@@ -105,11 +105,17 @@ Amounts are in micro-USDC.
 - `gross ≥ 5_000_000`.
 - `net = gross − vat`, `platform = floor(net / 20)`, `creator = net − platform`.
   `vat + platform + creator = gross`.
-- The whole gross amount stays in the ticket's escrow until the ticket settles.
-- On `mark_watched` or `release_expired`, VAT goes to the tax account, the platform share to
-  the platform balance and the creator share to the creator (push, with a balance fallback).
-- `refund_unwatched` returns the whole gross amount. Nothing has left escrow before it settles,
-  so a refund never uses another ticket's money.
+- The whole gross amount stays in the ticket's escrow until the ticket settles, watched or not.
+- `mark_watched` only records the watch: a crypto ticket becomes `watched_in_escrow`.
+- `release_expired`, 30 days after purchase, settles `purchased` and `watched_in_escrow` crypto
+  tickets: VAT to the tax balance, the platform share to the platform balance and the creator
+  share to the creator balance.
+- `refund_ticket` returns the whole gross amount of a `purchased` or `watched_in_escrow` ticket.
+  Nothing has left escrow before it settles, so a refund never uses another ticket's money.
+- Refund rule (owner decision 2026-10-10, same as the card provider's): refunds are for technical
+  failure, content not as described, or takedown; not for a change of mind. youtick decides, so
+  the payment operator submits the buyer-signed refund. After a takedown the buyer may submit
+  without youtick. The guardian's purchase pause stops operator refunds, not takedown refunds.
 
 For example, 5 USDC with 833,334 VAT gives net 4,166,666, platform 208,333 and creator 3,958,333.
 
@@ -191,7 +197,7 @@ could be reversed.
 | `add_device` | `{ ticket_id, session_public_key, certificate_sha256, device_epoch, expires_at_ms, signature }` |
 | `revoke_device` (holder) | `{ ticket_id, session_public_key, device_epoch, expires_at_ms, signature }` |
 | `platform_revoke_device` (platform role) | `{ ticket_id, session_public_key }` |
-| `refund_unwatched` | `{ ticket_id, refund_to, expires_at_ms, signature }` |
+| `refund_ticket` (payment operator; anyone after a takedown) | `{ ticket_id, refund_to, expires_at_ms, signature }` |
 | `mark_watched` (Bridge role) | `{ ticket_id }` |
 | `release_expired` (anyone) | `{ ticket_ids: [1..25] }`; NEAR caps one call's logs at 16,384 bytes |
 | `replace_upload_key` (job creator) | `{ job_id, new_public_key, expires_at_ms }`; see "Upload through NEAR Auth" |
@@ -202,7 +208,8 @@ could be reversed.
    after checking that each key, hex value and number round-trips to its canonical form. Never
    re-serialize parsed values.
 2. **Signature expiry.** Reject a signature that has expired, or whose `expires_at_ms` is more
-   than `3_600_000` ms ahead of the block time.
+   than `3_600_000` ms ahead of the block time. A `refund_ticket` signature may be up to
+   `604_800_000` ms (7 days) ahead, because the request waits for youtick's decision.
 3. **No deduplication by signature bytes.** Base64 trailing bits and verifier strictness can
    allow more than one accepted encoding of the same signature.
 4. **Price check.** The transferred amount must equal the attested gross and the publication's
@@ -221,14 +228,18 @@ could be reversed.
    the recovery scan and `ticket_id` uniqueness keep working.
 9. **Watched before playback.** The Bridge finalizes `mark_watched` before it issues the first
    playback token for a ticket.
-   - `mark_watched` succeeds for `purchased` tickets (settles) and for `watched` or `released`
-     tickets (no payment). Those tickets may play.
+   - `mark_watched` succeeds for `purchased` tickets (records the watch) and for `watched`,
+     `watched_in_escrow` or `released` tickets (no-op). Those tickets may play. No call moves
+     money on a watch.
    - It fails for `refunded` or `voided` tickets and for taken-down publications. Those get no
      token.
    - This closes the race between playing and refunding.
-10. **Refund window.** `refund_unwatched` is allowed while a crypto ticket is `purchased` and
-    younger than 30 days. After a takedown it stays open with no time limit; there is no other
-    exit for that escrow.
+10. **Refund window.** `refund_ticket` is allowed while a crypto ticket is `purchased` or
+    `watched_in_escrow` and younger than 30 days. After a takedown it stays open with no time
+    limit; there is no other exit for that escrow.
+11. **Ticket statuses.** `purchased`, `watched_in_escrow` (crypto, watched, money in escrow),
+    `watched` (card; on testnet also crypto tickets the earlier code settled on watch, which are
+    never refunded or released), `released`, `refunded`, `voided`.
 
 ## Playback request
 
@@ -254,10 +265,11 @@ The envelope is `{ "standard": "youtick_market", "version": "2.0.0", "event", "d
 | `ticket_purchased` | gross, VAT, net, platform and creator amounts; `vat_key_version` |
 | `card_ticket_issued` | `gross_minor`, `currency`, `payment_reference_hmac` |
 | `device_added`, `device_revoked` | `device_epoch` |
-| `ticket_watched`, `ticket_released` | the settled VAT, platform and creator amounts |
+| `ticket_watched` | the ticket's VAT, platform and creator amounts; `settled: false` (nothing moves on a watch) |
+| `ticket_released` | the settled VAT, platform and creator amounts |
 | `ticket_refunded` | `refunded_usdc_micro` |
 | `card_ticket_voided` | `reason` |
-| `creator_payout_credited` | the creator share credited to the creator balance after a failed push on `mark_watched` |
+| `creator_payout_credited` | earlier testnet code only: the creator share credited after a failed push on `mark_watched` |
 
 No event carries a buyer account. Field lists are in `schema.json`. The contract gate (E3) may
 add payout-outcome events. It must not remove fields listed here without a protocol version

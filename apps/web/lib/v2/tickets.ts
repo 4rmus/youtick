@@ -2,7 +2,10 @@
 import { scanTickets } from '../ticket-keys/recovery';
 import type { TicketKey } from '../ticket-keys/keys';
 
-export type TicketStatus = 'purchased' | 'watched' | 'refunded' | 'released' | 'voided';
+// `watched_in_escrow`: a crypto ticket watched while its money is still in escrow (refundable
+// through youtick for 30 days). `watched`: a card ticket, or a testnet crypto ticket the earlier
+// contract settled on watch.
+export type TicketStatus = 'purchased' | 'watched' | 'watched_in_escrow' | 'refunded' | 'released' | 'voided';
 
 export interface TicketDevice {
     session_public_key: string;
@@ -26,7 +29,7 @@ export interface MarketTicket {
 
 export type ViewContract = <T>(contractId: string, method: string, args: Record<string, unknown>) => Promise<T>;
 
-const STATUSES: TicketStatus[] = ['purchased', 'watched', 'refunded', 'released', 'voided'];
+const STATUSES: TicketStatus[] = ['purchased', 'watched', 'watched_in_escrow', 'refunded', 'released', 'voided'];
 const DECIMAL = /^(0|[1-9][0-9]{0,38})$/;
 
 /** Accepts only the fields this page uses, in the shapes the contract returns. */
@@ -68,7 +71,18 @@ export function deviceIsListed(ticket: MarketTicket, sessionPublicKey: string, n
     return ticket.devices.some((device) => device.session_public_key === sessionPublicKey && Number(device.expires_at_ms) > nowMs);
 }
 
-/** Statuses the Bridge plays: purchased (settles first), watched and released. */
+/** Statuses the Bridge plays: purchased (marked watched first), watched, watched_in_escrow and released. */
 export function playableStatus(status: TicketStatus): boolean {
-    return status === 'purchased' || status === 'watched' || status === 'released';
+    return status === 'purchased' || status === 'watched' || status === 'watched_in_escrow' || status === 'released';
+}
+
+/** The contract's refund window: 30 days after purchase (takedowns are handled by youtick). */
+export const REFUND_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+/** youtick's answer time. A request must leave it before the window closes and the escrow releases. */
+export const REFUND_DECISION_MS = 72 * 60 * 60 * 1000;
+
+/** A crypto ticket whose money is still in escrow, requested early enough for a decision in the window. */
+export function refundRequestable(ticket: MarketTicket, nowMs: number): boolean {
+    return ticket.rail === 'crypto' && (ticket.status === 'purchased' || ticket.status === 'watched_in_escrow')
+        && Number(ticket.purchased_at_ms) + REFUND_WINDOW_MS - REFUND_DECISION_MS > nowMs;
 }

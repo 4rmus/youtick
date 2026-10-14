@@ -1,6 +1,7 @@
 import {
     canonicalMarketEventJson,
     normalizeFinalMarketEvents,
+    watchSettled,
 } from './rebuild-market-read-model.mjs';
 
 export const MAX_FINAL_EVENTS_PER_BATCH = 16;
@@ -265,7 +266,9 @@ function projectionStatements(db, record, data) {
             ticket_watched: 'watched', ticket_released: 'released',
             ticket_refunded: 'refunded', card_ticket_voided: 'voided',
         }[record.event.event];
-        const settled = status === 'watched' || status === 'released';
+        // A watch settles only on the earlier testnet code (no `settled` field); current code
+        // keeps the money in escrow (`settled: false`) until release or refund.
+        const settled = status === 'released' || (status === 'watched' && watchSettled(data));
         return [bound(db, `
             UPDATE market_v2_tickets SET status=?, settled_at_ms=COALESCE(?, settled_at_ms),
                 source_block_height=?
