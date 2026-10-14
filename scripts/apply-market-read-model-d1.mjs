@@ -46,7 +46,13 @@ export async function applyFinalMarketBlock(db, rawBlock) {
     return db.batch(finalBlockStatements(db, normalizeFinalMarketBlock(rawBlock)));
 }
 
-export async function applyFinalMarketBlockBatch(db, rawBlocks, queryBudget = MAX_FINAL_BATCH_QUERIES) {
+/**
+ * `replaceWatermark` (W3.5 sparse scan only): the batch first deletes the watermark row if it still
+ * holds exactly that block, so the following upsert inserts instead of updating and the contiguity
+ * trigger (which guards updates) does not apply to a deliberate jump over blocks without events. If the
+ * row changed meanwhile, nothing is deleted, the upsert updates, and the trigger aborts the batch.
+ */
+export async function applyFinalMarketBlockBatch(db, rawBlocks, queryBudget = MAX_FINAL_BATCH_QUERIES, options = {}) {
     if (!Array.isArray(rawBlocks) || rawBlocks.length < 1 || rawBlocks.length > MAX_FINAL_BLOCKS_PER_BATCH) {
         throw new Error('invalid_d1_block_batch_size');
     }
@@ -67,6 +73,17 @@ export async function applyFinalMarketBlockBatch(db, rawBlocks, queryBudget = MA
         throw new Error('non_contiguous_d1_block_batch');
     }
     const statements = blocks.flatMap((block) => finalBlockStatements(db, block));
+    const replace = options.replaceWatermark;
+    if (replace !== undefined) {
+        if (!Number.isSafeInteger(replace?.block_height) || typeof replace.block_hash !== 'string'
+            || blocks[0].block_height <= replace.block_height) {
+            throw new Error('invalid_read_model_watermark');
+        }
+        statements.unshift(bound(db, `
+            DELETE FROM finality_watermarks
+            WHERE network = ? AND contract_id = ? AND block_height = ? AND block_hash = ?
+        `, [blocks[0].network, blocks[0].contract_id, replace.block_height, replace.block_hash]));
+    }
     if (statements.length > Math.min(queryBudget, MAX_FINAL_BATCH_QUERIES)) {
         throw new Error(alone && blocks[0].events.length > MAX_FINAL_EVENTS_PER_BATCH
             ? 'd1_final_block_query_budget_exceeded' : 'd1_block_batch_query_limit_exceeded');

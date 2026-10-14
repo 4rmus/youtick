@@ -270,10 +270,13 @@ What differs from the V1 read model:
   events before it are not indexed), `READ_MODEL_WEB_ORIGIN=http://localhost:3000` (the V2
   instance is the only one that accepts a plain-HTTP origin), one-minute cron, backfill off.
   `READ_MODEL_NEAR_RPC_URL` is the `V2_NEAR_RPC_URL` secret.
-- **Scanner (W3.4).** `v2-testnet` scans like the public testnet: a scan cursor, predecessor
-  proof on every block, at most 150 fetches a run paced at one per 350 ms, and a skipped height
-  (neardata `null`) crossed through the next linked block. Before W3.4 it used the V1 one-block
-  scan, which fails the run on a skipped height and never advances past it.
+- **Scanner (W3.5).** `v2-testnet` reads only the blocks with Market V2 events, found through
+  FastNEAR's transaction index, and moves the watermark over the blocks between them (details in
+  `read-model/README.md`). The W3.4 linked scan of every block could not keep up: free neardata
+  answers 30 blocks a minute and the chain makes about 100 (2026-10-14: 40 blocks in 3 minutes
+  against 320, every run ending `neardata_unavailable`). Each run logs `escrow.matched`, which
+  compares Market V2's escrow at the watermark with the purchased crypto tickets in D1; a mismatch
+  means the index missed an event and the affected release waits.
 - **Migrations** `read-model/d1/0001` to `0010` travel in the attested packet and the deploy job
   applies them with `wrangler d1 migrations apply --remote` before the Workers go out; wrangler
   skips the ones the database already records.

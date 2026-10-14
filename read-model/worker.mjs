@@ -1,5 +1,6 @@
 import { currentCatalogEnabled, refreshCurrentCatalog, CURRENT_CATALOG_QUERY_BUDGET } from './current-catalog.mjs';
 import { fetchNeardataMarketBlock } from '../scripts/fetch-neardata-market-block.mjs';
+import { discoverMarketEventBlocks, fetchFastnearIndexHead } from '../scripts/fastnear-market-discovery.mjs';
 import {
     applyFinalMarketBlockBatch, finalBlockQueryCost, MAX_FINAL_BLOCKS_PER_BATCH,
     MAX_FINAL_BATCH_QUERIES, MAX_FINAL_EVENTS_PER_BATCH,
@@ -17,8 +18,22 @@ const ACCOUNT_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
 const MAX_BLOCKS_PER_RUN = 180;
 // Environments whose scanner keeps a cursor, proves each block's predecessor and paces its fetches, so a
 // skipped height (neardata `null`) is crossed through the next linked block instead of failing the run:
-// the public testnet and, since W3.4, the V2 testnet. The V1 testnet keeps the strict one-block scan.
-const LINKED_SCAN_ENVIRONMENTS = new Set(['public-testnet', 'v2-testnet']);
+// the public testnet. The V1 testnet keeps the strict one-block scan.
+const LINKED_SCAN_ENVIRONMENTS = new Set(['public-testnet']);
+// W3.5: environments that read only the blocks FastNEAR's transaction index names
+// (scripts/fastnear-market-discovery.mjs). Every block from free neardata (30 a minute) cannot keep up
+// with the chain, and Market V2 events are rare; `release_expired` re-checks every ticket on chain.
+const SPARSE_SCAN_ENVIRONMENTS = new Set(['v2-testnet']);
+// The index lags the chain by a few blocks and stores a transaction once its receipts ran; stay behind.
+const SPARSE_SAFETY_BLOCKS = 120;
+// Transactions included before the watermark can still log events after it.
+const SPARSE_TX_LOOKBACK_BLOCKS = 600;
+const SPARSE_MAX_WINDOW_BLOCKS = 100_000;
+const SPARSE_MAX_EVENT_BLOCKS = 20;
+const SPARSE_HEADER_ATTEMPTS = 10;
+const SPARSE_WINDOW_HALVINGS = 8;
+// DELETE and upsert of the final watermark write, and the escrow read.
+const SPARSE_RESERVED_QUERIES = 3;
 const MAX_RPC_RESPONSE_BYTES = 256 * 1024;
 const TELEMETRY_SCHEMA = 'youtick.read-model-ingestion.v1';
 const BACKFILL_TELEMETRY_SCHEMA = 'youtick.read-model-backfill.v1';
@@ -45,6 +60,14 @@ const INGESTION_ERROR_CODES = new Set([
     'mixed_d1_final_block_batch',
     'neardata_unavailable',
     'read_model_final_rpc_unavailable',
+    'fastnear_discovery_incomplete',
+    'fastnear_discovery_limit',
+    'fastnear_discovery_unavailable',
+    'invalid_fastnear_discovery',
+    'invalid_fastnear_discovery_request',
+    'invalid_read_model_rpc',
+    'read_model_rpc_unavailable',
+    'read_model_watermark_conflict',
 ]);
 const BACKFILL_ERROR_CODES = new Set([
     ...INGESTION_ERROR_CODES,
@@ -73,6 +96,9 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
         : fetch;
     const fetchFinalHeight = dependencies.fetchFinalHeight ?? ((env) => fetchNearFinalBlockHeight(env, boundedFetch));
     const fetchBlock = dependencies.fetchBlock ?? ((input) => fetchNeardataMarketBlock(input, boundedFetch));
+    if (SPARSE_SCAN_ENVIRONMENTS.has(env.VIDEO_ENVIRONMENT)) {
+        return ingestSparseMarketReadModelBatch(env, dependencies, config, { boundedFetch, fetchFinalHeight, fetchBlock });
+    }
     const finalBlockHeight = await fetchFinalHeight(env);
     if (!Number.isSafeInteger(finalBlockHeight)
         || finalBlockHeight < config.startBlockHeight) {
@@ -197,6 +223,224 @@ async function ingestEnabledMarketReadModelBatch(env, dependencies, config = ing
     };
 }
 
+/**
+ * W3.5 sparse scan: event blocks come from the transaction index, everything between them is skipped.
+ * Each event block is read from neardata and written as in the full scan; once every event block up
+ * to the coverage height is written, the watermark moves to that height's header from RPC. The run
+ * then compares Market V2's escrow at the watermark with the purchased crypto tickets it projected.
+ */
+async function ingestSparseMarketReadModelBatch(env, dependencies, config, { boundedFetch, fetchFinalHeight, fetchBlock }) {
+    const db = env.MARKET_READ_MODEL;
+    const logger = dependencies.logger ?? console;
+    const now = dependencies.now ?? Date.now;
+    const sleep = dependencies.sleepFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const fetchIndexHead = dependencies.fetchIndexHead ?? ((network) => fetchFastnearIndexHead(network, boundedFetch));
+    const discover = dependencies.discoverEventBlocks ?? ((input) => discoverMarketEventBlocks(input, boundedFetch));
+    const fetchHeader = dependencies.fetchBlockHeader ?? ((height) => fetchNearBlockHeader(env, height, boundedFetch));
+    const fetchEscrow = dependencies.fetchEscrowBalance
+        ?? ((height) => fetchMarketEscrowBalance(env, config.contractId, height, boundedFetch));
+
+    const [finalBlockHeight, indexHead] = await Promise.all([fetchFinalHeight(env), fetchIndexHead(config.network)]);
+    if (!Number.isSafeInteger(finalBlockHeight) || finalBlockHeight < config.startBlockHeight) {
+        throw new Error('invalid_read_model_final_height');
+    }
+    if (!Number.isSafeInteger(indexHead) || indexHead < 1) throw new Error('invalid_fastnear_discovery');
+    const stored = await db.prepare(`
+        SELECT block_height, block_hash FROM finality_watermarks WHERE network = ? AND contract_id = ?
+    `).bind(config.network, config.contractId).first();
+    if (stored !== null && (!Number.isSafeInteger(stored?.block_height) || stored.block_height < config.startBlockHeight - 1
+        || typeof stored.block_hash !== 'string')) {
+        throw new Error('invalid_read_model_watermark');
+    }
+    // The row being replaced: each write deletes it only while it still holds this block.
+    let watermark = stored === null ? null : { block_height: stored.block_height, block_hash: stored.block_hash };
+    const nextBlockHeight = stored === null ? config.startBlockHeight : stored.block_height + 1;
+    const watermarkHeight = nextBlockHeight - 1;
+    const target = Math.min(finalBlockHeight, indexHead) - SPARSE_SAFETY_BLOCKS;
+    let coverage = Math.min(target, watermarkHeight + SPARSE_MAX_WINDOW_BLOCKS);
+    const telemetry = { schema: TELEMETRY_SCHEMA, mode: 'sparse', final_block_height: finalBlockHeight };
+    if (coverage <= watermarkHeight) return { ...telemetry, status: 'caught_up', block_count: 0, remaining_blocks: 0 };
+
+    // Event blocks already below the watermark are discovered again over the lookback window: one the
+    // index had not stored when the watermark passed it cannot be written any more, so it raises an alarm.
+    const fromTxHeight = Math.max(config.startBlockHeight, nextBlockHeight - SPARSE_TX_LOOKBACK_BLOCKS);
+    let discovered;
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            discovered = await discover({ network: config.network, contractId: config.contractId,
+                fromTxHeight, toTxHeight: coverage, minBlockHeight: fromTxHeight, maxBlockHeight: coverage });
+            break;
+        } catch (error) {
+            // A window busier than the index's page limit halves until it fits.
+            if (!(error instanceof Error) || error.message !== 'fastnear_discovery_limit'
+                || attempt === SPARSE_WINDOW_HALVINGS || coverage - watermarkHeight < 2) throw error;
+            coverage = watermarkHeight + Math.floor((coverage - watermarkHeight) / 2);
+        }
+    }
+    if (!Array.isArray(discovered) || discovered.some((height, index) => !Number.isSafeInteger(height)
+        || height < fromTxHeight || height > coverage || (index > 0 && height <= discovered[index - 1]))) {
+        throw new Error('invalid_fastnear_discovery');
+    }
+    const heights = discovered.filter((height) => height >= nextBlockHeight);
+    const below = discovered.filter((height) => height < nextBlockHeight);
+
+    const invocationQueries = dependencies.queryBudget ?? MAX_FINAL_BATCH_QUERIES;
+    // Kept back for the final watermark write (DELETE and upsert) and the escrow read.
+    let remainingQueries = invocationQueries - SPARSE_RESERVED_QUERIES;
+    const telemetryExtra = {};
+    if (below.length > 0) {
+        remainingQueries -= 1;
+        const written = await db.prepare(`
+            SELECT DISTINCT block_height FROM chain_events
+            WHERE network = ? AND contract_id = ? AND block_height >= ? AND block_height <= ?
+        `).bind(config.network, config.contractId, below[0], below.at(-1)).all();
+        const known = new Set((written?.results ?? []).map((row) => row.block_height));
+        const missed = below.filter((height) => !known.has(height));
+        if (missed.length > 0) {
+            telemetryExtra.missed_event_blocks = missed;
+            logger.error(JSON.stringify({ schema: TELEMETRY_SCHEMA, status: 'missed_event_blocks', block_heights: missed }));
+        }
+    }
+
+    const write = async (block) => {
+        try {
+            await applyFinalMarketBlockBatch(db, [block], remainingQueries + SPARSE_RESERVED_QUERIES,
+                watermark ? { replaceWatermark: watermark } : {});
+        } catch (error) {
+            // Another writer moved the watermark between the read and this write; nothing was written.
+            if (String(error?.message ?? '').includes('non_contiguous_finality_watermark')) {
+                throw new Error('read_model_watermark_conflict');
+            }
+            throw error;
+        }
+        watermark = { block_height: block.block_height, block_hash: block.block_hash };
+    };
+
+    let lastFetchAt = now() - 350;
+    let last = null;
+    let blockCount = 0;
+    for (const height of heights.slice(0, SPARSE_MAX_EVENT_BLOCKS)) {
+        await sleep(Math.max(0, 350 - (now() - lastFetchAt)));
+        lastFetchAt = now();
+        const block = await fetchBlock({ network: config.network, contractId: config.contractId,
+            blockHeight: height, requirePredecessor: true });
+        if (!block || block.block_height !== height || !Array.isArray(block.events)) throw new Error('invalid_neardata_block');
+        // One extra query deletes the replaced watermark row.
+        const cost = finalBlockQueryCost(block.events.length) + 1;
+        if (cost > invocationQueries - SPARSE_RESERVED_QUERIES - 1) throw new Error('d1_final_block_query_budget_exceeded');
+        if (cost > remainingQueries) break;
+        await write(block);
+        remainingQueries -= cost;
+        last = block;
+        blockCount += 1;
+    }
+    const lastEventHeight = last?.block_height ?? watermarkHeight;
+    if (blockCount < heights.length) {
+        return { ...telemetry, ...telemetryExtra, status: 'catching_up', block_count: blockCount,
+            remaining_blocks: target - lastEventHeight, block_height: last?.block_height,
+            block_hash: last?.block_hash, event_count: last?.events.length };
+    }
+
+    // Every event block up to the coverage height is written: move the watermark there.
+    let header = null;
+    for (let height = coverage; !header && height > lastEventHeight && height > coverage - SPARSE_HEADER_ATTEMPTS; height -= 1) {
+        header = await fetchHeader(height);
+    }
+    if (header && header.height > lastEventHeight) {
+        await write({
+            network: config.network, contract_id: config.contractId, finality: 'final',
+            block_height: header.height, block_hash: header.hash,
+            prev_block_height: header.prev_height, prev_block_hash: header.prev_hash, events: [],
+        });
+        last = { block_height: header.height, block_hash: header.hash, events: [] };
+    }
+    // The safety margin behind final is by design; only a window cap leaves work for the next run.
+    const result = { ...telemetry, ...telemetryExtra, status: coverage < target ? 'catching_up' : 'applied',
+        block_count: blockCount, remaining_blocks: target - coverage, coverage_block_height: coverage };
+    if (!last) return result;
+    Object.assign(result, { block_height: last.block_height, block_hash: last.block_hash, event_count: last.events.length });
+
+    // Escrow holds the gross of every purchased crypto ticket; a gap in the index shows up here.
+    // The check only reports: the blocks above are already written.
+    try {
+        const chain = await fetchEscrow(last.block_height);
+        const rows = await db.prepare(`
+            SELECT gross_amount FROM market_v2_tickets
+            WHERE network = ? AND contract_id = ? AND rail = 'crypto' AND status = 'purchased'
+        `).bind(config.network, config.contractId).all();
+        const readModel = (rows?.results ?? []).reduce((sum, row) => sum + BigInt(row.gross_amount), 0n).toString();
+        result.escrow = { chain_usdc_micro: chain, read_model_usdc_micro: readModel, matched: chain === readModel };
+    } catch (error) {
+        const code = error instanceof Error ? error.message : '';
+        result.escrow = { matched: null, error_code: INGESTION_ERROR_CODES.has(code) ? code : 'read_model_escrow_check_failed' };
+        return result;
+    }
+    if (!result.escrow.matched) {
+        logger.error(JSON.stringify({ schema: TELEMETRY_SCHEMA, status: 'escrow_mismatch',
+            block_height: last.block_height, ...result.escrow }));
+    }
+    return result;
+}
+
+async function nearRpc(env, id, method, params, fetchImpl) {
+    let response;
+    try {
+        response = await fetchImpl(validRpcUrl(env.READ_MODEL_NEAR_RPC_URL), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+            signal: AbortSignal.timeout(2_500),
+        });
+    } catch {
+        throw new Error('read_model_rpc_unavailable');
+    }
+    const contentLength = Number(response.headers.get('Content-Length') || '0');
+    if (!response.ok || (contentLength > 0 && contentLength > MAX_RPC_RESPONSE_BYTES)) {
+        throw new Error('read_model_rpc_unavailable');
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength < 2 || bytes.byteLength > MAX_RPC_RESPONSE_BYTES) throw new Error('invalid_read_model_rpc');
+    let value;
+    try {
+        value = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+        throw new Error('invalid_read_model_rpc');
+    }
+    if (value?.jsonrpc !== '2.0' || value?.id !== id) throw new Error('invalid_read_model_rpc');
+    return value;
+}
+
+/** A block's header by height, or null when the height was skipped. */
+export async function fetchNearBlockHeader(env, height, fetchImpl = fetch) {
+    const value = await nearRpc(env, 'youtick-read-model-header', 'block', { block_id: height }, fetchImpl);
+    if (value.error) {
+        if (value.error?.cause?.name === 'UNKNOWN_BLOCK') return null;
+        throw new Error('read_model_rpc_unavailable');
+    }
+    const header = value.result?.header;
+    if (header?.height !== height || typeof header.hash !== 'string' || !Number.isSafeInteger(header.prev_height)
+        || header.prev_height >= height || typeof header.prev_hash !== 'string') {
+        throw new Error('invalid_read_model_rpc');
+    }
+    return { height, hash: header.hash, prev_height: header.prev_height, prev_hash: header.prev_hash };
+}
+
+export async function fetchMarketEscrowBalance(env, contractId, height, fetchImpl = fetch) {
+    const value = await nearRpc(env, 'youtick-read-model-escrow', 'query', {
+        request_type: 'call_function', account_id: contractId, method_name: 'get_escrow_balance',
+        args_base64: btoa('{}'), block_id: height,
+    }, fetchImpl);
+    const bytes = value.result?.result;
+    if (value.error || !Array.isArray(bytes) || bytes.length > 64) throw new Error('read_model_rpc_unavailable');
+    try {
+        const balance = JSON.parse(new TextDecoder().decode(Uint8Array.from(bytes)));
+        if (typeof balance !== 'string' || !/^(0|[1-9][0-9]{0,39})$/.test(balance)) throw new Error('invalid');
+        return balance;
+    } catch {
+        throw new Error('invalid_read_model_rpc');
+    }
+}
+
 export async function ingestMarketReadModelBackfill(env, body, dependencies = {}) {
     if (env.READ_MODEL_BACKFILL_ENABLED !== 'true') {
         return { schema: BACKFILL_TELEMETRY_SCHEMA, status: 'disabled' };
@@ -297,7 +541,7 @@ export async function fetchNearFinalBlockHeight(env, fetchImpl = fetch) {
 
 function ingestionConfig(env) {
     const startBlockHeight = Number(env.READ_MODEL_START_BLOCK_HEIGHT);
-    if ((LINKED_SCAN_ENVIRONMENTS.has(env.VIDEO_ENVIRONMENT)
+    if (((LINKED_SCAN_ENVIRONMENTS.has(env.VIDEO_ENVIRONMENT) || SPARSE_SCAN_ENVIRONMENTS.has(env.VIDEO_ENVIRONMENT))
             && (env.MARKET_CONTRACT_ID !== env.READ_MODEL_CONTRACT_ID || !env.READ_MODEL_CONTRACT_ID?.endsWith('.testnet')))
         || env.READ_MODEL_NETWORK !== 'testnet'
         || !ACCOUNT_PATTERN.test(env.READ_MODEL_CONTRACT_ID || '')
