@@ -266,7 +266,7 @@ describe('CKD sign-in (option C2)', () => {
 
     function setup(options: { accountOnChain?: string; nonceOverride?: string } = {}) {
         const network = mpc(bls.utils.randomSecretKey());
-        const trustRoots = { testnet: [{ gateAccountId: GATE, mpcPublicKey: network.mpcPublicKey }], mainnet: [] };
+        const trustRoots = { testnet: [{ gateAccountId: GATE, mpcPublicKey: network.mpcPublicKey, role: 'current' as const }], mainnet: [] };
         let nonce = '';
         const oidc = fakeOidc((url) => {
             nonce = url.searchParams.get('nonce')!;
@@ -292,7 +292,7 @@ describe('CKD sign-in (option C2)', () => {
 
     it('binds the login nonce to the ephemeral key and decrypts the same key across logins', async () => {
         const network = mpc(bls.utils.randomSecretKey());
-        const trustRoots = { testnet: [{ gateAccountId: GATE, mpcPublicKey: network.mpcPublicKey }], mainnet: [] };
+        const trustRoots = { testnet: [{ gateAccountId: GATE, mpcPublicKey: network.mpcPublicKey, role: 'current' as const }], mainnet: [] };
         const keys: string[] = [];
         for (let attempt = 0; attempt < 2; attempt += 1) {
             let nonce = '';
@@ -336,7 +336,7 @@ describe('CKD sign-in (option C2)', () => {
         expect(trustedCkdGates('testnet')).toEqual(['v2-ckd-gate-261007.youtick-dev-v3.testnet']);
         expect(trustedCkdGates('testnet')).not.toContain(GATE);
         expect(trustedCkdGates('mainnet')).toEqual([]);
-        const roots = { testnet: [{ gateAccountId: 'other-gate.testnet', mpcPublicKey: encodeG2(G2.BASE) }], mainnet: [] };
+        const roots = { testnet: [{ gateAccountId: 'other-gate.testnet', mpcPublicKey: encodeG2(G2.BASE), role: 'current' as const }], mainnet: [] };
         for (const trustRoots of [undefined, roots]) {
             const popup = new FakePopup();
             const submit = vi.fn();

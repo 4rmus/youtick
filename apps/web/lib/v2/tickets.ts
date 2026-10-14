@@ -57,14 +57,31 @@ export function readTicket(view: ViewContract, contractId: string, ticketId: str
 export interface OwnedTicket {
     key: TicketKey;
     ticket: MarketTicket;
+    /** The gate whose CKD secret derives this ticket's key. */
+    gateAccountId: string;
 }
 
-export async function findOwnedTickets(view: ViewContract, contractId: string, ckdKey: Uint8Array) {
-    const result = await scanTickets(ckdKey, (ticketId) => readTicket(view, contractId, ticketId));
-    return {
-        tickets: result.tickets.map(({ key, ticket }) => ({ key, ticket })) as OwnedTicket[],
-        nextIndex: result.nextIndex,
-    };
+/** A CKD secret held in memory for this session, by the gate it came from. */
+export interface GateKey {
+    gateAccountId: string;
+    ckdKey: Uint8Array;
+}
+
+/**
+ * Runs the recovery scan with every CKD key of the session (current gate first). Different gates
+ * give different secrets, so their tickets never overlap. `nextIndex` is the current gate's only:
+ * new purchases always use the current gate.
+ */
+export async function findOwnedTickets(view: ViewContract, contractId: string, keys: readonly GateKey[]) {
+    if (keys.length === 0) throw new Error('no_ckd_key');
+    const tickets: OwnedTicket[] = [];
+    let nextIndex = 0;
+    for (const [position, { gateAccountId, ckdKey }] of keys.entries()) {
+        const result = await scanTickets(ckdKey, (ticketId) => readTicket(view, contractId, ticketId));
+        tickets.push(...result.tickets.map(({ key, ticket }) => ({ key, ticket, gateAccountId })));
+        if (position === 0) nextIndex = result.nextIndex;
+    }
+    return { tickets, nextIndex };
 }
 
 export function deviceIsListed(ticket: MarketTicket, sessionPublicKey: string, nowMs: number): boolean {

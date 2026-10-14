@@ -24,7 +24,7 @@ const STATUS_LABELS: Record<TicketStatus, string> = {
 };
 
 export function MyTickets() {
-    const { config, session, view, signOut } = useNearAuthV2();
+    const { config, session, view, pendingGates, unlockGate, signOut } = useNearAuthV2();
     const [device, setDevice] = useState<DeviceKey | null>(null);
     const [deviceError, setDeviceError] = useState(false);
     const [open, setOpen] = useState<string | null>(null);
@@ -39,8 +39,10 @@ export function MyTickets() {
     }, [signedIn, config]);
 
     const tickets = useQuery({
-        queryKey: ['v2Tickets', signedIn ? session.accountId : null, config.marketContractId],
-        queryFn: () => findOwnedTickets(view, config.marketContractId, (session as { ckdKey: Uint8Array }).ckdKey),
+        // The gates (never the secrets) are part of the key, so unlocking a retired gate rescans.
+        queryKey: ['v2Tickets', signedIn ? session.accountId : null, config.marketContractId,
+            signedIn ? session.gateKeys.map((key) => key.gateAccountId).join(',') : ''],
+        queryFn: () => findOwnedTickets(view, config.marketContractId, signedIn ? session.gateKeys : []),
         enabled: signedIn,
         staleTime: 30_000,
         // The CKD key must not leave memory through the query cache's persistence or devtools.
@@ -63,6 +65,24 @@ export function MyTickets() {
         {tickets.isError && <p className="text-red-300" role="alert">Your tickets could not be loaded. Please try again.</p>}
         {deviceError && <p className="text-red-300" role="alert">This browser cannot create a playback key, so tickets cannot be played here.</p>}
         {tickets.data && tickets.data.tickets.length === 0 && <p className="text-white/70">You have no tickets yet.</p>}
+        {pendingGates.length > 0 && <Card className="space-y-3 p-5">
+            <p className="text-sm text-white/80">
+                Tickets bought before a security update of our sign-in may need one more sign-in to show up here. It opens the same
+                sign-in window and uses the same account.
+            </p>
+            {pendingGates.map((gate) => <div key={gate.gateAccountId} className="space-y-1">
+                <Button variant="outline" className="min-h-11 gap-2" disabled={gate.state === 'signing_in'} onClick={() => unlockGate(gate.gateAccountId)}>
+                    {gate.state === 'signing_in' && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                    Find earlier tickets{pendingGates.length > 1 ? ` (${gate.gateAccountId})` : ''}
+                </Button>
+                {gate.state === 'error' && <p className="text-sm text-red-300" role="alert">
+                    {gate.error === 'ckd_account_changed'
+                        ? 'That sign-in belongs to a different account. Sign in with the account you used here.'
+                        : gate.error === 'popup_blocked' ? 'Your browser blocked the sign-in window. Allow pop-ups and try again.'
+                            : 'The sign-in did not complete. Please try again.'}
+                </p>}
+            </div>)}
+        </Card>}
         {tickets.data?.tickets.map(({ key, ticket }) => {
             const listed = Boolean(device && deviceIsListed(ticket, device.sessionPublicKey, tickets.dataUpdatedAt));
             const playable = playableStatus(ticket.status);

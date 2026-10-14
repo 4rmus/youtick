@@ -135,7 +135,8 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
         setError('');
         track('approval_started');
         try {
-            const scan = await findOwnedTickets(view, config.marketContractId, session.ckdKey);
+            // The index comes from the current gate's scan; purchases never use a retired gate.
+            const scan = await findOwnedTickets(view, config.marketContractId, session.gateKeys.slice(0, 1));
             let index = scan.nextIndex;
             while (reserved.current.has(index)) index += 1;
             reserved.current.add(index);
