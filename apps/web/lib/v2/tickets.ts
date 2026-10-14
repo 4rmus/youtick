@@ -98,8 +98,22 @@ export const REFUND_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 /** youtick's answer time. A request must leave it before the window closes and the escrow releases. */
 export const REFUND_DECISION_MS = 72 * 60 * 60 * 1000;
 
-/** A crypto ticket whose money is still in escrow, requested early enough for a decision in the window. */
-export function refundRequestable(ticket: MarketTicket, nowMs: number): boolean {
-    return ticket.rail === 'crypto' && (ticket.status === 'purchased' || ticket.status === 'watched_in_escrow')
-        && Number(ticket.purchased_at_ms) + REFUND_WINDOW_MS - REFUND_DECISION_MS > nowMs;
+/**
+ * A crypto ticket whose money is still in escrow, requested early enough for a decision in the
+ * window. After a takedown the contract keeps the refund open with no time limit, and youtick
+ * refunds without review.
+ */
+export function refundRequestable(ticket: MarketTicket, nowMs: number, takenDown = false): boolean {
+    if (ticket.rail !== 'crypto' || (ticket.status !== 'purchased' && ticket.status !== 'watched_in_escrow')) return false;
+    return takenDown || Number(ticket.purchased_at_ms) + REFUND_WINDOW_MS - REFUND_DECISION_MS > nowMs;
+}
+
+/** The publications among `publicationIds` that are taken down, read from Market V2. */
+export async function takenDownPublications(view: ViewContract, contractId: string, publicationIds: readonly string[]): Promise<Set<string>> {
+    const takenDown = new Set<string>();
+    for (const publicationId of new Set(publicationIds)) {
+        const publication = await view<{ publication_id?: string; availability?: string } | null>(contractId, 'get_publication', { publication_id: publicationId });
+        if (publication?.publication_id === publicationId && publication.availability === 'TAKEDOWN') takenDown.add(publicationId);
+    }
+    return takenDown;
 }

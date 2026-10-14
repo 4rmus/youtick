@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { formatUsdc } from '@/lib/livepeer-publication';
 import { loadDeviceKey, type DeviceKey } from '@/lib/v2/device-key';
-import { deviceIsListed, findOwnedTickets, playableStatus, refundRequestable, type TicketStatus } from '@/lib/v2/tickets';
+import { deviceIsListed, findOwnedTickets, playableStatus, refundRequestable, takenDownPublications, type TicketStatus } from '@/lib/v2/tickets';
 import { useNearAuthV2 } from './NearAuthV2Provider';
 import { RefundRequest } from './RefundRequest';
 import { SignInPanel } from './SignInPanel';
@@ -42,7 +42,11 @@ export function MyTickets() {
         // The gates (never the secrets) are part of the key, so unlocking a retired gate rescans.
         queryKey: ['v2Tickets', signedIn ? session.accountId : null, config.marketContractId,
             signedIn ? session.gateKeys.map((key) => key.gateAccountId).join(',') : ''],
-        queryFn: () => findOwnedTickets(view, config.marketContractId, signedIn ? session.gateKeys : []),
+        queryFn: async () => {
+            const found = await findOwnedTickets(view, config.marketContractId, signedIn ? session.gateKeys : []);
+            const takenDown = await takenDownPublications(view, config.marketContractId, found.tickets.map(({ ticket }) => ticket.publication_id));
+            return { ...found, takenDown };
+        },
         enabled: signedIn,
         staleTime: 30_000,
         // The CKD key must not leave memory through the query cache's persistence or devtools.
@@ -85,7 +89,9 @@ export function MyTickets() {
         </Card>}
         {tickets.data?.tickets.map(({ key, ticket }) => {
             const listed = Boolean(device && deviceIsListed(ticket, device.sessionPublicKey, tickets.dataUpdatedAt));
-            const playable = playableStatus(ticket.status);
+            const takenDown = tickets.data.takenDown.has(ticket.publication_id);
+            // A taken-down video cannot be played; the Bridge refuses it too.
+            const playable = playableStatus(ticket.status) && !takenDown;
             return <Card key={ticket.ticket_id} className="space-y-3 p-5">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
@@ -103,9 +109,10 @@ export function MyTickets() {
                 {playable && !listed && device && <p className="text-sm text-white/60">
                     This device is not linked to this ticket yet. Watching on a new device will be available soon.
                 </p>}
-                {session.status === 'signed_in' && refundRequestable(ticket, tickets.dataUpdatedAt) && <RefundRequest
+                {takenDown && <p className="text-sm text-amber-200">This video was removed and can no longer be watched.</p>}
+                {session.status === 'signed_in' && refundRequestable(ticket, tickets.dataUpdatedAt, takenDown) && <RefundRequest
                     binding={{ network: config.auth.network, contractId: config.marketContractId }}
-                    ticket={key} accountId={session.accountId} paymentServiceUrl={config.paymentServiceUrl} />}
+                    ticket={key} accountId={session.accountId} paymentServiceUrl={config.paymentServiceUrl} takenDown={takenDown} />}
             </Card>;
         })}
     </div>;

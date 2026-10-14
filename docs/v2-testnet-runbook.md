@@ -347,8 +347,9 @@ Bridge, read model and web follow it on `main` (`contracts/market-v2/README.md`,
   account, valid 7 days) and posts it with the buyer's description to the payment service inbox
   (`POST /v1/refund-requests`); without the inbox it falls back to an e-mail to
   `contact@youtick.net`. youtick replies within 72 hours. The page offers the request until day 27,
-  so a decision fits in the 30-day window; it does not yet offer one for a taken-down ticket older
-  than 27 days (the contract allows that refund; the buyer writes to youtick).
+  so a decision fits in the 30-day window. For a taken-down video the ticket shows "This video was
+  removed" and "Get your money back" with no deadline and no description to write; the owner
+  refunds those with `refunds.mjs approve-takedowns` (no review).
 - **Operator tool.** `workers/payment-service/scripts/refunds.mjs` (`list`, `approve`, `decline`,
   `record`) runs on the owner's machine with `REFUND_ADMIN_TOKEN` in the environment. `approve`
   signs `refund_ticket` with `~/youtick-v2-testnet-keys/payment_operator.json`; that key never goes

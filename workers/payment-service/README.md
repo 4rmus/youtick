@@ -82,6 +82,7 @@ export REFUND_ADMIN_TOKEN=…   # from the owner's password manager; never a fil
 node scripts/refunds.mjs list
 node scripts/refunds.mjs approve <request_id> --key-file ~/youtick-v2-testnet-keys/payment_operator.json
 node scripts/refunds.mjs decline <request_id> --note "The video plays normally."
+node scripts/refunds.mjs approve-takedowns --key-file ~/youtick-v2-testnet-keys/payment_operator.json
 ```
 
 `PAYMENT_SERVICE_URL` (default `https://pay-v2-testnet.youtick.net`), `NEAR_RPC_URL` (default
@@ -90,7 +91,10 @@ defaults) can be overridden. `list` sorts by the moment each refund window close
 closing within 72 hours. `approve` re-reads the ticket, refuses a closed window, checks that the key
 file's public key is an access key of the payment operator, asks for confirmation, prints the
 transaction hash before sending (for `record` if the run stops), sends `refund_ticket` and waits
-for the final outcome. The private key is read only by `approve` and never printed.
+for the final outcome. `approve-takedowns` does the same, after one confirmation, for every
+pending request whose video is taken down: a takedown needs no review, has no time limit and is
+not stopped by the purchase pause. One failed refund does not stop the others; it stays pending.
+The private key is read only by the approving commands and never printed.
 
 ## Checks
 

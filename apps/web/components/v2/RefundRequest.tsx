@@ -28,16 +28,23 @@ export function refundRequestMailto(input: { ticketId: string; reason: string; a
  * so youtick cannot redirect the money; the request goes to the payment service inbox and youtick
  * answers within 72 hours. Without the inbox, the signed request is sent by e-mail.
  */
-export function RefundRequest(props: { binding: MarketBinding; ticket: TicketKey; accountId: string; paymentServiceUrl: string | null }) {
+/** Prefilled for a taken-down video: the reason is the takedown itself, so no description is needed. */
+export const TAKEDOWN_REASON = 'The video was removed (takedown).';
+
+export function RefundRequest(props: {
+    binding: MarketBinding; ticket: TicketKey; accountId: string; paymentServiceUrl: string | null; takenDown?: boolean;
+}) {
     const [open, setOpen] = useState(false);
-    const [reason, setReason] = useState('');
+    const [reason, setReason] = useState(props.takenDown ? TAKEDOWN_REASON : '');
     const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
     const [receipt, setReceipt] = useState<RefundReceipt | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [mailto, setMailto] = useState<string | null>(null);
 
     if (!open) {
-        return <Button variant="outline" className="min-h-11" onClick={() => setOpen(true)}>Request a refund</Button>;
+        return <Button variant="outline" className="min-h-11" onClick={() => setOpen(true)}>
+            {props.takenDown ? 'Get your money back' : 'Request a refund'}
+        </Button>;
     }
 
     if (state === 'sent' && receipt) {
@@ -73,12 +80,17 @@ export function RefundRequest(props: { binding: MarketBinding; ticket: TicketKey
     }
 
     return <div className="space-y-3 rounded border border-white/15 p-4">
-        <p className="text-sm text-white/80">
-            Refunds are for technical problems: the video does not play, keeps failing, or is not as described.
-            A change of mind is not refunded. We reply within 72 hours, and an approved refund returns the full
-            price to your youtick balance.
-        </p>
-        <label className="block space-y-1 text-sm">
+        {props.takenDown
+            ? <p className="text-sm text-white/80">
+                This video was removed, so the full price is refunded without review. There is no deadline. The refund goes
+                to your youtick balance, usually within 72 hours.
+            </p>
+            : <p className="text-sm text-white/80">
+                Refunds are for technical problems: the video does not play, keeps failing, or is not as described.
+                A change of mind is not refunded. We reply within 72 hours, and an approved refund returns the full
+                price to your youtick balance.
+            </p>}
+        <label className={props.takenDown ? 'hidden' : 'block space-y-1 text-sm'}>
             <span>What went wrong?</span>
             <textarea className="min-h-24 w-full rounded border border-white/20 bg-transparent p-2" value={reason}
                 maxLength={1000} onChange={(event) => { setReason(event.target.value); setMailto(null); setError(null); }} />

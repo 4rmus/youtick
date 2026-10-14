@@ -78,7 +78,7 @@ test('list puts requests whose window closes within 72 hours first and flags the
     assert.match(calls.out[0], new RegExp(`answer by ${new Date(NOW + 2 * day).toISOString()}`));
     const takedown = harness({ purchasedAtMs: NOW - 90 * day, availability: 'TAKEDOWN' });
     await run(['list'], takedown.deps);
-    assert.match(takedown.calls.out[0], /no time limit \(takedown\)/);
+    assert.match(takedown.calls.out[0], /no time limit: TAKEDOWN, refund without review/);
 });
 
 test('approve sends refund_ticket with the signed arguments and records the transaction', async () => {
@@ -147,4 +147,46 @@ test('settings, arguments and key files', () => {
     assert.equal(readKeyFile(join(dir, 'keygen.json')), operatorKey.toString());
     assert.throws(() => readKeyFile(join(dir, 'bad.json')), /key_file_invalid/);
     assert.throws(() => readKeyFile(join(dir, 'missing.json')), /key_file_unreadable/);
+});
+
+test('approve-takedowns refunds every pending request of a taken-down video, and only those', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    // Tickets b… (taken down, watched), d… (taken down, already refunded elsewhere), e… (live video).
+    const chain = {
+        ['b'.repeat(64)]: { status: 'watched_in_escrow', availability: 'TAKEDOWN', purchased: NOW - 90 * day },
+        ['d'.repeat(64)]: { status: 'refunded', availability: 'TAKEDOWN', purchased: NOW - 90 * day },
+        ['e'.repeat(64)]: { status: 'purchased', availability: 'ACTIVE', purchased: NOW - day },
+        ['f'.repeat(64)]: { status: 'purchased', availability: 'TAKEDOWN', purchased: NOW - 2 * day },
+    };
+    const requests = [
+        row({ request_id: '1'.repeat(32), ticket_id: 'b'.repeat(64) }),
+        row({ request_id: '2'.repeat(32), ticket_id: 'd'.repeat(64) }),
+        row({ request_id: '3'.repeat(32), ticket_id: 'e'.repeat(64) }),
+        row({ request_id: '4'.repeat(32), ticket_id: 'f'.repeat(64) }),
+    ];
+    const { calls, deps } = harness({ requests });
+    const publications = {};
+    deps.view = async (_contract, method, args) => {
+        if (method === 'get_publication') return { availability: publications[args.publication_id] };
+        const state = chain[args.ticket_id];
+        publications[`pub-${args.ticket_id[0]}`] = state.availability;
+        return { status: state.status, publication_id: `pub-${args.ticket_id[0]}`, purchased_at_ms: String(state.purchased) };
+    };
+    deps.sendRefund = async (input) => {
+        calls.sent.push(input);
+        // The second refund's USDC transfer fails on chain: the ticket stays in escrow.
+        if (input.args.ticket_id !== 'f'.repeat(64)) chain[input.args.ticket_id].status = 'refunded';
+        return TX;
+    };
+    await assert.rejects(run(['approve-takedowns', '--key-file', '/k.json'], deps), /takedown_refunds_incomplete:4{32}/);
+    assert.deepEqual(calls.sent.map((input) => input.args.ticket_id), ['b'.repeat(64), 'f'.repeat(64)]);
+    const recorded = calls.service.filter((call) => call.url.endsWith('/decision')).map((call) => call.url);
+    assert.deepEqual(recorded, [`https://pay-v2-testnet.youtick.net/internal/refund-requests/${'1'.repeat(32)}/decision`]);
+    assert.ok(calls.out.some((text) => text === 'Refunded 1, not refunded 1.'));
+
+    const none = harness({ requests: [row({ ticket_id: 'e'.repeat(64) })] });
+    none.deps.view = deps.view;
+    assert.deepEqual(await run(['approve-takedowns', '--key-file', '/k.json'], none.deps), []);
+    assert.ok(none.calls.out.includes('No pending refund requests for taken-down videos.'));
+    assert.equal(none.calls.sent.length, 0);
 });
