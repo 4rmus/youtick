@@ -319,7 +319,37 @@ What differs from the V1 read model:
    - Bridge logs: `market_v2_release_failed` must not appear; `market_v2_release_scheduled`
      appears only once a ticket is 30 days old.
 
-## Evidence
+## Refund rule (2026-10-14)
+
+Owner decision 2026-10-10: USDC tickets follow the card provider's refund rule (technical
+failure, content not as described, takedown; no change-of-mind refunds). Contract, protocol,
+Bridge, read model and web follow it on `main` (`contracts/market-v2/README.md`, "Settlement").
+
+- **Not on testnet yet.** The deployed Market V2 (`v2-market-261007.youtick-dev-v3.testnet`) still
+  runs the earlier rule: a watch pays the creator, and the buyer refunds an unwatched ticket
+  alone with `refund_unwatched`. Moving it needs a code upgrade through the self-upgrade path,
+  which is an on-chain action and needs owner approval.
+- **Both codes are safe for the consumers.** The Bridge plays `watched_in_escrow` tickets and
+  releases them after 30 days. The read model treats a `ticket_watched` event without `settled`
+  (earlier code) as settled and one with `settled: false` as still in escrow.
+- **Earlier tickets after the upgrade.** Crypto tickets the earlier code settled stay `watched`:
+  they play, and they are never refunded or released. Unwatched tickets keep their escrow and
+  fall under the new rule.
+- **Upgrade order.** Deploy the read model, then the Bridge and the web, then upgrade the
+  contract. An old Bridge refuses `watched_in_escrow` tickets, and an old read model marks every
+  watch as settled, so the release job would skip those tickets (recoverable: `release_expired`
+  is open to anyone and D1 can be rebuilt).
+- **Upgrade moment.** Freeze the Bridge first and execute the upgrade only when no
+  `mark_watched` or `refund_unwatched` receipt is pending. The new code no longer has
+  `on_creator_payout`, so a creator push that fails across the upgrade would not be credited. A
+  pending refund callback still restores its ticket (`restore_status` absent means `purchased`).
+- **Refund requests.** The web page signs a `refund_ticket` request (recipient: the buyer's own
+  account, valid 7 days) and opens an e-mail to `contact@youtick.net`. youtick replies within 72
+  hours; the payment operator submits approved refunds. The page offers the request until day 27,
+  so a decision fits in the 30-day window. There is no request inbox or operator tool yet, and the
+  page does not yet offer a request for a taken-down ticket older than 27 days (the contract
+  allows that refund; the buyer writes to youtick).
+
 
 The bootstrap is covered by `workers/livepeer-bridge/scripts/v2-testnet-bootstrap.test.mjs`
 against a simulated chain (LOCAL_TEST), and its workflow ran with `PASS` on testnet (PROVIDER).
