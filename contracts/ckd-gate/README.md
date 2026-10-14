@@ -85,10 +85,16 @@ account, and every user then gets a new secret.
   keyless gate cannot be switched off, so it does.
 - The client already accepts several gates per network (`CKD_TRUST_ROOTS` is a list) and checks each
   result against that gate's pinned MPC key.
-- **Gap (2026-10-14):** sign-in requests the secret from one gate only
-  (`NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID`), and the recovery scan uses that one secret. After a rotation
-  the client must request the secret from every trusted gate (one CKD transaction each) and scan
-  tickets with each. This is a client change for its own gate before any second gate is deployed.
+- **Client (2026-10-15).** Each gate has a role in `CKD_TRUST_ROOTS`: one `current` gate per
+  network (sign-in and new purchases) and any `retired` gates. Sign-in requests the current
+  gate's secret. For each retired gate, My tickets offers one more NEAR Auth sign-in ("Find
+  earlier tickets"), because the id_token nonce binds a single gate; the extra sign-in must
+  resolve to the same account. The recovery scan then runs with every secret, and each ticket
+  signs with the key of the gate it was bought under. New purchases always use the current gate.
+- **Rotation steps (client).** Pin the new gate as `current` and change the old one to `retired`
+  in the same release, set `NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID` to the new gate (sign-in refuses a
+  configured gate that is not current) and add the new gate to the relayer's
+  `CKD_GATE_ACCOUNT_IDS`. Never remove a retired gate while tickets bought under it may be in use.
 - Any rules needed later must be in the first mainnet version.
 
 ## Known limits (input for the audit)
