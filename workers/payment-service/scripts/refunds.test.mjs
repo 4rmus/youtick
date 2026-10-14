@@ -19,7 +19,8 @@ function row(overrides = {}) {
     };
 }
 
-function harness({ chain = 'watched_in_escrow', afterSend = 'refunded', requests = [row()], accessKey = true } = {}) {
+function harness({ chain = 'watched_in_escrow', afterSend = 'refunded', requests = [row()], accessKey = true,
+    purchasedAtMs = NOW - 24 * 60 * 60 * 1000, availability = 'ACTIVE' } = {}) {
     const calls = { service: [], sent: [], out: [] };
     let status = chain;
     const fetcher = async (url, init = {}) => {
@@ -36,8 +37,9 @@ function harness({ chain = 'watched_in_escrow', afterSend = 'refunded', requests
         now: () => NOW,
         out: (text) => calls.out.push(text),
         view: async (_contract, method) => {
+            if (method === 'get_publication') return { availability };
             assert.equal(method, 'get_ticket');
-            return { status };
+            return { status, publication_id: 'lp-job', purchased_at_ms: String(purchasedAtMs) };
         },
         readKeyFile: () => operatorKey.toString(),
         hasAccessKey: async (_rpc, _fetch, account, publicKey) => {
@@ -47,6 +49,7 @@ function harness({ chain = 'watched_in_escrow', afterSend = 'refunded', requests
         confirm: async () => 'REFUND',
         sendRefund: async (input) => {
             calls.sent.push(input);
+            input.announce?.(TX);
             status = afterSend;
             return TX;
         },
@@ -59,9 +62,23 @@ test('list shows pending requests with the chain status and the 72-hour answer t
     await run(['list'], deps);
     assert.equal(calls.service[0].url, 'https://pay-v2-testnet.youtick.net/internal/refund-requests?status=pending');
     assert.equal(calls.service[0].auth, `Bearer ${TOKEN}`);
-    assert.match(calls.out[0], /chain: watched_in_escrow/);
-    assert.match(calls.out[0], /answer by 2026-10-/);
-    assert.match(calls.out[1], /OVERDUE/);
+    // Same window: the older request comes first.
+    assert.match(calls.out[0], new RegExp(`^${'c'.repeat(32)} .*OVERDUE`));
+    assert.match(calls.out[1], new RegExp(`^${'a'.repeat(32)} .*answer by 2026-10-`));
+    assert.match(calls.out[1], /chain: watched_in_escrow/);
+    assert.match(calls.out[1], /refund window closes 2026-11-/);
+});
+
+test('list puts requests whose window closes within 72 hours first and flags them', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const { calls, deps } = harness({ purchasedAtMs: NOW - 28 * day });
+    await run(['list'], deps);
+    assert.match(calls.out[0], /refund WINDOW CLOSES/);
+    // The answer time is capped by the window.
+    assert.match(calls.out[0], new RegExp(`answer by ${new Date(NOW + 2 * day).toISOString()}`));
+    const takedown = harness({ purchasedAtMs: NOW - 90 * day, availability: 'TAKEDOWN' });
+    await run(['list'], takedown.deps);
+    assert.match(takedown.calls.out[0], /no time limit \(takedown\)/);
 });
 
 test('approve sends refund_ticket with the signed arguments and records the transaction', async () => {
@@ -76,6 +93,8 @@ test('approve sends refund_ticket with the signed arguments and records the tran
     const decision = calls.service.find((call) => call.url.endsWith('/decision'));
     assert.deepEqual(JSON.parse(decision.body), { decision: 'refunded', tx_hash: TX });
     assert.equal(request.status, 'refunded');
+    // The hash is shown before the outcome, with the command that records it later.
+    assert.ok(calls.out.some((text) => text.includes(`Sending ${TX}`) && text.includes(`record ${'a'.repeat(32)} --tx ${TX}`)));
     // The private key never reaches the output.
     assert.ok(!calls.out.join('\n').includes(operatorKey.toString()));
 });
@@ -87,6 +106,7 @@ test('approve refuses before sending when anything does not hold', async () => {
         [{ accessKey: false }, /key_not_on_payment_operator/],
         [{ requests: [row({ expires_at_ms: NOW + 30_000 })] }, /request_signature_expired/],
         [{ requests: [] }, /request_not_pending/],
+        [{ purchasedAtMs: NOW - 30 * 24 * 60 * 60 * 1000 + 60_000 }, /refund_window_closed/],
     ];
     for (const [options, error] of cases) {
         const { calls, deps } = harness(options);

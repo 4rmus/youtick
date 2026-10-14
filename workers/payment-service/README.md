@@ -11,7 +11,7 @@ stores is the text a buyer writes in a refund request.
 |---|---|---|
 | `POST /v1/vat-attestations` | `{ ticket_id, publication_id }` | `{ gross_usdc_micro, vat_usdc_micro, expires_at_ms, key_version, signature }` |
 | `POST /v1/funnel` | `{ step, rail, code? }` | `204` |
-| `POST /v1/refund-requests` | `{ ticket_id, refund_to, expires_at_ms, signature, reason }` | `201 { request_id, status, answer_by_ms }` |
+| `POST /v1/refund-requests` | `{ ticket_id, refund_to, expires_at_ms, signature, reason }` | `201 { request_id, status, answer_by_ms, refund_window_closes_at_ms }` |
 | `GET /internal/refund-requests?status=pending` | bearer `REFUND_ADMIN_TOKEN` | `{ requests }` (at most 100) |
 | `POST /internal/refund-requests/<id>/decision` | bearer; `{ decision: "refunded", tx_hash }` or `{ decision: "declined", note }` | `{ request }` |
 
@@ -56,14 +56,21 @@ no change of mind. youtick answers within 72 hours.
 - **Checks before storing** (the same the contract makes on submit): the ticket exists, is crypto
   and `purchased` or `watched_in_escrow`; it is less than 30 days old unless its publication is
   taken down; the signature verifies against the ticket's own public key; it expires in the future
-  and at most 7 days ahead. One pending request per ticket (D1 partial unique index).
+  and at most 7 days ahead. One pending request per ticket (D1 partial unique index). The reason
+  is counted in characters (code points), as SQLite counts them.
+- **Answer time.** 72 hours, capped at the moment the contract's 30-day window closes
+  (`refund_window_closes_at_ms`; `null` after a takedown, which has no limit). After that moment
+  anyone may call `release_expired`, so a late answer could no longer refund.
 - **Decision.** The operator tool (`scripts/refunds.mjs`) lists pending requests, submits approved
   refunds with the payment operator key from the operator's own machine, then records
   `refunded` with the transaction hash. The service accepts `refunded` only when Market V2
   `get_ticket` reads `refunded`. A decline needs a note; nothing goes to the chain.
-- **Storage.** `REFUNDS` D1 (`migrations/`): ticket id, publication, recipient account, signed
-  arguments, the buyer's text, status and decision. No e-mail, IP or sign-in identity. A retention
-  rule waits for the privacy review (roadmap X4).
+- **Storage.** `REFUNDS` D1 (`migrations/`): ticket id, publication, recipient account (a
+  pseudonymous NEAR account tied to the ticket), signed arguments, the buyer's text, status and
+  decision. No e-mail, IP or sign-in identity. A retention rule waits for the privacy review
+  (roadmap X4).
+- **Known limits.** The list returns at most 100 requests per status, oldest first. `record`
+  trusts the hash it is given once the chain shows the ticket refunded.
 - **Access.** The public endpoint follows `ALLOWED_ORIGINS` and the rate limiter. The internal
   endpoints need `REFUND_ADMIN_TOKEN` (secret, at least 32 characters) and accept no browser origin.
 
@@ -79,8 +86,10 @@ node scripts/refunds.mjs decline <request_id> --note "The video plays normally."
 
 `PAYMENT_SERVICE_URL` (default `https://pay-v2-testnet.youtick.net`), `NEAR_RPC_URL` (default
 `https://rpc.testnet.near.org`), `MARKET_V2_CONTRACT_ID` and `PAYMENT_OPERATOR_ID` (V2 testnet
-defaults) can be overridden. `approve` re-reads the ticket, checks that the key file's public key
-is an access key of the payment operator, asks for confirmation, sends `refund_ticket` and waits
+defaults) can be overridden. `list` sorts by the moment each refund window closes and flags those
+closing within 72 hours. `approve` re-reads the ticket, refuses a closed window, checks that the key
+file's public key is an access key of the payment operator, asks for confirmation, prints the
+transaction hash before sending (for `record` if the run stops), sends `refund_ticket` and waits
 for the final outcome. The private key is read only by `approve` and never printed.
 
 ## Checks

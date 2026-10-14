@@ -1,7 +1,7 @@
 // youtick payment service (roadmap E7; E8 adds the card path). It issues VAT attestations for V2
 // crypto purchases, counts checkout funnel steps and keeps USDC refund requests until youtick
-// decides (src/refunds.ts). It never moves money; the only personal data it stores is the reason a
-// buyer writes in a refund request.
+// decides (src/refunds.ts). It never moves money. For a refund request it stores the buyer's text
+// and the refund account (a pseudonymous NEAR account tied to the ticket); no e-mail or IP.
 import { paymentConfig, type Env, type PaymentConfig } from './env';
 import { parseFunnelEvent, recordFunnelEvent } from './funnel';
 import { readPurchasablePublication, rpcView, type View } from './market';
@@ -114,11 +114,16 @@ export async function handle(request: Request, env: Env, deps: PaymentDeps = {})
         const nowMs = (deps.now ?? Date.now)();
         try {
             const input = parseRefundRequest(body);
-            const { ticket } = await verifyRefundRequest(deps.view ?? rpcView(config.rpcUrl), input, {
+            const { ticket, windowClosesAtMs } = await verifyRefundRequest(deps.view ?? rpcView(config.rpcUrl), input, {
                 network: config.network, contractId: config.marketContractId, nowMs,
             });
             const row = await storeRefundRequest(env.REFUNDS, input, ticket.publication_id, nowMs);
-            return json({ request_id: row.request_id, status: row.status, answer_by_ms: String(nowMs + ANSWER_WITHIN_MS) }, 201, cors);
+            // The answer must come while the contract still accepts the refund.
+            const answerBy = windowClosesAtMs === null ? nowMs + ANSWER_WITHIN_MS : Math.min(nowMs + ANSWER_WITHIN_MS, windowClosesAtMs);
+            return json({
+                request_id: row.request_id, status: row.status, answer_by_ms: String(answerBy),
+                refund_window_closes_at_ms: windowClosesAtMs === null ? null : String(windowClosesAtMs),
+            }, 201, cors);
         } catch (error) {
             return refundError(error, cors);
         }

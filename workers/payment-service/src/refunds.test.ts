@@ -1,4 +1,5 @@
-import { KeyPair } from 'near-api-js';
+import { KeyPair, PublicKey } from 'near-api-js';
+import vectors from '../../../protocol/youtick-market-v2/golden-vectors.json';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handle, resetKeyCheckForTests, type Env } from './index';
 import type { View } from './market';
@@ -81,7 +82,9 @@ describe('refund request inbox', () => {
         expect(response.status).toBe(201);
         expect(response.headers.get('access-control-allow-origin')).toBe(ORIGIN);
         const created = await response.json() as { request_id: string; status: string; answer_by_ms: string };
-        expect(created).toMatchObject({ status: 'pending', answer_by_ms: String(NOW + 72 * 60 * 60 * 1000) });
+        expect(created).toMatchObject({
+            status: 'pending', answer_by_ms: String(NOW + 72 * 60 * 60 * 1000), refund_window_closes_at_ms: String(NOW - DAY + 30 * DAY),
+        });
         expect(created.request_id).toMatch(/^[0-9a-f]{32}$/);
 
         const list = await handle(internal('/internal/refund-requests'), e, { view, now: () => NOW });
@@ -106,6 +109,8 @@ describe('refund request inbox', () => {
             [{ expires_at_ms: String(NOW + 7 * DAY + 1), signature: sign({ expiresAtMs: String(NOW + 7 * DAY + 1), refundTo: 'fan.testnet' }) }, chain(), 'signature_expiry_too_far'],
             [{ reason: 'short' }, chain(), 'invalid_reason'],
             [{ reason: 'bad\u0007control text' }, chain(), 'invalid_reason'],
+            // Five emoji are ten UTF-16 units but five characters, as SQLite counts them.
+            [{ reason: '\u{1F600}'.repeat(5) }, chain(), 'invalid_reason'],
             [{ extra: 1 }, chain(), 'invalid_request'],
         ];
         for (const [overrides, { view }, code] of cases) {
@@ -140,6 +145,40 @@ describe('refund request inbox', () => {
         expect(declined.request).toMatchObject({ status: 'declined', decision_note: 'The video plays normally; change of mind.' });
         expect(await (await decide('f'.repeat(32), { decision: 'declined', note: 'none' })).json()).toEqual({ error: 'refund_request_not_found' });
         expect((await decide(second, { decision: 'approved' })).status).toBe(400);
+    });
+
+    it('caps the answer time at the refund window and keeps no limit after a takedown', async () => {
+        const late = chain({ purchasedAtMs: NOW - 29 * DAY });
+        const answer = await (await handle(post(body()), env(), { view: late.view, now: () => NOW })).json() as Record<string, string>;
+        expect(answer).toMatchObject({ answer_by_ms: String(NOW + DAY), refund_window_closes_at_ms: String(NOW + DAY) });
+        const takedown = chain({ purchasedAtMs: NOW - 90 * DAY, availability: 'TAKEDOWN' });
+        const open = await (await handle(post(body()), env(), { view: takedown.view, now: () => NOW })).json() as Record<string, unknown>;
+        expect(open).toMatchObject({ answer_by_ms: String(NOW + 72 * 60 * 60 * 1000), refund_window_closes_at_ms: null });
+    });
+
+    it('answers a storage failure with 500, not as a pending request, so the web offers e-mail', async () => {
+        const broken = {
+            prepare: (sql: string) => ({
+                bind: () => ({
+                    first: async () => null,
+                    run: async () => { if (sql.startsWith('INSERT')) throw new Error('D1_ERROR: storage unavailable'); return { meta: { changes: 0 } }; },
+                    all: async () => ({ results: [] }),
+                }),
+            }),
+        } as unknown as D1Database;
+        const response = await handle(post(body()), env(broken), { view: chain().view, now: () => NOW });
+        expect(response.status).toBe(500);
+        expect(await response.json()).toEqual({ error: 'internal_error' });
+    });
+
+    it('builds the refund_ticket message of the protocol golden vector', () => {
+        const signed = vectors.ticket_signatures.refund_ticket;
+        const call = vectors.calls.refund_ticket_args;
+        const message = refundMessage({ network: vectors.fixture.network, contractId: vectors.fixture.contract_id,
+            ticketId: call.ticket_id, expiresAtMs: call.expires_at_ms, refundTo: call.refund_to });
+        expect(message).toBe(signed.message);
+        expect(PublicKey.from(signed.signer_public_key).verify(new TextEncoder().encode(message),
+            Uint8Array.from(atob(call.signature), (char) => char.charCodeAt(0)))).toBe(true);
     });
 
     it('guards the operator endpoints with the admin token', async () => {

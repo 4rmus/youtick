@@ -61,8 +61,10 @@ function fail(code: string): never {
 export function cleanReason(value: unknown): string {
     if (typeof value !== 'string') fail('invalid_request');
     const reason = value.replace(/\r\n?/g, '\n').trim();
+    // Counted in code points, as SQLite's length() counts them (an emoji is one character).
+    const length = [...reason].length;
     // eslint-disable-next-line no-control-regex
-    if (reason.length < 10 || reason.length > 1000 || /[\u0000-\u0009\u000b-\u001f\u007f]/.test(reason)) fail('invalid_reason');
+    if (length < 10 || length > 1000 || /[\u0000-\u0009\u000b-\u001f\u007f]/.test(reason)) fail('invalid_reason');
     return reason;
 }
 
@@ -96,7 +98,7 @@ function base64Bytes(value: string): Uint8Array {
  */
 export async function verifyRefundRequest(view: View, input: RefundRequestInput, context: {
     network: string; contractId: string; nowMs: number;
-}): Promise<{ ticket: TicketView }> {
+}): Promise<{ ticket: TicketView; windowClosesAtMs: number | null }> {
     const expires = Number(input.expires_at_ms);
     if (expires <= context.nowMs) fail('signature_expired');
     if (expires - context.nowMs > MAX_REFUND_SIGNATURE_TTL_MS) fail('signature_expiry_too_far');
@@ -106,7 +108,9 @@ export async function verifyRefundRequest(view: View, input: RefundRequestInput,
     if (ticket.status !== 'purchased' && ticket.status !== 'watched_in_escrow') fail('ticket_not_refundable');
     const publication = await view<{ availability?: string } | null>(context.contractId, 'get_publication', { publication_id: ticket.publication_id });
     const takenDown = publication?.availability === 'TAKEDOWN';
-    if (!takenDown && Number(ticket.purchased_at_ms) + REFUND_WINDOW_MS <= context.nowMs) fail('refund_window_closed');
+    // After a takedown the contract keeps the refund open with no time limit.
+    const windowClosesAtMs = takenDown ? null : Number(ticket.purchased_at_ms) + REFUND_WINDOW_MS;
+    if (windowClosesAtMs !== null && windowClosesAtMs <= context.nowMs) fail('refund_window_closed');
     let valid = false;
     try {
         valid = PublicKey.from(ticket.ticket_public_key).verify(new TextEncoder().encode(refundMessage({
@@ -117,7 +121,7 @@ export async function verifyRefundRequest(view: View, input: RefundRequestInput,
         valid = false;
     }
     if (!valid) fail('invalid_signature');
-    return { ticket };
+    return { ticket, windowClosesAtMs };
 }
 
 function randomId(): string {
@@ -137,9 +141,11 @@ export async function storeRefundRequest(db: D1Database, input: RefundRequestInp
         await db.prepare(`INSERT INTO refund_requests (request_id, ticket_id, publication_id, refund_to, expires_at_ms, signature, reason,
             status, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
             .bind(row.request_id, row.ticket_id, row.publication_id, row.refund_to, row.expires_at_ms, row.signature, row.reason, nowMs).run();
-    } catch {
-        // The partial unique index refuses a second open request for the same ticket.
-        fail('refund_request_pending');
+    } catch (error) {
+        // The partial unique index refuses a second open request for the same ticket; anything else
+        // is a storage failure the web answers with its e-mail fallback.
+        if (error instanceof Error && /UNIQUE/i.test(error.message)) fail('refund_request_pending');
+        throw error;
     }
     return row;
 }

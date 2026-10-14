@@ -23,6 +23,9 @@ export const DEFAULTS = Object.freeze({
     PAYMENT_OPERATOR_ID: 'v2-payments-261007.youtick-dev-v3.testnet',
 });
 export const ANSWER_WITHIN_MS = 72 * 60 * 60 * 1000;
+export const REFUND_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+// Margin between the operator's clock and block time when a window is about to close.
+const WINDOW_MARGIN_MS = 5 * 60 * 1000;
 export const REFUND_GAS = 100_000_000_000_000n;
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 const TX_HASH = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/;
@@ -107,30 +110,50 @@ export function readKeyFile(path) {
     return key;
 }
 
-/** Signs and sends `refund_ticket`, waiting for the final outcome. Returns the transaction hash. */
-export async function sendRefund({ rpcUrl, operator, market, privateKey, args }) {
-    const { Account, JsonRpcProvider, KeyPairSigner, actions } = await import('near-api-js');
+/**
+ * Signs and sends `refund_ticket`, waiting for the final outcome. The hash is announced before
+ * sending, so a timeout still leaves the operator what `record` needs. Returns the hash.
+ */
+export async function sendRefund({ rpcUrl, operator, market, privateKey, args, announce = () => {} }) {
+    const { Account, JsonRpcProvider, KeyPairSigner, actions, baseEncode, encodeTransaction } = await import('near-api-js');
+    const { createHash } = await import('node:crypto');
     const provider = new JsonRpcProvider({ url: rpcUrl }, { retries: 1 });
     const account = new Account(operator, provider, KeyPairSigner.fromSecretKey(privateKey));
     const signed = await account.createSignedTransaction({
         receiverId: market, actions: [actions.functionCall('refund_ticket', args, REFUND_GAS, 0n)],
     });
-    const outcome = await provider.sendTransactionUntil(signed, 'FINAL');
-    const hash = outcome?.transaction?.hash ?? outcome?.transaction_outcome?.id;
-    if (outcome?.status && typeof outcome.status === 'object' && Object.hasOwn(outcome.status, 'Failure')) {
-        fail(`refund_transaction_failed${hash ? `:${hash}` : ''}`);
+    // A NEAR transaction hash is sha256 of the Borsh-encoded unsigned transaction.
+    const hash = baseEncode(createHash('sha256').update(encodeTransaction(signed.transaction)).digest());
+    announce(hash);
+    let outcome;
+    try {
+        outcome = await provider.sendTransactionUntil(signed, 'FINAL');
+    } catch {
+        fail(`refund_transaction_outcome_unknown:${hash}`);
     }
-    if (!hash) fail('refund_transaction_hash_missing');
+    if (outcome?.status && typeof outcome.status === 'object' && Object.hasOwn(outcome.status, 'Failure')) {
+        fail(`refund_transaction_failed:${hash}`);
+    }
     return hash;
 }
 
-function line(row, ticketStatus, nowMs) {
-    const answerBy = row.created_at_ms + ANSWER_WITHIN_MS;
+/** When the contract stops accepting the refund; null after a takedown (no limit). */
+export function windowClosesAt(ticket, publication) {
+    if (publication?.availability === 'TAKEDOWN') return null;
+    const purchased = Number(ticket?.purchased_at_ms);
+    return Number.isSafeInteger(purchased) ? purchased + REFUND_WINDOW_MS : null;
+}
+
+function line(row, ticketStatus, nowMs, closesAt = null) {
+    const answerBy = closesAt === null ? row.created_at_ms + ANSWER_WITHIN_MS : Math.min(row.created_at_ms + ANSWER_WITHIN_MS, closesAt);
     const due = row.status === 'pending' ? (nowMs > answerBy ? 'OVERDUE' : `answer by ${new Date(answerBy).toISOString()}`) : row.status;
+    const window = closesAt === null ? 'no time limit (takedown)'
+        : `${closesAt - nowMs <= ANSWER_WITHIN_MS ? 'WINDOW CLOSES ' : 'window closes '}${new Date(closesAt).toISOString()}`;
     const reason = row.reason.replace(/\s+/g, ' ').slice(0, 200);
     return [
         `${row.request_id}  ${new Date(row.created_at_ms).toISOString()}  ${due}`,
         `  ticket ${row.ticket_id.slice(0, 12)}…  chain: ${ticketStatus}  publication ${row.publication_id}`,
+        ...(row.status === 'pending' ? [`  refund ${window}`] : []),
         `  refund to ${row.refund_to}  signature valid until ${new Date(row.expires_at_ms).toISOString()}`,
         `  "${reason}"`,
         ...(row.decision_note ? [`  note: ${row.decision_note}`] : []),
@@ -152,7 +175,13 @@ export async function run(argv, deps = {}) {
     const { command, options } = parseArgs(argv);
     const cfg = settings(env);
     const view = deps.view ?? rpcView(cfg.rpcUrl, fetcher);
-    const ticketStatus = async (ticketId) => (await view(cfg.market, 'get_ticket', { ticket_id: ticketId }))?.status ?? 'missing';
+    const chainState = async (ticketId) => {
+        const ticket = await view(cfg.market, 'get_ticket', { ticket_id: ticketId });
+        if (!ticket) return { status: 'missing', closesAt: null };
+        const publication = await view(cfg.market, 'get_publication', { publication_id: ticket.publication_id });
+        return { status: ticket.status, closesAt: windowClosesAt(ticket, publication) };
+    };
+    const ticketStatus = async (ticketId) => (await chainState(ticketId)).status;
     const record = async (requestId, txHash) => {
         const { request } = await service(cfg, fetcher, `/internal/refund-requests/${requestId}/decision`, {
             method: 'POST', body: JSON.stringify({ decision: 'refunded', tx_hash: txHash }),
@@ -164,20 +193,25 @@ export async function run(argv, deps = {}) {
         const status = options.status ?? 'pending';
         const { requests } = await service(cfg, fetcher, `/internal/refund-requests?status=${encodeURIComponent(status)}`);
         if (requests.length === 0) out(`No ${status} refund requests.`);
-        for (const row of requests) out(line(row, await ticketStatus(row.ticket_id), now()));
-        return requests;
+        const rows = [];
+        for (const row of requests) rows.push({ row, ...(await chainState(row.ticket_id)) });
+        // The request whose refund window closes first comes first.
+        rows.sort((a, b) => (a.closesAt ?? Infinity) - (b.closesAt ?? Infinity) || a.row.created_at_ms - b.row.created_at_ms);
+        for (const { row, status: chain, closesAt } of rows) out(line(row, chain, now(), closesAt));
+        return rows.map(({ row }) => row);
     }
     if (command === 'approve') {
         if (!options.key_file) fail('key_file_required');
         const row = await pendingRequest(cfg, fetcher, options.positional[0]);
-        const status = await ticketStatus(row.ticket_id);
+        const { status, closesAt } = await chainState(row.ticket_id);
         if (!REFUNDABLE.has(status)) fail(`ticket_not_refundable:${status}`);
+        if (closesAt !== null && closesAt <= now() + WINDOW_MARGIN_MS) fail('refund_window_closed');
         if (row.expires_at_ms <= now() + 60_000) fail('request_signature_expired');
         const privateKey = (deps.readKeyFile ?? readKeyFile)(options.key_file);
         const { KeyPairSigner } = await import('near-api-js');
         const publicKey = (await KeyPairSigner.fromSecretKey(privateKey).getPublicKey()).toString();
         if (!(await (deps.hasAccessKey ?? hasAccessKey)(cfg.rpcUrl, fetcher, cfg.operator, publicKey))) fail('key_not_on_payment_operator');
-        out(line(row, status, now()));
+        out(line(row, status, now(), closesAt));
         out(`Refund the full ticket price to ${row.refund_to} from ${cfg.market}, signed by ${cfg.operator}.`);
         if (!options.yes) {
             const confirm = deps.confirm ?? (async (question) => {
@@ -189,6 +223,7 @@ export async function run(argv, deps = {}) {
         const txHash = await (deps.sendRefund ?? sendRefund)({
             rpcUrl: cfg.rpcUrl, operator: cfg.operator, market: cfg.market, privateKey,
             args: { ticket_id: row.ticket_id, refund_to: row.refund_to, expires_at_ms: String(row.expires_at_ms), signature: row.signature },
+            announce: (hash) => out(`Sending ${hash} (if this run stops, check it on an explorer and use: record ${row.request_id} --tx ${hash})`),
         });
         out(`Sent: ${txHash}`);
         const after = await ticketStatus(row.ticket_id);

@@ -1,7 +1,8 @@
 -- USDC refund requests (owner decision 2026-10-10: technical failure, not as described, takedown).
 -- The buyer's ticket key signs `refund_ticket`; youtick decides within 72 hours and the payment
 -- operator submits approved refunds from its own machine. Market V2 stays the authority: a row is
--- marked `refunded` only after get_ticket reads `refunded`. No e-mail, IP or buyer identity.
+-- marked `refunded` only after get_ticket reads `refunded`. Stored about the buyer: their text and
+-- the refund account (pseudonymous, tied to the ticket). No e-mail, IP or sign-in identity.
 CREATE TABLE refund_requests (
     request_id TEXT PRIMARY KEY CHECK (length(request_id) = 32 AND request_id NOT GLOB '*[^0-9a-f]*'),
     ticket_id TEXT NOT NULL CHECK (length(ticket_id) = 64 AND ticket_id NOT GLOB '*[^0-9a-f]*'),
