@@ -13,6 +13,8 @@ Bu dosya Codex ve Claude Code için ortak proje sözleşmesidir. Kök dizine `CL
 - İşi gate'lere böl; her gate'in başında amaç, değiştirilebilecek dosyalar, yasak dosyalar, kabul kriterleri ve hedef doğrulamaları yaz.
 - Varsayılan otonomdur: gate'leri sırayla sürdür, sonunda tek rapor ver. Yalnız onay gerektiren bir işlemde, çıktıyı değiştirecek bir belirsizlikte veya teşhis edilemeyen bir hatada dur. Kullanıcı "adım adım" derse her gate sonunda dur.
 - Bir milestone, bir dal, bir PR. Milestone, yol haritasındaki bir adım (ör. E3) veya kullanıcının tek seferde verdiği iştir; gate değildir. Gate'ler aynı dalda ayrı commit olur. Dalı ara gate'lerde push'lama; milestone bitince bir kez push'la ve PR'ı aç, çünkü her PR push'u ve her merge tam CI çalıştırır. Main'i kıran acil düzeltme ayrı PR olabilir. PR'ları birbirine yığma (stacked PR açma). `main` için up-to-date zorunluluğu kapalıdır: açık PR'ı yalnız çakışma varsa güncelle, çünkü her güncelleme çalışan CI'ı iptal edip baştan başlatır. PR açıldığında squash auto-merge'ü etkinleştir; CI'ı oturumdan yoklama, başarısız kontrol bildirimi gelince düzelt.
+- Alt-gate'ler (ör. W3.4, W3.5) ve testnet kabul turunda bulunan düzeltmeler milestone dalında commit olur; ayrı PR yalnız testnet veya Preview deploy'u o düzeltme olmadan ilerleyemiyorsa açılır. Kalan düzeltmeler tur sonunda tek PR'da toplanır.
+- Docs, runbook ve kanıt notları kendi PR'ını açmaz: açık milestone dalına commit olarak girer, açık dal yoksa sonraki milestone PR'ına biner. Deploy'u bloklayan runbook düzeltmesi yukarıdaki istisnaya tabidir. Docs-only merge de main'de tam push CI (CodeQL dahil) çalıştırır.
 
 ## Sorumluluk ve katılımcılar
 
