@@ -344,11 +344,44 @@ Bridge, read model and web follow it on `main` (`contracts/market-v2/README.md`,
   `on_creator_payout`, so a creator push that fails across the upgrade would not be credited. A
   pending refund callback still restores its ticket (`restore_status` absent means `purchased`).
 - **Refund requests.** The web page signs a `refund_ticket` request (recipient: the buyer's own
-  account, valid 7 days) and opens an e-mail to `contact@youtick.net`. youtick replies within 72
-  hours; the payment operator submits approved refunds. The page offers the request until day 27,
-  so a decision fits in the 30-day window. There is no request inbox or operator tool yet, and the
-  page does not yet offer a request for a taken-down ticket older than 27 days (the contract
-  allows that refund; the buyer writes to youtick).
+  account, valid 7 days) and posts it with the buyer's description to the payment service inbox
+  (`POST /v1/refund-requests`); without the inbox it falls back to an e-mail to
+  `contact@youtick.net`. youtick replies within 72 hours. The page offers the request until day 27,
+  so a decision fits in the 30-day window; it does not yet offer one for a taken-down ticket older
+  than 27 days (the contract allows that refund; the buyer writes to youtick).
+- **Operator tool.** `workers/payment-service/scripts/refunds.mjs` (`list`, `approve`, `decline`,
+  `record`) runs on the owner's machine with `REFUND_ADMIN_TOKEN` in the environment. `approve`
+  signs `refund_ticket` with `~/youtick-v2-testnet-keys/payment_operator.json`; that key never goes
+  to Cloudflare or GitHub. Details: `workers/payment-service/README.md`.
+
+### Owner steps (refund inbox)
+
+1. Create the D1 database `youtick-payments-v2-testnet` in the Cloudflare account and set its id
+   as the repository variable `V2_PAYMENTS_D1_ID` (the release refuses the all-zero placeholder
+   and the V1 read-model id, and requires an id different from `V2_READ_MODEL_D1_ID`).
+2. Generate a token of 32–256 characters from `[A-Za-z0-9_-]` (for example
+   `openssl rand -hex 32`), store it in your password manager and add it as the `v2-testnet`
+   environment secret `V2_REFUND_ADMIN_TOKEN`. It must differ from `V2_RELAYER_ADMIN_TOKEN`.
+3. Run *V2 Testnet Workers* on the merged `main` commit. It applies
+   `workers/payment-service/migrations` to the new database before deploying.
+4. Check: `REFUND_ADMIN_TOKEN=… node workers/payment-service/scripts/refunds.mjs list` prints
+   `No pending refund requests.`
+
+### Refund acceptance, 2026-10-14 (PROVIDER, testnet)
+
+Before the inbox existed; the request went through the e-mail fallback and the command line.
+
+| Step | Evidence |
+|---|---|
+| Purchase on the upgraded Market V2 | ticket `7041fe9f…b9fa` (publication `lp-bcc8f530…`, buyer `37729f76…23d9`); escrow 0 → 5000000 |
+| First play | `ticket_watched` with `settled: false`; status `watched_in_escrow`; escrow stays 5000000; creator, tax and platform balances unchanged |
+| Refund request | web "Request a refund": `refund_ticket` signature valid ~168 h |
+| Operator refund | `refund_ticket` tx `9DnzFAJjxjX2xsi6K3ZbESRUjp2RKxvLu45ntYAUzngf` by `v2-payments-261007…`; `ft_transfer` 5000000 and `ticket_refunded`; ticket `refunded`, 0 devices; escrow 0; buyer USDC 3558333 → 8558333 |
+
+Contract upgrade the same evening (self-upgrade path, owner-signed): code hash
+`Y3N2FUdLQYosZp8LSR7fYdGHAo15wvo3UEavBaSPrXz` = CI WASM sha256 `07f3ad22…b489` of `f0a73bf`; the
+E5b ticket of 2026-10-13 stays `watched`. Not yet shown: `release_expired` on a watched ticket
+(earliest 2026-11-13).
 
 
 The bootstrap is covered by `workers/livepeer-bridge/scripts/v2-testnet-bootstrap.test.mjs`

@@ -1,9 +1,14 @@
-// youtick payment service (roadmap E7; E8 adds the card path). For now it issues VAT attestations
-// for V2 crypto purchases and counts checkout funnel steps. It never moves money and stores no
-// personal data.
+// youtick payment service (roadmap E7; E8 adds the card path). It issues VAT attestations for V2
+// crypto purchases, counts checkout funnel steps and keeps USDC refund requests until youtick
+// decides (src/refunds.ts). It never moves money. For a refund request it stores the buyer's text
+// and the refund account (a pseudonymous NEAR account tied to the ticket); no e-mail or IP.
 import { paymentConfig, type Env, type PaymentConfig } from './env';
 import { parseFunnelEvent, recordFunnelEvent } from './funnel';
 import { readPurchasablePublication, rpcView, type View } from './market';
+import {
+    adminAuthorized, ANSWER_WITHIN_MS, decideRefundRequest, listRefundRequests, parseDecision, parseRefundRequest,
+    storeRefundRequest, verifyRefundRequest,
+} from './refunds';
 import { attestVat } from './vat';
 
 export type { Env } from './env';
@@ -32,11 +37,56 @@ async function assertKeyRegistered(view: View, config: PaymentConfig, nowMs: num
     keyCheck = { key: cacheKey, checkedAt: nowMs };
 }
 
+const PUBLIC_PATHS = ['/v1/vat-attestations', '/v1/funnel', '/v1/refund-requests'];
+const REFUND_ERRORS: Record<string, number> = {
+    invalid_request: 400, invalid_reason: 400, invalid_signature: 400, signature_expired: 400, signature_expiry_too_far: 400,
+    ticket_not_found: 404, ticket_not_refundable: 409, refund_window_closed: 409, refund_request_pending: 409,
+    refund_request_not_found: 404, refund_request_decided: 409, ticket_not_refunded: 409, rpc_unavailable: 503,
+};
+
+function refundError(error: unknown, headers: Record<string, string> = {}): Response {
+    const code = error instanceof Error ? error.message : '';
+    if (REFUND_ERRORS[code]) return json({ error: code }, REFUND_ERRORS[code], headers);
+    console.error(JSON.stringify({ event: 'refund_request_failed' }));
+    return json({ error: 'internal_error' }, 500, headers);
+}
+
+async function readJson(request: Request, limit: number): Promise<Record<string, unknown>> {
+    if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw new Error('invalid_request');
+    const text = await request.text();
+    if (text.length > limit) throw new Error('invalid_request');
+    const body = JSON.parse(text) as unknown;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid_request');
+    return body as Record<string, unknown>;
+}
+
+/** The operator tool's endpoints: no browser origin, a bearer token instead. */
+async function handleInternal(request: Request, env: Env, config: PaymentConfig, url: URL, deps: PaymentDeps): Promise<Response> {
+    if (!adminAuthorized(request.headers.get('authorization'), env.REFUND_ADMIN_TOKEN)) return json({ error: 'unauthorized' }, 401);
+    if (!env.REFUNDS) return json({ error: 'refund_inbox_unavailable' }, 503);
+    try {
+        if (request.method === 'GET' && url.pathname === '/internal/refund-requests') {
+            return json({ requests: await listRefundRequests(env.REFUNDS, url.searchParams.get('status') ?? 'pending') });
+        }
+        const decision = /^\/internal\/refund-requests\/([0-9a-f]{32})\/decision$/.exec(url.pathname);
+        if (request.method === 'POST' && decision) {
+            const view = deps.view ?? rpcView(config.rpcUrl);
+            const row = await decideRefundRequest(env.REFUNDS, view, config.marketContractId, decision[1],
+                parseDecision(await readJson(request, 1_024).catch(() => { throw new Error('invalid_request'); })), (deps.now ?? Date.now)());
+            return json({ request: row });
+        }
+    } catch (error) {
+        return refundError(error);
+    }
+    return json({ error: 'not_found' }, 404);
+}
+
 export async function handle(request: Request, env: Env, deps: PaymentDeps = {}): Promise<Response> {
     const config = paymentConfig(env);
     if (!config) return json({ error: 'payment_service_disabled' }, 503);
     const url = new URL(request.url);
-    if (url.pathname !== '/v1/vat-attestations' && url.pathname !== '/v1/funnel') return json({ error: 'not_found' }, 404);
+    if (url.pathname.startsWith('/internal/')) return handleInternal(request, env, config, url, deps);
+    if (!PUBLIC_PATHS.includes(url.pathname)) return json({ error: 'not_found' }, 404);
     const origin = request.headers.get('origin') ?? '';
     if (!config.allowedOrigins.includes(origin)) return json({ error: 'origin_denied' }, 403);
     const cors = {
@@ -48,18 +98,35 @@ export async function handle(request: Request, env: Env, deps: PaymentDeps = {})
     if (env.PAYMENT_RATE_LIMITER) {
         const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
         // The IP is only a limiter key here; it is never written anywhere.
-        const scope = url.pathname === '/v1/funnel' ? 'funnel' : 'vat';
+        const scope = url.pathname === '/v1/funnel' ? 'funnel' : url.pathname === '/v1/refund-requests' ? 'refund' : 'vat';
         if (!(await env.PAYMENT_RATE_LIMITER.limit({ key: `${scope}:ip:${ip}` })).success) return json({ error: 'rate_limited' }, 429, cors);
     }
 
     let body: Record<string, unknown>;
     try {
-        if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw new Error('invalid_request');
-        const text = await request.text();
-        if (text.length > 2_048) throw new Error('invalid_request');
-        body = JSON.parse(text) as Record<string, unknown>;
+        // A refund request carries up to 1,000 characters of the buyer's text (escaped in JSON).
+        body = await readJson(request, url.pathname === '/v1/refund-requests' ? 8_192 : 2_048);
     } catch {
         return json({ error: 'invalid_request' }, 400, cors);
+    }
+    if (url.pathname === '/v1/refund-requests') {
+        if (!env.REFUNDS) return json({ error: 'refund_inbox_unavailable' }, 503, cors);
+        const nowMs = (deps.now ?? Date.now)();
+        try {
+            const input = parseRefundRequest(body);
+            const { ticket, windowClosesAtMs } = await verifyRefundRequest(deps.view ?? rpcView(config.rpcUrl), input, {
+                network: config.network, contractId: config.marketContractId, nowMs,
+            });
+            const row = await storeRefundRequest(env.REFUNDS, input, ticket.publication_id, nowMs);
+            // The answer must come while the contract still accepts the refund.
+            const answerBy = windowClosesAtMs === null ? nowMs + ANSWER_WITHIN_MS : Math.min(nowMs + ANSWER_WITHIN_MS, windowClosesAtMs);
+            return json({
+                request_id: row.request_id, status: row.status, answer_by_ms: String(answerBy),
+                refund_window_closes_at_ms: windowClosesAtMs === null ? null : String(windowClosesAtMs),
+            }, 201, cors);
+        } catch (error) {
+            return refundError(error, cors);
+        }
     }
     if (url.pathname === '/v1/funnel') {
         try {

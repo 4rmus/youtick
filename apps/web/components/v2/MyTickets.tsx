@@ -85,7 +85,7 @@ export function MyTickets() {
                 </p>}
                 {session.status === 'signed_in' && refundRequestable(ticket, tickets.dataUpdatedAt) && <RefundRequest
                     binding={{ network: config.auth.network, contractId: config.marketContractId }}
-                    ticket={key} accountId={session.accountId} />}
+                    ticket={key} accountId={session.accountId} paymentServiceUrl={config.paymentServiceUrl} />}
             </Card>;
         })}
     </div>;

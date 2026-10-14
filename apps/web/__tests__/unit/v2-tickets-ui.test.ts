@@ -12,6 +12,7 @@ import { requestPlaybackV3Token } from '@/lib/v2/playback';
 import { createRelayerClient, relayerSubmitter } from '@/lib/v2/relayer-client';
 import { deviceIsListed, findOwnedTickets, parseTicket, playableStatus, refundRequestable } from '@/lib/v2/tickets';
 import { refundRequestMailto } from '@/components/v2/RefundRequest';
+import { refundErrorMessage, submitRefundRequest } from '@/lib/v2/refunds';
 
 vi.unmock('near-api-js');
 
@@ -171,6 +172,26 @@ describe('V2 tickets', () => {
             expect(refundRequestable(at({ status }), purchasedAt)).toBe(false);
         }
         expect(refundRequestable(at({ status: 'purchased', rail: 'card' }), purchasedAt)).toBe(false);
+    });
+
+    it('posts the signed refund request with the reason to the payment service inbox', async () => {
+        const args = { ticket_id: 'a'.repeat(64), refund_to: 'fan.testnet', expires_at_ms: '1792610005189', signature: 'sig' };
+        const calls: { url: string; body: unknown }[] = [];
+        const ok = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+            calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+            return Response.json({ request_id: 'b'.repeat(32), status: 'pending', answer_by_ms: '1792264200000' }, { status: 201 });
+        });
+        expect(await submitRefundRequest('https://pay.example', args, '  The video stops.  ', ok as unknown as typeof fetch))
+            .toEqual({ requestId: 'b'.repeat(32), answerByMs: 1792264200000 });
+        expect(calls).toEqual([{ url: 'https://pay.example/v1/refund-requests', body: { ...args, reason: 'The video stops.' } }]);
+        const pending = vi.fn(async () => Response.json({ error: 'refund_request_pending' }, { status: 409 }));
+        await expect(submitRefundRequest('https://pay.example', args, 'The video stops.', pending as unknown as typeof fetch))
+            .rejects.toThrow('refund_request_pending');
+        const offline = vi.fn(async () => { throw new TypeError('network'); });
+        await expect(submitRefundRequest('https://pay.example', args, 'The video stops.', offline as unknown as typeof fetch))
+            .rejects.toThrow('refund_service_unreachable');
+        expect(refundErrorMessage('refund_request_pending')).toMatch(/already waiting/);
+        expect(refundErrorMessage('anything')).toMatch(/by e-mail/);
     });
 
     it('signs a refund request to the buyer\'s own account with a 7-day expiry', () => {

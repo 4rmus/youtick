@@ -18,7 +18,7 @@ VAT_POLICY = "fixed-testnet"
 VAT_RATE_BPS = "2000"
 VAT_KEY_VERSION = "1"
 ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
-# Secret (wrangler secret put): VAT_SIGNER_PRIVATE_KEY.
+# Secrets (wrangler secret put): VAT_SIGNER_PRIVATE_KEY, REFUND_ADMIN_TOKEN (operator tool, >= 32 characters).
 
 [[ratelimits]]
 name = "PAYMENT_RATE_LIMITER"
@@ -29,3 +29,11 @@ simple = { limit = 20, period = 60 }
 [[analytics_engine_datasets]]
 binding = "FUNNEL"
 dataset = "youtick_checkout_funnel"
+
+# Refund request inbox (src/refunds.ts, migrations/). The all-zero id is a placeholder: the V2
+# testnet release writes the real id from the repository variable V2_PAYMENTS_D1_ID.
+[[d1_databases]]
+binding = "REFUNDS"
+database_name = "youtick-payments-v2-testnet"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"

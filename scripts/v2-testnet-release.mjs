@@ -37,6 +37,17 @@ export function readModelD1Id(value) {
     return value;
 }
 
+// The payment service's refund request inbox. Created by the owner like the read model's database; its
+// id is the repository variable V2_PAYMENTS_D1_ID. The repository config carries an all-zero placeholder.
+export const PAYMENTS_D1_NAME = 'youtick-payments-v2-testnet';
+export const PAYMENTS_D1_BINDING = 'REFUNDS';
+
+export function paymentsD1Id(value) {
+    if (!D1_ID.test(value ?? '') || /^[0-]+$/.test(value)) fail('payments_d1_id_invalid');
+    if (value === V1_READ_MODEL_D1_ID) fail('payments_d1_is_v1_read_model');
+    return value;
+}
+
 export const COMPONENTS = Object.freeze({
     relayer: Object.freeze({
         dir: 'workers/relayer',
@@ -66,9 +77,10 @@ export const COMPONENTS = Object.freeze({
             VAT_KEY_VERSION,
             ALLOWED_ORIGINS: ACCEPTANCE_ORIGIN,
         }),
-        secrets: Object.freeze(['NEAR_RPC_URL', 'VAT_SIGNER_PRIVATE_KEY']),
+        secrets: Object.freeze(['NEAR_RPC_URL', 'VAT_SIGNER_PRIVATE_KEY', 'REFUND_ADMIN_TOKEN']),
         smokePath: '/v1/vat-attestations',
         disabledError: 'payment_service_disabled',
+        d1: Object.freeze({ binding: PAYMENTS_D1_BINDING, name: PAYMENTS_D1_NAME, idEnv: 'PAYMENTS_D1_ID', validate: paymentsD1Id }),
     }),
     // W3: the derived read model of Market V2; the Bridge's 30-day release job reads its D1 directly.
     'read-model': Object.freeze({
@@ -91,7 +103,7 @@ export const COMPONENTS = Object.freeze({
         secrets: Object.freeze(['READ_MODEL_NEAR_RPC_URL']),
         smokePath: '/__health',
         disabledError: null,
-        d1: Object.freeze({ binding: READ_MODEL_D1_BINDING, name: READ_MODEL_D1_NAME }),
+        d1: Object.freeze({ binding: READ_MODEL_D1_BINDING, name: READ_MODEL_D1_NAME, idEnv: 'READ_MODEL_D1_ID', validate: readModelD1Id }),
     }),
 });
 
@@ -123,13 +135,13 @@ export function sanitizeWranglerConfig(source, component, { d1Id } = {}) {
         if (!section && /^(workers_dev|preview_urls)\s*=\s*false\s*$/.test(line)) continue;
         if (!section && /^(workers_dev|preview_urls|routes|route)\s*=/.test(line)) fail('config_routing_unexpected');
         if (section === 'd1_databases') {
-            // The V2 instance has its own database; the repository config names the V1 testnet one.
+            // Each V2 component has its own database; the repository config names a V1 or placeholder one.
             if (!spec.d1) fail('config_binding_unexpected');
             const entry = /^(binding|database_name|database_id)\s*=/.exec(line);
             if (entry?.[1] === 'binding') out.push(`binding = ${JSON.stringify(spec.d1.binding)}`);
             else if (entry?.[1] === 'database_name') out.push(`database_name = ${JSON.stringify(spec.d1.name)}`);
             else if (entry?.[1] === 'database_id') {
-                out.push(`database_id = ${JSON.stringify(readModelD1Id(d1Id))}`);
+                out.push(`database_id = ${JSON.stringify(spec.d1.validate(d1Id))}`);
                 d1Seen = true;
             } else out.push(line);
             continue;
@@ -216,6 +228,8 @@ export function validateRpcUrl(value) {
 export function releaseSecrets(env) {
     if (!/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID ?? '') || !env.CLOUDFLARE_API_TOKEN?.trim()) fail('cloudflare_credentials_invalid');
     if (!/^[A-Za-z0-9_-]{32,256}$/.test(env.RELAYER_ADMIN_TOKEN ?? '')) fail('relayer_admin_token_invalid');
+    if (!/^[A-Za-z0-9_-]{32,256}$/.test(env.REFUND_ADMIN_TOKEN ?? '')) fail('refund_admin_token_invalid');
+    if (env.REFUND_ADMIN_TOKEN === env.RELAYER_ADMIN_TOKEN) fail('admin_tokens_must_differ');
     const rpc = validateRpcUrl(env.NEAR_RPC_URL ?? '');
     return {
         cloudflare: { accountId: env.CLOUDFLARE_ACCOUNT_ID, apiToken: env.CLOUDFLARE_API_TOKEN },
@@ -223,7 +237,7 @@ export function releaseSecrets(env) {
         relayerPublicKey: nearPublicKey(env.RELAYER_PRIVATE_KEY),
         vatPublicKey: nearPublicKey(env.VAT_SIGNER_PRIVATE_KEY),
         relayer: { NEAR_RPC_URL: rpc, RELAYER_PRIVATE_KEY: env.RELAYER_PRIVATE_KEY, RELAYER_ADMIN_TOKEN: env.RELAYER_ADMIN_TOKEN },
-        'payment-service': { NEAR_RPC_URL: rpc, VAT_SIGNER_PRIVATE_KEY: env.VAT_SIGNER_PRIVATE_KEY },
+        'payment-service': { NEAR_RPC_URL: rpc, VAT_SIGNER_PRIVATE_KEY: env.VAT_SIGNER_PRIVATE_KEY, REFUND_ADMIN_TOKEN: env.REFUND_ADMIN_TOKEN },
         'read-model': { READ_MODEL_NEAR_RPC_URL: rpc },
     };
 }
@@ -438,7 +452,8 @@ async function main(argv) {
         const spec = COMPONENTS[component] ?? fail('component_unknown');
         await stat(join(outdir, 'index.js'));
         const source = await readFile(join(spec.dir, 'wrangler.toml'), 'utf8');
-        const options = spec.d1 ? { d1Id: process.env.READ_MODEL_D1_ID } : {};
+        const options = spec.d1 ? { d1Id: process.env[spec.d1.idEnv] } : {};
+        if (spec.d1 && process.env.PAYMENTS_D1_ID && process.env.PAYMENTS_D1_ID === process.env.READ_MODEL_D1_ID) fail('d1_ids_must_differ');
         await writeFile(join(outdir, 'wrangler.toml'), sanitizeWranglerConfig(source, component, options), { flag: 'wx', mode: 0o644 });
         return;
     }

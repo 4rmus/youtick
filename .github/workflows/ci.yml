@@ -354,6 +354,7 @@ jobs:
           cache-dependency-path: workers/payment-service/package-lock.json
       - run: npm ci --no-audit --no-fund --prefer-offline
       - run: npm test -- --run
+      - run: node --test scripts/refunds.test.mjs
       - run: npm run check
       - run: npx wrangler deploy --dry-run
 
