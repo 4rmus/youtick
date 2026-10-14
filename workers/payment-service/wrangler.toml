@@ -30,9 +30,10 @@ simple = { limit = 20, period = 60 }
 binding = "FUNNEL"
 dataset = "youtick_checkout_funnel"
 
-# Refund request inbox (src/refunds.ts, migrations/). The V2 testnet release names its own database.
+# Refund request inbox (src/refunds.ts, migrations/). The all-zero id is a placeholder: the V2
+# testnet release writes the real id from the repository variable V2_PAYMENTS_D1_ID.
 [[d1_databases]]
 binding = "REFUNDS"
 database_name = "youtick-payments-v2-testnet"
-database_id = "<replace-with-payments-d1-id>"
+database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
