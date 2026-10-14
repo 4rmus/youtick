@@ -1385,10 +1385,11 @@ test('public ingestion crosses missing heights only through actual linked blocks
     db.sqlite.close();
 });
 
-test('the V2 testnet scans like the public one and crosses skipped heights, while the V1 testnet stays strict (W3.4)', async () => {
+// W3.4 gave the V2 testnet this linked scan; W3.5 moved it to the sparse scan (v2-sparse-read-model.test.mjs).
+test('the linked scan crosses skipped heights, while the V1 testnet stays strict (W3.4)', async () => {
     const db = await database(true);
     await applyFinalMarketBlock(db, emptyBlock(99));
-    const env = { ...publicIngestionEnv(db), VIDEO_ENVIRONMENT: 'v2-testnet' };
+    const env = publicIngestionEnv(db);
     const requested = [];
     const deps = { now: () => 0, sleepFn: async () => {}, fetchFinalHeight: async () => 104,
         fetchBlock: async ({ blockHeight, requirePredecessor }) => {
