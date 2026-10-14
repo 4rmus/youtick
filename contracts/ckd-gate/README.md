@@ -41,12 +41,14 @@ The contract pays the 1 yoctoNEAR MPC deposit. There is no owner, upgrade or mig
 
 | Network | Account | Source | Build | WASM sha256 / code hash | Verified |
 |---|---|---|---|---|---|
-| testnet | `v2-ckd-gate-261007.youtick-dev-v3.testnet` | `9592674` (unchanged since) | CI run 37829015302, `non-reproducible-wasm` | `c79b61629976f069aedaf4b3106e02813c6ef35d18620829de9ba3d55fb7a9c2` / `ESBYxppi6NzkeFJfBTxPTPvbGfjx5A7doCZqZNBwapcq` | 2026-10-14: no access keys, code hash = that CI WASM, `config` as expected (`scripts/verify-ckd-gate.mjs`, PROVIDER testnet) |
+| testnet | `v2-ckd-gate-261007.youtick-dev-v3.testnet` | `9592674` (contract source unchanged since) | CI run 37829015302, `non-reproducible-wasm` | `c79b61629976f069aedaf4b3106e02813c6ef35d18620829de9ba3d55fb7a9c2` / `ESBYxppi6NzkeFJfBTxPTPvbGfjx5A7doCZqZNBwapcq` | 2026-10-14: no access keys, code hash = that CI WASM, `config` as expected (`scripts/verify-ckd-gate.mjs`, PROVIDER testnet) |
 
 The testnet gate was deployed by the V2 testnet bootstrap (run 37832347847) before the reproducible
 build existed, so its NEP-330 `link` and `build_info` are empty. It stays: a new gate would give every
 test user a new secret. The CI artifact holding its WASM expires on 2026-11-07; the hashes above are the
-record. The first gate built reproducibly will be mainnet's.
+record. Builds from E4 on embed NEP-330 `link` (Cargo.toml `repository`), so no later build, even a
+non-reproducible one, reproduces `ESBYxppi…`; the contract's behaviour is the same. The first gate built
+reproducibly will be mainnet's.
 
 ## Mainnet deployment procedure (requires owner approval)
 
@@ -57,16 +59,19 @@ record. The first gate built reproducibly will be mainnet's.
 2. **Build reproducibly** from a commit on `main`: CI's *ckd-gate reproducible build* job runs
    `cargo near build reproducible-wasm` in the digest-pinned `sourcescan/cargo-near:0.17.0-rust-1.86.0`
    image and keeps `ckd_gate.wasm`, `Cargo.lock` and `build.json` (commit, sha256, code hash) for 90
-   days. Rebuild the same commit on a second machine and compare the sha256 before deploying; publish
-   it with the commit.
+   days. Use the artifact of the push to `main` (pull-request runs build a temporary merge commit).
+   Rebuild the same commit on a second machine and compare the sha256 before deploying; publish it
+   with the commit. On macOS, Docker Desktop does not share `/var/folders`, so run the build with
+   `TMPDIR` under the home directory, or the container finds an empty checkout.
 3. **Deploy to a permanent account name, initialize once, then delete the account's full-access
    key in the same session.**
    - Whoever holds that key could redeploy and collect every user's secret.
    - Then run, from any machine, and keep the JSON output with the release record:
      `node scripts/verify-ckd-gate.mjs check --network mainnet --account <gate> --wasm ckd_gate.wasm`
-     (with the mainnet `config` added to `EXPECTED_CONFIG` once X2 supplies it). It must report `PASS`:
-     no access keys, the code hash of that WASM, the expected `config`, and NEP-330 `link` and
-     `build_info` naming the commit and image.
+     `--require-build-info` (with the mainnet `config` added to `EXPECTED_CONFIG` once X2 supplies
+     it). It must report `PASS`: no access keys, the code hash of that WASM, the expected `config`,
+     and NEP-330 `link` and `build_info`. Check that both name the release commit and the image. Query
+     a second RPC provider with `--rpc` as well.
    - Publish the code hash next to the account and add the gate to `CKD_TRUST_ROOTS`
      (`apps/web/lib/ticket-keys/ckd.ts`).
 4. **Fund the account with NEAR** for the 1 yoctoNEAR deposits and storage.

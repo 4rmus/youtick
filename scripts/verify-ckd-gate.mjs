@@ -9,6 +9,7 @@
 //
 //   node scripts/verify-ckd-gate.mjs hash <ckd_gate.wasm>
 //   node scripts/verify-ckd-gate.mjs check --network testnet --account <gate> --wasm <ckd_gate.wasm> [--rpc <url>]
+//     [--require-build-info]   also require NEP-330 `link` and `build_info` (a reproducible build)
 
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -72,9 +73,14 @@ async function rpc(fetchImpl, url, params) {
 }
 
 async function view(fetchImpl, url, account, method) {
-    const result = await rpc(fetchImpl, url, {
-        request_type: 'call_function', account_id: account, method_name: method, args_base64: 'e30=',
-    });
+    let result;
+    try {
+        result = await rpc(fetchImpl, url, {
+            request_type: 'call_function', account_id: account, method_name: method, args_base64: 'e30=',
+        });
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : 'rpc_unavailable' };
+    }
     if (!Array.isArray(result?.result)) return { error: result?.error ?? 'no_result' };
     try {
         return { value: JSON.parse(Buffer.from(result.result).toString('utf8')) };
@@ -89,7 +95,7 @@ function sameJson(left, right) {
         && keys(right).every((key) => left[key] === right[key]);
 }
 
-export async function verifyCkdGate({ network, account, wasm, rpcUrl, expectedConfig, fetchImpl = fetch }) {
+export async function verifyCkdGate({ network, account, wasm, rpcUrl, expectedConfig, requireBuildInfo = false, fetchImpl = fetch }) {
     if (!Object.hasOwn(DEFAULT_RPC, network) || typeof account !== 'string' || !ACCOUNT_PATTERN.test(account)
         || !(wasm instanceof Uint8Array) || wasm.byteLength === 0) {
         throw new Error('invalid_arguments');
@@ -112,12 +118,20 @@ export async function verifyCkdGate({ network, account, wasm, rpcUrl, expectedCo
         { name: 'config', pass: config.value !== undefined && sameJson(config.value, expected),
             detail: config.value ?? { error: config.error } },
     ];
+    if (requireBuildInfo) {
+        const source = metadata.value;
+        checks.push({ name: 'reproducible_build_info',
+            pass: typeof source?.link === 'string' && source.link.length > 0
+                && source?.build_info !== null && typeof source?.build_info === 'object',
+            detail: source ?? { error: metadata.error } });
+    }
     return {
         schema: 'youtick.ckd-gate-verification.v1',
         network, account, block_height: state?.block_height ?? null,
         status: checks.every((check) => check.pass) ? 'PASS' : 'FAIL',
         checks,
-        // Informational: a reproducible build fills `link` and `build_info`; the testnet gate predates it.
+        // A reproducible build fills `link` and `build_info` (checked with --require-build-info); the
+        // testnet gate predates it.
         source_metadata: metadata.value ?? null,
     };
 }
@@ -137,6 +151,7 @@ async function main(args) {
         const result = await verifyCkdGate({
             network: option(rest, '--network'), account: option(rest, '--account'),
             wasm: new Uint8Array(await readFile(option(rest, '--wasm') ?? '')), rpcUrl: option(rest, '--rpc'),
+            requireBuildInfo: rest.includes('--require-build-info'),
         });
         console.log(JSON.stringify(result, null, 2));
         return result.status === 'PASS' ? 0 : 1;

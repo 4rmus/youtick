@@ -61,6 +61,23 @@ test('mainnet needs an explicit configuration until NEAR Auth approval, and bad 
         fetchImpl: async () => new Response('busy', { status: 503 }) }), /rpc_unavailable/);
 });
 
+test('--require-build-info demands NEP-330 link and build_info, and a missing metadata view does not abort', async () => {
+    const plain = await verifyCkdGate({ network: 'testnet', account: ACCOUNT, wasm: WASM, requireBuildInfo: true,
+        fetchImpl: chain({ metadata: { version: '0.2.0', link: null, build_info: null } }).fetchImpl });
+    assert.equal(plain.status, 'FAIL');
+    assert.equal(plain.checks.at(-1).name, 'reproducible_build_info');
+    const built = await verifyCkdGate({ network: 'testnet', account: ACCOUNT, wasm: WASM, requireBuildInfo: true,
+        fetchImpl: chain({ metadata: { version: '0.2.0', link: 'https://github.com/4rmus/youtick/tree/abc',
+            build_info: { build_environment: 'sourcescan/cargo-near:0.17.0-rust-1.86.0@sha256:x' } } }).fetchImpl });
+    assert.equal(built.status, 'PASS');
+    const base = chain();
+    const noMetadata = async (url, init) => JSON.parse(init.body).params.method_name === 'contract_source_metadata'
+        ? Response.json({ jsonrpc: '2.0', error: { name: 'HANDLER_ERROR' } }) : base.fetchImpl(url, init);
+    const tolerant = await verifyCkdGate({ network: 'testnet', account: ACCOUNT, wasm: WASM, fetchImpl: noMetadata });
+    assert.equal(tolerant.status, 'PASS');
+    assert.equal(tolerant.source_metadata, null);
+});
+
 test('code hashes are base58 of the WASM sha256, with leading zero bytes kept', () => {
     assert.equal(base58(Uint8Array.from([0, 0, 1])), '112');
     assert.equal(base58(Uint8Array.from([255])), '5Q');

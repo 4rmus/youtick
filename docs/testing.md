@@ -284,7 +284,8 @@ cargo +1.86.0 near build non-reproducible-wasm --locked
 ```
 
 A deployable gate comes only from the reproducible build (Docker, image pinned by digest in
-`Cargo.toml`; needs a clean, committed tree). CI's *ckd-gate reproducible build* job runs it whenever
+`Cargo.toml`; needs a clean, committed tree; on macOS set `TMPDIR` under the home directory, because
+Docker Desktop does not share `/var/folders`). CI's *ckd-gate reproducible build* job runs it whenever
 the crate changes and keeps the WASM and its hashes for 90 days:
 
 ```bash

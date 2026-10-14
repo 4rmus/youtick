@@ -195,7 +195,7 @@ jobs:
                   protocol=true
                   payments=true
                   ;;
-                contracts/ckd-gate/*|scripts/verify-ckd-gate.mjs)
+                contracts/ckd-gate/*|scripts/verify-ckd-gate.mjs|scripts/verify-ckd-gate.test.mjs)
                   contracts=true
                   ckd_gate=true
                   ;;
