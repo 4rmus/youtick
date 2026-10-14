@@ -18,6 +18,10 @@ export interface Env {
     PAYMENT_RATE_LIMITER?: RateLimit;
     /** Checkout funnel counts; without the binding `/v1/funnel` accepts and drops events. */
     FUNNEL?: AnalyticsEngineDataset;
+    /** Refund request inbox (migrations/); without it the refund endpoints answer 503. */
+    REFUNDS?: D1Database;
+    /** Secret. Bearer token of the operator tool for `/internal/refund-requests`; at least 32 characters. */
+    REFUND_ADMIN_TOKEN?: string;
 }
 
 export interface PaymentConfig {
