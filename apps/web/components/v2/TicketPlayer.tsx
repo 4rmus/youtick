@@ -17,8 +17,9 @@ const ERRORS: Record<string, string> = {
 };
 
 /**
- * Plays a V2 ticket. Nothing is requested until the viewer presses play: the first token settles
- * the ticket (`mark_watched`), after which it can no longer be refunded.
+ * Plays a V2 ticket. Nothing is requested until the viewer presses play: the first token marks
+ * the ticket watched (`mark_watched`). The money stays in escrow; a refund after that is only for
+ * a technical problem and goes through youtick.
  */
 export function TicketPlayer(props: {
     bridgeUrl: string; network: string; contractId: string; ticketId: string; device: DeviceKey; firstPlay: boolean;
@@ -133,7 +134,7 @@ export function TicketPlayer(props: {
                     Play
                 </Button>
                 {props.firstPlay && state === 'idle' && <p className="max-w-sm text-sm text-white/70">
-                    Starting playback uses your ticket. After that it can no longer be refunded.
+                    Starting playback uses your ticket. After that, refunds are only for technical problems.
                 </p>}
                 {error && <p className="text-sm text-red-300" role="alert">{error}</p>}
             </div>}

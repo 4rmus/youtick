@@ -5,12 +5,13 @@ import vectors from '../../../../protocol/youtick-market-v2/golden-vectors.json'
 import { base64Decode, hexDecode, hexEncode } from '@/lib/crypto/codec';
 import { NEAR_AUTH_PROVIDERS, type NearAuthConfig } from '@/lib/near-auth/config';
 import { deriveRootKey, ticketKey } from '@/lib/ticket-keys/keys';
-import { playbackMessage } from '@/lib/ticket-keys/messages';
+import { playbackMessage, refundRequestExpiry } from '@/lib/ticket-keys/messages';
 import { v2Config } from '@/lib/v2/config';
 import { deviceCertificate, loadDeviceKey, type DeviceKeyBackend } from '@/lib/v2/device-key';
 import { requestPlaybackV3Token } from '@/lib/v2/playback';
 import { createRelayerClient, relayerSubmitter } from '@/lib/v2/relayer-client';
-import { deviceIsListed, findOwnedTickets, parseTicket, playableStatus } from '@/lib/v2/tickets';
+import { deviceIsListed, findOwnedTickets, parseTicket, playableStatus, refundRequestable } from '@/lib/v2/tickets';
+import { refundRequestMailto } from '@/components/v2/RefundRequest';
 
 vi.unmock('near-api-js');
 
@@ -151,8 +152,37 @@ describe('V2 tickets', () => {
         expect(deviceIsListed(ticket, 'ed25519:dev', 1999)).toBe(true);
         expect(deviceIsListed(ticket, 'ed25519:dev', 2000)).toBe(false);
         expect(deviceIsListed(ticket, 'ed25519:other', 1)).toBe(false);
-        expect(['purchased', 'watched', 'released', 'refunded', 'voided'].map((status) => playableStatus(status as never)))
-            .toEqual([true, true, true, false, false]);
+        expect(['purchased', 'watched', 'watched_in_escrow', 'released', 'refunded', 'voided']
+            .map((status) => playableStatus(status as never)))
+            .toEqual([true, true, true, true, false, false]);
+    });
+
+    it('offers a refund request only for crypto tickets in escrow, until 27 days after purchase', () => {
+        const id = 'a'.repeat(64);
+        const purchasedAt = 1_791_360_000_000;
+        const at = (overrides: Record<string, unknown>) =>
+            parseTicket(ticketValue(id, { purchased_at_ms: String(purchasedAt), ...overrides }), id)!;
+        // 30-day contract window less youtick's 72-hour decision time.
+        const window = 27 * 24 * 60 * 60 * 1000;
+        expect(refundRequestable(at({ status: 'purchased' }), purchasedAt + window - 1)).toBe(true);
+        expect(refundRequestable(at({ status: 'watched_in_escrow' }), purchasedAt)).toBe(true);
+        expect(refundRequestable(at({ status: 'purchased' }), purchasedAt + window)).toBe(false);
+        for (const status of ['watched', 'released', 'refunded', 'voided']) {
+            expect(refundRequestable(at({ status }), purchasedAt)).toBe(false);
+        }
+        expect(refundRequestable(at({ status: 'purchased', rail: 'card' }), purchasedAt)).toBe(false);
+    });
+
+    it('signs a refund request to the buyer\'s own account with a 7-day expiry', () => {
+        const now = 1_791_360_000_000;
+        const expiry = refundRequestExpiry(now);
+        expect(Number(expiry) - now).toBe(7 * 24 * 60 * 60 * 1000 - 5 * 60 * 1000);
+        const mailto = refundRequestMailto({ ticketId: 'a'.repeat(64), reason: 'The video stops after a minute.',
+            args: { ticket_id: 'a'.repeat(64), refund_to: 'fan.testnet', expires_at_ms: expiry, signature: 'sig' } });
+        expect(mailto.startsWith('mailto:contact@youtick.net?subject=Refund%20request%20aaaaaaaa&body=')).toBe(true);
+        const body = decodeURIComponent(mailto.split('&body=')[1]);
+        expect(body).toContain('The video stops after a minute.');
+        expect(JSON.parse(body.split('\n').at(-1)!)).toMatchObject({ refund_to: 'fan.testnet', expires_at_ms: expiry });
     });
 });
 

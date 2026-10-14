@@ -8,14 +8,16 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { formatUsdc } from '@/lib/livepeer-publication';
 import { loadDeviceKey, type DeviceKey } from '@/lib/v2/device-key';
-import { deviceIsListed, findOwnedTickets, playableStatus, type TicketStatus } from '@/lib/v2/tickets';
+import { deviceIsListed, findOwnedTickets, playableStatus, refundRequestable, type TicketStatus } from '@/lib/v2/tickets';
 import { useNearAuthV2 } from './NearAuthV2Provider';
+import { RefundRequest } from './RefundRequest';
 import { SignInPanel } from './SignInPanel';
 import { TicketPlayer } from './TicketPlayer';
 
 const STATUS_LABELS: Record<TicketStatus, string> = {
     purchased: 'Not watched yet',
     watched: 'Watched',
+    watched_in_escrow: 'Watched',
     refunded: 'Refunded',
     released: 'Watch window closed, still playable',
     voided: 'Cancelled',
@@ -61,7 +63,7 @@ export function MyTickets() {
         {tickets.isError && <p className="text-red-300" role="alert">Your tickets could not be loaded. Please try again.</p>}
         {deviceError && <p className="text-red-300" role="alert">This browser cannot create a playback key, so tickets cannot be played here.</p>}
         {tickets.data && tickets.data.tickets.length === 0 && <p className="text-white/70">You have no tickets yet.</p>}
-        {tickets.data?.tickets.map(({ ticket }) => {
+        {tickets.data?.tickets.map(({ key, ticket }) => {
             const listed = Boolean(device && deviceIsListed(ticket, device.sessionPublicKey, tickets.dataUpdatedAt));
             const playable = playableStatus(ticket.status);
             return <Card key={ticket.ticket_id} className="space-y-3 p-5">
@@ -81,6 +83,9 @@ export function MyTickets() {
                 {playable && !listed && device && <p className="text-sm text-white/60">
                     This device is not linked to this ticket yet. Watching on a new device will be available soon.
                 </p>}
+                {session.status === 'signed_in' && refundRequestable(ticket, tickets.dataUpdatedAt) && <RefundRequest
+                    binding={{ network: config.auth.network, contractId: config.marketContractId }}
+                    ticket={key} accountId={session.accountId} />}
             </Card>;
         })}
     </div>;
