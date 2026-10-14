@@ -7,6 +7,7 @@
 //
 //   node scripts/refunds.mjs list [--status pending|refunded|declined]
 //   node scripts/refunds.mjs approve <request_id> --key-file <path> [--yes]
+//   node scripts/refunds.mjs approve-takedowns --key-file <path> [--yes]  refund every pending request of a taken-down video
 //   node scripts/refunds.mjs record <request_id> --tx <hash>        record a refund already on chain
 //   node scripts/refunds.mjs decline <request_id> --note "<why>"
 //
@@ -147,7 +148,7 @@ export function windowClosesAt(ticket, publication) {
 function line(row, ticketStatus, nowMs, closesAt = null) {
     const answerBy = closesAt === null ? row.created_at_ms + ANSWER_WITHIN_MS : Math.min(row.created_at_ms + ANSWER_WITHIN_MS, closesAt);
     const due = row.status === 'pending' ? (nowMs > answerBy ? 'OVERDUE' : `answer by ${new Date(answerBy).toISOString()}`) : row.status;
-    const window = closesAt === null ? 'no time limit (takedown)'
+    const window = closesAt === null ? 'no time limit: TAKEDOWN, refund without review (approve-takedowns)'
         : `${closesAt - nowMs <= ANSWER_WITHIN_MS ? 'WINDOW CLOSES ' : 'window closes '}${new Date(closesAt).toISOString()}`;
     const reason = row.reason.replace(/\s+/g, ' ').slice(0, 200);
     return [
@@ -200,26 +201,24 @@ export async function run(argv, deps = {}) {
         for (const { row, status: chain, closesAt } of rows) out(line(row, chain, now(), closesAt));
         return rows.map(({ row }) => row);
     }
-    if (command === 'approve') {
+    const operatorKey = async () => {
         if (!options.key_file) fail('key_file_required');
-        const row = await pendingRequest(cfg, fetcher, options.positional[0]);
-        const { status, closesAt } = await chainState(row.ticket_id);
-        if (!REFUNDABLE.has(status)) fail(`ticket_not_refundable:${status}`);
-        if (closesAt !== null && closesAt <= now() + WINDOW_MARGIN_MS) fail('refund_window_closed');
-        if (row.expires_at_ms <= now() + 60_000) fail('request_signature_expired');
         const privateKey = (deps.readKeyFile ?? readKeyFile)(options.key_file);
         const { KeyPairSigner } = await import('near-api-js');
         const publicKey = (await KeyPairSigner.fromSecretKey(privateKey).getPublicKey()).toString();
         if (!(await (deps.hasAccessKey ?? hasAccessKey)(cfg.rpcUrl, fetcher, cfg.operator, publicKey))) fail('key_not_on_payment_operator');
-        out(line(row, status, now(), closesAt));
-        out(`Refund the full ticket price to ${row.refund_to} from ${cfg.market}, signed by ${cfg.operator}.`);
-        if (!options.yes) {
-            const confirm = deps.confirm ?? (async (question) => {
-                const rl = createInterface({ input: process.stdin, output: process.stdout });
-                try { return (await rl.question(question)).trim(); } finally { rl.close(); }
-            });
-            if ((await confirm('Type REFUND to send: ')) !== 'REFUND') fail('cancelled');
-        }
+        return privateKey;
+    };
+    const confirmed = async (question) => {
+        if (options.yes) return;
+        const confirm = deps.confirm ?? (async (text) => {
+            const rl = createInterface({ input: process.stdin, output: process.stdout });
+            try { return (await rl.question(text)).trim(); } finally { rl.close(); }
+        });
+        if ((await confirm(question)) !== 'REFUND') fail('cancelled');
+    };
+    // Sends one refund and records it only after the chain shows the ticket refunded.
+    const refundOne = async (row, privateKey) => {
         const txHash = await (deps.sendRefund ?? sendRefund)({
             rpcUrl: cfg.rpcUrl, operator: cfg.operator, market: cfg.market, privateKey,
             args: { ticket_id: row.ticket_id, refund_to: row.refund_to, expires_at_ms: String(row.expires_at_ms), signature: row.signature },
@@ -232,6 +231,52 @@ export async function run(argv, deps = {}) {
         const request = await record(row.request_id, txHash);
         out(`Recorded ${request.request_id} as refunded.`);
         return request;
+    };
+
+    if (command === 'approve') {
+        if (!options.key_file) fail('key_file_required');
+        const row = await pendingRequest(cfg, fetcher, options.positional[0]);
+        const { status, closesAt } = await chainState(row.ticket_id);
+        if (!REFUNDABLE.has(status)) fail(`ticket_not_refundable:${status}`);
+        if (closesAt !== null && closesAt <= now() + WINDOW_MARGIN_MS) fail('refund_window_closed');
+        if (row.expires_at_ms <= now() + 60_000) fail('request_signature_expired');
+        const privateKey = await operatorKey();
+        out(line(row, status, now(), closesAt));
+        out(`Refund the full ticket price to ${row.refund_to} from ${cfg.market}, signed by ${cfg.operator}.`);
+        await confirmed('Type REFUND to send: ');
+        return refundOne(row, privateKey);
+    }
+    if (command === 'approve-takedowns') {
+        // A takedown needs no review: the video is gone, so every pending request for it is refunded.
+        // The contract allows it during a purchase pause and with no time limit.
+        const { requests } = await service(cfg, fetcher, '/internal/refund-requests?status=pending');
+        const due = [];
+        for (const row of requests) {
+            const { status, closesAt } = await chainState(row.ticket_id);
+            if (closesAt === null && REFUNDABLE.has(status) && row.expires_at_ms > now() + 60_000) due.push({ row, status });
+        }
+        if (due.length === 0) {
+            out('No pending refund requests for taken-down videos.');
+            return [];
+        }
+        const privateKey = await operatorKey();
+        for (const { row, status } of due) out(line(row, status, now(), null));
+        out(`Refund ${due.length} taken-down ticket(s) in full, signed by ${cfg.operator}.`);
+        await confirmed(`Type REFUND to send ${due.length} refund(s): `);
+        const done = [];
+        const failed = [];
+        for (const { row } of due) {
+            try {
+                done.push(await refundOne(row, privateKey));
+            } catch (error) {
+                // One failure does not stop the others; the request stays pending for the next run.
+                failed.push(row.request_id);
+                out(`Not refunded ${row.request_id}: ${error instanceof Error ? error.message : 'failed'}`);
+            }
+        }
+        out(`Refunded ${done.length}, not refunded ${failed.length}.`);
+        if (failed.length > 0) fail(`takedown_refunds_incomplete:${failed.join(',')}`);
+        return done;
     }
     if (command === 'record') {
         if (!TX_HASH.test(options.tx ?? '')) fail('tx_hash_invalid');
@@ -249,7 +294,7 @@ export async function run(argv, deps = {}) {
         out(`Declined ${request.request_id}. Tell the buyer why; nothing was sent on chain.`);
         return request;
     }
-    fail('usage: list | approve <id> --key-file <path> | record <id> --tx <hash> | decline <id> --note <text>');
+    fail('usage: list | approve <id> --key-file <path> | approve-takedowns --key-file <path> | record <id> --tx <hash> | decline <id> --note <text>');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

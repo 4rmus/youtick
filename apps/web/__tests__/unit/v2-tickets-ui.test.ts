@@ -10,7 +10,7 @@ import { v2Config } from '@/lib/v2/config';
 import { deviceCertificate, loadDeviceKey, type DeviceKeyBackend } from '@/lib/v2/device-key';
 import { requestPlaybackV3Token } from '@/lib/v2/playback';
 import { createRelayerClient, relayerSubmitter } from '@/lib/v2/relayer-client';
-import { deviceIsListed, findOwnedTickets, parseTicket, playableStatus, refundRequestable } from '@/lib/v2/tickets';
+import { deviceIsListed, findOwnedTickets, parseTicket, playableStatus, refundRequestable, takenDownPublications } from '@/lib/v2/tickets';
 import { refundRequestMailto } from '@/components/v2/RefundRequest';
 import { refundErrorMessage, submitRefundRequest } from '@/lib/v2/refunds';
 import { addGateKey, canUnlock, pendingGates } from '@/lib/v2/gates';
@@ -218,6 +218,23 @@ describe('V2 tickets', () => {
             expect(refundRequestable(at({ status }), purchasedAt)).toBe(false);
         }
         expect(refundRequestable(at({ status: 'purchased', rail: 'card' }), purchasedAt)).toBe(false);
+        // After a takedown there is no deadline, but only for tickets still in escrow.
+        expect(refundRequestable(at({ status: 'watched_in_escrow' }), purchasedAt + 400 * 24 * 60 * 60 * 1000, true)).toBe(true);
+        for (const status of ['watched', 'released', 'refunded', 'voided']) {
+            expect(refundRequestable(at({ status }), purchasedAt, true)).toBe(false);
+        }
+        expect(refundRequestable(at({ status: 'purchased', rail: 'card' }), purchasedAt, true)).toBe(false);
+    });
+
+    it('reads which of the ticket publications are taken down, once per publication', async () => {
+        const calls: string[] = [];
+        const view = vi.fn(async (_contract: string, method: string, args: Record<string, unknown>) => {
+            calls.push(`${method}:${String(args.publication_id)}`);
+            const id = String(args.publication_id);
+            return id === 'missing' ? null : { publication_id: id, availability: id === 'gone' ? 'TAKEDOWN' : 'ACTIVE' };
+        }) as unknown as Parameters<typeof takenDownPublications>[0];
+        expect([...await takenDownPublications(view, MARKET, ['gone', 'live', 'gone', 'missing'])]).toEqual(['gone']);
+        expect(calls).toEqual(['get_publication:gone', 'get_publication:live', 'get_publication:missing']);
     });
 
     it('posts the signed refund request with the reason to the payment service inbox', async () => {
