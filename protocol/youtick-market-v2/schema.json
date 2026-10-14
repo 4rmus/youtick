@@ -203,7 +203,7 @@
         }
       }
     },
-    "refund_unwatched_args": {
+    "refund_ticket_args": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -424,7 +424,8 @@
         "rail",
         "vat_usdc_micro",
         "platform_usdc_micro",
-        "creator_usdc_micro"
+        "creator_usdc_micro",
+        "settled"
       ],
       "properties": {
         "ticket_id": {
@@ -444,6 +445,10 @@
         },
         "creator_usdc_micro": {
           "$ref": "#/$defs/decimal_u128"
+        },
+        "settled": {
+          "description": "Whether the watch moved money out of escrow. Always false, for both rails: the watch is only recorded, and a crypto ticket's gross amount settles on release_expired or returns on refund_ticket. ticket_watched events of the earlier testnet code have no settled field; consumers treat those crypto watches as settled.",
+          "const": false
         }
       }
     },
@@ -591,6 +596,7 @@
       }
     },
     "event_creator_payout_credited": {
+      "description": "Emitted only by the earlier code that pushed the creator share on mark_watched (testnet). Current code never emits it.",
       "type": "object",
       "additionalProperties": false,
       "required": [
