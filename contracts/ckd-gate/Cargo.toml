@@ -3,6 +3,16 @@ name = "ckd-gate"
 version = "0.2.0"
 edition = "2021"
 publish = false
+# NEP-330: a reproducible build records this link and the commit in `contract_source_metadata`.
+repository = "https://github.com/4rmus/youtick"
+
+# E4: `cargo near build reproducible-wasm` builds inside this image, identified by its digest (the
+# tag is descriptive). It carries the repository's cargo-near 0.17.0 and Rust 1.86.0 pins.
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.17.0-rust-1.86.0"
+image_digest = "sha256:1784ca6310f3496f0048356ce420921c8f5fdf71ee8124d43a2e1ceb1f70db8a"
+passed_env = []
+container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--locked"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

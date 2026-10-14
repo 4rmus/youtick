@@ -123,7 +123,8 @@ export type CkdNetwork = 'testnet' | 'mainnet';
  */
 export const CKD_TRUST_ROOTS: Readonly<Record<CkdNetwork, readonly CkdTrustRoot[]>> = Object.freeze({
     testnet: Object.freeze([
-        // V2 testnet bootstrap, GitHub run 37832347847 (source 9592674): keyless, code hash = CI ckd_gate.wasm.
+        // V2 testnet bootstrap, GitHub run 37832347847 (source 9592674): keyless, code hash = CI ckd_gate.wasm
+        // (re-checked 2026-10-14 with scripts/verify-ckd-gate.mjs; record in contracts/ckd-gate/README.md).
         // MPC key: v1.signer-prod.testnet `public_key({ domain_id: 2 })`, domain 2 = ConfidentialKeyDerivation.
         Object.freeze({
             gateAccountId: 'v2-ckd-gate-261007.youtick-dev-v3.testnet',
