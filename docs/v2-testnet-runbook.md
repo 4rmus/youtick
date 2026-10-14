@@ -383,6 +383,19 @@ Contract upgrade the same evening (self-upgrade path, owner-signed): code hash
 E5b ticket of 2026-10-13 stays `watched`. Not yet shown: `release_expired` on a watched ticket
 (earliest 2026-11-13).
 
+### Refund inbox acceptance, 2026-10-15 (PROVIDER, testnet)
+
+| Step | Evidence |
+|---|---|
+| Inbox ready | #329 (`89b5737`); D1 `youtick-payments-v2-testnet` `9a8f4b05-325f-4348-bca4-e2357c9da9f5`; Workers runs 38630374991 (migration `0001` applied) and 38633161197 (new `V2_REFUND_ADMIN_TOKEN`), both PASS |
+| Operator tool | `refunds.mjs list` printed `No pending refund requests.` with the owner's admin token |
+| Purchase and play | local web `89b5737`; ticket `823ad1ac…e555`, `watched_in_escrow`, escrow 5000000 |
+| Request | "Request a refund" posted to the inbox; `list` showed it |
+| Approve | `refunds.mjs approve` with the payment operator key file, confirmed with `REFUND`; tx `6rJYVE4DdAWj26fRA2Dw4RkDNzadRh2YqSvS7TQFKEDY` by `v2-payments-261007…`: `ft_transfer` 5000000 and `ticket_refunded`; ticket `refunded`, 0 devices, escrow 0, buyer USDC back to 8558333; the tool recorded the request as refunded |
+
+The owner keeps the admin token and the payment operator key file backed up: without them no
+refund can be listed or sent. `decline` was not run against the live inbox.
+
 
 The bootstrap is covered by `workers/livepeer-bridge/scripts/v2-testnet-bootstrap.test.mjs`
 against a simulated chain (LOCAL_TEST), and its workflow ran with `PASS` on testnet (PROVIDER).

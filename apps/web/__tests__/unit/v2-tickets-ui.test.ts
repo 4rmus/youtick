@@ -13,6 +13,7 @@ import { createRelayerClient, relayerSubmitter } from '@/lib/v2/relayer-client';
 import { deviceIsListed, findOwnedTickets, parseTicket, playableStatus, refundRequestable } from '@/lib/v2/tickets';
 import { refundRequestMailto } from '@/components/v2/RefundRequest';
 import { refundErrorMessage, submitRefundRequest } from '@/lib/v2/refunds';
+import { addGateKey, canUnlock, pendingGates } from '@/lib/v2/gates';
 
 vi.unmock('near-api-js');
 
@@ -133,9 +134,54 @@ describe('V2 tickets', () => {
             expect([contractId, method]).toEqual([MARKET, 'get_ticket']);
             return owned.has(String(args.ticket_id)) ? ticketValue(String(args.ticket_id)) : null;
         }) as unknown as Parameters<typeof findOwnedTickets>[0];
-        const result = await findOwnedTickets(view, MARKET, hexDecode(vectors.key_derivation.ckd_key_hex));
+        const result = await findOwnedTickets(view, MARKET, [{ gateAccountId: 'gate.testnet', ckdKey: hexDecode(vectors.key_derivation.ckd_key_hex) }]);
         expect(result.tickets.map(({ key }) => key.index)).toEqual([0, 2]);
+        expect(result.tickets.every((ticket) => ticket.gateAccountId === 'gate.testnet')).toBe(true);
         expect(result.nextIndex).toBe(3);
+    });
+
+    it('scans every gate secret of the session and takes the next index from the current gate only', async () => {
+        const current = hexDecode(vectors.key_derivation.ckd_key_hex);
+        const retired = new Uint8Array(32).fill(7);
+        const retiredRoot = deriveRootKey(retired);
+        // Current gate: tickets 0 and 1. Retired gate: tickets 0, 1, 2 and 5.
+        const owned = new Set([
+            ...[0, 1].map((index) => ticketKey(root, index).ticketId),
+            ...[0, 1, 2, 5].map((index) => ticketKey(retiredRoot, index).ticketId),
+        ]);
+        const view = vi.fn(async (_contract: string, _method: string, args: Record<string, unknown>) =>
+            owned.has(String(args.ticket_id)) ? ticketValue(String(args.ticket_id)) : null) as unknown as Parameters<typeof findOwnedTickets>[0];
+        const result = await findOwnedTickets(view, MARKET, [
+            { gateAccountId: 'new-gate.testnet', ckdKey: current },
+            { gateAccountId: 'old-gate.testnet', ckdKey: retired },
+        ]);
+        expect(result.tickets.map((ticket) => [ticket.gateAccountId, ticket.key.index])).toEqual([
+            ['new-gate.testnet', 0], ['new-gate.testnet', 1],
+            ['old-gate.testnet', 0], ['old-gate.testnet', 1], ['old-gate.testnet', 2], ['old-gate.testnet', 5],
+        ]);
+        // A retired gate's tickets sign with their own keys, never the current gate's.
+        expect(result.tickets[2].key.publicKey).toBe(ticketKey(retiredRoot, 0).publicKey);
+        expect(result.nextIndex).toBe(2);
+        await expect(findOwnedTickets(view, MARKET, [])).rejects.toThrow('no_ckd_key');
+    });
+
+    it('unlocks a retired gate only once, only for the same account', () => {
+        const key = 'bls12381g2:x';
+        const retired = [{ gateAccountId: 'old-gate.testnet', mpcPublicKey: key, role: 'retired' as const }];
+        const current = { gateAccountId: 'new-gate.testnet', ckdKey: new Uint8Array(32).fill(1) };
+        expect(pendingGates(retired, [current], {})).toEqual([{ gateAccountId: 'old-gate.testnet', state: 'idle' }]);
+        expect(pendingGates(retired, [current], { 'old-gate.testnet': { state: 'error', error: 'popup_blocked' } }))
+            .toEqual([{ gateAccountId: 'old-gate.testnet', state: 'error', error: 'popup_blocked' }]);
+        expect(canUnlock(retired, [current], 'old-gate.testnet')).toBe(true);
+        expect(canUnlock(retired, [current], 'new-gate.testnet')).toBe(false);
+        expect(canUnlock(retired, [current], 'unknown.testnet')).toBe(false);
+        const old = { accountId: 'fan.testnet', gateAccountId: 'old-gate.testnet', ckdKey: new Uint8Array(32).fill(2) };
+        const keys = addGateKey([current], 'fan.testnet', old);
+        expect(keys.map((entry) => entry.gateAccountId)).toEqual(['new-gate.testnet', 'old-gate.testnet']);
+        expect(addGateKey(keys, 'fan.testnet', old)).toHaveLength(2);
+        expect(() => addGateKey([current], 'fan.testnet', { ...old, accountId: 'other.testnet' })).toThrow('ckd_account_changed');
+        expect(pendingGates(retired, keys, {})).toEqual([]);
+        expect(canUnlock(retired, keys, 'old-gate.testnet')).toBe(false);
     });
 
     it('rejects a ticket for another id or with unexpected shapes', () => {

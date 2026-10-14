@@ -105,10 +105,15 @@ export interface CkdGateResult {
     response: { big_y: string; big_c: string };
 }
 
-/** A deployed `ckd-gate` and the MPC public key of the CKD domain it requests from. */
+/**
+ * A deployed `ckd-gate` and the MPC public key of the CKD domain it requests from. `current` is the
+ * gate sign-in and new purchases use; `retired` gates stay listed so tickets bought with their
+ * secret can still be found and used (one extra sign-in each).
+ */
 export interface CkdTrustRoot {
     gateAccountId: string;
     mpcPublicKey: string;
+    role: 'current' | 'retired';
 }
 
 export type CkdNetwork = 'testnet' | 'mainnet';
@@ -129,10 +134,28 @@ export const CKD_TRUST_ROOTS: Readonly<Record<CkdNetwork, readonly CkdTrustRoot[
         Object.freeze({
             gateAccountId: 'v2-ckd-gate-261007.youtick-dev-v3.testnet',
             mpcPublicKey: 'bls12381g2:xeYho48G2Sr9oJz4gw9sLGZGspeeKpHZvMDAwWvoNTRnVMFJH96GxX98TT2MRhTtsot1wcGR1Ti2Xh8PCsbYJ2enbLNdJXDvTYSK8aTE3nJ5NZXU7Kt1F6mFtReWs5pR4kj',
+            role: 'current',
         }),
     ]),
     mainnet: Object.freeze([]),
 });
+
+/**
+ * A network's gates, current first. A non-empty list must have exactly one current gate and no
+ * gate twice; anything else is a release error, so CKD is refused rather than guessed.
+ */
+export function ckdGates(network: CkdNetwork, roots: Readonly<Record<CkdNetwork, readonly CkdTrustRoot[]>> = CKD_TRUST_ROOTS): {
+    current: CkdTrustRoot | null; retired: CkdTrustRoot[];
+} {
+    const list = roots[network] ?? [];
+    if (list.length === 0) return { current: null, retired: [] };
+    const current = list.filter((root) => root.role === 'current');
+    const ids = new Set(list.map((root) => root.gateAccountId));
+    if (current.length !== 1 || ids.size !== list.length || list.some((root) => root.role !== 'current' && root.role !== 'retired')) {
+        throw new Error('ckd_trust_roots_invalid');
+    }
+    return { current: current[0], retired: list.filter((root) => root.role === 'retired') };
+}
 
 export interface DecryptCkdKeyInput {
     network: CkdNetwork;

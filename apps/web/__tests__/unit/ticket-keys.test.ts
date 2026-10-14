@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import vectors from '../../../../protocol/youtick-market-v2/golden-vectors.json';
 import { base64Decode, hexDecode, hexEncode } from '@/lib/crypto/codec';
 import {
-    CKD_TRUST_ROOTS, ckdGateNonce, ckdGatePath, createCkdDecryptor, decodeG1, decodeG2, decryptCkdKey, deriveAppId,
+    CKD_TRUST_ROOTS, ckdGateNonce, ckdGates, ckdGatePath, createCkdDecryptor, decodeG1, decodeG2, decryptCkdKey, deriveAppId,
     encodeG1, encodeG2, generateEphemeralKeyPV, hashAppIdWithPk, requestKeyArgs,
 } from '@/lib/ticket-keys/ckd';
 import { deriveRootKey, deriveTicketSeed, ticketKey } from '@/lib/ticket-keys/keys';
@@ -224,6 +224,26 @@ describe('CKD through ckd-gate', () => {
         expect(requestKeyArgs('jwt', key, 'fan.testnet')).toEqual({ jwt: 'jwt', app_public_key: key, account_id: 'fan.testnet' });
     });
 
+    it('names exactly one current gate per network and keeps retired gates for recovery', () => {
+        expect(ckdGates('testnet')).toEqual({ current: CKD_TRUST_ROOTS.testnet[0], retired: [] });
+        expect(CKD_TRUST_ROOTS.testnet[0].role).toBe('current');
+        expect(ckdGates('mainnet')).toEqual({ current: null, retired: [] });
+        const key = CKD_TRUST_ROOTS.testnet[0].mpcPublicKey;
+        const rotated = { testnet: [
+            { gateAccountId: 'new-gate.testnet', mpcPublicKey: key, role: 'current' as const },
+            { gateAccountId: 'old-gate.testnet', mpcPublicKey: key, role: 'retired' as const },
+        ], mainnet: [] };
+        expect(ckdGates('testnet', rotated).current?.gateAccountId).toBe('new-gate.testnet');
+        expect(ckdGates('testnet', rotated).retired.map((root) => root.gateAccountId)).toEqual(['old-gate.testnet']);
+        for (const testnet of [
+            [{ gateAccountId: 'a.testnet', mpcPublicKey: key, role: 'retired' as const }],
+            [{ gateAccountId: 'a.testnet', mpcPublicKey: key, role: 'current' as const }, { gateAccountId: 'b.testnet', mpcPublicKey: key, role: 'current' as const }],
+            [{ gateAccountId: 'a.testnet', mpcPublicKey: key, role: 'current' as const }, { gateAccountId: 'a.testnet', mpcPublicKey: key, role: 'retired' as const }],
+        ]) {
+            expect(() => ckdGates('testnet', { testnet, mainnet: [] })).toThrow('ckd_trust_roots_invalid');
+        }
+    });
+
     it('trusts only the pinned V2 testnet gate and no mainnet gate', () => {
         expect(CKD_TRUST_ROOTS.testnet.map((root) => root.gateAccountId)).toEqual(['v2-ckd-gate-261007.youtick-dev-v3.testnet']);
         for (const root of CKD_TRUST_ROOTS.testnet) {
@@ -253,7 +273,7 @@ describe('CKD through ckd-gate', () => {
         };
         const first = request();
         const decrypt = createCkdDecryptor({
-            testnet: [{ gateAccountId, mpcPublicKey: first.mpcPublicKey }, { gateAccountId: 'old-gate.testnet', mpcPublicKey: first.mpcPublicKey }],
+            testnet: [{ gateAccountId, mpcPublicKey: first.mpcPublicKey, role: 'current' }, { gateAccountId: 'old-gate.testnet', mpcPublicKey: first.mpcPublicKey, role: 'retired' }],
             mainnet: [],
         });
         const keys = [first, request()].map(({ ephemeral, result }) =>
