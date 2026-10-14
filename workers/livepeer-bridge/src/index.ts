@@ -7437,8 +7437,8 @@ async function processMarkWatchedOutbox(
     input: MarkWatchedInput,
 ): Promise<Response> {
     if (!isMarketV2(env)) throw new Error('operator_unauthorized');
-    const settled = async () => ['watched', 'released'].includes(await finalTicketStatus(env, input.ticketId) || '');
-    // Already settled tickets never create an outbox record.
+    const settled = async () => ['watched', 'watched_in_escrow', 'released'].includes(await finalTicketStatus(env, input.ticketId) || '');
+    // Already watched or released tickets never create an outbox record.
     if (await settled()) return json({ accepted: true, watched: true, tx_hash: null }, 200);
     try {
         const result = await processOperatorOutbox(
@@ -7454,7 +7454,7 @@ async function processMarkWatchedOutbox(
         if (error instanceof Error && error.message === 'near_finalize_failed') {
             const status = await finalTicketStatus(env, input.ticketId);
             // The contract refuses refunded or voided tickets and taken-down publications.
-            if (!['purchased', 'watched', 'released'].includes(status || '')) throw new Error('playback_denied');
+            if (!['purchased', 'watched', 'watched_in_escrow', 'released'].includes(status || '')) throw new Error('playback_denied');
             // Still purchased after a failed transaction: drop the record so the next play signs
             // a fresh transaction instead of reporting the old failure forever.
             if (status === 'purchased') {
@@ -7510,10 +7510,11 @@ async function processReleaseExpiredOutbox(
     input: ReleaseExpiredInput,
 ): Promise<Response> {
     if (!isMarketV2(env)) throw new Error('operator_unauthorized');
-    // Confirmed once no ticket of the batch is still purchased (released, or settled otherwise).
+    // Confirmed once no ticket of the batch is still in escrow (released, or refunded meanwhile).
     const settled = async () => {
         for (const ticketId of input.ticketIds) {
-            if (await finalTicketStatus(env, ticketId) === 'purchased') return false;
+            const status = await finalTicketStatus(env, ticketId);
+            if (status === 'purchased' || status === 'watched_in_escrow') return false;
         }
         return true;
     };
@@ -7538,14 +7539,15 @@ async function processReleaseExpiredOutbox(
 }
 
 /**
- * Reads up to 25 purchased crypto tickets older than 30 days from the read model. Tickets of
- * taken-down publications are excluded: the contract skips them, and they would otherwise
- * stay at the head of the queue.
+ * Reads up to 25 crypto tickets still in escrow (purchased, or watched without settlement) older
+ * than 30 days from the read model. Tickets of taken-down publications are excluded: the
+ * contract skips them, and they would otherwise stay at the head of the queue.
  */
 export async function dueReleaseTicketIds(env: Env, nowMs: number): Promise<string[]> {
     const result = await env.MARKET_READ_MODEL!.prepare(`
         SELECT t.ticket_id FROM market_v2_tickets AS t
-        WHERE t.network = ? AND t.contract_id = ? AND t.rail = 'crypto' AND t.status = 'purchased'
+        WHERE t.network = ? AND t.contract_id = ? AND t.rail = 'crypto'
+          AND t.status IN ('purchased', 'watched') AND t.settled_at_ms IS NULL
           AND t.purchased_at_ms <= ?
           AND NOT EXISTS (
               SELECT 1 FROM publications AS p

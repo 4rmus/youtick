@@ -9,7 +9,7 @@ const DEVICE_NONCE_PATTERN = /^[0-9a-f]{32}$/;
 const DECIMAL_MS_PATTERN = /^[1-9][0-9]{0,19}$/;
 const SIGNATURE_PATTERN = /^[A-Za-z0-9+/]{86}==$/;
 const MAX_REQUEST_AHEAD_MS = 5 * 60 * 1000;
-const PLAYABLE_STATUSES = new Set(['purchased', 'watched', 'released']);
+const PLAYABLE_STATUSES = new Set(['purchased', 'watched', 'watched_in_escrow', 'released']);
 const PLAYABLE_AVAILABILITY = new Set(['ACTIVE', 'SALES_SUSPENDED']);
 
 export type PlaybackV3Request = {

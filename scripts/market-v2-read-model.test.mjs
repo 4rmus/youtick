@@ -12,6 +12,16 @@ const BLOCK_HASH = 'B6oE1UWkynBdztjt3CDPHv5er7q9PVqtYNUWBcC57SPX';
 const TIMESTAMP_MS = 1_791_360_000_000;
 const CRYPTO_TICKET = vectors.events.ticket_purchased.data[0].ticket_id;
 const CARD_TICKET = vectors.events.card_ticket_issued.data[0].ticket_id;
+// The earlier testnet code settled a crypto ticket on watch: its ticket_watched has no `settled`
+// field, and a failed creator push emitted creator_payout_credited.
+const { settled: _settled, ...legacyWatchedData } = vectors.events.ticket_watched.data[0];
+const LEGACY_WATCHED = { ...vectors.events.ticket_watched, data: [legacyWatchedData] };
+const LEGACY_PAYOUT_CREDITED = {
+    ...vectors.events.ticket_watched,
+    event: 'creator_payout_credited',
+    data: [{ ticket_id: CRYPTO_TICKET, creator_id: vectors.fixture.creator_id,
+        creator_usdc_micro: vectors.events.ticket_purchased.data[0].creator_usdc_micro }],
+};
 
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
@@ -105,10 +115,36 @@ test('V2 envelopes only carry V2 events, and V1 envelopes only V1 events', () =>
     assert.equal(block.events[0].event.event, 'vat_key_revoked');
 });
 
+test('a watch keeps a crypto ticket in escrow; only the earlier testnet code settled on watch', () => {
+    const purchase = parsed(590, [vectors.events.ticket_purchased]).events;
+    const current = rebuildMarketReadModel([...purchase, ...parsed(591, [vectors.events.ticket_watched]).events])
+        .market_v2_tickets[0];
+    assert.equal(vectors.events.ticket_watched.data[0].settled, false);
+    assert.equal(current.status, 'watched');
+    assert.equal(current.settled_at_ms, null);
+    const legacy = rebuildMarketReadModel([...purchase, ...parsed(591, [LEGACY_WATCHED]).events]).market_v2_tickets[0];
+    assert.equal(legacy.status, 'watched');
+    assert.equal(legacy.settled_at_ms, TIMESTAMP_MS + 591);
+    const bad = { ...vectors.events.ticket_watched, data: [{ ...vectors.events.ticket_watched.data[0], settled: 'no' }] };
+    assert.throws(() => rebuildMarketReadModel([...purchase, ...parsed(591, [bad]).events]), /invalid_event_data/);
+});
+
+test('D1 escrow rows: purchased and watched-in-escrow tickets count, legacy settled watches do not', async () => {
+    const db = await database();
+    await applyFinalMarketBlock(db, parsed(650, [vectors.events.ticket_purchased]));
+    await applyFinalMarketBlock(db, parsed(651, [vectors.events.ticket_watched]));
+    const escrowRows = () => db.sqlite.prepare(`SELECT ticket_id FROM market_v2_tickets
+        WHERE rail = 'crypto' AND status IN ('purchased', 'watched') AND settled_at_ms IS NULL`).all().length;
+    assert.equal(escrowRows(), 1);
+    await applyFinalMarketBlock(db, parsed(652, [LEGACY_WATCHED]));
+    assert.equal(escrowRows(), 0);
+    db.sqlite.close();
+});
+
 test('the reducer projects ticket lifecycles without devices or buyer accounts', () => {
     const records = [
         ...parsed(600, [vectors.events.ticket_purchased, vectors.events.card_ticket_issued, vectors.events.device_added]).events,
-        ...parsed(601, [vectors.events.ticket_watched, vectors.events.creator_payout_credited]).events,
+        ...parsed(601, [LEGACY_WATCHED, LEGACY_PAYOUT_CREDITED]).events,
         ...parsed(602, [vectors.events.card_ticket_voided, vectors.events.device_revoked]).events,
     ];
     const model = rebuildMarketReadModel(records);
@@ -153,7 +189,7 @@ test('D1 rows equal the reducer output for the same final blocks, including repl
     const blocks = [
         parsed(800, [vectors.events.ticket_purchased, vectors.events.card_ticket_issued]),
         parsed(801, [vectors.events.ticket_watched, vectors.events.ticket_purchased]),
-        parsed(802, [vectors.events.creator_payout_credited, vectors.events.card_ticket_voided]),
+        parsed(802, [LEGACY_PAYOUT_CREDITED, vectors.events.card_ticket_voided]),
         parsed(803, [vectors.events.ticket_refunded]),
     ];
     // A refund for a ticket D1 never saw (and the reducer skips) must not create a row.
@@ -186,7 +222,9 @@ test('market-v2 producer and the indexer share the V2 catalog', async () => {
     const emittedV2 = sorted([...contract.matchAll(/emit_market_v2_event\(\s*"([a-z][a-z0-9_]*)"/g)].map((match) => match[1]));
     const emittedV1 = sorted([...contract.matchAll(/emit_(?:market|governance)_event\(\s*"([a-z][a-z0-9_]*)"/g)].map((match) => match[1]));
     const protocolEvents = sorted(JSON.parse(schema).$defs.event.properties.event.enum);
-    assert.deepEqual(emittedV2, protocolEvents);
+    // creator_payout_credited stays in the catalog for the earlier testnet code's history.
+    assert.deepEqual(protocolEvents.filter((name) => !emittedV2.includes(name)), ['creator_payout_credited']);
+    assert.deepEqual(emittedV2.filter((name) => !protocolEvents.includes(name)), []);
     assert.deepEqual(setValues(neardata, 'MARKET_V2_EVENT_CATALOG'), protocolEvents);
     assert.deepEqual(setValues(rebuild, 'MARKET_V2_CATALOG'), protocolEvents);
     // Every 1.0.0 event the V2 contract emits is accepted by both consumers.

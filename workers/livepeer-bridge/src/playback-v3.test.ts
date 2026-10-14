@@ -62,6 +62,7 @@ describe('playback v3 protocol', () => {
         const publication = (availability = 'ACTIVE') => ({ publication_id: 'job-001', availability, playback_id: PLAYBACK_ID });
         expect(decideTicketPlayback(ticket('purchased'), publication(), request, issuedAtMs).kind).toBe('watch');
         expect(decideTicketPlayback(ticket('watched'), publication('SALES_SUSPENDED'), request, issuedAtMs).kind).toBe('play');
+        expect(decideTicketPlayback(ticket('watched_in_escrow'), publication(), request, issuedAtMs).kind).toBe('play');
         expect(decideTicketPlayback(ticket('released'), publication(), request, issuedAtMs).kind).toBe('play');
         for (const [ticketValue, publicationValue] of [
             [null, publication()],
