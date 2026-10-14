@@ -1,6 +1,6 @@
 # ckd-gate
 
-Status: `IMPORTED_FROM_SPIKE / NOT_AUDITED / NOT_DEPLOYED_ON_MAINNET`
+Status: `TESTNET_KEYLESS_VERIFIED / NOT_AUDITED / NOT_DEPLOYED_ON_MAINNET` (roadmap E4, 2026-10-14)
 
 `ckd-gate` is a small proxy contract. It lets a signed-in youtick user obtain their NEAR MPC
 Confidential Key Derivation (CKD) root secret with no approval prompt. The client derives ticket
@@ -37,20 +37,43 @@ The contract pays the 1 yoctoNEAR MPC deposit. There is no owner, upgrade or mig
   `unreachable` instead of failing cleanly.
 - Build and test with `--locked`.
 
+## Deployments
+
+| Network | Account | Source | Build | WASM sha256 / code hash | Verified |
+|---|---|---|---|---|---|
+| testnet | `v2-ckd-gate-261007.youtick-dev-v3.testnet` | `9592674` (contract source unchanged since) | CI run 37829015302, `non-reproducible-wasm` | `c79b61629976f069aedaf4b3106e02813c6ef35d18620829de9ba3d55fb7a9c2` / `ESBYxppi6NzkeFJfBTxPTPvbGfjx5A7doCZqZNBwapcq` | 2026-10-14: no access keys, code hash = that CI WASM, `config` as expected (`scripts/verify-ckd-gate.mjs`, PROVIDER testnet) |
+
+The testnet gate was deployed by the V2 testnet bootstrap (run 37832347847) before the reproducible
+build existed, so its NEP-330 `link` and `build_info` are empty. It stays: a new gate would give every
+test user a new secret. The CI artifact holding its WASM expires on 2026-11-07; the hashes above are the
+record. Builds from E4 on embed NEP-330 `link` (Cargo.toml `repository`), so no later build, even a
+non-reproducible one, reproduces `ESBYxppi…`; the contract's behaviour is the same. The first gate built
+reproducibly will be mainnet's.
+
 ## Mainnet deployment procedure (requires owner approval)
 
 1. **Wait for NEAR Auth approval** (roadmap X2). The approval supplies the mainnet Auth0 issuer,
    the client ID and the guard account. Confirm the fast-auth account (`fast-auth.near`), the MPC
    contract (`v1.signer`) and the domain IDs on chain before init. Testnet used fast-auth domain
    1 and CKD domain 2.
-2. **Build reproducibly** (`cargo near build reproducible-wasm`, which needs Docker) and publish
-   the WASM SHA-256. The testnet spike deployment does not match a fresh build of its source, so
-   deploy only from a reproducible build.
+2. **Build reproducibly** from a commit on `main`: CI's *ckd-gate reproducible build* job runs
+   `cargo near build reproducible-wasm` in the digest-pinned `sourcescan/cargo-near:0.17.0-rust-1.86.0`
+   image and keeps `ckd_gate.wasm`, `Cargo.lock` and `build.json` (commit, sha256, code hash) for 90
+   days. Use the artifact of the push to `main` (pull-request runs build a temporary merge commit).
+   Rebuild the same commit on a second machine and compare the sha256 before deploying; publish it
+   with the commit. On macOS, Docker Desktop does not share `/var/folders`, so run the build with
+   `TMPDIR` under the home directory, or the container finds an empty checkout.
 3. **Deploy to a permanent account name, initialize once, then delete the account's full-access
    key in the same session.**
    - Whoever holds that key could redeploy and collect every user's secret.
-   - Verify `view_access_key_list` is empty.
-   - Publish the code hash next to the account.
+   - Then run, from any machine, and keep the JSON output with the release record:
+     `node scripts/verify-ckd-gate.mjs check --network mainnet --account <gate> --wasm ckd_gate.wasm`
+     `--require-build-info` (with the mainnet `config` added to `EXPECTED_CONFIG` once X2 supplies
+     it). It must report `PASS`: no access keys, the code hash of that WASM, the expected `config`,
+     and NEP-330 `link` and `build_info`. Check that both name the release commit and the image. Query
+     a second RPC provider with `--rpc` as well.
+   - Publish the code hash next to the account and add the gate to `CKD_TRUST_ROOTS`
+     (`apps/web/lib/ticket-keys/ckd.ts`).
 4. **Fund the account with NEAR** for the 1 yoctoNEAR deposits and storage.
 
 ## Rotation
@@ -58,8 +81,14 @@ The contract pays the 1 yoctoNEAR MPC deposit. There is no owner, upgrade or mig
 The secret depends on the gate account. Fixing a bug therefore means deploying a new gate
 account, and every user then gets a new secret.
 
-- Tickets stay bound to keys derived from the old secret, so the old gate must keep working.
-- The client must know every gate version and scan tickets for each one (roadmap E5).
+- Tickets stay bound to keys derived from the old secret, so the old gate must keep working. A
+  keyless gate cannot be switched off, so it does.
+- The client already accepts several gates per network (`CKD_TRUST_ROOTS` is a list) and checks each
+  result against that gate's pinned MPC key.
+- **Gap (2026-10-14):** sign-in requests the secret from one gate only
+  (`NEXT_PUBLIC_CKD_GATE_ACCOUNT_ID`), and the recovery scan uses that one secret. After a rotation
+  the client must request the secret from every trusted gate (one CKD transaction each) and scan
+  tickets with each. This is a client change for its own gate before any second gate is deployed.
 - Any rules needed later must be in the first mainnet version.
 
 ## Known limits (input for the audit)
@@ -67,6 +96,10 @@ account, and every user then gets a new secret.
 - **The id_token is a call argument, so it is public on chain.**
   - Request minimal scopes. The identity reference (`sub`) cannot be removed. This is
     fast-auth's model too, and it is on the legal list (roadmap X4).
+  - Checked on testnet (2026-10-14, claim names of a real `request_key` token only): `aud`, `exp`,
+    `iat`, `iss`, `nonce`, `sid`, `sub`. No email or name. `sub` is the provider's raw identifier
+    (`google-oauth2|<Google user id>`), and `sid` is the Auth0 session id; both are public and
+    permanent. Raise both with NEAR Auth (X2) and in the legal review (X4).
   - Never accept these tokens as sessions anywhere else.
 - **No `jti` single-use check.** A token can be replayed until `exp`, but only with the same
   ephemeral key. The MPC response is encrypted to that key, so a replay reveals nothing.
@@ -80,7 +113,8 @@ account, and every user then gets a new secret.
 
 ## Checks
 
-See `docs/testing.md` (ckd-gate). There are 26 unit tests: the token rules, rule selection,
-linking and the deposit maths, and the callback failure paths. A sandbox test against a real MPC
-contract is not possible locally; the end-to-end evidence is the spike's testnet run
-(UNPROVEN in this repository).
+See `docs/testing.md` (ckd-gate). There are 26 unit tests: the token rules (including `nbf`, a
+foreign issuer, malformed and oversized tokens), rule selection, linking and the deposit maths, and
+the callback failure paths. A sandbox test against a real MPC contract is not possible locally. The
+end-to-end evidence is the V2 testnet: NEAR Auth sign-ins on 2026-10-12/13 ran `request_key` through
+this gate and decrypted the result against the pinned MPC key (PROVIDER testnet).

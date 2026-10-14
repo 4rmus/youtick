@@ -283,6 +283,26 @@ cargo +1.86.0 clippy --locked --all-targets -- -D warnings
 cargo +1.86.0 near build non-reproducible-wasm --locked
 ```
 
+A deployable gate comes only from the reproducible build (Docker, image pinned by digest in
+`Cargo.toml`; needs a clean, committed tree; on macOS set `TMPDIR` under the home directory, because
+Docker Desktop does not share `/var/folders`). CI's *ckd-gate reproducible build* job runs it whenever
+the crate changes and keeps the WASM and its hashes for 90 days:
+
+```bash
+cd contracts/ckd-gate
+cargo near build reproducible-wasm
+node ../../scripts/verify-ckd-gate.mjs hash target/near/ckd_gate.wasm
+```
+
+`scripts/verify-ckd-gate.mjs check` reads a deployed gate (no transaction): no access keys, code hash
+equal to a given WASM, and the expected `config`. Its unit test is `scripts/verify-ckd-gate.test.mjs`
+(mocked RPC, LOCAL_TEST); run against a real gate it is PROVIDER evidence for that network only.
+
+```bash
+node scripts/verify-ckd-gate.mjs check --network testnet \
+  --account v2-ckd-gate-261007.youtick-dev-v3.testnet --wasm <ckd_gate.wasm>
+```
+
 ## Read model
 
 ```bash
