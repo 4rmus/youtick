@@ -205,11 +205,14 @@ provider was called.
 cd workers/payment-service
 npm ci
 npm test -- --run
+node --test scripts/refunds.test.mjs
 npm run check
 ```
 
 The VAT attestation tests reproduce the protocol golden vector with the reference test key
-(LOCAL_TEST). No RPC, signer secret or provider is used.
+(LOCAL_TEST). The refund inbox tests run the real D1 migration on in-memory SQLite (Node 24
+`node:sqlite`) with a fake Market V2 view; the operator tool tests use a fake service, chain and
+signer. No RPC, signer secret or provider is used.
 
 ## Contracts
 

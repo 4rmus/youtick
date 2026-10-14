@@ -96,6 +96,7 @@ jobs:
           SHA: ${{ steps.authorize.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
           READ_MODEL_D1_ID: ${{ vars.V2_READ_MODEL_D1_ID }}
+          PAYMENTS_D1_ID: ${{ vars.V2_PAYMENTS_D1_ID }}
         run: |
           set -euo pipefail
           for component in relayer payment-service; do
@@ -104,6 +105,8 @@ jobs:
             install -m 0644 "$RUNNER_TEMP/build/${component}/index.js" "$RUNNER_TEMP/release/${component}/index.js"
             node scripts/v2-testnet-release.mjs write-config "$component" "$RUNNER_TEMP/release/${component}"
           done
+          mkdir -p "$RUNNER_TEMP/release/payment-service/migrations"
+          install -m 0644 workers/payment-service/migrations/*.sql "$RUNNER_TEMP/release/payment-service/migrations/"
           workers/livepeer-bridge/node_modules/.bin/wrangler deploy --dry-run --cwd read-model --outdir "$RUNNER_TEMP/build/read-model"
           mkdir -p "$RUNNER_TEMP/release/read-model/d1"
           install -m 0644 "$RUNNER_TEMP/build/read-model/worker.js" "$RUNNER_TEMP/release/read-model/index.js"
@@ -190,6 +193,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
           WRANGLER_SEND_METRICS: 'false'
         run: workers/relayer/node_modules/.bin/wrangler d1 migrations apply youtick-market-read-model-v2-testnet --remote --config "$RUNNER_TEMP/release/read-model/wrangler.toml"
+      - name: Apply the V2 payments D1 migrations (refund request inbox)
+        # Idempotent, like the read-model step; the packet carries workers/payment-service/migrations.
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: workers/relayer/node_modules/.bin/wrangler d1 migrations apply youtick-payments-v2-testnet --remote --config "$RUNNER_TEMP/release/payment-service/wrangler.toml"
       - name: Preflight keys on chain, deploy the three Workers and smoke them
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
@@ -198,6 +208,7 @@ jobs:
           RELAYER_PRIVATE_KEY: ${{ secrets.V2_RELAYER_PRIVATE_KEY }}
           RELAYER_ADMIN_TOKEN: ${{ secrets.V2_RELAYER_ADMIN_TOKEN }}
           VAT_SIGNER_PRIVATE_KEY: ${{ secrets.V2_VAT_SIGNER_PRIVATE_KEY }}
+          REFUND_ADMIN_TOKEN: ${{ secrets.V2_REFUND_ADMIN_TOKEN }}
           SHA: ${{ needs.prepare.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
         run: node scripts/v2-testnet-release.mjs deploy "$SHA" "$RUNNER_TEMP/release" "$RUNNER_TEMP/v2-testnet-workers-receipt.json" "$RELEASE_MODE"

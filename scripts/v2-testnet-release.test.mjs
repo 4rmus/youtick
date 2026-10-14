@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
     ACCEPTANCE_ORIGIN, COMPONENTS, READ_MODEL_D1_NAME, READ_MODEL_START_BLOCK_HEIGHT, base58Decode, base58Encode, deployRelease,
-    nearPublicKey, readModelD1Id, releaseSecrets, releaseVars, sanitizeWranglerConfig, validateRpcUrl, wranglerArgs,
+    nearPublicKey, paymentsD1Id, readModelD1Id, releaseSecrets, releaseVars, sanitizeWranglerConfig, validateRpcUrl, wranglerArgs,
 } from './v2-testnet-release.mjs';
 
 const SHA = 'a'.repeat(40);
@@ -27,7 +27,7 @@ function env(overrides = {}) {
     return {
         CLOUDFLARE_ACCOUNT_ID: 'c'.repeat(32), CLOUDFLARE_API_TOKEN: 'cf-token',
         NEAR_RPC_URL: 'https://rpc.testnet.example-provider.net/key',
-        RELAYER_PRIVATE_KEY: relayerKey.secret, RELAYER_ADMIN_TOKEN: 'A'.repeat(48), VAT_SIGNER_PRIVATE_KEY: vatKey.secret,
+        RELAYER_PRIVATE_KEY: relayerKey.secret, RELAYER_ADMIN_TOKEN: 'A'.repeat(48), REFUND_ADMIN_TOKEN: 'B'.repeat(48), VAT_SIGNER_PRIVATE_KEY: vatKey.secret,
         ...overrides,
     };
 }
@@ -91,6 +91,13 @@ test('the repository wrangler configs sanitize to index.js, no workers.dev and n
             assert.match(config, new RegExp(`^database_name = "${READ_MODEL_D1_NAME}"$`, 'm'));
             assert.match(config, new RegExp(`^database_id = "${D1_ID}"$`, 'm'));
             assert.doesNotMatch(config, /50b1e14f|read-model-v1-testnet/);
+        } else if (component === 'payment-service') {
+            // The refund inbox gets the V2 payments database; the all-zero placeholder never ships.
+            assert.match(config, /^binding = "REFUNDS"$/m);
+            assert.match(config, /^database_name = "youtick-payments-v2-testnet"$/m);
+            assert.match(config, new RegExp(`^database_id = "${D1_ID}"$`, 'm'));
+            assert.match(config, /^migrations_dir = "migrations"$/m);
+            assert.doesNotMatch(config, /00000000-0000/);
         } else {
             assert.doesNotMatch(config, /d1_databases/);
         }
@@ -101,6 +108,11 @@ test('the repository wrangler configs sanitize to index.js, no workers.dev and n
     assert.throws(() => sanitizeWranglerConfig('main = "x"\n[[d1_databases]]\nbinding = "X"\n', 'relayer'), /config_binding_unexpected/);
     assert.throws(() => sanitizeWranglerConfig('main = "x"\n[vars]\n', 'read-model', { d1Id: D1_ID }), /config_d1_missing/);
     assert.equal(readModelD1Id(D1_ID), D1_ID);
+    const payments = await readFile(new URL('../workers/payment-service/wrangler.toml', import.meta.url), 'utf8');
+    assert.throws(() => sanitizeWranglerConfig(payments, 'payment-service'), /payments_d1_id_invalid/);
+    assert.throws(() => sanitizeWranglerConfig(payments, 'payment-service', { d1Id: '00000000-0000-0000-0000-000000000000' }), /payments_d1_id_invalid/);
+    assert.throws(() => paymentsD1Id('50b1e14f-2b06-444b-98cf-b828f11277ef'), /payments_d1_is_v1_read_model/);
+    assert.equal(paymentsD1Id(D1_ID), D1_ID);
     assert.throws(() => sanitizeWranglerConfig('main = "x"\n[vars]\nNEW_ID = "<replace-me>"\n', 'relayer'), /config_placeholder_NEW_ID/);
     assert.throws(() => sanitizeWranglerConfig('main = "x"\n[vars]\nRELAYER_PRIVATE_KEY = "ed25519:x"\n', 'relayer'), /config_secret_in_vars/);
     assert.throws(() => sanitizeWranglerConfig('main = "x"\nworkers_dev = true\n', 'relayer'), /config_routing_unexpected/);
@@ -138,6 +150,8 @@ test('secrets: Cloudflare, admin token and RPC URL are validated', () => {
     assert.equal(releaseSecrets(env()).relayerPublicKey, relayerKey.public);
     assert.throws(() => releaseSecrets(env({ CLOUDFLARE_ACCOUNT_ID: 'x' })), /cloudflare_credentials_invalid/);
     assert.throws(() => releaseSecrets(env({ RELAYER_ADMIN_TOKEN: 'short' })), /relayer_admin_token_invalid/);
+    assert.throws(() => releaseSecrets(env({ REFUND_ADMIN_TOKEN: undefined })), /refund_admin_token_invalid/);
+    assert.throws(() => releaseSecrets(env({ REFUND_ADMIN_TOKEN: 'A'.repeat(48) })), /admin_tokens_must_differ/);
     for (const url of ['http://rpc.example.net', 'https://<replace-with-rpc>', 'https://rpc.testnet.near.org', 'https://u:p@rpc.x.net']) {
         assert.throws(() => validateRpcUrl(url), /near_rpc_url_invalid/, url);
     }
@@ -160,10 +174,10 @@ test('acceptance deploy: preflight, one deploy per Worker with its own secrets, 
     assert.equal(receipt.workers[1].smoke.unknown_publication_status, 404);
     assert.deepEqual(receipt.workers[2].smoke, { health_status: 200, stage: 'ENABLED', ingestion_enabled: true });
     assert.deepEqual(Object.keys(record[0].secrets).sort(), ['NEAR_RPC_URL', 'RELAYER_ADMIN_TOKEN', 'RELAYER_PRIVATE_KEY']);
-    assert.deepEqual(Object.keys(record[1].secrets).sort(), ['NEAR_RPC_URL', 'VAT_SIGNER_PRIVATE_KEY']);
+    assert.deepEqual(Object.keys(record[1].secrets).sort(), ['NEAR_RPC_URL', 'REFUND_ADMIN_TOKEN', 'VAT_SIGNER_PRIVATE_KEY']);
     assert.deepEqual(record[2].secrets, { READ_MODEL_NEAR_RPC_URL: 'https://rpc.testnet.example-provider.net/key' });
     const written = await readFile(receiptPath, 'utf8');
-    for (const secret of [relayerKey.secret, vatKey.secret, 'A'.repeat(48), 'cf-token', 'example-provider']) assert.ok(!written.includes(secret));
+    for (const secret of [relayerKey.secret, vatKey.secret, 'A'.repeat(48), 'B'.repeat(48), 'cf-token', 'example-provider']) assert.ok(!written.includes(secret));
     await assert.rejects(readdir(record[0].tempRoot), /ENOENT/);
 });
 
