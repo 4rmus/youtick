@@ -183,8 +183,12 @@ web tests must reproduce `bytes_base64` exactly.
 
 The payment operator writes card tickets without moving tokens:
 - `issue_card_ticket { ticket_public_key, publication_id, device, payment_reference_hmac, gross_minor, currency }`.
-  `device.signature` is the `card_purchase` signature.
+  `device.signature` is the `card_purchase` signature. Gas 100 Tgas, deposit 0: the ticket's
+  storage comes from the contract's reserve headroom (`get_storage_reserve_status`), so the
+  operator signs with a function-call access key. A deposit is refused, and so is a ticket the
+  headroom does not cover; the payment service then keeps the order waiting.
 - `void_card_ticket { ticket_id, reason }`, where the reason is `refund` or `chargeback`.
+  Gas 100 Tgas, deposit 0.
 
 The payment reference is stored only as `payment_reference_hmac`: an HMAC-SHA256 of the
 provider order ID, keyed by a payment-service secret. A plain hash of a guessable order ID
