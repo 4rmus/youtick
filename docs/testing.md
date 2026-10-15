@@ -214,7 +214,9 @@ The VAT attestation tests reproduce the protocol golden vector with the referenc
 `node:sqlite`) with a fake Market V2 view; the operator tool tests use a fake service, chain and
 signer. The card path tests (E8) reproduce the golden `payment_reference_hmac` and `card_purchase`
 message, and drive orders, provider events and the card operator through a fake provider adapter
-and a fake chain. No RPC, signer secret or provider is used.
+and a fake chain. The Cleeng adapter tests (E8.1) feed it Cleeng's documented webhook and API
+shapes through a fake `fetch`; they show the mapping matches the documentation, not that Cleeng
+sends it (EXTERNAL_NOT_RUN until the sandbox). No RPC, signer secret or provider is used.
 
 ## Contracts
 

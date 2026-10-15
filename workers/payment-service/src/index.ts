@@ -1,12 +1,13 @@
 // youtick payment service (roadmap E7; E8 adds the card path). It issues VAT attestations for V2
 // crypto purchases, counts checkout funnel steps and keeps USDC refund requests until youtick
-// decides (src/refunds.ts). It never moves money. The card path (src/card-*.ts, off until a
-// provider adapter exists) writes and voids card tickets as the payment operator. For a refund request it stores the buyer's text
+// decides (src/refunds.ts). It never moves money. The card path (src/card-*.ts and the Cleeng
+// adapter src/cleeng.ts, off until enabled) writes and voids card tickets as the payment operator. For a refund request it stores the buyer's text
 // and the refund account (a pseudonymous NEAR account tied to the ticket); no e-mail or IP.
 import { CardOperator, wakeCardOperator } from './card-operator-object';
 import type { CardProvider } from './card-provider';
 import { handleCardInternal, handleCardPublic, handleCardWebhook, isCardPublicPath, type CardContext } from './card-routes';
-import { cardConfig, paymentConfig, type Env, type PaymentConfig } from './env';
+import { cleengProvider } from './cleeng';
+import { cardConfig, cleengConfig, paymentConfig, type Env, type PaymentConfig } from './env';
 import { parseFunnelEvent, recordFunnelEvent } from './funnel';
 import { readPurchasablePublication, rpcView, type View } from './market';
 import {
@@ -21,18 +22,22 @@ export { CardOperator };
 export interface PaymentDeps {
     view?: View;
     now?: () => number;
-    /** The card provider adapter. None exists in production yet, so the card path stays off. */
+    /** The card provider adapter; without one the Cleeng adapter is built from the environment, if configured. */
     cardProvider?: CardProvider;
     wakeCardOperator?: () => Promise<void>;
 }
 
 /** Everything the card routes need, or null while the card path is off. */
-function cardContext(env: Env, config: PaymentConfig, deps: PaymentDeps): CardContext | null {
+function cardContext(request: Request, env: Env, config: PaymentConfig, deps: PaymentDeps): CardContext | null {
     const card = cardConfig(env);
-    if (!card || !deps.cardProvider || !env.REFUNDS) return null;
+    const cleeng = cleengConfig(env);
+    const provider = deps.cardProvider ?? (cleeng ? cleengProvider(cleeng, { now: deps.now }) : null);
+    if (!card || !provider || !env.REFUNDS) return null;
+    const country = (request as { cf?: { country?: unknown } }).cf?.country;
     return {
-        db: env.REFUNDS, view: deps.view ?? rpcView(config.rpcUrl), provider: deps.cardProvider, config, card,
-        nowMs: (deps.now ?? Date.now)(), wake: deps.wakeCardOperator ?? (() => wakeCardOperator(env)),
+        db: env.REFUNDS, view: deps.view ?? rpcView(config.rpcUrl), provider, config, card,
+        nowMs: (deps.now ?? Date.now)(), country: typeof country === 'string' ? country : null,
+        wake: deps.wakeCardOperator ?? (() => wakeCardOperator(env)),
     };
 }
 
@@ -82,7 +87,7 @@ async function readJson(request: Request, limit: number): Promise<Record<string,
 async function handleInternal(request: Request, env: Env, config: PaymentConfig, url: URL, deps: PaymentDeps): Promise<Response> {
     if (!adminAuthorized(request.headers.get('authorization'), env.REFUND_ADMIN_TOKEN)) return json({ error: 'unauthorized' }, 401);
     if (url.pathname.startsWith('/internal/card-')) {
-        const card = cardContext(env, config, deps);
+        const card = cardContext(request, env, config, deps);
         if (!card) return json({ error: 'card_path_disabled' }, 503);
         return handleCardInternal(request, url, () => readJson(request, 2_048).catch(() => { throw new Error('invalid_request'); }), card);
     }
@@ -112,7 +117,7 @@ export async function handle(request: Request, env: Env, deps: PaymentDeps = {})
     if (url.pathname === '/webhooks/card') {
         // Server to server: no browser origin; the provider adapter authenticates the delivery.
         if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-        const card = cardContext(env, config, deps);
+        const card = cardContext(request, env, config, deps);
         if (!card) return json({ error: 'card_path_disabled' }, 503);
         return handleCardWebhook(request, card);
     }
@@ -134,7 +139,7 @@ export async function handle(request: Request, env: Env, deps: PaymentDeps = {})
     }
 
     if (isCard) {
-        const card = cardContext(env, config, deps);
+        const card = cardContext(request, env, config, deps);
         if (!card) return json({ error: 'card_path_disabled' }, 503, cors);
         let cardBody: Record<string, unknown> | null = null;
         if (request.method === 'POST') {
