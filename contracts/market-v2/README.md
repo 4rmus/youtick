@@ -117,8 +117,15 @@ mind. youtick decides, so the creator share stays in escrow until the refund win
   - Each `payment_reference_hmac` and each `ticket_id` can be used only once.
   - It follows the purchase pause and needs an `ACTIVE` publication. If it fails, the payment
     service must refund the card payment.
-  - The operator attaches NEAR for the ticket's storage, and any excess is returned. A
-    compromised operator therefore cannot exhaust the contract's own storage balance.
+  - No deposit (gate E8.0): the ticket's storage is paid from the contract's reserve headroom,
+    the NEAR above the storage stake and `near_operational_reserve`
+    (`get_storage_reserve_status`), so the operator signs with a function-call access key. A
+    deposit is refused. When the headroom does not cover the ticket the call fails with
+    "Card ticket storage exceeds the operational reserve headroom" and nothing is written; a
+    compromised operator can therefore spend at most the headroom, never the reserve. The
+    headroom includes `platform_near_balance` (NEAR upload fees), so such tickets can make
+    `withdraw_platform_near` fail until the account is topped up; no creator or buyer balance is
+    affected (those are USDC).
 - **`void_card_ticket(ticket_id, reason)`** — payment operator only; the reason is `refund` or
   `chargeback`.
   - The ticket becomes `voided` and its devices are cleared.

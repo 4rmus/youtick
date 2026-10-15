@@ -23,7 +23,7 @@ All accounts are direct children of the parent (`youtick-dev-v3.testnet`, the V1
 | `ckd_gate` | **none, ever** | ckd-gate, initialized for the shared NEAR Auth testnet client |
 | `relayer` | full-access key (becomes `RELAYER_PRIVATE_KEY`) | — |
 | `bridge_operator` | management full-access key, and a function-call key for Market V2 `finalize_livepeer_publication`, `suspend_livepeer_sales`, `mark_watched`, `release_expired` (becomes the Bridge V2 `NEAR_OPERATOR_PRIVATE_KEY`) | — |
-| `payment_operator` | full-access key (card path, E8) | — |
+| `payment_operator` | full-access key (bootstrap; signs `refund_ticket` from the owner's machine), and a function-call key for Market V2 `issue_card_ticket`, `void_card_ticket` (added after gate E8.0; becomes the payment service `PAYMENT_OPERATOR_PRIVATE_KEY`) | — |
 | `tax` | full-access key | — |
 
 A last transaction registers `market_v2`, `relayer` and `tax` with Circle's testnet USDC

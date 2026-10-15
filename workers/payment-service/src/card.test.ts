@@ -3,7 +3,7 @@ import vectors from '../../../protocol/youtick-market-v2/golden-vectors.json';
 import { describe, expect, it } from 'vitest';
 import type { CardEvent } from './card-events';
 import { applyCardEvent } from './card-events';
-import { MAX_SEND_ATTEMPTS, runCardOperator, type SendOutcome, type SignCall, type TxStatus } from './card-operator';
+import { MAX_SEND_ATTEMPTS, RESERVE_HEADROOM_REFUSAL, outcomeOf, runCardOperator, type SendOutcome, type SignCall, type TxStatus } from './card-operator';
 import { cardPurchaseMessage, paymentReferenceHmac, ticketIdOf } from './card-orders';
 import { verifyCleengSignature, type CardProvider } from './card-provider';
 import { handle, type Env } from './index';
@@ -94,7 +94,7 @@ function chainSigner(h: ReturnType<typeof harness>, outcomes: SendOutcome[] = []
         send: async () => {
             sent.push({ method, args, deposit });
             const outcome = outcomes.shift() ?? 'success';
-            if (outcome === 'failure') return outcome;
+            if (outcome === 'failure' || outcome === 'reserve_exhausted') return outcome;
             if (method === 'issue_card_ticket') {
                 const ticketId = await ticketIdOf(String(args.ticket_public_key));
                 h.tickets.set(ticketId, { ticket_id: ticketId, rail: 'card', status: 'purchased', card: { payment_reference_hmac: String(args.payment_reference_hmac) } });
@@ -215,7 +215,8 @@ describe('card events and operator', () => {
         expect(chain.sent).toHaveLength(1);
         expect(chain.sent[0].method).toBe('issue_card_ticket');
         expect(chain.sent[0].args).toMatchObject({ payment_reference_hmac: order.payment_reference_hmac, gross_minor: '500', currency: 'USD' });
-        expect(chain.sent[0].deposit > 0n).toBe(true);
+        // A function-call key signs it: no deposit, the Market pays the storage from its headroom.
+        expect(chain.sent[0].deposit).toBe(0n);
         expect(await status(h, order.order_id)).toMatchObject({ status: 'issued', issue_tx_hash: TX });
         await operate(h, chain.sign);
         expect(chain.sent).toHaveLength(1);
@@ -262,6 +263,57 @@ describe('card events and operator', () => {
         for (let i = 0; i < MAX_SEND_ATTEMPTS + 2; i += 1) await operate(h, chain.sign);
         expect(chain.sent).toHaveLength(MAX_SEND_ATTEMPTS);
         expect(await status(h, order.order_id)).toMatchObject({ status: 'paid', last_error: 'send_failed', attempts: MAX_SEND_ATTEMPTS });
+    });
+
+    it('waits without counting attempts while the Market cannot pay for ticket storage', async () => {
+        const h = harness();
+        const { order } = await paidOrder(h);
+        const chain = chainSigner(h, Array(MAX_SEND_ATTEMPTS + 2).fill('reserve_exhausted'));
+        for (let i = 0; i < MAX_SEND_ATTEMPTS + 2; i += 1) {
+            // Left to the cron: the Durable Object's 30-second alarm would only burn gas.
+            expect(await operate(h, chain.sign)).toEqual({ processed: 1, waiting: 0 });
+        }
+        expect(chain.sent).toHaveLength(MAX_SEND_ATTEMPTS + 2);
+        expect(await status(h, order.order_id)).toMatchObject({ status: 'paid', last_error: 'reserve_exhausted', attempts: 0 });
+        // The owner topped up the Market: the next run issues the ticket.
+        await operate(h, chain.sign);
+        expect(await status(h, order.order_id)).toMatchObject({ status: 'issued', issue_tx_hash: TX, last_error: null, attempts: 1 });
+        // A refund meanwhile cancels the waiting order, as a plain failure would allow.
+        const other = harness();
+        const second = await paidOrder(other);
+        const dry = chainSigner(other, ['reserve_exhausted']);
+        await operate(other, dry.sign);
+        await applyCardEvent(other.db, 'test', { ...purchase('evt-r3', 'po-1'), kind: 'refund' }, NOW);
+        await operate(other, dry.sign);
+        expect(await status(other, second.order.order_id)).toMatchObject({ status: 'cancelled' });
+    });
+
+    it('drains a reserve_exhausted backlog once the Market pays again', async () => {
+        const h = harness();
+        const orders: string[] = [];
+        for (let i = 1; i <= 3; i += 1) {
+            const { ticket, order } = await openOrder(h);
+            await h.call(`/v1/card-orders/${order.order_id}/device`, { body: signDevice(ticket, order) });
+            h.events.push([purchase(`evt-${i}`, `po-${i}`)]);
+            await h.call('/webhooks/card', { body: {}, headers: { 'x-test-signature': 'ok' } });
+            orders.push(order.order_id);
+        }
+        const dry = chainSigner(h, ['reserve_exhausted', 'reserve_exhausted', 'reserve_exhausted']);
+        expect(await operate(h, dry.sign)).toEqual({ processed: 3, waiting: 0 });
+        // Topped up: the first ticket goes through, so the rest are retried by the alarm, not the cron.
+        const partial = chainSigner(h, ['success', 'reserve_exhausted', 'reserve_exhausted']);
+        expect(await operate(h, partial.sign)).toEqual({ processed: 3, waiting: 2 });
+        expect(await status(h, orders[0])).toMatchObject({ status: 'issued' });
+        expect(await operate(h, chainSigner(h).sign)).toEqual({ processed: 2, waiting: 0 });
+        for (const orderId of orders) expect(await status(h, orderId)).toMatchObject({ status: 'issued' });
+    });
+
+    it('reads the headroom refusal out of a final execution outcome', () => {
+        const panicked = { status: { Failure: { ActionError: { index: 0, kind: { FunctionCallError: { ExecutionError:
+            `Smart contract panicked: ${RESERVE_HEADROOM_REFUSAL} (1 > 0 yoctoNEAR)` } } } } } };
+        expect(outcomeOf(panicked)).toBe('reserve_exhausted');
+        expect(outcomeOf({ status: { Failure: { ActionError: { index: 0, kind: { FunctionCallError: { ExecutionError: 'Smart contract panicked: Ticket already exists' } } } } } })).toBe('failure');
+        expect(outcomeOf({ status: { SuccessValue: '' } })).toBe('success');
     });
 
     it('cancels a refunded order before issue and voids an issued one', async () => {

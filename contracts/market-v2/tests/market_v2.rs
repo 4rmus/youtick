@@ -3426,7 +3426,6 @@ fn protocol_golden_vectors_are_accepted_byte_for_byte() {
     let card = &vectors["card_ticket"];
     let mut operator = context("payments.testnet");
     operator.block_timestamp(issued_at * 1_000_000);
-    operator.attached_deposit(near_sdk::NearToken::from_millinear(100));
     testing_env!(operator.build());
     let issue = &card["issue_card_ticket_args"];
     market.issue_card_ticket(
@@ -4492,11 +4491,9 @@ fn issue(
     )
 }
 
-/// The payment operator attaches NEAR for card ticket storage.
+/// The payment operator signs with a function-call key: no deposit, storage from the reserve.
 fn operator_env() {
-    let mut operator = context("payments.testnet");
-    operator.attached_deposit(near_sdk::NearToken::from_millinear(100));
-    testing_env!(operator.build());
+    testing_env!(context("payments.testnet").build());
 }
 
 fn card_market(publication_id: &str) -> Contract {
@@ -4756,43 +4753,76 @@ fn payment_operator_is_a_separate_timelocked_role() {
 }
 
 #[test]
-fn card_ticket_storage_is_paid_by_the_operator_deposit() {
-    // The mock host keeps writes made before a panic, so each attempt uses a fresh sale; on
-    // chain the failed call reverts entirely.
-    let mut market = card_market("job-card-storage");
-    let unpaid = card_sale(
-        "job-card-storage",
-        "card-unpaid",
+fn issue_card_ticket_refuses_a_deposit() {
+    // A function-call key cannot attach NEAR, so the method must not expect any; a deposit is a
+    // sign of a mis-configured operator and is refused before anything is written.
+    let mut market = card_market("job-card-deposit");
+    let sale = card_sale(
+        "job-card-deposit",
+        "card-deposit",
         &"8".repeat(64),
         "500",
         "USD",
     );
-    testing_env!(context("payments.testnet").build());
+    let mut paying = context("payments.testnet");
+    paying.attached_deposit(near_sdk::NearToken::from_yoctonear(1));
+    testing_env!(paying.build());
     must_fail(|| {
-        issue(&mut market, "job-card-storage", &unpaid, "500", "USD");
+        issue(&mut market, "job-card-deposit", &sale, "500", "USD");
     });
-    let short = card_sale(
+    assert!(market.get_ticket(sale.ticket_id.clone()).is_none());
+    operator_env();
+    issue(&mut market, "job-card-deposit", &sale, "500", "USD");
+}
+
+#[test]
+fn card_ticket_storage_comes_from_the_reserve_headroom() {
+    let mut market = card_market("job-card-storage");
+    let sale = card_sale(
         "job-card-storage",
-        "card-short",
+        "card-storage",
         &"a".repeat(64),
         "500",
         "USD",
     );
-    let mut tiny = context("payments.testnet");
-    tiny.attached_deposit(near_sdk::NearToken::from_yoctonear(1));
-    testing_env!(tiny.build());
-    must_fail(|| {
-        issue(&mut market, "job-card-storage", &short, "500", "USD");
-    });
-    let paid = card_sale(
-        "job-card-storage",
-        "card-paid",
-        &"b".repeat(64),
-        "500",
-        "USD",
-    );
+    // Leave 1 yoctoNEAR above the storage stake and the operational reserve: less than any
+    // ticket costs, so the reserve itself is never touched.
     operator_env();
-    issue(&mut market, "job-card-storage", &paid, "500", "USD");
+    let status = market.get_storage_reserve_status();
+    let mut exhausted = context("payments.testnet");
+    exhausted.account_balance(near_sdk::NearToken::from_yoctonear(
+        status.storage_stake_yocto.0 + status.operational_reserve_yocto.0 + 1,
+    ));
+    testing_env!(exhausted.build());
+    assert_eq!(
+        market.get_storage_reserve_status().reserve_headroom_yocto,
+        U128(1)
+    );
+    let references_before = market.get_storage_reserve_status().storage_usage_bytes;
+    must_fail(|| {
+        issue(&mut market, "job-card-storage", &sale, "500", "USD");
+    });
+    // Nothing is left behind: no ticket, no used reference, no extra bytes.
+    assert!(market.get_ticket(sale.ticket_id.clone()).is_none());
+    assert_eq!(
+        market.get_storage_reserve_status().storage_usage_bytes,
+        references_before
+    );
+
+    // With headroom (the default mock balance) the same sale, same reference, goes through and
+    // the headroom shrinks by exactly the ticket's storage.
+    operator_env();
+    let before = market.get_storage_reserve_status();
+    let ticket = issue(&mut market, "job-card-storage", &sale, "500", "USD");
+    assert_eq!(ticket.ticket_id, sale.ticket_id);
+    let after = market.get_storage_reserve_status();
+    assert!(after.storage_usage_bytes.0 > before.storage_usage_bytes.0);
+    assert_eq!(
+        after.reserve_headroom_yocto.0,
+        before.reserve_headroom_yocto.0
+            - u128::from(after.storage_usage_bytes.0 - before.storage_usage_bytes.0)
+                * before.storage_byte_cost_yocto.0
+    );
 }
 
 #[test]

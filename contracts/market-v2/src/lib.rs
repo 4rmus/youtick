@@ -2514,9 +2514,11 @@ impl Contract {
     /// Payment operator only, after a verified provider purchase event. Writes a card ticket
     /// without moving tokens. The ticket key's `card_purchase` signature binds the device, the
     /// payment reference and the charged amount; each payment reference creates one ticket.
-    /// The operator attaches NEAR for the ticket's storage (any excess is returned), so a
-    /// compromised operator cannot exhaust the contract's own storage balance.
-    #[payable]
+    /// The call takes no deposit, so the operator can sign it with a function-call access key:
+    /// the ticket's storage is paid from the contract's reserve headroom (the NEAR above the
+    /// storage stake and `near_operational_reserve`, see `get_storage_reserve_status`). When the
+    /// headroom does not cover it the call fails and the payment service keeps the order waiting,
+    /// so a compromised operator can at most spend the headroom, never the reserve itself.
     pub fn issue_card_ticket(
         &mut self,
         ticket_public_key: String,
@@ -2529,6 +2531,10 @@ impl Contract {
         require!(
             env::predecessor_account_id() == self.payment_operator_id,
             "Only the payment operator can issue card tickets"
+        );
+        require!(
+            env::attached_deposit().is_zero(),
+            "issue_card_ticket takes no deposit"
         );
         require!(!self.new_purchases_paused(), "New purchases are paused");
         require!(
@@ -2591,6 +2597,8 @@ impl Contract {
             "Invalid ticket signature",
         );
 
+        // Measured before the writes: afterwards the headroom already reflects the new bytes.
+        let reserve_headroom = self.storage_reserve_status().reserve_headroom_yocto.0;
         let storage_before = env::storage_usage();
         let ticket = Ticket {
             ticket_id: ticket_id.clone(),
@@ -2622,20 +2630,19 @@ impl Contract {
         };
         self.tickets.insert(&ticket_id, &ticket);
         self.card_references.insert(&payment_reference_hmac);
-        let storage_cost = env::storage_byte_cost().saturating_mul(u128::from(
-            env::storage_usage().saturating_sub(storage_before),
-        ));
-        let attached = env::attached_deposit();
-        require!(
-            attached >= storage_cost,
-            format!(
-                "Attach at least {} yoctoNEAR for card ticket storage",
-                storage_cost.as_yoctonear()
-            )
-        );
-        let excess = attached.saturating_sub(storage_cost);
-        if !excess.is_zero() {
-            Promise::new(env::predecessor_account_id()).transfer(excess);
+        let storage_cost = env::storage_byte_cost()
+            .saturating_mul(u128::from(
+                env::storage_usage().saturating_sub(storage_before),
+            ))
+            .as_yoctonear();
+        if storage_cost > reserve_headroom {
+            // On chain the panic reverts the writes; the unit-test host keeps them, so undo
+            // them first and leave no partial ticket or used reference behind.
+            self.tickets.remove(&ticket_id);
+            self.card_references.remove(&payment_reference_hmac);
+            env::panic_str(&format!(
+                "Card ticket storage exceeds the operational reserve headroom ({storage_cost} > {reserve_headroom} yoctoNEAR)"
+            ));
         }
         emit_market_v2_event(
             "card_ticket_issued",
