@@ -76,7 +76,7 @@ describe('Cleeng orders', () => {
     it('makes an offer, a per-order customer and a checkout session', async () => {
         const { sent, fetcher } = cleengFetch();
         const result = await cleengProvider(CONFIG, { fetcher }).createOrder({ orderId: ORDER_ID, publicationId: 'lp-job', grossMinor: 500, currency: 'USD', country: 'GB' });
-        expect(result).toEqual({ providerOrderId: OFFER, checkout: { provider: 'cleeng', environment: 'sandbox', jwt: 'jwt-value', refresh_token: 'refresh-value', offer_id: OFFER } });
+        expect(result).toEqual({ providerOrderId: OFFER, checkout: { provider: 'cleeng', environment: 'sandbox', publisher_id: CONFIG.publisherId, jwt: 'jwt-value', refresh_token: 'refresh-value', offer_id: OFFER } });
         expect(sent.map((request) => request.url)).toEqual([
             'https://api.sandbox.cleeng.com/3.1/offers', 'https://api.sandbox.cleeng.com/3.1/customers', 'https://mediastoreapi-sandbox.cleeng.com/sso/auths',
         ]);

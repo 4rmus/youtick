@@ -8,14 +8,17 @@ export const FUNNEL_STEPS = [
     'approval_started', 'purchase_submitted', 'ticket_confirmed', 'purchase_failed',
 ] as const;
 
-export const FUNNEL_RAILS = ['crypto'] as const;
+export const FUNNEL_RAILS = ['crypto', 'card'] as const;
 
 /** Failure codes the web checkout reports; anything else is counted as `other`. */
 export const FUNNEL_FAILURE_CODES = [
     'publication_not_available', 'publication_unavailable', 'price_below_minimum', 'price_mismatch', 'insufficient_balance',
     'near_auth_login_cancelled', 'near_auth_access_denied', 'delegate_stale', 'identity_limit_reached', 'daily_limit_reached',
     'rate_limited', 'purchase_not_confirmed', 'ticket_exists', 'signature_expired', 'approval_rejected', 'approval_expired',
-    'account_not_ready', 'purchase_pending', 'purchases_paused', 'popup_blocked', 'other',
+    'account_not_ready', 'purchase_pending', 'purchases_paused', 'popup_blocked',
+    // Card rail (E8.2).
+    'buyer_country_unknown', 'provider_unavailable', 'card_order_closed', 'card_payment_cancelled', 'card_payment_timeout',
+    'checkout_unavailable', 'other',
 ] as const;
 
 export interface FunnelEvent {
