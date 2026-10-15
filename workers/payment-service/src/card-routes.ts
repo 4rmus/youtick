@@ -14,6 +14,8 @@ export interface CardContext {
     config: PaymentConfig;
     card: CardConfig;
     nowMs: number;
+    /** The buyer's country from the request's IP (Cloudflare `cf.country`); passed to the provider only. */
+    country: string | null;
     /** Wakes the card operator after an order became payable or voidable. */
     wake: () => Promise<void>;
 }
@@ -22,7 +24,7 @@ const ERRORS: Record<string, number> = {
     invalid_request: 400, invalid_signature: 400, signature_expired: 400, signature_expiry_too_far: 400, invalid_event: 400,
     publication_not_found: 404, card_order_not_found: 404, publication_not_available: 409, price_below_minimum: 409,
     price_not_whole_cents: 409, ticket_exists: 409, ticket_key_used: 409, card_order_closed: 409,
-    invalid_webhook: 401, rpc_unavailable: 503, provider_unavailable: 503,
+    invalid_webhook: 401, buyer_country_unknown: 403, rpc_unavailable: 503, provider_unavailable: 503,
 };
 
 function json(value: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -37,21 +39,30 @@ export function cardError(error: unknown, headers: Record<string, string> = {}):
 }
 
 export function isCardPublicPath(pathname: string): boolean {
-    return pathname === '/v1/card-orders' || /^\/v1\/card-orders\/[0-9a-f]{32}(\/device)?$/.test(pathname);
+    return pathname === '/v1/card-orders' || /^\/v1\/card-orders\/[0-9a-f]{32}(\/device|\/checkout)?$/.test(pathname);
 }
 
 /** Public routes; origin, CORS and rate limit are checked by the caller. */
 export async function handleCardPublic(request: Request, url: URL, body: Record<string, unknown> | null, context: CardContext, cors: Record<string, string>): Promise<Response> {
     try {
         if (request.method === 'POST' && url.pathname === '/v1/card-orders') {
-            const order = await createCardOrder({
+            const { order, checkout } = await createCardOrder({
                 db: context.db, view: context.view, provider: context.provider, contractId: context.config.marketContractId,
-                referenceSecret: context.card.referenceSecret, nowMs: context.nowMs,
+                referenceSecret: context.card.referenceSecret, nowMs: context.nowMs, country: context.country,
             }, parseOrderRequest(body ?? {}));
-            return json(publicOrderView(order), 201, cors);
+            return json({ ...publicOrderView(order), ...(checkout ? { checkout } : {}) }, 201, cors);
         }
-        const match = /^\/v1\/card-orders\/([0-9a-f]{32})(\/device)?$/.exec(url.pathname);
-        if (match && request.method === 'POST' && match[2]) {
+        const match = /^\/v1\/card-orders\/([0-9a-f]{32})(\/device|\/checkout)?$/.exec(url.pathname);
+        if (match && request.method === 'POST' && match[2] === '/checkout') {
+            // The provider's session is short-lived; an open order gets a new one, never a stored one.
+            const order = await context.db.prepare(`SELECT * FROM card_orders WHERE order_id = ?`).bind(match[1]).first<CardOrderRow>();
+            if (!order) throw new Error('card_order_not_found');
+            if (!['created', 'awaiting_payment'].includes(order.status)) throw new Error('card_order_closed');
+            if (!context.provider.checkoutSession) throw new Error('provider_unavailable');
+            const checkout = await context.provider.checkoutSession(order.order_id, order.provider_order_id);
+            return json({ ...publicOrderView(order), checkout }, 200, cors);
+        }
+        if (match && request.method === 'POST' && match[2] === '/device') {
             const order = await signCardOrder({ db: context.db, contractId: context.config.marketContractId, network: context.config.network, nowMs: context.nowMs },
                 match[1], parseDevice(body ?? {}));
             // A paid order that waited for a fresh signature can be issued now.

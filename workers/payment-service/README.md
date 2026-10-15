@@ -98,13 +98,16 @@ The private key is read only by the approving commands and never printed.
 
 ## Card path
 
-Status: `LOCAL_TEST only / DISABLED`. Roadmap E8, preparation gate. The card provider (Cleeng,
-merchant of record) is not connected: its sandbox (roadmap X1) is not open, so no provider adapter
-exists and every card endpoint answers `503 card_path_disabled`. `CARD_PATH_ENABLED` is `false`.
+Status: `LOCAL_TEST only / DISABLED`. Roadmap E8 (preparation and E8.1 adapter). The card
+provider is Cleeng (merchant of record). Its adapter (`src/cleeng.ts`) is written from the public
+documentation; the sandbox (roadmap X1) is not open, so it has never called Cleeng. Every card
+endpoint answers `503 card_path_disabled` unless `CARD_PATH_ENABLED` is `true` **and** a Cleeng
+sandbox configuration is complete; `CARD_PATH_ENABLED` is `false`.
 
 | Endpoint | Input | Output |
 |---|---|---|
-| `POST /v1/card-orders` | `{ publication_id, ticket_public_key }` | `201 { order_id, status, ticket_id, payment_reference_hmac, gross_minor, currency, needs_signature }` |
+| `POST /v1/card-orders` | `{ publication_id, ticket_public_key }` | `201 { order_id, status, ticket_id, payment_reference_hmac, gross_minor, currency, needs_signature, checkout }` |
+| `POST /v1/card-orders/<id>/checkout` | `{}` | the order with a new `checkout` (while `created` or `awaiting_payment`) |
 | `POST /v1/card-orders/<id>/device` | `{ session_public_key, certificate_sha256, expires_at_ms, signature }` (`card_purchase`) | the order |
 | `GET /v1/card-orders/<id>` | — | the order |
 | `POST /webhooks/card` | the provider's delivery, authenticated by the adapter | `{ received }` |
@@ -143,14 +146,43 @@ exists and every card endpoint answers `503 card_path_disabled`. `CARD_PATH_ENAB
 - **Stored per order.** Publication, creator, ticket and device public keys, the device
   signature, amounts and transaction hashes. No e-mail, name, IP or card data.
 
-What waits for the sandbox (EXTERNAL_NOT_RUN): the Cleeng adapter (offer per video, SSO customer,
-order creation, mapping `transactionCreated` and `paymentRefunded` to the order), the web checkout,
-and turning the path on (Durable Object binding and migration, cron, `PAYMENT_OPERATOR_ID`,
-secrets). Only the documented Cleeng signature check exists (`verifyCleengSignature`), tested
-against a self-computed value, not a real delivery. Open provider questions: how a
-`transactionCreated` event maps to the order (it carries no order id), `paymentRefunded` to
-`paymentId` mapping, and chargebacks, which have no webhook and come from the provider's refunds
-report through `POST /internal/card-events`.
+### Cleeng adapter (E8.1)
+
+Written from developers.cleeng.com (read 2026-10-15). Every shape below is documented, not
+observed: nothing has been sent to or received from Cleeng (EXTERNAL_NOT_RUN).
+
+- **One offer per order.** Cleeng's webhooks carry no order id, but `transactionCreated` and
+  `paymentRefunded` both name the offer. `createOrder` therefore makes a `vod` offer
+  (`POST /3.1/offers`) at the order's price in USD, with `externalProperties` `order_id` and
+  `publication_id`, and the offer id is the provider order id (and the input of
+  `payment_reference_hmac`). Its one-hour Cleeng entitlement is unused: access is the ticket on NEAR.
+- **One customer per order.** `POST /3.1/customers` with `<order id>@buyers.youtick.invalid`
+  (Cleeng documents `.invalid` for users without e-mail), `externalId` = order id, and the buyer's
+  country. youtick sends and stores no e-mail, and no ticket is tied to a person.
+- **Country.** Cloudflare's `cf.country` for the request, passed to Cleeng for tax and not stored.
+  A request without a real country (none, `XX`, `T1`, …) gets `403 buyer_country_unknown`.
+- **Checkout.** `POST /sso/auths` (MediaStore) returns the customer's session (`jwt`,
+  `refresh_token`), sent to the buyer's page as `checkout` with the `offer_id` for Cleeng's hosted
+  checkout and never stored. `POST /v1/card-orders/<id>/checkout` makes a new one.
+- **Webhooks.** `POST /webhooks/card` checks `X-Webhook-Signature` over the raw body
+  (`CLEENG_WEBHOOK_SECRET`), requires `X-Webhook-Delivery-Id` and the envelope's `broadcasterId` =
+  `CLEENG_PUBLISHER_ID`; the event id is `<delivery id>:0`.
+  - `transactionCreated` → `purchase` at `offerPrice` / `offerCurrency`: the price the ticket key
+    signed. The charged amount (`transactionPriceInclTax`, in the buyer's currency, with tax) is
+    the report's business (E8.4).
+  - `paymentRefunded` → `refund` with `amount` and currency `XXX`: the webhook names no currency.
+    The ledger keeps it under `XXX` until the refunds report import settles it.
+  - Every other topic is acknowledged and ignored. Chargebacks have no webhook (report import).
+- **Configuration.** `CLEENG_ENVIRONMENT` (only `sandbox` is accepted), `CLEENG_PUBLISHER_ID`, and
+  the secrets `CLEENG_PUBLISHER_TOKEN` and `CLEENG_WEBHOOK_SECRET`. A Cleeng error body is never
+  logged (it may echo customer fields), only the path and status.
+
+To check in the sandbox before E8.3: that a `.invalid` customer per order is accepted (and what
+Cleeng's MoR receipt does with it); `offerPrice` units and type; the hosted checkout taking our
+customer session and offer; whether an offer id carries a country suffix (`S…_US`) in webhooks;
+`paymentRefunded` amount units; the webhook registration API (`/endpoints` or
+`/3.1/webhook_subscriptions`) and its host. Still to build: the web checkout (E8.2) and turning the
+path on (E8.3: Durable Object binding and migration, cron, `PAYMENT_OPERATOR_ID`, secrets).
 
 ```bash
 node scripts/card-orders.mjs reconcile               # every order against its ticket on chain

@@ -2,7 +2,7 @@
 // order holds its public key and, once signed, the `card_purchase` device binding that names the
 // payment reference and the charged amount. The price comes from Market V2, never from the request.
 import { PublicKey } from 'near-api-js';
-import type { CardProvider } from './card-provider';
+import type { CardProvider, CheckoutSession } from './card-provider';
 import { readPurchasablePublication, type View } from './market';
 import { TICKET_SIGNATURE_DOMAIN } from './refunds';
 
@@ -125,13 +125,16 @@ interface Context {
     contractId: string;
     referenceSecret: string;
     nowMs: number;
+    /** The buyer's country from the request's IP, passed to the provider and never stored. */
+    country: string | null;
 }
 
 /**
  * Opens a card order for one ticket key: reads the price, makes the provider order and stores its
- * reference. The web then has the ticket key sign `card_purchase` over the returned fields.
+ * reference. The web then has the ticket key sign `card_purchase` over the returned fields and pays
+ * with the provider's checkout session, which is returned once and not stored.
  */
-export async function createCardOrder(context: Context, input: { publication_id: string; ticket_public_key: string }): Promise<CardOrderRow> {
+export async function createCardOrder(context: Context, input: { publication_id: string; ticket_public_key: string }): Promise<{ order: CardOrderRow; checkout?: CheckoutSession }> {
     const ticketId = await ticketIdOf(input.ticket_public_key);
     const price = await readPurchasablePublication(context.view, context.contractId, input.publication_id);
     const publication = await context.view<{ creator_id?: string } | null>(context.contractId, 'get_publication', { publication_id: input.publication_id });
@@ -142,7 +145,7 @@ export async function createCardOrder(context: Context, input: { publication_id:
     if (existing) fail('ticket_key_used');
     const grossMinor = grossMinorOf(price);
     const orderId = randomId();
-    const providerOrder = await context.provider.createOrder({ orderId, publicationId: input.publication_id, grossMinor, currency: 'USD' });
+    const providerOrder = await context.provider.createOrder({ orderId, publicationId: input.publication_id, grossMinor, currency: 'USD', country: context.country });
     if (!IDENTIFIER.test(providerOrder.providerOrderId)) fail('provider_unavailable');
     const row: CardOrderRow = {
         order_id: orderId, provider: context.provider.name, provider_order_id: providerOrder.providerOrderId,
@@ -162,7 +165,7 @@ export async function createCardOrder(context: Context, input: { publication_id:
         if (error instanceof Error && /UNIQUE/i.test(error.message)) fail('ticket_key_used');
         throw error;
     }
-    return row;
+    return { order: row, checkout: providerOrder.checkout };
 }
 
 /**
@@ -170,7 +173,7 @@ export async function createCardOrder(context: Context, input: { publication_id:
  * be signed again while the ticket is not on chain yet, which is how a payment that lands after
  * the one-hour signature limit still becomes a ticket.
  */
-export async function signCardOrder(context: Omit<Context, 'provider' | 'referenceSecret' | 'view'> & { network: string }, orderId: string, device: DeviceInput): Promise<CardOrderRow> {
+export async function signCardOrder(context: Omit<Context, 'provider' | 'referenceSecret' | 'view' | 'country'> & { network: string }, orderId: string, device: DeviceInput): Promise<CardOrderRow> {
     if (!ORDER_ID.test(orderId)) fail('card_order_not_found');
     const order = await context.db.prepare(`SELECT * FROM card_orders WHERE order_id = ?`).bind(orderId).first<CardOrderRow>();
     if (!order) fail('card_order_not_found');

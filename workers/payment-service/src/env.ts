@@ -32,6 +32,31 @@ export interface Env {
     CARD_REFERENCE_SECRET?: string;
     /** The single card operator (src/card-operator-object.ts). */
     CARD_OPERATOR?: DurableObjectNamespace;
+    /** Cleeng adapter (src/cleeng.ts). Only `sandbox` is accepted while the service is testnet-only. */
+    CLEENG_ENVIRONMENT?: string;
+    /** The Cleeng broadcaster (publisher) id every webhook must name. */
+    CLEENG_PUBLISHER_ID?: string;
+    /** Secret. Cleeng `X-Publisher-Token`; never logged. */
+    CLEENG_PUBLISHER_TOKEN?: string;
+    /** Secret. The Cleeng webhook endpoint's signing secret; never logged. */
+    CLEENG_WEBHOOK_SECRET?: string;
+}
+
+export interface CleengEnvConfig {
+    environment: 'sandbox';
+    publisherId: string;
+    publisherToken: string;
+    webhookSecret: string;
+}
+
+/** The Cleeng adapter's settings, or null (no adapter, so the card path stays off). */
+export function cleengConfig(env: Env): CleengEnvConfig | null {
+    // Production Cleeng is refused with mainnet: both wait for the card path's own enabling gates.
+    if (env.CLEENG_ENVIRONMENT !== 'sandbox' || !/^[0-9]{1,20}$/.test(env.CLEENG_PUBLISHER_ID ?? '')
+        || !/^[\x21-\x7e]{16,4096}$/.test(env.CLEENG_PUBLISHER_TOKEN ?? '') || !/^[\x21-\x7e]{16,512}$/.test(env.CLEENG_WEBHOOK_SECRET ?? '')) {
+        return null;
+    }
+    return { environment: 'sandbox', publisherId: env.CLEENG_PUBLISHER_ID!, publisherToken: env.CLEENG_PUBLISHER_TOKEN!, webhookSecret: env.CLEENG_WEBHOOK_SECRET! };
 }
 
 export interface CardConfig {
