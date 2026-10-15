@@ -18,6 +18,11 @@ on:
         type: choice
         default: closed
         options: [closed, acceptance]
+      card_path:
+        description: off keeps the payment service's card path at 503; sandbox turns it on with the Cleeng sandbox (acceptance only)
+        type: choice
+        default: 'off'
+        options: ['off', sandbox]
       confirmation:
         description: Type DEPLOY_V2_TESTNET_closed or DEPLOY_V2_TESTNET_acceptance
         required: true
@@ -58,12 +63,14 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
           CI_RUN_ID: ${{ inputs.ci_run_id }}
           RELEASE_MODE: ${{ inputs.mode }}
+          CARD_PATH: ${{ inputs.card_path }}
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
           [[ "$REQUESTED_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$CI_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$RELEASE_MODE" =~ ^(closed|acceptance)$ ]]
+          [[ "$CARD_PATH" == "off" || ( "$CARD_PATH" == "sandbox" && "$RELEASE_MODE" == "acceptance" ) ]]
           [[ "$CONFIRMATION" == "DEPLOY_V2_TESTNET_${RELEASE_MODE}" ]]
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$RUNNER_TEMP/ci.json"
           jq -e --arg sha "$REQUESTED_SHA" --arg repo "$GITHUB_REPOSITORY" '
@@ -95,6 +102,7 @@ jobs:
         env:
           SHA: ${{ steps.authorize.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
+          CARD_PATH: ${{ inputs.card_path }}
           READ_MODEL_D1_ID: ${{ vars.V2_READ_MODEL_D1_ID }}
           PAYMENTS_D1_ID: ${{ vars.V2_PAYMENTS_D1_ID }}
         run: |
@@ -112,22 +120,23 @@ jobs:
           install -m 0644 "$RUNNER_TEMP/build/read-model/worker.js" "$RUNNER_TEMP/release/read-model/index.js"
           install -m 0644 read-model/d1/*.sql "$RUNNER_TEMP/release/read-model/d1/"
           node scripts/v2-testnet-release.mjs write-config read-model "$RUNNER_TEMP/release/read-model"
-          node scripts/v2-testnet-release.mjs check "$RUNNER_TEMP/release" "$SHA" "$RELEASE_MODE"
-          jq -n --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg run "$(jq -r .id "$RUNNER_TEMP/ci.json")" \
-            '{schema:"youtick.v2-testnet-workers-release.v1", sha:$sha, mode:$mode, ci_run_id:$run}' > "$RUNNER_TEMP/release/manifest.json"
+          node scripts/v2-testnet-release.mjs check "$RUNNER_TEMP/release" "$SHA" "$RELEASE_MODE" "$CARD_PATH"
+          jq -n --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg card "$CARD_PATH" --arg run "$(jq -r .id "$RUNNER_TEMP/ci.json")" \
+            '{schema:"youtick.v2-testnet-workers-release.v1", sha:$sha, mode:$mode, card_path:$card, ci_run_id:$run}' > "$RUNNER_TEMP/release/manifest.json"
           (cd "$RUNNER_TEMP/release" && find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
       - name: Summarize the exact packet for environment approval
         env:
           SHA: ${{ steps.authorize.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
+          CARD_PATH: ${{ inputs.card_path }}
         run: |
           node --input-type=module <<'JS'
           import { appendFileSync, readFileSync } from 'node:fs';
           import { COMPONENTS, releaseVars } from './scripts/v2-testnet-release.mjs';
           const packet = Object.fromEntries(Object.entries(COMPONENTS).map(([name, spec]) =>
-            [name, { worker: spec.worker, domain: spec.domain, vars: releaseVars(name, process.env.RELEASE_MODE) }]));
+            [name, { worker: spec.worker, domain: spec.domain, vars: releaseVars(name, process.env.RELEASE_MODE, process.env.CARD_PATH) }]));
           const sums = readFileSync(`${process.env.RUNNER_TEMP}/release/SHA256SUMS`, 'utf8');
-          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `V2 testnet Workers, ${process.env.RELEASE_MODE}, ${process.env.SHA} (no NEAR transaction in this workflow):\n\n` +
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `V2 testnet Workers, ${process.env.RELEASE_MODE}, card path ${process.env.CARD_PATH}, ${process.env.SHA} (no NEAR transaction in this workflow):\n\n` +
             '```json\n' + JSON.stringify(packet, null, 2) + '\n```\n\n```\n' + sums + '```\n');
           JS
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -170,6 +179,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.prepare.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
+          CARD_PATH: ${{ inputs.card_path }}
         run: |
           set -euo pipefail
           gh api "repos/${GITHUB_REPOSITORY}/environments/v2-testnet" | jq -e '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length) > 0)'
@@ -180,7 +190,7 @@ jobs:
             gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/deploy-v2-testnet.yml" --source-digest "$SHA"
           done < SHA256SUMS
-          jq -e --arg sha "$SHA" --arg mode "$RELEASE_MODE" '.sha == $sha and .mode == $mode' manifest.json
+          jq -e --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg card "$CARD_PATH" '.sha == $sha and .mode == $mode and .card_path == $card' manifest.json
       - run: npm ci --no-audit --no-fund --prefer-offline
         working-directory: workers/relayer
       - name: Fingerprint unrelated root origin
@@ -193,7 +203,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
           WRANGLER_SEND_METRICS: 'false'
         run: workers/relayer/node_modules/.bin/wrangler d1 migrations apply youtick-market-read-model-v2-testnet --remote --config "$RUNNER_TEMP/release/read-model/wrangler.toml"
-      - name: Apply the V2 payments D1 migrations (refund request inbox)
+      - name: Apply the V2 payments D1 migrations (refund request inbox, card orders)
         # Idempotent, like the read-model step; the packet carries workers/payment-service/migrations.
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
@@ -209,9 +219,15 @@ jobs:
           RELAYER_ADMIN_TOKEN: ${{ secrets.V2_RELAYER_ADMIN_TOKEN }}
           VAT_SIGNER_PRIVATE_KEY: ${{ secrets.V2_VAT_SIGNER_PRIVATE_KEY }}
           REFUND_ADMIN_TOKEN: ${{ secrets.V2_REFUND_ADMIN_TOKEN }}
+          # Card path only (E8.3); the release refuses missing or malformed ones when card_path is sandbox.
+          PAYMENT_OPERATOR_PRIVATE_KEY: ${{ inputs.card_path == 'sandbox' && secrets.V2_PAYMENT_OPERATOR_CARD_PRIVATE_KEY || '' }}
+          CARD_REFERENCE_SECRET: ${{ inputs.card_path == 'sandbox' && secrets.V2_CARD_REFERENCE_SECRET || '' }}
+          CLEENG_PUBLISHER_TOKEN: ${{ inputs.card_path == 'sandbox' && secrets.V2_CLEENG_PUBLISHER_TOKEN || '' }}
+          CLEENG_WEBHOOK_SECRET: ${{ inputs.card_path == 'sandbox' && secrets.V2_CLEENG_WEBHOOK_SECRET || '' }}
           SHA: ${{ needs.prepare.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
-        run: node scripts/v2-testnet-release.mjs deploy "$SHA" "$RUNNER_TEMP/release" "$RUNNER_TEMP/v2-testnet-workers-receipt.json" "$RELEASE_MODE"
+          CARD_PATH: ${{ inputs.card_path }}
+        run: node scripts/v2-testnet-release.mjs deploy "$SHA" "$RUNNER_TEMP/release" "$RUNNER_TEMP/v2-testnet-workers-receipt.json" "$RELEASE_MODE" "$CARD_PATH"
       - name: Verify unrelated root origin
         run: |
           node scripts/release-smoke.mjs fingerprint https://youtick.net > "$RUNNER_TEMP/root-after.json"

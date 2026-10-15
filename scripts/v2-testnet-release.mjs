@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // V2 testnet release for the relayer and payment-service Workers (docs/v2-testnet-runbook.md, Workers).
 // Run only by .github/workflows/deploy-v2-testnet.yml:
-//   write-config <component> <dry-run-outdir>       prepare job, no secrets
-//   deploy <sha> <release-dir> <receipt> <mode>     deploy job, environment v2-testnet
+//   write-config <component> <dry-run-outdir>              prepare job, no secrets
+//   check <release-dir> <sha> <mode> [card]                prepare job, dry run
+//   deploy <sha> <release-dir> <receipt> <mode> [card]     deploy job, environment v2-testnet
 // The Worker bytes come from `wrangler deploy --dry-run --outdir` in the prepare job; this script never bundles.
 import { createPrivateKey, createPublicKey, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -13,10 +14,17 @@ import process from 'node:process';
 
 export const WRANGLER_VERSION = '4.147.0';
 export const MODES = Object.freeze(['closed', 'acceptance']);
+/** The payment service's card path (roadmap E8.3): `off`, or on with the Cleeng sandbox (acceptance only). */
+export const CARD_PATHS = Object.freeze(['off', 'sandbox']);
 export const PARENT = 'youtick-dev-v3.testnet';
 export const MARKET_V2 = `v2-market-261007.${PARENT}`;
 const RELAYER = `v2-relayer-261007.${PARENT}`;
 const CKD_GATE = `v2-ckd-gate-261007.${PARENT}`;
+export const PAYMENT_OPERATOR = `v2-payments-261007.${PARENT}`;
+/** The only methods the card path's function-call key may call (gate E8.0); never a full-access key. */
+export const CARD_OPERATOR_METHODS = Object.freeze(['issue_card_ticket', 'void_card_ticket']);
+/** Cleeng sandbox publisher (broadcaster) id, public; created by the owner on 2026-10-15. */
+export const CLEENG_SANDBOX_PUBLISHER_ID = '154746265';
 // The shared NEAR Auth testnet client only allows this origin (docs/v2-testnet-runbook.md).
 export const ACCEPTANCE_ORIGIN = 'http://localhost:3000';
 export const DENIED_ORIGIN = 'https://release-smoke.invalid';
@@ -159,11 +167,22 @@ export function sanitizeWranglerConfig(source, component, { d1Id } = {}) {
     return out.join('\n');
 }
 
-export function releaseVars(component, mode) {
+export function cardPath(mode, card = 'off') {
+    if (!CARD_PATHS.includes(card)) fail('card_path_invalid');
+    if (card !== 'off' && mode !== 'acceptance') fail('card_path_requires_acceptance');
+    return card;
+}
+
+export function releaseVars(component, mode, card = 'off') {
     const spec = COMPONENTS[component] ?? fail('component_unknown');
     if (!MODES.includes(mode)) fail('mode_invalid');
     const flags = Object.fromEntries(spec.flags.map((flag) => [flag, mode === 'acceptance' ? 'true' : 'false']));
-    return { ...spec.vars, ...flags };
+    if (component !== 'payment-service') return { ...spec.vars, ...flags };
+    // The card path is its own switch: an acceptance release without it keeps every card route at 503.
+    const cardVars = cardPath(mode, card) === 'sandbox'
+        ? { CARD_PATH_ENABLED: 'true', PAYMENT_OPERATOR_ID: PAYMENT_OPERATOR, CLEENG_ENVIRONMENT: 'sandbox', CLEENG_PUBLISHER_ID: CLEENG_SANDBOX_PUBLISHER_ID }
+        : { CARD_PATH_ENABLED: 'false' };
+    return { ...spec.vars, ...flags, ...cardVars };
 }
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -225,19 +244,32 @@ export function validateRpcUrl(value) {
 }
 
 /** Reads and checks the deploy job's environment; nothing here is echoed. */
-export function releaseSecrets(env) {
+export function releaseSecrets(env, card = 'off') {
     if (!/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID ?? '') || !env.CLOUDFLARE_API_TOKEN?.trim()) fail('cloudflare_credentials_invalid');
     if (!/^[A-Za-z0-9_-]{32,256}$/.test(env.RELAYER_ADMIN_TOKEN ?? '')) fail('relayer_admin_token_invalid');
     if (!/^[A-Za-z0-9_-]{32,256}$/.test(env.REFUND_ADMIN_TOKEN ?? '')) fail('refund_admin_token_invalid');
     if (env.REFUND_ADMIN_TOKEN === env.RELAYER_ADMIN_TOKEN) fail('admin_tokens_must_differ');
     const rpc = validateRpcUrl(env.NEAR_RPC_URL ?? '');
+    const payment = { NEAR_RPC_URL: rpc, VAT_SIGNER_PRIVATE_KEY: env.VAT_SIGNER_PRIVATE_KEY, REFUND_ADMIN_TOKEN: env.REFUND_ADMIN_TOKEN };
+    let cardOperatorPublicKey = null;
+    if (card === 'sandbox') {
+        cardOperatorPublicKey = nearPublicKey(env.PAYMENT_OPERATOR_PRIVATE_KEY);
+        if (!/^[0-9a-f]{64}$/.test(env.CARD_REFERENCE_SECRET ?? '')) fail('card_reference_secret_invalid');
+        if (!/^[\x21-\x7e]{16,4096}$/.test(env.CLEENG_PUBLISHER_TOKEN ?? '')) fail('cleeng_publisher_token_invalid');
+        if (!/^whsec_[A-Za-z0-9+/=_-]{16,200}$/.test(env.CLEENG_WEBHOOK_SECRET ?? '')) fail('cleeng_webhook_secret_invalid');
+        Object.assign(payment, {
+            PAYMENT_OPERATOR_PRIVATE_KEY: env.PAYMENT_OPERATOR_PRIVATE_KEY, CARD_REFERENCE_SECRET: env.CARD_REFERENCE_SECRET,
+            CLEENG_PUBLISHER_TOKEN: env.CLEENG_PUBLISHER_TOKEN, CLEENG_WEBHOOK_SECRET: env.CLEENG_WEBHOOK_SECRET,
+        });
+    }
     return {
         cloudflare: { accountId: env.CLOUDFLARE_ACCOUNT_ID, apiToken: env.CLOUDFLARE_API_TOKEN },
         rpc,
         relayerPublicKey: nearPublicKey(env.RELAYER_PRIVATE_KEY),
         vatPublicKey: nearPublicKey(env.VAT_SIGNER_PRIVATE_KEY),
+        cardOperatorPublicKey,
         relayer: { NEAR_RPC_URL: rpc, RELAYER_PRIVATE_KEY: env.RELAYER_PRIVATE_KEY, RELAYER_ADMIN_TOKEN: env.RELAYER_ADMIN_TOKEN },
-        'payment-service': { NEAR_RPC_URL: rpc, VAT_SIGNER_PRIVATE_KEY: env.VAT_SIGNER_PRIVATE_KEY, REFUND_ADMIN_TOKEN: env.REFUND_ADMIN_TOKEN },
+        'payment-service': payment,
         'read-model': { READ_MODEL_NEAR_RPC_URL: rpc },
     };
 }
@@ -274,16 +306,26 @@ export async function preflight(secrets, fetchImpl) {
         fail('vat_key_unreadable');
     }
     if (registered !== secrets.vatPublicKey) fail('vat_key_not_registered');
+    if (!secrets.cardOperatorPublicKey) return;
+    // The card key must be the E8.0 function-call key: Market V2 only, exactly the two card methods.
+    const card = await rpcQuery(fetchImpl, secrets.rpc, {
+        request_type: 'view_access_key', account_id: PAYMENT_OPERATOR, public_key: secrets.cardOperatorPublicKey,
+    });
+    const call = card.result?.permission?.FunctionCall;
+    if (!call) fail(card.result?.permission === 'FullAccess' ? 'card_operator_key_full_access' : 'card_operator_key_not_on_chain');
+    if (call.receiver_id !== MARKET_V2 || [...(call.method_names ?? [])].sort().join(',') !== [...CARD_OPERATOR_METHODS].sort().join(',')) {
+        fail('card_operator_key_scope');
+    }
 }
 
-export function wranglerArgs(component, releaseDir, sha, mode) {
+export function wranglerArgs(component, releaseDir, sha, mode, card = 'off') {
     const spec = COMPONENTS[component] ?? fail('component_unknown');
     const dir = join(releaseDir, component);
     return [
         'deploy', join(dir, 'index.js'), '--no-bundle', '--config', join(dir, 'wrangler.toml'),
         '--name', spec.worker, '--domain', spec.domain,
-        ...Object.entries(releaseVars(component, mode)).flatMap(([key, value]) => ['--var', `${key}:${value}`]),
-        '--tag', sha, '--message', `YouTick v2-testnet ${mode} ${sha}`,
+        ...Object.entries(releaseVars(component, mode, card)).flatMap(([key, value]) => ['--var', `${key}:${value}`]),
+        '--tag', sha, '--message', `YouTick v2-testnet ${mode}${card === 'off' ? '' : ` card-${card}`} ${sha}`,
     ];
 }
 
@@ -342,7 +384,7 @@ export async function request(fetchImpl, url, init) {
  * Acceptance: the allowed origin gets a CORS preflight, another origin is refused, and the payment
  * service reaches the chain with a registered VAT key (an unknown publication returns 404, not 503).
  */
-export async function smoke(component, mode, fetchImpl) {
+export async function smoke(component, mode, fetchImpl, card = 'off') {
     const spec = COMPONENTS[component];
     const url = `https://${spec.domain}${spec.smokePath}`;
     if (component === 'read-model') {
@@ -375,6 +417,13 @@ export async function smoke(component, mode, fetchImpl) {
         });
         if (vat.status !== 404 || vat.body?.error !== 'publication_not_found') fail(`payment-service_smoke_vat_${vat.status}`);
         result.unknown_publication_status = vat.status;
+        // An unsigned webhook: 503 while the card path is off, 401 from the Cleeng adapter once it is on.
+        const webhook = await request(fetchImpl, `https://${spec.domain}/webhooks/card`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        });
+        const expected = card === 'sandbox' ? [401, 'invalid_webhook'] : [503, 'card_path_disabled'];
+        if (webhook.status !== expected[0] || webhook.body?.error !== expected[1]) fail(`payment-service_smoke_card_${webhook.status}`);
+        result.card_webhook_status = webhook.status;
     }
     return result;
 }
@@ -396,14 +445,15 @@ export async function retry(fn, delays, sleep) {
 export const SMOKE_DELAYS_MS = [0, 5_000, 10_000, 15_000, 30_000, 30_000, 60_000];
 
 export async function deployRelease({
-    sha, releaseDir, receiptPath, mode, env = process.env, fetchImpl = fetch,
+    sha, releaseDir, receiptPath, mode, card = 'off', env = process.env, fetchImpl = fetch,
     sleep = (ms) => new Promise((done) => setTimeout(done, ms)), makeRunner,
 }) {
     if (!/^[a-f0-9]{40}$/.test(sha ?? '')) fail('sha_invalid');
     if (!MODES.includes(mode)) fail('mode_invalid');
-    const secrets = releaseSecrets(env);
+    cardPath(mode, card);
+    const secrets = releaseSecrets(env, card);
     await preflight(secrets, fetchImpl);
-    const receipt = { schema: 'youtick.v2-testnet-workers-receipt.v1', sha, mode, status: 'IN_PROGRESS', workers: [] };
+    const receipt = { schema: 'youtick.v2-testnet-workers-receipt.v1', sha, mode, card, status: 'IN_PROGRESS', workers: [] };
     const save = () => writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o644 });
     const tempRoot = await mkdtemp(join(tmpdir(), 'youtick-v2-testnet-release-'));
     try {
@@ -420,7 +470,7 @@ export async function deployRelease({
             if (((await stat(secretsFile)).mode & 0o777) !== 0o600) fail('secrets_file_mode_invalid');
             let event;
             try {
-                event = await run([...wranglerArgs(component, releaseDir, sha, mode), '--secrets-file', secretsFile]);
+                event = await run([...wranglerArgs(component, releaseDir, sha, mode, card), '--secrets-file', secretsFile]);
             } finally {
                 await rm(secretsFile, { force: true });
             }
@@ -428,7 +478,7 @@ export async function deployRelease({
             entry.version_id = event.version_id;
             entry.status = 'DEPLOYED';
             await save();
-            entry.smoke = await retry(() => smoke(component, mode, fetchImpl), SMOKE_DELAYS_MS, sleep);
+            entry.smoke = await retry(() => smoke(component, mode, fetchImpl, card), SMOKE_DELAYS_MS, sleep);
             entry.status = 'VERIFIED';
             await save();
         }
@@ -457,21 +507,22 @@ async function main(argv) {
         await writeFile(join(outdir, 'wrangler.toml'), sanitizeWranglerConfig(source, component, options), { flag: 'wx', mode: 0o644 });
         return;
     }
-    if (command === 'check' && args.length === 3) {
+    if (command === 'check' && (args.length === 3 || args.length === 4)) {
         // Prepare job: the exact deploy invocation, as a dry run with no Cloudflare credentials.
-        const [releaseDir, sha, mode] = args;
+        const [releaseDir, sha, mode, card = 'off'] = args;
+        cardPath(mode, card);
         const binary = resolve('workers/relayer/node_modules/.bin/wrangler');
         for (const component of Object.keys(COMPONENTS)) {
-            const result = await runProcess(binary, [...wranglerArgs(component, resolve(releaseDir), sha, mode), '--dry-run'], {
+            const result = await runProcess(binary, [...wranglerArgs(component, resolve(releaseDir), sha, mode, card), '--dry-run'], {
                 PATH: process.env.PATH, HOME: process.env.HOME, CI: 'true', WRANGLER_SEND_METRICS: 'false',
             });
             if (result.code !== 0) fail(`${component}_dry_run_failed`);
         }
         return;
     }
-    if (command === 'deploy' && args.length === 4) {
-        const [sha, releaseDir, receiptPath, mode] = args;
-        const receipt = await deployRelease({ sha, releaseDir: resolve(releaseDir), receiptPath, mode });
+    if (command === 'deploy' && (args.length === 4 || args.length === 5)) {
+        const [sha, releaseDir, receiptPath, mode, card = 'off'] = args;
+        const receipt = await deployRelease({ sha, releaseDir: resolve(releaseDir), receiptPath, mode, card });
         console.log(JSON.stringify({ status: receipt.status, workers: receipt.workers.map(({ worker, version_id }) => ({ worker, version_id })) }));
         return;
     }

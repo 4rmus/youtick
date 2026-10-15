@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-    ACCEPTANCE_ORIGIN, COMPONENTS, READ_MODEL_D1_NAME, READ_MODEL_START_BLOCK_HEIGHT, base58Decode, base58Encode, deployRelease,
+    ACCEPTANCE_ORIGIN, CLEENG_SANDBOX_PUBLISHER_ID, COMPONENTS, PAYMENT_OPERATOR, READ_MODEL_D1_NAME, READ_MODEL_START_BLOCK_HEIGHT, base58Decode, base58Encode, deployRelease,
     nearPublicKey, paymentsD1Id, readModelD1Id, releaseSecrets, releaseVars, sanitizeWranglerConfig, validateRpcUrl, wranglerArgs,
 } from './v2-testnet-release.mjs';
 
@@ -22,6 +22,12 @@ function nearKeyPair() {
 
 const relayerKey = nearKeyPair();
 const vatKey = nearKeyPair();
+const cardKey = nearKeyPair();
+const CARD_SECRETS = {
+    PAYMENT_OPERATOR_PRIVATE_KEY: cardKey.secret, CARD_REFERENCE_SECRET: 'f'.repeat(64),
+    CLEENG_PUBLISHER_TOKEN: 'cleeng-publisher-token-value', CLEENG_WEBHOOK_SECRET: 'whsec_PkPHH0UXY0ynbFB8jcyBjgI6VwN/y2vh+JdxD7QZtSA=',
+};
+const CARD_KEY_SCOPE = { FunctionCall: { allowance: '1000000000000000000000000', receiver_id: 'v2-market-261007.youtick-dev-v3.testnet', method_names: ['issue_card_ticket', 'void_card_ticket'] } };
 
 function env(overrides = {}) {
     return {
@@ -37,13 +43,17 @@ function jsonResponse(status, body, headers = {}) {
 }
 
 /** A chain and two deployed Workers; `workers` decides how each domain answers. */
-function fakeFetch({ vatOnChain = vatKey.public, relayerKeyOnChain = true, chainId = 'testnet', workers = 'acceptance' } = {}) {
+function fakeFetch({ vatOnChain = vatKey.public, relayerKeyOnChain = true, chainId = 'testnet', workers = 'acceptance', card = 'off', cardPermission = CARD_KEY_SCOPE } = {}) {
     const calls = [];
     const impl = async (url, init = {}) => {
         calls.push({ url, init });
         if (url.startsWith('https://rpc.')) {
             const body = JSON.parse(init.body);
             if (body.method === 'status') return jsonResponse(200, { result: { chain_id: chainId } });
+            if (body.params.request_type === 'view_access_key' && body.params.account_id === PAYMENT_OPERATOR) {
+                return jsonResponse(200, cardPermission && body.params.public_key === cardKey.public
+                    ? { result: { permission: cardPermission } } : { error: { cause: { name: 'UNKNOWN_ACCESS_KEY' } } });
+            }
             if (body.params.request_type === 'view_access_key') {
                 return jsonResponse(200, relayerKeyOnChain && body.params.public_key === relayerKey.public
                     ? { result: { permission: 'FullAccess' } } : { error: { cause: { name: 'UNKNOWN_ACCESS_KEY' } } });
@@ -59,6 +69,9 @@ function fakeFetch({ vatOnChain = vatKey.public, relayerKeyOnChain = true, chain
             });
         }
         if (workers === 'closed') return jsonResponse(503, { error: COMPONENTS[component].disabledError });
+        if (new URL(url).pathname === '/webhooks/card') {
+            return card === 'sandbox' ? jsonResponse(401, { error: 'invalid_webhook' }) : jsonResponse(503, { error: 'card_path_disabled' });
+        }
         const origin = init.headers?.Origin;
         if (origin !== ACCEPTANCE_ORIGIN) return jsonResponse(403, { error: 'origin_denied' });
         if (init.method === 'OPTIONS') return jsonResponse(204, undefined, { 'Access-Control-Allow-Origin': origin });
@@ -97,6 +110,10 @@ test('the repository wrangler configs sanitize to index.js, no workers.dev and n
             assert.match(config, /^database_name = "youtick-payments-v2-testnet"$/m);
             assert.match(config, new RegExp(`^database_id = "${D1_ID}"$`, 'm'));
             assert.match(config, /^migrations_dir = "migrations"$/m);
+            // The card operator ships with every release; it does nothing until the card path is on.
+            assert.match(config, /^\[\[durable_objects\.bindings\]\]\nname = "CARD_OPERATOR"\nclass_name = "CardOperator"$/m);
+            assert.match(config, /^new_sqlite_classes = \["CardOperator"\]$/m);
+            assert.match(config, /^crons = \["\*\/5 \* \* \* \*"\]$/m);
             assert.doesNotMatch(config, /00000000-0000/);
         } else {
             assert.doesNotMatch(config, /d1_databases/);
@@ -172,6 +189,8 @@ test('acceptance deploy: preflight, one deploy per Worker with its own secrets, 
         ['youtick-market-read-model-v2-testnet', 'VERIFIED', 'v-3'],
     ]);
     assert.equal(receipt.workers[1].smoke.unknown_publication_status, 404);
+    assert.equal(receipt.workers[1].smoke.card_webhook_status, 503);
+    assert.equal(receipt.card, 'off');
     assert.deepEqual(receipt.workers[2].smoke, { health_status: 200, stage: 'ENABLED', ingestion_enabled: true });
     assert.deepEqual(Object.keys(record[0].secrets).sort(), ['NEAR_RPC_URL', 'RELAYER_ADMIN_TOKEN', 'RELAYER_PRIVATE_KEY']);
     assert.deepEqual(Object.keys(record[1].secrets).sort(), ['NEAR_RPC_URL', 'REFUND_ADMIN_TOKEN', 'VAT_SIGNER_PRIVATE_KEY']);
@@ -220,4 +239,64 @@ test('a failing smoke marks the receipt FAILED and stops before the next Worker'
     assert.equal(receipt.status, 'FAILED');
     assert.deepEqual(receipt.workers.map((w) => w.status), ['DEPLOYED']);
     assert.equal(record.length, 1);
+});
+
+test('the card path is its own switch, acceptance only, with the sandbox publisher and the operator', () => {
+    assert.equal(releaseVars('payment-service', 'acceptance').CARD_PATH_ENABLED, 'false');
+    assert.equal(releaseVars('payment-service', 'closed').CARD_PATH_ENABLED, 'false');
+    assert.deepEqual(releaseVars('payment-service', 'acceptance', 'sandbox'), {
+        ...COMPONENTS['payment-service'].vars, PAYMENT_SERVICE_ENABLED: 'true', CARD_PATH_ENABLED: 'true',
+        PAYMENT_OPERATOR_ID: 'v2-payments-261007.youtick-dev-v3.testnet', CLEENG_ENVIRONMENT: 'sandbox', CLEENG_PUBLISHER_ID: CLEENG_SANDBOX_PUBLISHER_ID,
+    });
+    assert.equal(releaseVars('relayer', 'acceptance', 'sandbox').CARD_PATH_ENABLED, undefined);
+    assert.throws(() => releaseVars('payment-service', 'closed', 'sandbox'), /card_path_requires_acceptance/);
+    assert.throws(() => releaseVars('payment-service', 'acceptance', 'production'), /card_path_invalid/);
+    const args = wranglerArgs('payment-service', '/r', SHA, 'acceptance', 'sandbox');
+    assert.ok(args.includes('CARD_PATH_ENABLED:true'));
+    assert.ok(!args.some((arg) => /whsec_|cleeng-publisher-token|PRIVATE_KEY:/.test(arg)));
+    // Card secrets are required only with the card path, and checked.
+    assert.equal(releaseSecrets(env()).cardOperatorPublicKey, null);
+    assert.equal(releaseSecrets(env(CARD_SECRETS), 'sandbox').cardOperatorPublicKey, cardKey.public);
+    assert.throws(() => releaseSecrets(env(), 'sandbox'), /near_secret_key_invalid/);
+    for (const [key, value, error] of [
+        ['CARD_REFERENCE_SECRET', 'F'.repeat(64), /card_reference_secret_invalid/],
+        ['CLEENG_PUBLISHER_TOKEN', 'short', /cleeng_publisher_token_invalid/],
+        ['CLEENG_WEBHOOK_SECRET', 'not-a-whsec-value-at-all', /cleeng_webhook_secret_invalid/],
+    ]) assert.throws(() => releaseSecrets(env({ ...CARD_SECRETS, [key]: value }), 'sandbox'), error, key);
+});
+
+test('card deploy: the operator key must be the function-call key, and the webhook answers 401 unsigned', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'v2-release-test-'));
+    const record = [];
+    const receipt = await deployRelease({
+        sha: SHA, releaseDir: '/r', receiptPath: join(dir, 'r.json'), mode: 'acceptance', card: 'sandbox', env: env(CARD_SECRETS),
+        fetchImpl: fakeFetch({ card: 'sandbox' }).impl, sleep: async () => {}, makeRunner: fakeRunner(record),
+    });
+    assert.equal(receipt.status, 'PASS');
+    assert.equal(receipt.workers[1].smoke.card_webhook_status, 401);
+    assert.deepEqual(Object.keys(record[1].secrets).sort(), [
+        'CARD_REFERENCE_SECRET', 'CLEENG_PUBLISHER_TOKEN', 'CLEENG_WEBHOOK_SECRET', 'NEAR_RPC_URL', 'PAYMENT_OPERATOR_PRIVATE_KEY',
+        'REFUND_ADMIN_TOKEN', 'VAT_SIGNER_PRIVATE_KEY',
+    ]);
+    assert.ok(!Object.hasOwn(record[0].secrets, 'CLEENG_PUBLISHER_TOKEN'));
+    const written = await readFile(join(dir, 'r.json'), 'utf8');
+    for (const secret of Object.values(CARD_SECRETS)) assert.ok(!written.includes(secret));
+
+    for (const [cardPermission, error] of [
+        ['FullAccess', /card_operator_key_full_access/],
+        [null, /card_operator_key_not_on_chain/],
+        [{ FunctionCall: { ...CARD_KEY_SCOPE.FunctionCall, method_names: ['issue_card_ticket', 'void_card_ticket', 'refund_ticket'] } }, /card_operator_key_scope/],
+        [{ FunctionCall: { ...CARD_KEY_SCOPE.FunctionCall, receiver_id: 'other.testnet' } }, /card_operator_key_scope/],
+    ]) {
+        const none = [];
+        await assert.rejects(deployRelease({
+            sha: SHA, releaseDir: '/r', receiptPath: join(dir, 'r2.json'), mode: 'acceptance', card: 'sandbox', env: env(CARD_SECRETS),
+            fetchImpl: fakeFetch({ card: 'sandbox', cardPermission }).impl, sleep: async () => {}, makeRunner: fakeRunner(none),
+        }), error);
+        assert.equal(none.length, 0);
+    }
+    await assert.rejects(deployRelease({
+        sha: SHA, releaseDir: '/r', receiptPath: join(dir, 'r3.json'), mode: 'closed', card: 'sandbox', env: env(CARD_SECRETS),
+        fetchImpl: fakeFetch().impl, sleep: async () => {}, makeRunner: fakeRunner([]),
+    }), /card_path_requires_acceptance/);
 });
