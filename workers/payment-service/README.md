@@ -162,8 +162,8 @@ observed: nothing has been sent to or received from Cleeng (EXTERNAL_NOT_RUN).
 - **Country.** Cloudflare's `cf.country` for the request, passed to Cleeng for tax and not stored.
   A request without a real country (none, `XX`, `T1`, …) gets `403 buyer_country_unknown`.
 - **Checkout.** `POST /sso/auths` (MediaStore) returns the customer's session (`jwt`,
-  `refresh_token`), sent to the buyer's page as `checkout` with the `offer_id` for Cleeng's hosted
-  checkout and never stored. `POST /v1/card-orders/<id>/checkout` makes a new one.
+  `refresh_token`), sent to the buyer's page as `checkout` with the `offer_id` and `publisher_id`
+  (public, the widget's `data-cleeng-publisher-id`) for Cleeng's hosted checkout and never stored. `POST /v1/card-orders/<id>/checkout` makes a new one.
 - **Webhooks.** `POST /webhooks/card` checks `X-Webhook-Signature` over the raw body
   (`CLEENG_WEBHOOK_SECRET`), requires `X-Webhook-Delivery-Id` and the envelope's `broadcasterId` =
   `CLEENG_PUBLISHER_ID`; the event id is `<delivery id>:0`.

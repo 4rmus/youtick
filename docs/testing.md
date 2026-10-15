@@ -139,6 +139,9 @@ What each value does:
   crypto checkout from a Turkish browser (the default list is `tr`, roadmap E7); without it a
   Turkish-language browser sees "Ticket sales are not available here yet" on `/tickets/buy`.
   Leave it out to test the rule itself.
+- `NEXT_PUBLIC_V2_CARD_RAIL=sandbox` shows the card option (E8.2). It needs a payment service with
+  the card path on and a Cleeng sandbox configuration, which no environment has yet; leave it out
+  until then.
 - Open the app as `http://localhost:3000`, never `127.0.0.1:3000`: the NEAR Auth client allows
   only that origin, and the Claude desktop browser pane blocks the sign-in pop-up, so sign in
   from a normal browser.

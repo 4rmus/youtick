@@ -31,11 +31,13 @@ describe('checkout funnel', () => {
         const { send, points, view } = setup();
         expect(await send({ step: 'checkout_view', rail: 'crypto' })).toBe(204);
         expect(await send({ step: 'purchase_failed', rail: 'crypto', code: 'approval_rejected' })).toBe(204);
+        expect(await send({ step: 'purchase_failed', rail: 'card', code: 'card_payment_cancelled' })).toBe(204);
         // A code outside the fixed list is counted, but never stored as sent.
         expect(await send({ step: 'purchase_failed', rail: 'crypto', code: 'alice@example.com' })).toBe(204);
         expect(points).toEqual([
             { indexes: ['checkout_view'], blobs: ['checkout_view', 'crypto', ''], doubles: [1] },
             { indexes: ['purchase_failed'], blobs: ['purchase_failed', 'crypto', 'approval_rejected'], doubles: [1] },
+            { indexes: ['purchase_failed'], blobs: ['purchase_failed', 'card', 'card_payment_cancelled'], doubles: [1] },
             { indexes: ['purchase_failed'], blobs: ['purchase_failed', 'crypto', 'other'], doubles: [1] },
         ]);
         expect(JSON.stringify(points)).not.toContain('203.0.113.9');
@@ -45,7 +47,7 @@ describe('checkout funnel', () => {
     it('refuses unknown steps, rails, extra fields and foreign origins', async () => {
         const { send, points } = setup();
         expect(await send({ step: 'login', rail: 'crypto' })).toBe(400);
-        expect(await send({ step: 'checkout_view', rail: 'card' })).toBe(400);
+        expect(await send({ step: 'checkout_view', rail: 'bank' })).toBe(400);
         expect(await send({ step: 'checkout_view', rail: 'crypto', account_id: 'x' })).toBe(400);
         expect(await send({ step: 'checkout_view', rail: 'crypto', code: 'other' })).toBe(400);
         expect(await send(['checkout_view'])).toBe(400);

@@ -1,28 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { contentSecurityPolicy } from './lib/csp';
 
 function requestNonce(): string {
     const bytes = crypto.getRandomValues(new Uint8Array(16));
     return btoa(String.fromCharCode(...bytes));
-}
-
-function contentSecurityPolicy(nonce: string): string {
-    const isDevelopment = process.env.NODE_ENV !== 'production';
-    return [
-        "default-src 'self'",
-        `script-src 'self' 'nonce-${nonce}' https://static.cloudflareinsights.com${isDevelopment ? " 'unsafe-eval'" : ''}`,
-        `style-src 'self' 'nonce-${nonce}'`,
-        "style-src-elem 'self' 'unsafe-inline'",
-        "style-src-attr 'unsafe-inline'",
-        "img-src 'self' data: blob: https:",
-        "font-src 'self' data:",
-        "connect-src 'self' https:",
-        "media-src 'self' blob: https:",
-        "worker-src 'self' blob:",
-        "object-src 'none'",
-        "frame-ancestors 'none'",
-        "base-uri 'self'",
-        "form-action 'self'",
-    ].join('; ');
 }
 
 export function middleware(request: NextRequest): NextResponse {

@@ -90,7 +90,7 @@ export function cleengProvider(config: CleengConfig, options: { fetcher?: typeof
         const jwt = auth.responseData?.jwt;
         const refreshToken = auth.responseData?.refreshToken;
         if (typeof jwt !== 'string' || typeof refreshToken !== 'string' || jwt.length > 4_096 || refreshToken.length > 4_096) fail('provider_unavailable');
-        return { provider: 'cleeng', environment: config.environment, jwt, refresh_token: refreshToken };
+        return { provider: 'cleeng', environment: config.environment, publisher_id: config.publisherId, jwt, refresh_token: refreshToken };
     }
 
     return {

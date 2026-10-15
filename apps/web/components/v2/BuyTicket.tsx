@@ -9,12 +9,14 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { NEAR_CONFIG } from '@/lib/constants';
 import { formatUsdc } from '@/lib/livepeer-publication';
+import { cardPriceLabel, cardRailFromEnv } from '@/lib/v2/card-checkout';
 import { loadDeviceKey, type DeviceKey } from '@/lib/v2/device-key';
 import { cryptoRailEnabled, fundingAvailable } from '@/lib/v2/funding';
 import { trackFunnelStep, type FunnelStep } from '@/lib/v2/funnel';
 import { readAccessKey } from '@/lib/v2/near-reads';
 import { buyTicket, CheckoutError } from '@/lib/v2/purchase';
 import { findOwnedTickets } from '@/lib/v2/tickets';
+import { CardCheckout } from './CardCheckout';
 import { FundBalance } from './FundBalance';
 import { useNearAuthV2 } from './NearAuthV2Provider';
 import { SignInPanel } from './SignInPanel';
@@ -38,7 +40,16 @@ const ERRORS: Record<string, string> = {
     approval_expired: 'The approval expired. Please try again.',
     account_not_ready: 'Your youtick account is still being set up. Please try again in a minute.',
     purchase_pending: 'Your purchase is still being processed. Check My tickets in a few minutes before trying again.',
+    buyer_country_unknown: 'Card payment is not available from your connection (for example through a VPN). Please try again without it.',
+    provider_unavailable: 'The card payment service is not reachable right now. Please try again in a few minutes.',
+    checkout_unavailable: 'The card payment service is not reachable right now. Please try again in a few minutes.',
+    card_order_closed: 'This payment was closed. Please start again.',
+    card_payment_cancelled: 'The card payment was refunded or cancelled, so no ticket was issued.',
+    card_payment_timeout: 'We have not seen your card payment yet. If you paid, your ticket will appear in My tickets once it is confirmed.',
 };
+
+/** NEXT_PUBLIC_V2_CARD_RAIL, fixed at build time; null keeps the card option hidden. */
+const CARD_RAIL = cardRailFromEnv();
 
 interface PublicationView {
     publication_id: string;
@@ -52,6 +63,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     const signedIn = session.status === 'signed_in';
     const [device, setDevice] = useState<DeviceKey | null>(null);
     const [state, setState] = useState<'idle' | 'buying' | 'done' | 'error'>('idle');
+    const [paidBy, setPaidBy] = useState<'crypto' | 'card'>('crypto');
     const [error, setError] = useState('');
     const reserved = useRef(new Set<number>());
     // Read from the browser after mount, so the server render never guesses the language.
@@ -84,27 +96,27 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
 
     // Each view step is counted once per page load; nothing identifies the user or the screening.
     const counted = useRef(new Set<FunnelStep>());
-    const track = useCallback((step: FunnelStep, code?: string) => {
-        if (step !== 'purchase_failed' && step !== 'approval_started' && step !== 'ticket_confirmed') {
+    const track = useCallback((step: FunnelStep, code?: string, rail: 'crypto' | 'card' = 'crypto') => {
+        if (step !== 'purchase_failed' && step !== 'approval_started' && step !== 'ticket_confirmed' && step !== 'purchase_submitted') {
             if (counted.current.has(step)) return;
             counted.current.add(step);
         }
-        trackFunnelStep(config.paymentServiceUrl, step, code);
+        trackFunnelStep(config.paymentServiceUrl, step, code, undefined, rail);
     }, [config.paymentServiceUrl]);
-    const onSale = publication.data?.availability === 'ACTIVE' && cryptoRail === true;
+    const onSale = publication.data?.availability === 'ACTIVE' && (cryptoRail === true || (cryptoRail !== null && CARD_RAIL !== null));
     const balanceLow = signedIn && publication.data != null && balance.data !== undefined
         && BigInt(balance.data) < BigInt(publication.data.price_usdc);
     useEffect(() => {
         if (!onSale) return;
         track('checkout_view');
         if (!signedIn) track('sign_in_prompt');
-        if (balanceLow) track('balance_low');
-    }, [onSale, signedIn, balanceLow, track]);
+        if (balanceLow && cryptoRail) track('balance_low');
+    }, [onSale, signedIn, balanceLow, cryptoRail, track]);
 
     if (!valid) return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Screening not found" />;
     if (!config.paymentServiceUrl) return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Ticket sales are not open yet" />;
     if (cryptoRail === null) return <p className="text-center text-white/70" role="status">Loading…</p>;
-    if (!cryptoRail) {
+    if (!cryptoRail && !CARD_RAIL) {
         return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Ticket sales are not available here yet"
             description="Paying with crypto is not offered in your language. Card payments are coming." />;
     }
@@ -112,14 +124,27 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     const item = publication.data;
     if (!item || item.availability !== 'ACTIVE') return <ScreenState icon={<Ticket className="h-7 w-7" />} title="This screening is not on sale" />;
 
+    const cardPrice = CARD_RAIL ? cardPriceLabel(item.price_usdc) : null;
     if (!signedIn) {
-        return <ScreenState icon={<Ticket className="h-7 w-7" />} title={`Ticket: ${formatUsdc(item.price_usdc)} USDC`}
+        return <ScreenState icon={<Ticket className="h-7 w-7" />} title={cryptoRail ? `Ticket: ${formatUsdc(item.price_usdc)} USDC` : `Ticket: ${cardPrice ?? '…'}`}
             description="Sign in to buy. You approve the payment once on the sign-in screen; no wallet is needed.">
             <div className="mt-6 flex justify-center"><SignInPanel /></div>
         </ScreenState>;
     }
 
     const enough = balance.data !== undefined && BigInt(balance.data) >= BigInt(item.price_usdc);
+
+    /** The next unused ticket index of the current gate; this page never hands out one twice. */
+    async function reserveIndex(): Promise<number> {
+        if (!signedIn) throw new Error('checkout_failed');
+        // The index comes from the current gate's scan; purchases never use a retired gate.
+        const scan = await findOwnedTickets(view, config.marketContractId, session.gateKeys.slice(0, 1));
+        let index = scan.nextIndex;
+        while (reserved.current.has(index)) index += 1;
+        // A card order may skip a few keys an unpaid order holds; keep them out of later purchases.
+        for (let held = index; held < index + 5; held += 1) reserved.current.add(held);
+        return index;
+    }
 
     async function buy() {
         if (!signedIn || !device || !item) return;
@@ -135,11 +160,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
         setError('');
         track('approval_started');
         try {
-            // The index comes from the current gate's scan; purchases never use a retired gate.
-            const scan = await findOwnedTickets(view, config.marketContractId, session.gateKeys.slice(0, 1));
-            let index = scan.nextIndex;
-            while (reserved.current.has(index)) index += 1;
-            reserved.current.add(index);
+            const index = await reserveIndex();
             await buyTicket({
                 config, paymentServiceUrl: config.paymentServiceUrl!, usdcContractId: NEAR_CONFIG.usdcContractId,
                 session: { accountId: session.accountId, publicKey: session.publicKey, ckdKey: session.ckdKey },
@@ -147,6 +168,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
                 deps: { view, accessKey: readAccessKey },
             });
             track('ticket_confirmed');
+            setPaidBy('crypto');
             setState('done');
             void balance.refetch();
         } catch (failure) {
@@ -159,9 +181,33 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
 
     if (state === 'done') {
         return <ScreenState tone="success" icon={<CheckCircle2 className="h-7 w-7" />} title="Your ticket is ready"
-            description="It is linked to this device. If the video does not play properly, you can request a refund within 27 days.">
+            description={paidBy === 'card'
+                ? 'It is linked to this device. Card payments are handled by Cleeng, our payment partner. If the video does not play properly, write to contact@youtick.net.'
+                : 'It is linked to this device. If the video does not play properly, you can request a refund within 27 days.'}>
             <div className="mt-6 flex justify-center"><Button asChild><Link href="/tickets">Go to My tickets</Link></Button></div>
         </ScreenState>;
+    }
+
+    const card = CARD_RAIL && cardPrice && session.ckdKey && <div className="space-y-2 border-t border-white/10 pt-4">
+        <CardCheckout config={config} paymentServiceUrl={config.paymentServiceUrl!} rail={CARD_RAIL} ckdKey={session.ckdKey} device={device}
+            publicationId={item.publication_id} priceLabel={cardPrice} reserveIndex={reserveIndex} deps={{ view }}
+            onStep={(step) => track(step, undefined, 'card')}
+            onDone={() => { track('ticket_confirmed', undefined, 'card'); setPaidBy('card'); setState('done'); }}
+            onFailure={(code) => {
+                track('purchase_failed', ERRORS[code] ? code : 'other', 'card');
+                setState('error');
+                setError(ERRORS[code] ?? 'The card payment did not complete. No ticket was issued; please try again.');
+            }} />
+        <p className="text-xs text-white/50">Card payments are processed by Cleeng, our payment partner, which may add tax for your country.</p>
+    </div>;
+
+    if (!cryptoRail) {
+        return <Card className="mx-auto max-w-xl space-y-4 p-6">
+            <h1 className="text-xl font-semibold">{item.publication_id}</h1>
+            <p className="text-white/80">Ticket price: <strong>{cardPrice ?? '…'}</strong></p>
+            {card || <p className="text-sm text-white/70">Card payment is not available for this screening.</p>}
+            {state === 'error' && <p className="text-sm text-red-300" role="alert">{error}</p>}
+        </Card>;
     }
 
     return <Card className="mx-auto max-w-xl space-y-4 p-6">
@@ -180,6 +226,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
             {state === 'buying' ? 'Waiting for your approval…' : `Buy for ${formatUsdc(item.price_usdc)} USDC`}
         </Button>
         <p className="text-xs text-white/50">Refunds are for technical problems (the video does not play or is not as described) and can be requested within 27 days. A change of mind is not refunded.</p>
+        {card}
         {state === 'error' && <p className="text-sm text-red-300" role="alert">{error}</p>}
     </Card>;
 }
