@@ -20,8 +20,38 @@ export interface Env {
     FUNNEL?: AnalyticsEngineDataset;
     /** Refund request inbox (migrations/); without it the refund endpoints answer 503. */
     REFUNDS?: D1Database;
-    /** Secret. Bearer token of the operator tool for `/internal/refund-requests`; at least 32 characters. */
+    /** Secret. Bearer token of the operator tools for `/internal/*`; at least 32 characters. */
     REFUND_ADMIN_TOKEN?: string;
+    /** Card path (roadmap E8). Off unless exactly `true` and a provider adapter exists. */
+    CARD_PATH_ENABLED?: string;
+    /** The Market V2 payment operator account the card path signs as. */
+    PAYMENT_OPERATOR_ID?: string;
+    /** Secret. A key of PAYMENT_OPERATOR_ID kept only for the card path; never logged. */
+    PAYMENT_OPERATOR_PRIVATE_KEY?: string;
+    /** Secret. HMAC key of `payment_reference_hmac`: 32 bytes as 64 lowercase hex; never rotated while orders are open. */
+    CARD_REFERENCE_SECRET?: string;
+    /** The single card operator (src/card-operator-object.ts). */
+    CARD_OPERATOR?: DurableObjectNamespace;
+}
+
+export interface CardConfig {
+    operatorId: string;
+    operatorPrivateKey: string;
+    referenceSecret: string;
+}
+
+/** The card path's own settings; null keeps every card endpoint answering `card_path_disabled`. */
+export function cardConfig(env: Env): CardConfig | null {
+    if (env.CARD_PATH_ENABLED !== 'true' || !env.REFUNDS || !env.CARD_OPERATOR || !ACCOUNT_ID.test(env.PAYMENT_OPERATOR_ID ?? '')
+        || !/^[0-9a-f]{64}$/.test(env.CARD_REFERENCE_SECRET ?? '')) {
+        return null;
+    }
+    try {
+        if (KeyPair.fromString(env.PAYMENT_OPERATOR_PRIVATE_KEY as `ed25519:${string}`).getPublicKey().keyType !== 0) return null;
+    } catch {
+        return null;
+    }
+    return { operatorId: env.PAYMENT_OPERATOR_ID!, operatorPrivateKey: env.PAYMENT_OPERATOR_PRIVATE_KEY!, referenceSecret: env.CARD_REFERENCE_SECRET! };
 }
 
 export interface PaymentConfig {

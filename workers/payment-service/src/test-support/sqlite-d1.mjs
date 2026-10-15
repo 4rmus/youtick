@@ -1,11 +1,14 @@
-// Test helper: the subset of D1 the refund inbox uses, over in-memory SQLite (Node 24) with the real
+// Test helper: the subset of D1 the refund inbox and card path use, over in-memory SQLite (Node 24) with the real
 // migrations. Plain JavaScript because the Worker's tsconfig has no Node types.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 export function sqliteD1() {
     const sqlite = new DatabaseSync(':memory:');
-    sqlite.exec(readFileSync(new URL('../../migrations/0001_refund_requests.sql', import.meta.url), 'utf8'));
+    const migrations = new URL('../../migrations/', import.meta.url);
+    for (const name of readdirSync(migrations).filter((file) => file.endsWith('.sql')).sort()) {
+        sqlite.exec(readFileSync(new URL(name, migrations), 'utf8'));
+    }
     return {
         prepare(sql) {
             let values = [];

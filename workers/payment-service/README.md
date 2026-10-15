@@ -1,6 +1,6 @@
 # youtick payment service
 
-Status: `LOCAL_TEST only / NOT_DEPLOYED`; V2 testnet deploy path: `.github/workflows/deploy-v2-testnet.yml` (`docs/v2-testnet-runbook.md`, Workers). Roadmap gate E7a; E8 adds the card path.
+Status: `LOCAL_TEST only / NOT_DEPLOYED`; V2 testnet deploy path: `.github/workflows/deploy-v2-testnet.yml` (`docs/v2-testnet-runbook.md`, Workers). Roadmap gate E7a; E8 adds the card path (disabled, see "Card path").
 
 This Worker issues **VAT attestations** for V2 crypto purchases
 (`protocol/youtick-market-v2`, "VAT attestation"), counts **checkout funnel steps** (E7e) and keeps
@@ -96,12 +96,66 @@ pending request whose video is taken down: a takedown needs no review, has no ti
 not stopped by the purchase pause. One failed refund does not stop the others; it stays pending.
 The private key is read only by the approving commands and never printed.
 
+## Card path
+
+Status: `LOCAL_TEST only / DISABLED`. Roadmap E8, preparation gate. The card provider (Cleeng,
+merchant of record) is not connected: its sandbox (roadmap X1) is not open, so no provider adapter
+exists and every card endpoint answers `503 card_path_disabled`. `CARD_PATH_ENABLED` is `false`.
+
+| Endpoint | Input | Output |
+|---|---|---|
+| `POST /v1/card-orders` | `{ publication_id, ticket_public_key }` | `201 { order_id, status, ticket_id, payment_reference_hmac, gross_minor, currency, needs_signature }` |
+| `POST /v1/card-orders/<id>/device` | `{ session_public_key, certificate_sha256, expires_at_ms, signature }` (`card_purchase`) | the order |
+| `GET /v1/card-orders/<id>` | — | the order |
+| `POST /webhooks/card` | the provider's delivery, authenticated by the adapter | `{ received }` |
+| `GET /internal/card-orders?status=&after=` | operator tool token | `{ orders }` (at most 100; no keys or signatures) |
+| `GET /internal/card-ledger` | operator tool token | `{ entries }` |
+| `POST /internal/card-events` | operator tool token; `{ provider_event_id: "report:…", kind, provider_order_id, amount_minor, currency, occurred_at_ms }` | `{ outcome }` |
+
+- **Order.** The price comes from Market V2 (`ACTIVE`, at least 5 USDC) in USD cents; a USDC price
+  that is not whole cents is refused. The adapter makes the provider order;
+  `payment_reference_hmac` is HMAC-SHA256 of the provider order id under `CARD_REFERENCE_SECRET`
+  (32 bytes, hex), as the protocol golden vector computes it. One order per ticket key.
+- **Signature.** The ticket key signs `card_purchase` over the reference and the amount. The
+  service checks it as the contract will and accepts an expiry at most one hour ahead. A payment
+  that lands after the signature expired waits as `paid` with `device_signature_expired`; the
+  buyer's page signs again (`needs_signature`).
+- **Events.** Only an adapter-authenticated webhook or an operator-imported report event changes
+  an order; a browser redirect never does. Each event is stored once under the provider's id (for
+  Cleeng the delivery id). A purchase for another amount or currency than the order is refused
+  (`amount_mismatch`). A refund or lost chargeback cancels an order before any send and turns an
+  issued (or in-flight) one into `void_pending`. Opened and won chargebacks are recorded only.
+- **Operator.** One Durable Object (`CardOperator`) sends `issue_card_ticket` (with a storage
+  deposit; the contract returns the excess) and `void_card_ticket`. Each transaction hash is stored
+  before sending; an unknown outcome is settled by reading the ticket, not by resending. An order
+  stops after 5 sends and waits for the operator. After an unknown outcome nothing is resent and no
+  order is cancelled until the transaction status reads failed; the cron re-checks such orders.
+- **Ledger.** `card_ledger` keeps the provider's money facts per event (sale, refund, chargeback).
+  No creator share is computed: the card split is an open owner decision (roadmap D4).
+- **Stored per order.** Publication, creator, ticket and device public keys, the device
+  signature, amounts and transaction hashes. No e-mail, name, IP or card data.
+
+What waits for the sandbox (EXTERNAL_NOT_RUN): the Cleeng adapter (offer per video, SSO customer,
+order creation, mapping `transactionCreated` and `paymentRefunded` to the order), the web checkout,
+and turning the path on (Durable Object binding and migration, cron, `PAYMENT_OPERATOR_ID`,
+secrets). Only the documented Cleeng signature check exists (`verifyCleengSignature`), tested
+against a self-computed value, not a real delivery. Open provider questions: how a
+`transactionCreated` event maps to the order (it carries no order id), `paymentRefunded` to
+`paymentId` mapping, and chargebacks, which have no webhook and come from the provider's refunds
+report through `POST /internal/card-events`.
+
+```bash
+node scripts/card-orders.mjs reconcile               # every order against its ticket on chain
+node scripts/card-orders.mjs ledger --month 2026-11  # per creator and currency, no split
+```
+
 ## Checks
 
 ```bash
 cd workers/payment-service
 npm ci
 npm test -- --run
+node --test scripts/refunds.test.mjs scripts/card-orders.test.mjs
 npm run check
 ```
 

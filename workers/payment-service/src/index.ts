@@ -1,8 +1,12 @@
 // youtick payment service (roadmap E7; E8 adds the card path). It issues VAT attestations for V2
 // crypto purchases, counts checkout funnel steps and keeps USDC refund requests until youtick
-// decides (src/refunds.ts). It never moves money. For a refund request it stores the buyer's text
+// decides (src/refunds.ts). It never moves money. The card path (src/card-*.ts, off until a
+// provider adapter exists) writes and voids card tickets as the payment operator. For a refund request it stores the buyer's text
 // and the refund account (a pseudonymous NEAR account tied to the ticket); no e-mail or IP.
-import { paymentConfig, type Env, type PaymentConfig } from './env';
+import { CardOperator, wakeCardOperator } from './card-operator-object';
+import type { CardProvider } from './card-provider';
+import { handleCardInternal, handleCardPublic, handleCardWebhook, isCardPublicPath, type CardContext } from './card-routes';
+import { cardConfig, paymentConfig, type Env, type PaymentConfig } from './env';
 import { parseFunnelEvent, recordFunnelEvent } from './funnel';
 import { readPurchasablePublication, rpcView, type View } from './market';
 import {
@@ -12,10 +16,24 @@ import {
 import { attestVat } from './vat';
 
 export type { Env } from './env';
+export { CardOperator };
 
 export interface PaymentDeps {
     view?: View;
     now?: () => number;
+    /** The card provider adapter. None exists in production yet, so the card path stays off. */
+    cardProvider?: CardProvider;
+    wakeCardOperator?: () => Promise<void>;
+}
+
+/** Everything the card routes need, or null while the card path is off. */
+function cardContext(env: Env, config: PaymentConfig, deps: PaymentDeps): CardContext | null {
+    const card = cardConfig(env);
+    if (!card || !deps.cardProvider || !env.REFUNDS) return null;
+    return {
+        db: env.REFUNDS, view: deps.view ?? rpcView(config.rpcUrl), provider: deps.cardProvider, config, card,
+        nowMs: (deps.now ?? Date.now)(), wake: deps.wakeCardOperator ?? (() => wakeCardOperator(env)),
+    };
 }
 
 const KEY_CHECK_TTL_MS = 60_000;
@@ -63,6 +81,11 @@ async function readJson(request: Request, limit: number): Promise<Record<string,
 /** The operator tool's endpoints: no browser origin, a bearer token instead. */
 async function handleInternal(request: Request, env: Env, config: PaymentConfig, url: URL, deps: PaymentDeps): Promise<Response> {
     if (!adminAuthorized(request.headers.get('authorization'), env.REFUND_ADMIN_TOKEN)) return json({ error: 'unauthorized' }, 401);
+    if (url.pathname.startsWith('/internal/card-')) {
+        const card = cardContext(env, config, deps);
+        if (!card) return json({ error: 'card_path_disabled' }, 503);
+        return handleCardInternal(request, url, () => readJson(request, 2_048).catch(() => { throw new Error('invalid_request'); }), card);
+    }
     if (!env.REFUNDS) return json({ error: 'refund_inbox_unavailable' }, 503);
     try {
         if (request.method === 'GET' && url.pathname === '/internal/refund-requests') {
@@ -86,20 +109,42 @@ export async function handle(request: Request, env: Env, deps: PaymentDeps = {})
     if (!config) return json({ error: 'payment_service_disabled' }, 503);
     const url = new URL(request.url);
     if (url.pathname.startsWith('/internal/')) return handleInternal(request, env, config, url, deps);
-    if (!PUBLIC_PATHS.includes(url.pathname)) return json({ error: 'not_found' }, 404);
+    if (url.pathname === '/webhooks/card') {
+        // Server to server: no browser origin; the provider adapter authenticates the delivery.
+        if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+        const card = cardContext(env, config, deps);
+        if (!card) return json({ error: 'card_path_disabled' }, 503);
+        return handleCardWebhook(request, card);
+    }
+    const isCard = isCardPublicPath(url.pathname);
+    if (!PUBLIC_PATHS.includes(url.pathname) && !isCard) return json({ error: 'not_found' }, 404);
     const origin = request.headers.get('origin') ?? '';
     if (!config.allowedOrigins.includes(origin)) return json({ error: 'origin_denied' }, 403);
     const cors = {
-        'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': isCard ? 'GET, POST, OPTIONS' : 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '600', Vary: 'Origin',
     };
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
-    if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, cors);
+    if (request.method !== 'POST' && !(isCard && request.method === 'GET')) return json({ error: 'method_not_allowed' }, 405, cors);
     if (env.PAYMENT_RATE_LIMITER) {
         const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
         // The IP is only a limiter key here; it is never written anywhere.
-        const scope = url.pathname === '/v1/funnel' ? 'funnel' : url.pathname === '/v1/refund-requests' ? 'refund' : 'vat';
+        const scope = isCard ? 'card' : url.pathname === '/v1/funnel' ? 'funnel' : url.pathname === '/v1/refund-requests' ? 'refund' : 'vat';
         if (!(await env.PAYMENT_RATE_LIMITER.limit({ key: `${scope}:ip:${ip}` })).success) return json({ error: 'rate_limited' }, 429, cors);
+    }
+
+    if (isCard) {
+        const card = cardContext(env, config, deps);
+        if (!card) return json({ error: 'card_path_disabled' }, 503, cors);
+        let cardBody: Record<string, unknown> | null = null;
+        if (request.method === 'POST') {
+            try {
+                cardBody = await readJson(request, 2_048);
+            } catch {
+                return json({ error: 'invalid_request' }, 400, cors);
+            }
+        }
+        return handleCardPublic(request, url, cardBody, card, cors);
     }
 
     let body: Record<string, unknown>;
@@ -176,4 +221,8 @@ export function resetKeyCheckForTests(): void {
 
 export default {
     fetch: (request: Request, env: Env) => handle(request, env),
+    // A safety net for the card operator's own alarm (wrangler.toml cron).
+    scheduled: async (_controller: ScheduledController, env: Env) => {
+        if (cardConfig(env)) await wakeCardOperator(env);
+    },
 };
