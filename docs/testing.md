@@ -205,14 +205,16 @@ provider was called.
 cd workers/payment-service
 npm ci
 npm test -- --run
-node --test scripts/refunds.test.mjs
+node --test scripts/refunds.test.mjs scripts/card-orders.test.mjs
 npm run check
 ```
 
 The VAT attestation tests reproduce the protocol golden vector with the reference test key
 (LOCAL_TEST). The refund inbox tests run the real D1 migration on in-memory SQLite (Node 24
 `node:sqlite`) with a fake Market V2 view; the operator tool tests use a fake service, chain and
-signer. No RPC, signer secret or provider is used.
+signer. The card path tests (E8) reproduce the golden `payment_reference_hmac` and `card_purchase`
+message, and drive orders, provider events and the card operator through a fake provider adapter
+and a fake chain. No RPC, signer secret or provider is used.
 
 ## Contracts
 
