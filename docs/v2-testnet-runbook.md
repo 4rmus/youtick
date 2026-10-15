@@ -455,10 +455,10 @@ Each value goes from a file to GitHub; none is printed. All files live in `~/you
    `paymentRefunded`. Deliveries fail until the card path is deployed; nothing is sold before that.
 3. **Environment secrets** (`v2-testnet`):
    ```bash
-   jq -r .private_key ~/youtick-v2-testnet-keys/payment_operator_card_fc.json | gh secret set V2_PAYMENT_OPERATOR_CARD_PRIVATE_KEY --env v2-testnet --repo 4rmus/youtick
-   gh secret set V2_CARD_REFERENCE_SECRET --env v2-testnet --repo 4rmus/youtick < ~/youtick-v2-testnet-keys/card_reference_secret
-   gh secret set V2_CLEENG_PUBLISHER_TOKEN --env v2-testnet --repo 4rmus/youtick < ~/youtick-v2-testnet-keys/cleeng_sandbox_publisher_token
-   gh secret set V2_CLEENG_WEBHOOK_SECRET --env v2-testnet --repo 4rmus/youtick < ~/youtick-v2-testnet-keys/cleeng_sandbox_webhook_secret
+   jq -j .private_key ~/youtick-v2-testnet-keys/payment_operator_card_fc.json | gh secret set V2_PAYMENT_OPERATOR_CARD_PRIVATE_KEY --env v2-testnet --repo 4rmus/youtick
+   tr -d '\n' < ~/youtick-v2-testnet-keys/card_reference_secret | gh secret set V2_CARD_REFERENCE_SECRET --env v2-testnet --repo 4rmus/youtick
+   tr -d '\n' < ~/youtick-v2-testnet-keys/cleeng_sandbox_publisher_token | gh secret set V2_CLEENG_PUBLISHER_TOKEN --env v2-testnet --repo 4rmus/youtick
+   tr -d '\n' < ~/youtick-v2-testnet-keys/cleeng_sandbox_webhook_secret | gh secret set V2_CLEENG_WEBHOOK_SECRET --env v2-testnet --repo 4rmus/youtick
    ```
 4. **Deploy** *V2 Testnet Workers* on the merged `main` commit with `mode: acceptance`,
    `card_path: sandbox` and confirmation `DEPLOY_V2_TESTNET_acceptance`, then approve the
