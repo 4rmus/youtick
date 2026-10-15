@@ -23,7 +23,7 @@ All accounts are direct children of the parent (`youtick-dev-v3.testnet`, the V1
 | `ckd_gate` | **none, ever** | ckd-gate, initialized for the shared NEAR Auth testnet client |
 | `relayer` | full-access key (becomes `RELAYER_PRIVATE_KEY`) | — |
 | `bridge_operator` | management full-access key, and a function-call key for Market V2 `finalize_livepeer_publication`, `suspend_livepeer_sales`, `mark_watched`, `release_expired` (becomes the Bridge V2 `NEAR_OPERATOR_PRIVATE_KEY`) | — |
-| `payment_operator` | full-access key (bootstrap; signs `refund_ticket` from the owner's machine), and a function-call key for Market V2 `issue_card_ticket`, `void_card_ticket` (added after gate E8.0; becomes the payment service `PAYMENT_OPERATOR_PRIVATE_KEY`) | — |
+| `payment_operator` | full-access key (bootstrap; signs `refund_ticket` from the owner's machine), and a function-call key for Market V2 `issue_card_ticket`, `void_card_ticket` (`ed25519:CcjcZpiL…`, added 2026-10-15 after gate E8.0; becomes the payment service `PAYMENT_OPERATOR_PRIVATE_KEY`) | — |
 | `tax` | full-access key | — |
 
 A last transaction registers `market_v2`, `relayer` and `tax` with Circle's testnet USDC
@@ -325,10 +325,10 @@ Owner decision 2026-10-10: USDC tickets follow the card provider's refund rule (
 failure, content not as described, takedown; no change-of-mind refunds). Contract, protocol,
 Bridge, read model and web follow it on `main` (`contracts/market-v2/README.md`, "Settlement").
 
-- **Not on testnet yet.** The deployed Market V2 (`v2-market-261007.youtick-dev-v3.testnet`) still
-  runs the earlier rule: a watch pays the creator, and the buyer refunds an unwatched ticket
-  alone with `refund_unwatched`. Moving it needs a code upgrade through the self-upgrade path,
-  which is an on-chain action and needs owner approval.
+- **On testnet since 2026-10-14.** The deployed Market V2 (`v2-market-261007.youtick-dev-v3.testnet`)
+  was moved to this rule through the self-upgrade path (owner-signed, see "Refund acceptance").
+  Before that it ran the earlier rule: a watch paid the creator, and the buyer refunded an
+  unwatched ticket alone with `refund_unwatched`.
 - **Both codes are safe for the consumers.** The Bridge plays `watched_in_escrow` tickets and
   releases them after 30 days. The read model treats a `ticket_watched` event without `settled`
   (earlier code) as settled and one with `settled: false` as still in escrow.
@@ -396,6 +396,32 @@ E5b ticket of 2026-10-13 stays `watched`. Not yet shown: `release_expired` on a 
 
 The owner keeps the admin token and the payment operator key file backed up: without them no
 refund can be listed or sent. `decline` was not run against the live inbox.
+
+### Takedown refund acceptance, 2026-10-15 (PROVIDER, testnet)
+
+| Step | Evidence |
+|---|---|
+| Upload | local web `19fba6d` (#331); creator `37729f76…` uploads `lp-eb0d11d0-8d41-48c5-9816-b3a5015f658d`, `ACTIVE` 11:35 UTC, fee 0.5 USDC (platform 1208333 → 1708333) |
+| Purchase and play | ticket `20024216…2751`, `watched_in_escrow`, escrow 5000000 |
+| Takedown | guardian `GOVERNANCE_DECISION` `acceptance-takedown-20261015` at 11:54; publication `TAKEDOWN`, ticket stays in escrow; the other publication `lp-bcc8f530…` stays `ACTIVE` |
+| Request | web "Get your money back" (no deadline, no description) posted to the inbox |
+| Approve | `refunds.mjs approve-takedowns`, one `REFUND` confirmation; tx `AK3bR79SPYy1BDEBgbc9khGqkaM8y8ZeCUqu4ZJwCbm4` by `v2-payments-261007…`: `ft_transfer` 5000000 and `ticket_refunded`; ticket `refunded`, 0 devices, escrow 0; buyer USDC 3058333 → 8058333; creator and tax balances unchanged |
+
+### E8.0 upgrade and card operator key, 2026-10-15 (PROVIDER, testnet)
+
+Owner-signed; command sheet kept outside the repository. The card path stays off.
+
+| Step | Evidence |
+|---|---|
+| Artifact | main CI run 38746374767 (`647f2bb`, #333); `SHA256SUMS` and `gh attestation verify` (`ci.yml@refs/heads/main`); `youtick_market_v2.wasm` sha256 `f64a5d37f86a71c4cab6e6fd394b8127a387c23bddea91c7f185d9d010161c3d`, 502746 bytes |
+| Freeze | guardian `freeze_bridge` 15:37 UTC → `bridge_frozen: true` (block 273203714); escrow 0 |
+| Propose | admin `propose_code_upgrade` → pending `f64a5d37…1c3d`, timelock 0 (block 273204527) |
+| Execute | `execute_code_upgrade` signed by `youtick-dev-v3.testnet` (the admin's 0.19 NEAR does not cover the call); code sha256 `f64a5d37…1c3d`, hash `HaR4aT4zVJwvjcY1SfnrsRzUwgp2oW3oBUDRhZLmdvM2`; no pending upgrade; governance state unchanged; storage 509007 → 509408 bytes; reserve headroom 0.80592 NEAR, `reserve_covered: true` |
+| Unfreeze | admin `request_bridge_unfreeze` + `unfreeze_bridge` → `bridge_frozen: false` (block 273205472) |
+| Card operator key | `add-key` on `v2-payments-261007…` signed with its full-access key: `ed25519:CcjcZpiL1eHCdZYLJbCJWFeSpyDpXWZmM8XpdKAZZmmy`, `FunctionCall` to `v2-market-261007…`, methods `issue_card_ticket`, `void_card_ticket`, allowance 1 NEAR (block 273208028). The owner keeps the key file as `~/youtick-v2-testnet-keys/payment_operator_card_fc.json`; it becomes `PAYMENT_OPERATOR_PRIVATE_KEY` only when the card path is enabled (E8.3) |
+
+Not yet shown: an `issue_card_ticket` or `void_card_ticket` call on the new code, and the payment
+service reading a real `reserve_exhausted` RPC failure.
 
 
 The bootstrap is covered by `workers/livepeer-bridge/scripts/v2-testnet-bootstrap.test.mjs`
