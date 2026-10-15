@@ -17,6 +17,18 @@ export function cardRailFromEnv(value: string | undefined = process.env.NEXT_PUB
     return value?.trim() === 'sandbox' ? 'sandbox' : null;
 }
 
+/**
+ * The card price in US dollars as the payment service charges it (one cent = 10,000 micro USDC), or
+ * null when the USDC price is not a whole number of cents (the service refuses such an order).
+ */
+export function cardPriceLabel(priceUsdc: string): string | null {
+    if (!/^[1-9][0-9]{0,30}$/.test(priceUsdc)) return null;
+    const micro = BigInt(priceUsdc);
+    if (micro % 10_000n !== 0n) return null;
+    const cents = micro / 10_000n;
+    return `$${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
+}
+
 export const CLEENG_WIDGET_SCRIPT: Record<CardRail, string> = {
     sandbox: 'https://widgets.sandbox.cleeng.com/cleeng.js',
 };

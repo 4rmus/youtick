@@ -98,7 +98,16 @@ Bridge's `ticket` quote with the user's own account as recipient (a V2 Bridge po
 `NEXT_PUBLIC_V2_CRYPTO_RAIL_DISABLED_LANGUAGES` (comma-separated, default `tr`). The checkout
 sends funnel counts (`lib/v2/funnel.ts`) to the payment service's `/v1/funnel`: a fixed step
 name, the rail and a failure code only, nothing that identifies the user or the screening; with
-Do Not Track or Global Privacy Control set, nothing is sent. The V2 ticket player shows a
+Do Not Track or Global Privacy Control set, nothing is sent. The card rail (roadmap E8.2) is off
+unless `NEXT_PUBLIC_V2_CARD_RAIL=sandbox`: then the page also offers "Pay $X by card" (also for
+languages where the crypto rail is off) when the price is a whole number of cents. The ticket key
+is derived in the browser as for crypto; the payment service opens the card order, the ticket key
+signs `card_purchase` over the provider reference and the price, and the buyer pays in Cleeng's
+hosted checkout widget (`lib/v2/card-checkout.ts`, `components/v2/CardCheckout.tsx`). The page
+counts the ticket only when `get_ticket` shows it on chain and signs again when a payment lands
+after the signature expired. With the flag, the CSP (`lib/csp.ts`) allows Cleeng's sandbox widget
+script and `*.sandbox.cleeng.com` frames; that frame host list is unverified until the sandbox
+opens. Nothing of this has run against Cleeng (EXTERNAL_NOT_RUN). The V2 ticket player shows a
 moving watermark with the ticket code (the first 8 hex characters of the public ticket id, which
 carries no buyer account). It is a visible deterrent only; full screen applies to the player
 frame so the watermark stays, and picture-in-picture is off. iOS Safari's own full-screen video

@@ -5,7 +5,7 @@ import { NEAR_AUTH_PROVIDERS } from '@/lib/near-auth/config';
 import { deriveRootKey, ticketKey } from '@/lib/ticket-keys/keys';
 import { PublicKey } from 'near-api-js';
 import { ticketMessage } from '@/lib/ticket-keys/messages';
-import { cardRailFromEnv, openCardOrder, waitForCardTicket, type CardOrder } from '@/lib/v2/card-checkout';
+import { cardPriceLabel, cardRailFromEnv, openCardOrder, waitForCardTicket, type CardOrder } from '@/lib/v2/card-checkout';
 import type { V2Config } from '@/lib/v2/config';
 import type { DeviceKey } from '@/lib/v2/device-key';
 
@@ -51,6 +51,13 @@ describe('card rail flag', () => {
         expect(cardRailFromEnv('production')).toBeNull();
         expect(cardRailFromEnv('true')).toBeNull();
         expect(cardRailFromEnv('sandbox')).toBe('sandbox');
+    });
+
+    it('shows the card price in dollars only for whole cents', () => {
+        expect(cardPriceLabel('5000000')).toBe('$5.00');
+        expect(cardPriceLabel('12340000')).toBe('$12.34');
+        expect(cardPriceLabel('5000001')).toBeNull();
+        expect(cardPriceLabel('-1')).toBeNull();
     });
 });
 
