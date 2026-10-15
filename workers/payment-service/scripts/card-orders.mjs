@@ -42,6 +42,8 @@ export function reconcileOrder(order, ticket, ledger, nowMs) {
     if (['paid', 'issued', 'void_pending', 'voided'].includes(order.status) && sales !== 1) add(`sales_${sales}`);
     if (order.status === 'issued' && net !== order.gross_minor) add('ledger_net_not_gross');
     if (order.status === 'voided' && net > 0) add('ledger_net_positive_after_void');
+    // Money kept for an order that never got a ticket, e.g. its offer paid again after a cancel.
+    if (['created', 'awaiting_payment', 'cancelled'].includes(order.status) && net > 0) add('paid_without_ticket');
     return findings;
 }
 

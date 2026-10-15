@@ -30,6 +30,9 @@ test('book and chain disagreements are reported', () => {
     assert.deepEqual(codes(order(), ticket('purchased'), [], NOW), ['sales_0', 'ledger_net_not_gross']);
     assert.deepEqual(codes(order({ status: 'paid', last_error: 'device_signature_expired', updated_at_ms: NOW - STUCK_AFTER_MS - 1 }), null, [sale], NOW),
         ['stuck_paid_device_signature_expired']);
+    // A sale on an order that has no ticket and no matching refund (an offer paid after a cancel).
+    assert.deepEqual(codes(order({ status: 'cancelled' }), null, [sale], NOW), ['paid_without_ticket']);
+    assert.deepEqual(codes(order({ status: 'cancelled' }), null, [sale, refund], NOW), []);
 });
 
 test('the ledger sums one UTC month per creator and currency without a split', () => {

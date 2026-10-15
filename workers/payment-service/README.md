@@ -181,7 +181,9 @@ To check in the sandbox before E8.3: that a `.invalid` customer per order is acc
 Cleeng's MoR receipt does with it); `offerPrice` units and type; the hosted checkout taking our
 customer session and offer; whether an offer id carries a country suffix (`S…_US`) in webhooks;
 `paymentRefunded` amount units; the webhook registration API (`/endpoints` or
-`/3.1/webhook_subscriptions`) and its host. Still to build: the web checkout (E8.2) and turning the
+`/3.1/webhook_subscriptions`) and its host. An offer stays payable with its order's customer session
+after the order is cancelled; such a payment is stored as `order_not_open` with a ledger sale,
+`card-orders.mjs reconcile` reports `paid_without_ticket`, and it is refunded by hand in Cleeng. Still to build: the web checkout (E8.2) and turning the
 path on (E8.3: Durable Object binding and migration, cron, `PAYMENT_OPERATOR_ID`, secrets).
 
 ```bash
