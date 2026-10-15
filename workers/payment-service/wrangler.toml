@@ -18,10 +18,10 @@ VAT_POLICY = "fixed-testnet"
 VAT_RATE_BPS = "2000"
 VAT_KEY_VERSION = "1"
 ALLOWED_ORIGINS = "https://youtick.net,https://www.youtick.net"
-# Card path (roadmap E8). Off: the Cleeng adapter (src/cleeng.ts) has not met the sandbox (X1).
-# Turning it on is its own gate (README, "Card path"): it adds PAYMENT_OPERATOR_ID, the CARD_OPERATOR
-# Durable Object binding with its migration, a "*/5 * * * *" cron, CLEENG_ENVIRONMENT = "sandbox",
-# CLEENG_PUBLISHER_ID and the card secrets.
+# Card path (roadmap E8). Off here. The V2 testnet release turns it on with the Cleeng sandbox
+# (gate E8.3, scripts/v2-testnet-release.mjs `sandbox`): CARD_PATH_ENABLED, PAYMENT_OPERATOR_ID,
+# CLEENG_ENVIRONMENT, CLEENG_PUBLISHER_ID and the card secrets. The Durable Object and the cron below
+# do nothing while it is off.
 CARD_PATH_ENABLED = "false"
 # Secrets (wrangler secret put): VAT_SIGNER_PRIVATE_KEY, REFUND_ADMIN_TOKEN (operator tools, >= 32 characters).
 # Card path only, when enabled: PAYMENT_OPERATOR_PRIVATE_KEY, CARD_REFERENCE_SECRET (32 bytes, 64 hex),
@@ -44,3 +44,17 @@ binding = "REFUNDS"
 database_name = "youtick-payments-v2-testnet"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
+
+# The single card operator (src/card-operator-object.ts): one instance signs every card ticket
+# transaction, so the payment operator key's nonce is never raced.
+[[durable_objects.bindings]]
+name = "CARD_OPERATOR"
+class_name = "CardOperator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CardOperator"]
+
+# A safety net for the card operator's own alarm; a no-op while the card path is off.
+[triggers]
+crons = ["*/5 * * * *"]

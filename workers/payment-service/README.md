@@ -186,6 +186,14 @@ after the order is cancelled; such a payment is stored as `order_not_open` with 
 `card-orders.mjs reconcile` reports `paid_without_ticket`, and it is refunded by hand in Cleeng. Still to build: the web checkout (E8.2) and turning the
 path on (E8.3: Durable Object binding and migration, cron, `PAYMENT_OPERATOR_ID`, secrets).
 
+The V2 testnet release turns the path on with `card_path: sandbox` (docs/v2-testnet-runbook.md,
+"Card path on testnet (E8.3)"). The webhook endpoint is registered once from the owner's machine;
+the signing secret is written to a new 0600 file and never printed:
+
+```bash
+node scripts/cleeng-webhook.mjs register --token-file <publisher token file> --secret-out <new file>
+```
+
 ```bash
 node scripts/card-orders.mjs reconcile               # every order against its ticket on chain
 node scripts/card-orders.mjs ledger --month 2026-11  # per creator and currency, no split
