@@ -129,7 +129,7 @@ function ours(ticket: ChainTicket | null, order: OrderRow): boolean {
     return ticket?.rail === 'card' && ticket.card?.payment_reference_hmac === order.payment_reference_hmac;
 }
 
-async function issue(deps: OperatorDeps, order: OrderRow): Promise<unknown> {
+async function issue(deps: OperatorDeps, order: OrderRow): Promise<'issued' | unknown> {
     const before = await readTicket(deps, order.ticket_id);
     if (before) {
         if (!ours(before, order)) return update(deps, order, { last_error: 'ticket_conflict', attempts: MAX_SEND_ATTEMPTS });
@@ -164,7 +164,7 @@ async function issue(deps: OperatorDeps, order: OrderRow): Promise<unknown> {
     const after = await readTicket(deps, order.ticket_id);
     if (ours(after, order)) {
         await update(deps, order, { status: 'issued', issue_tx_hash: call.hash, pending_tx_hash: null, last_error: null });
-        return;
+        return 'issued';
     }
     // A confirmed failure with no ticket on chain releases the order (a refund may cancel it and the
     // buyer may sign again); an unknown outcome keeps the hash until the ticket is read again.
@@ -213,18 +213,22 @@ export async function runCardOperator(deps: OperatorDeps): Promise<{ processed: 
     const rows = (await deps.db.prepare(`SELECT * FROM card_orders WHERE status IN ('paid', 'void_pending') AND attempts < ?
         ORDER BY updated_at_ms LIMIT ?`).bind(MAX_SEND_ATTEMPTS, BATCH).all<OrderRow>()).results ?? [];
     let processed = 0;
+    let issued = false;
     for (const order of rows) {
         try {
-            if (order.status === 'paid') await issue(deps, order);
+            if (order.status === 'paid') issued = (await issue(deps, order)) === 'issued' || issued;
             else await voidTicket(deps, order);
             processed += 1;
         } catch {
             await update(deps, order, { last_error: 'rpc_unavailable' }).catch(() => undefined);
         }
     }
-    // Orders that wait for the buyer, the chain or the Market's NEAR are left to the cron.
+    // Orders that wait for the buyer, the chain or the Market's NEAR are left to the cron. Once a
+    // ticket was issued again the Market can pay, so a backlog of `reserve_exhausted` orders is
+    // drained batch by batch instead of ten per cron tick.
+    const parked = ['device_signature_missing', 'device_signature_expired', 'outcome_unknown', ...(issued ? [] : ['reserve_exhausted'])];
     const waiting = await deps.db.prepare(`SELECT COUNT(*) AS n FROM card_orders WHERE status IN ('paid', 'void_pending') AND attempts < ?
-        AND (last_error IS NULL OR last_error NOT IN ('device_signature_missing', 'device_signature_expired', 'outcome_unknown', 'reserve_exhausted'))`)
-        .bind(MAX_SEND_ATTEMPTS).first<{ n: number }>();
+        AND (last_error IS NULL OR last_error NOT IN (${parked.map(() => '?').join(', ')}))`)
+        .bind(MAX_SEND_ATTEMPTS, ...parked).first<{ n: number }>();
     return { processed, waiting: Number(waiting?.n ?? 0) };
 }

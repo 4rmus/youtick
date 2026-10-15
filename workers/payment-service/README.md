@@ -135,7 +135,9 @@ exists and every card endpoint answers `503 card_path_disabled`. `CARD_PATH_ENAB
   refuses because its headroom cannot pay for the storage, the order keeps `reserve_exhausted`
   without using up an attempt and the cron retries it (each retry costs the operator gas);
   `card-orders.mjs reconcile` reports it as `stuck_paid_reserve_exhausted` after 15 minutes, and
-  the fix is NEAR on the Market account, not on the operator.
+  the fix is NEAR on the Market account, not on the operator. That headroom also holds the
+  platform's NEAR upload fees, so a leaked operator key can spend them on tickets (never the
+  reserve or the storage stake); the guardian's purchase pause stops it.
 - **Ledger.** `card_ledger` keeps the provider's money facts per event (sale, refund, chargeback).
   No creator share is computed: the card split is an open owner decision (roadmap D4).
 - **Stored per order.** Publication, creator, ticket and device public keys, the device

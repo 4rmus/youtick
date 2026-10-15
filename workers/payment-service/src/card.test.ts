@@ -288,6 +288,26 @@ describe('card events and operator', () => {
         expect(await status(other, second.order.order_id)).toMatchObject({ status: 'cancelled' });
     });
 
+    it('drains a reserve_exhausted backlog once the Market pays again', async () => {
+        const h = harness();
+        const orders: string[] = [];
+        for (let i = 1; i <= 3; i += 1) {
+            const { ticket, order } = await openOrder(h);
+            await h.call(`/v1/card-orders/${order.order_id}/device`, { body: signDevice(ticket, order) });
+            h.events.push([purchase(`evt-${i}`, `po-${i}`)]);
+            await h.call('/webhooks/card', { body: {}, headers: { 'x-test-signature': 'ok' } });
+            orders.push(order.order_id);
+        }
+        const dry = chainSigner(h, ['reserve_exhausted', 'reserve_exhausted', 'reserve_exhausted']);
+        expect(await operate(h, dry.sign)).toEqual({ processed: 3, waiting: 0 });
+        // Topped up: the first ticket goes through, so the rest are retried by the alarm, not the cron.
+        const partial = chainSigner(h, ['success', 'reserve_exhausted', 'reserve_exhausted']);
+        expect(await operate(h, partial.sign)).toEqual({ processed: 3, waiting: 2 });
+        expect(await status(h, orders[0])).toMatchObject({ status: 'issued' });
+        expect(await operate(h, chainSigner(h).sign)).toEqual({ processed: 2, waiting: 0 });
+        for (const orderId of orders) expect(await status(h, orderId)).toMatchObject({ status: 'issued' });
+    });
+
     it('reads the headroom refusal out of a final execution outcome', () => {
         const panicked = { status: { Failure: { ActionError: { index: 0, kind: { FunctionCallError: { ExecutionError:
             `Smart contract panicked: ${RESERVE_HEADROOM_REFUSAL} (1 > 0 yoctoNEAR)` } } } } } };
