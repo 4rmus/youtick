@@ -125,11 +125,17 @@ exists and every card endpoint answers `503 card_path_disabled`. `CARD_PATH_ENAB
   Cleeng the delivery id). A purchase for another amount or currency than the order is refused
   (`amount_mismatch`). A refund or lost chargeback cancels an order before any send and turns an
   issued (or in-flight) one into `void_pending`. Opened and won chargebacks are recorded only.
-- **Operator.** One Durable Object (`CardOperator`) sends `issue_card_ticket` (with a storage
-  deposit; the contract returns the excess) and `void_card_ticket`. Each transaction hash is stored
-  before sending; an unknown outcome is settled by reading the ticket, not by resending. An order
-  stops after 5 sends and waits for the operator. After an unknown outcome nothing is resent and no
-  order is cancelled until the transaction status reads failed; the cron re-checks such orders.
+- **Operator.** One Durable Object (`CardOperator`) sends `issue_card_ticket` and
+  `void_card_ticket`, both without a deposit: the ticket's storage comes from the Market's reserve
+  headroom (gate E8.0), so `PAYMENT_OPERATOR_PRIVATE_KEY` is a function-call key limited to these
+  two methods, never a full-access key. Each transaction hash is stored before sending; an unknown
+  outcome is settled by reading the ticket, not by resending. An order stops after 5 sends and
+  waits for the operator. After an unknown outcome nothing is resent and no order is cancelled
+  until the transaction status reads failed; the cron re-checks such orders. When the Market
+  refuses because its headroom cannot pay for the storage, the order keeps `reserve_exhausted`
+  without using up an attempt and the cron retries it (each retry costs the operator gas);
+  `card-orders.mjs reconcile` reports it as `stuck_paid_reserve_exhausted` after 15 minutes, and
+  the fix is NEAR on the Market account, not on the operator.
 - **Ledger.** `card_ledger` keeps the provider's money facts per event (sale, refund, chargeback).
   No creator share is computed: the card split is an open owner decision (roadmap D4).
 - **Stored per order.** Publication, creator, ticket and device public keys, the device

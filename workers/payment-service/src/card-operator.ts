@@ -7,16 +7,19 @@
 import { Account, JsonRpcProvider, KeyPairSigner, actions, baseEncode, encodeTransaction } from 'near-api-js';
 import type { View } from './market';
 
-/** Attached to `issue_card_ticket` for the ticket's storage; the contract returns the excess. */
-export const CARD_TICKET_STORAGE_DEPOSIT = 50_000_000_000_000_000_000_000n;
+// Neither call takes a deposit (gate E8.0): the ticket's storage comes from the Market's reserve
+// headroom, so the operator key is a function-call key that can sign nothing else.
 export const CARD_OPERATOR_GAS = 100_000_000_000_000n;
+/** The contract's refusal when the Market account cannot pay for another ticket's storage. */
+export const RESERVE_HEADROOM_REFUSAL = 'Card ticket storage exceeds the operational reserve headroom';
 /** After this many sends an order stops and waits for the operator (README, "Card path"). */
 export const MAX_SEND_ATTEMPTS = 5;
 /** The signature must still be valid when the transaction lands; block time trails the clock. */
 const DEVICE_EXPIRY_MARGIN_MS = 2 * 60 * 1000;
 const BATCH = 10;
 
-export type SendOutcome = 'success' | 'failure' | 'unknown';
+/** `reserve_exhausted` is a confirmed failure that is the Market's to fix, not the order's. */
+export type SendOutcome = 'success' | 'failure' | 'unknown' | 'reserve_exhausted';
 
 export interface SignedCall {
     hash: string;
@@ -66,11 +69,17 @@ interface ChainTicket {
 
 /** Fixed codes stored in `last_error`; never provider or RPC text. */
 export type OperatorError = 'device_signature_missing' | 'device_signature_expired' | 'ticket_conflict' | 'send_failed'
-    | 'outcome_unknown' | 'ticket_not_voidable' | 'rpc_unavailable';
+    | 'outcome_unknown' | 'ticket_not_voidable' | 'rpc_unavailable' | 'reserve_exhausted';
 
-function outcomeOf(response: unknown): SendOutcome {
+export function outcomeOf(response: unknown): SendOutcome {
     const status = (response as { status?: unknown }).status;
-    return status && typeof status === 'object' && Object.hasOwn(status, 'Failure') ? 'failure' : 'success';
+    if (!status || typeof status !== 'object' || !Object.hasOwn(status, 'Failure')) return 'success';
+    // The execution error carries the contract's panic text ("Smart contract panicked: …").
+    return JSON.stringify((status as { Failure: unknown }).Failure).includes(RESERVE_HEADROOM_REFUSAL) ? 'reserve_exhausted' : 'failure';
+}
+
+function failed(outcome: SendOutcome): boolean {
+    return outcome === 'failure' || outcome === 'reserve_exhausted';
 }
 
 export function nearSigner(input: { rpcUrl: string; operatorId: string; privateKey: string; contractId: string }): { sign: SignCall; txStatus: TxStatus } {
@@ -129,7 +138,7 @@ async function issue(deps: OperatorDeps, order: OrderRow): Promise<unknown> {
     }
     if (order.pending_tx_hash) {
         // An earlier send's outcome is unknown: resend only once the chain says it failed.
-        if ((await deps.txStatus(order.pending_tx_hash)) !== 'failure') return update(deps, order, { last_error: 'outcome_unknown' });
+        if (!failed(await deps.txStatus(order.pending_tx_hash))) return update(deps, order, { last_error: 'outcome_unknown' });
         if (!(await update(deps, order, { pending_tx_hash: null }))) return;
         order = { ...order, pending_tx_hash: null };
     }
@@ -147,7 +156,7 @@ async function issue(deps: OperatorDeps, order: OrderRow): Promise<unknown> {
             expires_at_ms: String(order.device_expires_at_ms), signature: order.device_signature,
         },
         payment_reference_hmac: order.payment_reference_hmac, gross_minor: String(order.gross_minor), currency: order.currency,
-    }, CARD_TICKET_STORAGE_DEPOSIT);
+    }, 0n);
     // A refund that arrived meanwhile moved the order on; then nothing is sent.
     if (!(await update(deps, order, { pending_tx_hash: call.hash, attempts: order.attempts + 1 }))) return;
     // From here a refund turns the order into void_pending (src/card-events.ts), never cancelled.
@@ -159,7 +168,14 @@ async function issue(deps: OperatorDeps, order: OrderRow): Promise<unknown> {
     }
     // A confirmed failure with no ticket on chain releases the order (a refund may cancel it and the
     // buyer may sign again); an unknown outcome keeps the hash until the ticket is read again.
-    await update(deps, order, outcome === 'unknown' ? { last_error: 'outcome_unknown' } : { last_error: 'send_failed', pending_tx_hash: null });
+    if (outcome === 'unknown') return update(deps, order, { last_error: 'outcome_unknown' });
+    if (outcome === 'reserve_exhausted') {
+        // The Market account cannot pay for the ticket's storage: nothing about this order is wrong,
+        // so the send is not counted and the order waits for the cron until the owner tops up the
+        // Market (README, "Card path"). Each retry still burns the operator's gas on a failed call.
+        return update(deps, order, { last_error: 'reserve_exhausted', pending_tx_hash: null, attempts: order.attempts });
+    }
+    await update(deps, order, { last_error: 'send_failed', pending_tx_hash: null });
 }
 
 async function voidTicket(deps: OperatorDeps, order: OrderRow): Promise<unknown> {
@@ -167,7 +183,7 @@ async function voidTicket(deps: OperatorDeps, order: OrderRow): Promise<unknown>
     if (!before && !order.issue_tx_hash) {
         // No ticket yet. With no send outstanding nothing can land, so the order is cancelled. An
         // issue whose outcome was unknown may still land: cancel only once the chain says it failed.
-        if (!order.pending_tx_hash || (await deps.txStatus(order.pending_tx_hash)) === 'failure') {
+        if (!order.pending_tx_hash || failed(await deps.txStatus(order.pending_tx_hash))) {
             return update(deps, order, { status: 'cancelled', pending_tx_hash: null, last_error: null });
         }
         return update(deps, order, { last_error: 'outcome_unknown' });
@@ -206,8 +222,9 @@ export async function runCardOperator(deps: OperatorDeps): Promise<{ processed: 
             await update(deps, order, { last_error: 'rpc_unavailable' }).catch(() => undefined);
         }
     }
+    // Orders that wait for the buyer, the chain or the Market's NEAR are left to the cron.
     const waiting = await deps.db.prepare(`SELECT COUNT(*) AS n FROM card_orders WHERE status IN ('paid', 'void_pending') AND attempts < ?
-        AND (last_error IS NULL OR last_error NOT IN ('device_signature_missing', 'device_signature_expired', 'outcome_unknown'))`)
+        AND (last_error IS NULL OR last_error NOT IN ('device_signature_missing', 'device_signature_expired', 'outcome_unknown', 'reserve_exhausted'))`)
         .bind(MAX_SEND_ATTEMPTS).first<{ n: number }>();
     return { processed, waiting: Number(waiting?.n ?? 0) };
 }
