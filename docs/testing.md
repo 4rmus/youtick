@@ -208,7 +208,7 @@ provider was called.
 cd workers/payment-service
 npm ci
 npm test -- --run
-node --test scripts/refunds.test.mjs scripts/card-orders.test.mjs
+node --test scripts/refunds.test.mjs scripts/card-orders.test.mjs scripts/cleeng-webhook.test.mjs
 npm run check
 ```
 

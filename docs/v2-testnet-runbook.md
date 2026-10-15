@@ -423,6 +423,50 @@ Owner-signed; command sheet kept outside the repository. The card path stays off
 Not yet shown: an `issue_card_ticket` or `void_card_ticket` call on the new code, and the payment
 service reading a real `reserve_exhausted` RPC failure.
 
+## Card path on testnet (E8.3)
+
+The payment service's card path runs only in an `acceptance` release with `card_path: sandbox`
+(*V2 Testnet Workers*). `off` (the default) keeps every card route at `503 card_path_disabled`.
+
+- **What `sandbox` sets:** `CARD_PATH_ENABLED=true`, `PAYMENT_OPERATOR_ID=v2-payments-261007…`,
+  `CLEENG_ENVIRONMENT=sandbox` and `CLEENG_PUBLISHER_ID=154746265` (the owner's Cleeng sandbox
+  account, created 2026-10-15), plus four secrets.
+- **Every release** ships the `CardOperator` Durable Object (migration `v1`) and a `*/5` cron; both
+  do nothing while the card path is off. The payments D1 migrations (`0002_card_orders.sql`) are
+  applied by the same idempotent step as the refund inbox.
+- **Preflight:** the card key must be a function-call key of `v2-payments-261007…` for Market V2
+  with exactly `issue_card_ticket` and `void_card_ticket`. A full-access key is refused.
+- **Smoke:** an unsigned `POST /webhooks/card` must answer `401 invalid_webhook` with the card path
+  on and `503 card_path_disabled` with it off.
+
+### Owner steps (E8.3)
+
+Each value goes from a file to GitHub; none is printed. All files live in `~/youtick-v2-testnet-keys`.
+
+1. **Reference secret** (32 random bytes, never rotated while card orders are open):
+   ```bash
+   (umask 077 && openssl rand -hex 32 > ~/youtick-v2-testnet-keys/card_reference_secret)
+   ```
+2. **Register the webhook** (a Cleeng sandbox write; it returns the signing secret once):
+   ```bash
+   node workers/payment-service/scripts/cleeng-webhook.mjs register --token-file ~/youtick-v2-testnet-keys/cleeng_sandbox_publisher_token --secret-out ~/youtick-v2-testnet-keys/cleeng_sandbox_webhook_secret
+   ```
+   It subscribes `https://pay-v2-testnet.youtick.net/webhooks/card` to `transactionCreated` and
+   `paymentRefunded`. Deliveries fail until the card path is deployed; nothing is sold before that.
+3. **Environment secrets** (`v2-testnet`):
+   ```bash
+   jq -r .private_key ~/youtick-v2-testnet-keys/payment_operator_card_fc.json | gh secret set V2_PAYMENT_OPERATOR_CARD_PRIVATE_KEY --env v2-testnet --repo 4rmus/youtick
+   gh secret set V2_CARD_REFERENCE_SECRET --env v2-testnet --repo 4rmus/youtick < ~/youtick-v2-testnet-keys/card_reference_secret
+   gh secret set V2_CLEENG_PUBLISHER_TOKEN --env v2-testnet --repo 4rmus/youtick < ~/youtick-v2-testnet-keys/cleeng_sandbox_publisher_token
+   gh secret set V2_CLEENG_WEBHOOK_SECRET --env v2-testnet --repo 4rmus/youtick < ~/youtick-v2-testnet-keys/cleeng_sandbox_webhook_secret
+   ```
+4. **Deploy** *V2 Testnet Workers* on the merged `main` commit with `mode: acceptance`,
+   `card_path: sandbox` and confirmation `DEPLOY_V2_TESTNET_acceptance`, then approve the
+   environment. To turn the card path off again, deploy the same commit with `card_path: off`.
+5. **Acceptance walk:** the local web (docs/testing.md) with `NEXT_PUBLIC_V2_CARD_RAIL=sandbox`; pay
+   with Cleeng's sandbox test card; the ticket counts only when `get_ticket` shows it with rail
+   `card`.
+
 
 The bootstrap is covered by `workers/livepeer-bridge/scripts/v2-testnet-bootstrap.test.mjs`
 against a simulated chain (LOCAL_TEST), and its workflow ran with `PASS` on testnet (PROVIDER).
