@@ -22,12 +22,12 @@ function browserEnvironment(): FunnelEnvironment | null {
 
 /** Fire and forget: a lost or refused count never affects the checkout. */
 export function trackFunnelStep(
-    paymentServiceUrl: string | null, step: FunnelStep, code?: string, environment = browserEnvironment(),
+    paymentServiceUrl: string | null, step: FunnelStep, code?: string, environment = browserEnvironment(), rail: 'crypto' | 'card' = 'crypto',
 ): void {
     if (!paymentServiceUrl || !environment || environment.doNotTrack) return;
     const body = step === 'purchase_failed'
-        ? { step, rail: 'crypto', code: code && /^[a-z_]{1,48}$/.test(code) ? code : 'other' }
-        : { step, rail: 'crypto' };
+        ? { step, rail, code: code && /^[a-z_]{1,48}$/.test(code) ? code : 'other' }
+        : { step, rail };
     try {
         void environment.fetch(`${paymentServiceUrl}/v1/funnel`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
