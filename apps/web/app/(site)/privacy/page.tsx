@@ -7,6 +7,7 @@ export default function PrivacyPage() {
             <h1 className="text-3xl font-bold text-white">Privacy</h1>
             <p>This notice describes the wallet-based V1 testnet pilot. It does not cover a future Google / passkey login or card payment service. The final data notice must be completed before collecting personal data in a public pilot.</p>
             <p>YOUTICK LTD operates youtick and is the data controller for youtick&apos;s processing described in this notice. For privacy questions and data-rights requests, contact <a className="text-emerald-300" href="mailto:contact@youtick.net">contact@youtick.net</a>.</p>
+            <p>YOUTICK LTD is registered with the UK Information Commissioner&apos;s Office (ICO) as a data protection fee payer under registration reference ZC276359.</p>
             <h2 className="text-xl font-semibold text-white">Account, media and public activity</h2>
             <p>youtick uses your connected NEAR account for publishing, ticket purchases, recovery and playback access. Wallet identifiers, transaction details and contract activity are public on NEAR. Clearing browser data does not delete public blockchain records.</p>
             <p>Source video goes directly from your browser to Livepeer for processing, storage and protected delivery. The web application and Bridge do not receive the video body. The Bridge can serve a public first-frame cover image after checking the publication. Keep the permissions needed to publish people&apos;s images, voices and other content.</p>
