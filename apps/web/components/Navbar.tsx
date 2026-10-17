@@ -20,8 +20,9 @@ export function Navbar() {
     const pathname = usePathname();
     const { accountId, connect, isReady, signOut } = useWallet();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
-    const isLanding = pathname === '/' || pathname === '/tr';
-    const locale: LandingLocale = pathname === '/tr' ? 'tr' : 'en';
+    // The creator application pages use the landing navigation in their own language.
+    const isLanding = pathname === '/' || pathname === '/tr' || pathname === '/apply' || pathname === '/tr/apply';
+    const locale: LandingLocale = pathname === '/tr' || pathname === '/tr/apply' ? 'tr' : 'en';
     const copy = landingCopy[locale];
     const ctas = getLandingCtas(locale, FEATURE_FLAGS.enablePaidMediaLivepeerV1);
     const landingHome = locale === 'tr' ? '/tr' : '/';

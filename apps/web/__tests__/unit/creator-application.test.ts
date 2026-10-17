@@ -173,7 +173,8 @@ describe('creator application pages', () => {
             const html = renderToStaticMarkup(React.createElement(CreatorApplicationForm, { locale, siteKey: null }));
             expect(html).toContain('mailto:contact@youtick.net');
             expect(html).not.toContain('<form');
-            expect(applyCopy[locale].unavailable).toContain('contact@youtick.net');
+            expect(html.match(/contact@youtick\.net/g)).toHaveLength(2);
+            expect(applyCopy[locale].unavailable).not.toContain('contact@youtick.net');
         }
         const form = renderToStaticMarkup(React.createElement(CreatorApplicationForm, { locale: 'en', siteKey: 'site-key' }));
         expect(form).toContain('<form');

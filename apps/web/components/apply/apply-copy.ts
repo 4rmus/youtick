@@ -64,7 +64,7 @@ export const applyCopy = {
             title: 'Application received',
             body: 'Thank you. We read every application and reply by email; please allow a few working days.',
         },
-        unavailable: `The application form is not open yet. Email ${CREATOR_APPLICATION_CONTACT} with your name, country and a link to your work instead.`,
+        unavailable: 'The application form is not open yet. Instead, email your name, country and a link to your work to',
         errors: {
             invalid_request: 'Please check the fields: every required field must be filled in, and the link must start with https://.',
             consent_required: 'Please tick the box so we can reply to you.',
@@ -106,7 +106,7 @@ export const applyCopy = {
             title: 'Başvurun alındı',
             body: 'Teşekkürler. Her başvuruyu okuyup e-postayla dönüş yapıyoruz; birkaç iş günü sürebilir.',
         },
-        unavailable: `Başvuru formu henüz açık değil. Bunun yerine adını, ülkeni ve eserine bir bağlantıyı ${CREATOR_APPLICATION_CONTACT} adresine gönder.`,
+        unavailable: 'Başvuru formu henüz açık değil. Bunun yerine adını, ülkeni ve eserine bir bağlantıyı şu adrese gönder:',
         errors: {
             invalid_request: 'Lütfen alanları kontrol et: zorunlu alanların hepsi dolu olmalı ve bağlantı https:// ile başlamalı.',
             consent_required: 'Sana dönebilmemiz için lütfen kutuyu işaretle.',
