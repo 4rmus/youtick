@@ -58,6 +58,12 @@ export type LandingCopy = {
         items: readonly CardCopy[];
         technologyLabel: string;
     };
+    creators: Intro & {
+        points: readonly string[];
+        action: string;
+        note: string;
+        heroLink: string;
+    };
     cta: Intro;
     footer: {
         description: string;
@@ -182,6 +188,19 @@ export const landingCopy = {
                 { title: 'Visible test fee model', description: 'See the test-USDC price and illustrative pilot split; no earnings or bank payout promise.' },
             ],
             technologyLabel: 'Built with Livepeer, NEAR, and USDC',
+        },
+        creators: {
+            eyebrow: 'Creator invitations',
+            title: 'Apply to release your work with youtick.',
+            description: 'We are preparing a paid launch with a small group of invited film and music creators. Tell us about your work and we will reply by email.',
+            points: [
+                'Concert recordings, independent films, festival selections and special editions.',
+                'Every application is read by a person; there is no automatic approval.',
+                'Applying does not open an account or commit you to anything.',
+            ],
+            action: 'Apply for an invite',
+            note: 'Launch timing, fees and payment methods are confirmed with invited creators before any release.',
+            heroLink: 'Creator? Apply for an invite',
         },
         cta: {
             eyebrow: 'Your next screening',
@@ -310,6 +329,19 @@ export const landingCopy = {
             ],
             technologyLabel: 'Livepeer, NEAR ve USDC ile geliştirildi',
         },
+        creators: {
+            eyebrow: 'Üretici davetleri',
+            title: 'Eserini youtick ile yayınlamak için başvur.',
+            description: 'Az sayıda davetli film ve müzik üreticisiyle ücretli bir açılış hazırlıyoruz. Bize eserinden bahset; e-postayla dönüş yapacağız.',
+            points: [
+                'Konser kayıtları, bağımsız filmler, festival seçkileri ve özel sürümler.',
+                'Her başvuruyu bir kişi okur; otomatik onay yoktur.',
+                'Başvuru hesap açmaz ve seni hiçbir şeye bağlamaz.',
+            ],
+            action: 'Davet için başvur',
+            note: 'Açılış zamanı, ücretler ve ödeme yöntemleri herhangi bir yayından önce davetli üreticilerle netleştirilir.',
+            heroLink: 'Üretici misin? Davet için başvur',
+        },
         cta: {
             eyebrow: 'Sıradaki gösterimin',
             title: 'Filmini, konser kaydını veya özel yayınını izleyicisiyle buluştur.',
@@ -334,6 +366,11 @@ export const landingCopy = {
         },
     },
 } as const satisfies Record<LandingLocale, LandingCopy>;
+
+/** The creator application page for each landing locale. */
+export function creatorApplyHref(locale: LandingLocale): string {
+    return locale === 'tr' ? '/tr/apply' : '/apply';
+}
 
 export type LandingCtas = {
     primary: { label: string; href: string };

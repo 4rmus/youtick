@@ -8,6 +8,7 @@ import {
     Film,
     Gauge,
     Github,
+    Mail,
     Globe,
     Music,
     Play,
@@ -20,7 +21,7 @@ import {
 import { BrandWordmark } from '@/components/BrandWordmark';
 import { Button } from '@/components/ui/button';
 import { ROICalculator } from './ROICalculator';
-import { getLandingCtas, landingCopy, type LandingCtas, type LandingLocale } from './landing-copy';
+import { creatorApplyHref, getLandingCtas, landingCopy, type LandingCtas, type LandingLocale } from './landing-copy';
 
 type Props = {
     locale: LandingLocale;
@@ -62,6 +63,7 @@ function LanguageSwitcher({ locale }: { locale: LandingLocale }) {
 export function LandingPage({ locale, enabled }: Props) {
     const copy = landingCopy[locale];
     const ctas = getLandingCtas(locale, enabled);
+    const applyHref = creatorApplyHref(locale);
 
     return (
         <div lang={locale} dir="ltr" className="min-h-screen bg-black text-white selection:bg-white selection:text-black">
@@ -92,6 +94,9 @@ export function LandingPage({ locale, enabled }: Props) {
                         <p className="mt-5 max-w-2xl text-base leading-relaxed text-zinc-400 md:text-lg">{copy.hero.description}</p>
                         {ctas.status && <p className="mt-5 text-sm font-semibold text-near-green">{ctas.status}</p>}
                         <div className="mt-8"><ActionButtons ctas={ctas} /></div>
+                        <Link href={applyHref} className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-zinc-200 underline-offset-4 hover:text-white hover:underline">
+                            {copy.creators.heroLink}<ArrowRight aria-hidden="true" className="h-4 w-4" />
+                        </Link>
                     </div>
                 </div>
             </section>
@@ -211,7 +216,31 @@ export function LandingPage({ locale, enabled }: Props) {
                 </div>
             </section>
 
-            <section className="bg-black py-28">
+            <section id="creators" className="bg-black py-24">
+                <div className="container mx-auto grid gap-10 px-4 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
+                    <div>
+                        <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">{copy.creators.eyebrow}</p>
+                        <h2 className="mb-5 text-3xl font-black md:text-5xl">{copy.creators.title}</h2>
+                        <p className="text-lg leading-relaxed text-zinc-400">{copy.creators.description}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-zinc-950 p-6 md:p-8">
+                        <ul className="space-y-4">
+                            {copy.creators.points.map((point) => (
+                                <li key={point} className="flex gap-3 text-sm leading-relaxed text-zinc-300">
+                                    <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-near-green" />
+                                    <span>{point}</span>
+                                </li>
+                            ))}
+                        </ul>
+                        <Button asChild size="lg" className="mt-8 w-full rounded-full bg-white px-8 py-6 text-base font-bold text-black hover:bg-zinc-200 sm:w-auto">
+                            <Link href={applyHref}><Mail aria-hidden="true" />{copy.creators.action}</Link>
+                        </Button>
+                        <p className="mt-5 text-xs leading-relaxed text-zinc-500">{copy.creators.note}</p>
+                    </div>
+                </div>
+            </section>
+
+            <section className="border-t border-white/5 bg-black py-28">
                 <div className="container mx-auto px-4 text-center">
                     <div className="mx-auto max-w-3xl">
                         <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">{copy.cta.eyebrow}</p>
