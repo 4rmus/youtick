@@ -9,12 +9,21 @@ function cardRailSources(rail = process.env.NEXT_PUBLIC_V2_CARD_RAIL): { script:
     return rail?.trim() === 'sandbox' ? { script: ' https://widgets.sandbox.cleeng.com', frame: 'https://*.sandbox.cleeng.com' } : null;
 }
 
-export function contentSecurityPolicy(nonce: string, card = cardRailSources()): string {
+/**
+ * Cloudflare Turnstile on the creator application form. Allowed only when the form is configured
+ * (`NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY`); Turnstile needs the host in script-src and frame-src.
+ */
+function turnstileSources(siteKey = process.env.NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY): { script: string; frame: string } | null {
+    return siteKey?.trim() ? { script: ' https://challenges.cloudflare.com', frame: 'https://challenges.cloudflare.com' } : null;
+}
+
+export function contentSecurityPolicy(nonce: string, card = cardRailSources(), turnstile = turnstileSources()): string {
     const isDevelopment = process.env.NODE_ENV !== 'production';
+    const frames = [card?.frame, turnstile?.frame].filter(Boolean);
     return [
         "default-src 'self'",
-        `script-src 'self' 'nonce-${nonce}' https://static.cloudflareinsights.com${card?.script ?? ''}${isDevelopment ? " 'unsafe-eval'" : ''}`,
-        ...(card ? [`frame-src ${card.frame}`] : []),
+        `script-src 'self' 'nonce-${nonce}' https://static.cloudflareinsights.com${card?.script ?? ''}${turnstile?.script ?? ''}${isDevelopment ? " 'unsafe-eval'" : ''}`,
+        ...(frames.length ? [`frame-src ${frames.join(' ')}`] : []),
         `style-src 'self' 'nonce-${nonce}'`,
         "style-src-elem 'self' 'unsafe-inline'",
         "style-src-attr 'unsafe-inline'",
