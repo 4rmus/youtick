@@ -187,7 +187,7 @@ export function CreatorApplicationForm({ locale, siteKey }: { locale: ApplyLocal
             </div>
             <label className="flex gap-3 text-sm leading-relaxed text-zinc-300">
                 <input type="checkbox" name="consent" required className="mt-1 h-4 w-4 shrink-0 accent-emerald-400" />
-                <span>{copy.consent} <Link href="/privacy" className="text-emerald-300">{copy.privacyLink}</Link></span>
+                <span>{copy.consent} <Link href="/privacy#creator-applications" className="text-emerald-300">{copy.privacyLink}</Link></span>
             </label>
             <div ref={widgetElement} />
             {error && <p role="alert" className="text-sm text-red-300">{copy.errors[error]}</p>}

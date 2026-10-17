@@ -1,6 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import PrivacyPage from '@/app/(site)/privacy/page';
 import { applyCopy } from '@/components/apply/apply-copy';
 import { CreatorApplicationForm } from '@/components/apply/CreatorApplicationForm';
 import { creatorApplyHref, landingCopy } from '@/components/landing/landing-copy';
@@ -177,7 +178,16 @@ describe('creator application pages', () => {
         const form = renderToStaticMarkup(React.createElement(CreatorApplicationForm, { locale: 'en', siteKey: 'site-key' }));
         expect(form).toContain('<form');
         expect(form).toContain('name="consent"');
-        expect(form).toContain('href="/privacy"');
+        expect(form).toContain('href="/privacy#creator-applications"');
+    });
+
+    it('describes application data, retention and providers in the privacy notice', () => {
+        const privacy = renderToStaticMarkup(React.createElement(PrivacyPage));
+        expect(privacy).toContain('id="creator-applications"');
+        expect(privacy).toContain('12 months after the last message');
+        expect(privacy).toContain('Turnstile');
+        expect(privacy).toContain('Google Workspace');
+        expect(privacy).toContain('does not keep a separate copy');
     });
 
     it('allows Turnstile in the CSP only when the form is configured', () => {
