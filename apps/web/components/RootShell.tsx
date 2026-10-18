@@ -1,6 +1,7 @@
 import { headers } from 'next/headers';
 import { connection } from 'next/server';
 import { Navbar } from '@/components/Navbar';
+import { LegalFooter } from '@/components/legal/LegalFooter';
 import { QueryProvider } from '@/components/providers/QueryProvider';
 import { WalletProvider } from '@/components/providers/WalletProvider';
 import { PublicTestnetBetaBanner } from '@/components/PublicTestnetBetaBanner';
@@ -24,6 +25,7 @@ export async function RootShell({ lang, fontClassName, children }: {
                     <WalletProvider cspNonce={cspNonce}>
                         <Navbar />
                         <main>{children}</main>
+                        <LegalFooter lang={lang} />
                     </WalletProvider>
                 </QueryProvider>
             </body>

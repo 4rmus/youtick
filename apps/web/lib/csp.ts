@@ -10,11 +10,15 @@ function cardRailSources(rail = process.env.NEXT_PUBLIC_V2_CARD_RAIL): { script:
 }
 
 /**
- * Cloudflare Turnstile on the creator application form. Allowed only when the form is configured
- * (`NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY`); Turnstile needs the host in script-src and frame-src.
+ * Cloudflare Turnstile on the creator application and content report forms. Allowed only when one of
+ * them is configured (`NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY`,
+ * `NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY`); Turnstile needs the host in script-src and frame-src.
  */
-function turnstileSources(siteKey = process.env.NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY): { script: string; frame: string } | null {
-    return siteKey?.trim() ? { script: ' https://challenges.cloudflare.com', frame: 'https://challenges.cloudflare.com' } : null;
+export function turnstileSources(
+    siteKey = process.env.NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY,
+    reportSiteKey = process.env.NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY,
+): { script: string; frame: string } | null {
+    return siteKey?.trim() || reportSiteKey?.trim() ? { script: ' https://challenges.cloudflare.com', frame: 'https://challenges.cloudflare.com' } : null;
 }
 
 export function contentSecurityPolicy(nonce: string, card = cardRailSources(), turnstile = turnstileSources()): string {
