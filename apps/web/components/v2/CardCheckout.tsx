@@ -73,6 +73,8 @@ export function CardCheckout(props: {
     device: DeviceKey | null;
     publicationId: string;
     priceLabel: string;
+    /** The instant-access consent version, or null while the buyer has not ticked it. */
+    consentVersion: string | null;
     /** The first unused ticket index for this purchase (recovery scan plus this page's reservations). */
     reserveIndex: () => Promise<number>;
     deps: CardCheckoutDeps;
@@ -89,13 +91,14 @@ export function CardCheckout(props: {
     const { onDone, onFailure, onStep } = props;
 
     async function start() {
-        if (!props.device) return;
+        if (!props.device || !props.consentVersion) return;
+        const consentVersion = props.consentVersion;
         setPhase('opening');
         onStep('approval_started');
         try {
             const opened = await openCardOrder({
                 config: props.config, paymentServiceUrl: props.paymentServiceUrl, rail: props.rail, ckdKey: props.ckdKey,
-                startIndex: await props.reserveIndex(), publicationId: props.publicationId, device: props.device, deps: props.deps,
+                startIndex: await props.reserveIndex(), publicationId: props.publicationId, device: props.device, deps: props.deps, consentVersion,
             });
             setOrder(opened.order);
             setSession(opened.checkout);
@@ -136,7 +139,7 @@ export function CardCheckout(props: {
         </div>;
     }
 
-    return <Button className="min-h-11 gap-2" variant="outline" disabled={phase === 'opening' || !props.device} onClick={() => void start()}>
+    return <Button className="min-h-11 gap-2" variant="outline" disabled={phase === 'opening' || !props.device || !props.consentVersion} onClick={() => void start()}>
         {phase === 'opening' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <CreditCard className="h-4 w-4" aria-hidden="true" />}
         {phase === 'opening' ? 'Preparing the payment…' : `Pay ${props.priceLabel} by card`}
     </Button>;

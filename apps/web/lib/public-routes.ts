@@ -23,7 +23,7 @@ export const PUBLIC_ROOT_PAGES: readonly string[] = [
 ];
 
 /** Pages listed in the root-host sitemap: the public pages that exist today (a test checks each has a page file). */
-export const PUBLIC_ROOT_SITEMAP_PATHS: readonly string[] = ['/', '/tr', '/apply', '/tr/apply', '/privacy', '/terms'];
+export const PUBLIC_ROOT_SITEMAP_PATHS: readonly string[] = ['/', '/tr', '/apply', '/tr/apply', '/privacy', '/terms', '/refund-policy', '/report'];
 
 /** Metadata files at the site root. */
 const PUBLIC_ROOT_FILES: readonly string[] = ['/robots.txt', '/sitemap.xml', '/favicon.ico', '/manifest.webmanifest'];

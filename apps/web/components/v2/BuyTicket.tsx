@@ -17,6 +17,8 @@ import { readAccessKey } from '@/lib/v2/near-reads';
 import { buyTicket, CheckoutError } from '@/lib/v2/purchase';
 import { findOwnedTickets } from '@/lib/v2/tickets';
 import { CardCheckout } from './CardCheckout';
+import { InstantAccessConsent } from './InstantAccessConsent';
+import { INSTANT_ACCESS_CONSENT_VERSION } from './instant-access-consent';
 import { FundBalance } from './FundBalance';
 import { useNearAuthV2 } from './NearAuthV2Provider';
 import { SignInPanel } from './SignInPanel';
@@ -65,6 +67,8 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     const [state, setState] = useState<'idle' | 'buying' | 'done' | 'error'>('idle');
     const [paidBy, setPaidBy] = useState<'crypto' | 'card'>('crypto');
     const [error, setError] = useState('');
+    // Unticked by default; every purchase button stays disabled until the buyer ticks it.
+    const [consented, setConsented] = useState(false);
     const reserved = useRef(new Set<number>());
     // Read from the browser after mount, so the server render never guesses the language.
     const [cryptoRail, setCryptoRail] = useState<boolean | null>(null);
@@ -147,7 +151,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     }
 
     async function buy() {
-        if (!signedIn || !device || !item) return;
+        if (!signedIn || !device || !item || !consented) return;
         // Opened in the click handler so the browser does not block the approval window.
         const popup = window.open('about:blank', 'youtick-near-auth', 'width=480,height=720');
         if (!popup) {
@@ -190,7 +194,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
 
     const card = CARD_RAIL && cardPrice && session.ckdKey && <div className="space-y-2 border-t border-white/10 pt-4">
         <CardCheckout config={config} paymentServiceUrl={config.paymentServiceUrl!} rail={CARD_RAIL} ckdKey={session.ckdKey} device={device}
-            publicationId={item.publication_id} priceLabel={cardPrice} reserveIndex={reserveIndex} deps={{ view }}
+            publicationId={item.publication_id} priceLabel={cardPrice} consentVersion={consented ? INSTANT_ACCESS_CONSENT_VERSION : null} reserveIndex={reserveIndex} deps={{ view }}
             onStep={(step) => track(step, undefined, 'card')}
             onDone={() => { track('ticket_confirmed', undefined, 'card'); setPaidBy('card'); setState('done'); }}
             onFailure={(code) => {
@@ -205,6 +209,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
         return <Card className="mx-auto max-w-xl space-y-4 p-6">
             <h1 className="text-xl font-semibold">{item.publication_id}</h1>
             <p className="text-white/80">Ticket price: <strong>{cardPrice ?? '…'}</strong></p>
+            {card && <InstantAccessConsent checked={consented} onChange={setConsented} disabled={state === 'buying'} />}
             {card || <p className="text-sm text-white/70">Card payment is not available for this screening.</p>}
             {state === 'error' && <p className="text-sm text-red-300" role="alert">{error}</p>}
         </Card>;
@@ -221,11 +226,12 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
             : <p className="text-sm text-amber-200">
                 Your balance is too low for this ticket. On testnet, send test USDC to your account <code className="break-all">{session.accountId}</code>.
             </p>)}
-        <Button className="min-h-11 gap-2" disabled={state === 'buying' || !enough || !device} onClick={() => void buy()}>
+        <InstantAccessConsent checked={consented} onChange={setConsented} disabled={state === 'buying'} />
+        <Button className="min-h-11 gap-2" disabled={state === 'buying' || !enough || !device || !consented} onClick={() => void buy()}>
             {state === 'buying' && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {state === 'buying' ? 'Waiting for your approval…' : `Buy for ${formatUsdc(item.price_usdc)} USDC`}
         </Button>
-        <p className="text-xs text-white/50">Refunds are for technical problems (the video does not play or is not as described) and can be requested within 27 days. A change of mind is not refunded.</p>
+        <p className="text-xs text-white/50">A ticket you have not played can be refunded. After playback starts, refunds are for technical problems (the video does not play or is not as described). Ask within 27 days of purchase. <Link className="underline" href="/refund-policy">Refund policy</Link></p>
         {card}
         {state === 'error' && <p className="text-sm text-red-300" role="alert">{error}</p>}
     </Card>;

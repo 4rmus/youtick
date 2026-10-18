@@ -128,7 +128,7 @@ export async function handleCardInternal(request: Request, url: URL, readBody: (
                 throw new Error('invalid_request');
             }
             const result = await context.db.prepare(`SELECT order_id, provider, provider_order_id, payment_reference_hmac, publication_id, creator_id,
-                ticket_id, gross_minor, currency, status, void_reason, pending_tx_hash, issue_tx_hash, void_tx_hash, attempts, last_error,
+                ticket_id, consent_version, gross_minor, currency, status, void_reason, pending_tx_hash, issue_tx_hash, void_tx_hash, attempts, last_error,
                 created_at_ms, updated_at_ms, paid_at_ms FROM card_orders WHERE status = ? AND created_at_ms > ? ORDER BY created_at_ms LIMIT 100`)
                 .bind(status, after).all();
             return json({ orders: result.results ?? [] });

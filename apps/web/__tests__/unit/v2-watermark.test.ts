@@ -34,3 +34,21 @@ describe('V2 ticket watermark', () => {
         expect(watermarkSlot(30_000)).toBe(1);
     });
 });
+
+describe('V2 ticket player overlay copy', () => {
+    it('names the ticket code without claiming a per-viewer or forensic mark, and starts nothing before play', async () => {
+        const { renderToStaticMarkup } = await import('react-dom/server');
+        const React = await import('react');
+        const { TicketPlayer } = await import('@/components/v2/TicketPlayer');
+        const html = renderToStaticMarkup(React.createElement(TicketPlayer, {
+            bridgeUrl: 'https://bridge.example', network: 'testnet', contractId: 'market.testnet', ticketId: TICKET,
+            device: {} as never, firstPlay: true,
+        }));
+        expect(html).toContain('Your ticket code A1B2-C3D4 is shown over the video while it plays.');
+        // The overlay itself appears only once playback has started.
+        expect(html).not.toContain('youtick · ');
+        for (const claim of [/forensic/i, /per[- ]viewer/i, /traced/i, /unique to (?:each|every) viewer/i, /recording (?:is )?(?:blocked|prevented)/i]) {
+            expect(html).not.toMatch(claim);
+        }
+    });
+});

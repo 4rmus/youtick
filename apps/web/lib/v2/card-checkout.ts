@@ -143,6 +143,8 @@ export async function signCardOrder(input: {
 export async function openCardOrder(input: {
     config: V2Config; paymentServiceUrl: string; rail: CardRail; ckdKey: Uint8Array; startIndex: number;
     publicationId: string; device: DeviceKey; deps: CardCheckoutDeps;
+    /** The instant-access consent version the buyer ticked; stored with the order. */
+    consentVersion: string;
 }): Promise<{ order: CardOrder; ticket: TicketKey; ticketIndex: number; checkout: CardCheckoutSession }> {
     const root = deriveRootKey(input.ckdKey);
     const fetcher = fetcherOf(input.deps);
@@ -150,7 +152,7 @@ export async function openCardOrder(input: {
         const ticketIndex = input.startIndex + attempt;
         const ticket = ticketKey(root, ticketIndex);
         const created = await request(fetcher, `${input.paymentServiceUrl}/v1/card-orders`, 'POST', {
-            publication_id: input.publicationId, ticket_public_key: ticket.publicKey,
+            publication_id: input.publicationId, ticket_public_key: ticket.publicKey, consent_version: input.consentVersion,
         });
         if (created.status === 409 && (created.value.error === 'ticket_key_used' || created.value.error === 'ticket_exists')) continue;
         if (created.status !== 201) throw new CheckoutError(errorCode(created.value, 'checkout_unavailable'));

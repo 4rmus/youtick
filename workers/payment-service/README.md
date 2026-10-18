@@ -106,7 +106,7 @@ sandbox configuration is complete; `CARD_PATH_ENABLED` is `false`.
 
 | Endpoint | Input | Output |
 |---|---|---|
-| `POST /v1/card-orders` | `{ publication_id, ticket_public_key }` | `201 { order_id, status, ticket_id, payment_reference_hmac, gross_minor, currency, needs_signature, checkout }` |
+| `POST /v1/card-orders` | `{ publication_id, ticket_public_key, consent_version }` (the instant-access consent the buyer ticked; stored on the order, migration `0003`) | `201 { order_id, status, ticket_id, payment_reference_hmac, gross_minor, currency, needs_signature, checkout }` |
 | `POST /v1/card-orders/<id>/checkout` | `{}` | the order with a new `checkout` (while `created` or `awaiting_payment`) |
 | `POST /v1/card-orders/<id>/device` | `{ session_public_key, certificate_sha256, expires_at_ms, signature }` (`card_purchase`) | the order |
 | `GET /v1/card-orders/<id>` | — | the order |

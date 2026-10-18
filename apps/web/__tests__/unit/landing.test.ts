@@ -246,9 +246,10 @@ describe('bilingual landing', () => {
     it('shows pilot, responsibility and local-data notices without blanket refund or storage claims', () => {
         const terms = renderToStaticMarkup(React.createElement(TermsPage));
         const privacy = renderToStaticMarkup(React.createElement(PrivacyPage));
-        expect(terms).toContain('controlled testnet pilot');
+        // The terms are the V2 launch draft (C3); the V1 wallet pilot keeps its own section.
+        expect(terms).toContain('V1 wallet pilot on NEAR testnet');
         expect(terms).toContain('statutory consumer rights');
-        expect(terms).toContain('remain to be confirmed');
+        expect(terms).toContain('pending review by our legal counsel');
         expect(terms).not.toMatch(/non-refundable|14-day beta/);
         expect(privacy).toContain('IndexedDB');
         expect(privacy).toContain('localStorage');

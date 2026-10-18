@@ -17,6 +17,8 @@ const IDENTIFIER = /^[A-Za-z0-9._:-]{1,128}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const DECIMAL = /^[1-9][0-9]{0,15}$/;
 const SIGNATURE = /^[A-Za-z0-9+/]{86}==$/;
+/** The web's instant-access consent version (components/v2/instant-access-consent.ts), e.g. `instant-access-en-2026-10-18`. */
+const CONSENT_VERSION = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 
 export interface CardOrderRow {
     order_id: string;
@@ -27,6 +29,8 @@ export interface CardOrderRow {
     creator_id: string;
     ticket_id: string;
     ticket_public_key: string;
+    /** The instant-access consent the buyer ticked; null only for orders opened before migration 0003. */
+    consent_version: string | null;
     gross_minor: number;
     currency: string;
     session_public_key: string | null;
@@ -91,13 +95,21 @@ export function cardPurchaseMessage(input: {
         String(input.grossMinor), input.currency].join('\n');
 }
 
-export function parseOrderRequest(body: Record<string, unknown>): { publication_id: string; ticket_public_key: string } {
-    if (Object.keys(body).sort().join(',') !== 'publication_id,ticket_public_key'
+export interface OrderRequest {
+    publication_id: string;
+    ticket_public_key: string;
+    consent_version: string;
+}
+
+/** A card order needs the instant-access consent version; without it no order is opened. */
+export function parseOrderRequest(body: Record<string, unknown>): OrderRequest {
+    if (Object.keys(body).sort().join(',') !== 'consent_version,publication_id,ticket_public_key'
         || typeof body.publication_id !== 'string' || !IDENTIFIER.test(body.publication_id)
-        || typeof body.ticket_public_key !== 'string' || !KEY.test(body.ticket_public_key)) {
+        || typeof body.ticket_public_key !== 'string' || !KEY.test(body.ticket_public_key)
+        || typeof body.consent_version !== 'string' || !CONSENT_VERSION.test(body.consent_version)) {
         fail('invalid_request');
     }
-    return { publication_id: body.publication_id, ticket_public_key: body.ticket_public_key };
+    return { publication_id: body.publication_id, ticket_public_key: body.ticket_public_key, consent_version: body.consent_version };
 }
 
 export function parseDevice(body: Record<string, unknown>): DeviceInput {
@@ -134,7 +146,7 @@ interface Context {
  * reference. The web then has the ticket key sign `card_purchase` over the returned fields and pays
  * with the provider's checkout session, which is returned once and not stored.
  */
-export async function createCardOrder(context: Context, input: { publication_id: string; ticket_public_key: string }): Promise<{ order: CardOrderRow; checkout?: CheckoutSession }> {
+export async function createCardOrder(context: Context, input: OrderRequest): Promise<{ order: CardOrderRow; checkout?: CheckoutSession }> {
     const ticketId = await ticketIdOf(input.ticket_public_key);
     const price = await readPurchasablePublication(context.view, context.contractId, input.publication_id);
     const publication = await context.view<{ creator_id?: string } | null>(context.contractId, 'get_publication', { publication_id: input.publication_id });
@@ -151,16 +163,16 @@ export async function createCardOrder(context: Context, input: { publication_id:
         order_id: orderId, provider: context.provider.name, provider_order_id: providerOrder.providerOrderId,
         payment_reference_hmac: await paymentReferenceHmac(context.referenceSecret, providerOrder.providerOrderId),
         publication_id: input.publication_id, creator_id: publication.creator_id, ticket_id: ticketId, ticket_public_key: input.ticket_public_key,
-        gross_minor: grossMinor, currency: 'USD', session_public_key: null, certificate_sha256: null, device_expires_at_ms: null,
+        consent_version: input.consent_version, gross_minor: grossMinor, currency: 'USD', session_public_key: null, certificate_sha256: null, device_expires_at_ms: null,
         device_signature: null, status: 'created', void_reason: null, pending_tx_hash: null, issue_tx_hash: null, void_tx_hash: null,
         attempts: 0, last_error: null, created_at_ms: context.nowMs, updated_at_ms: context.nowMs, paid_at_ms: null,
     };
     try {
         await context.db.prepare(`INSERT INTO card_orders (order_id, provider, provider_order_id, payment_reference_hmac, publication_id,
-            creator_id, ticket_id, ticket_public_key, gross_minor, currency, status, created_at_ms, updated_at_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?)`)
+            creator_id, ticket_id, ticket_public_key, consent_version, gross_minor, currency, status, created_at_ms, updated_at_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?)`)
             .bind(row.order_id, row.provider, row.provider_order_id, row.payment_reference_hmac, row.publication_id, row.creator_id,
-                row.ticket_id, row.ticket_public_key, row.gross_minor, row.currency, context.nowMs, context.nowMs).run();
+                row.ticket_id, row.ticket_public_key, row.consent_version, row.gross_minor, row.currency, context.nowMs, context.nowMs).run();
     } catch (error) {
         if (error instanceof Error && /UNIQUE/i.test(error.message)) fail('ticket_key_used');
         throw error;

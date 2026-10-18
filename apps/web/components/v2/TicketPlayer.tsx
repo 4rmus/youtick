@@ -139,6 +139,7 @@ export function TicketPlayer(props: {
                 {error && <p className="text-sm text-red-300" role="alert">{error}</p>}
             </div>}
         </div>
-        <p className="text-xs text-white/50">This video shows your ticket code {code}, so a copied recording can be traced to the ticket.</p>
+        {/* Owner decision K14/D5: a visible overlay only; no copy may present it as a per-viewer or forensic mark (claim 14). */}
+        <p className="text-xs text-white/50">Your ticket code {code} is shown over the video while it plays.</p>
     </div>;
 }

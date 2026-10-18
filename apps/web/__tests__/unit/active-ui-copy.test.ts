@@ -43,15 +43,18 @@ describe('active UI copy', () => {
     });
 
     it('keeps the public testnet warning, limits, noindex and abuse route visible', async () => {
-        const [banner, terms, layout, robots] = await Promise.all([
+        const [banner, terms, legalFacts, layout, robots] = await Promise.all([
             readFile('components/PublicTestnetBetaBanner.tsx', 'utf8'),
             readFile('app/(site)/terms/page.tsx', 'utf8'),
+            readFile('components/legal/legal-facts.ts', 'utf8'),
             readFile('lib/site-metadata.ts', 'utf8'),
             readFile('app/robots.ts', 'utf8'),
         ]);
         for (const value of ['Testnet Beta', 'no real value', '1 GB/file', '1 upload/UTC day',
             '10 uploads total', '0.10 test USDC', '24-hour']) expect(banner).toContain(value);
-        expect(terms).toContain('abuse@youtick.net');
+        // The terms page takes its contact addresses from the shared legal facts.
+        expect(terms).toContain('COMPANY.reportsEmail');
+        expect(legalFacts).toContain("reportsEmail: 'abuse@youtick.net'");
         expect(terms).toContain('does not automatically refund a processed upload or a cancelled job');
         expect(terms).toContain('Nothing in this notice excludes applicable statutory consumer rights');
         expect(layout).toContain('index: false');

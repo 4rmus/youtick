@@ -5,6 +5,7 @@ import { NEAR_AUTH_PROVIDERS } from '@/lib/near-auth/config';
 import { deriveRootKey, ticketKey } from '@/lib/ticket-keys/keys';
 import { PublicKey } from 'near-api-js';
 import { ticketMessage } from '@/lib/ticket-keys/messages';
+import { INSTANT_ACCESS_CONSENT_VERSION } from '@/components/v2/instant-access-consent';
 import { cardPriceLabel, cardRailFromEnv, openCardOrder, waitForCardTicket, type CardOrder } from '@/lib/v2/card-checkout';
 import type { V2Config } from '@/lib/v2/config';
 import type { DeviceKey } from '@/lib/v2/device-key';
@@ -73,13 +74,15 @@ describe('card order', () => {
             return Response.json(orderBody(second.ticketId, { status: 'awaiting_payment', needs_signature: false }));
         });
         const result = await openCardOrder({
-            config, paymentServiceUrl: SERVICE, rail: 'sandbox', ckdKey, startIndex: 3, publicationId: 'lp-job', device,
+            config, paymentServiceUrl: SERVICE, rail: 'sandbox', ckdKey, startIndex: 3, publicationId: 'lp-job', device, consentVersion: INSTANT_ACCESS_CONSENT_VERSION,
             deps: { view: async () => null as never, fetch: fetcher, now: () => NOW },
         });
         expect(result.ticketIndex).toBe(4);
         expect(result.order.status).toBe('awaiting_payment');
         expect(result.checkout).toEqual({ provider: 'cleeng', environment: 'sandbox', publisherId: '123456789', offerId: 'S229081230_US', jwt: 'jwt', refreshToken: 'refresh' });
 
+        // Every order attempt carries the consent version the buyer ticked.
+        expect(calls.slice(0, 2).map((call) => call.body?.consent_version)).toEqual([INSTANT_ACCESS_CONSENT_VERSION, INSTANT_ACCESS_CONSENT_VERSION]);
         const signed = calls[2];
         expect(signed.url).toBe(`${SERVICE}/v1/card-orders/${'0'.repeat(31)}1/device`);
         expect(Number(signed.body!.expires_at_ms) - NOW).toBeLessThanOrEqual(60 * 60 * 1000);
@@ -97,7 +100,7 @@ describe('card order', () => {
         for (const bad of [{ ...checkout, environment: 'production' }, { ...checkout, provider: 'other' }, { ...checkout, offer_id: 'x' }, undefined]) {
             const { fetcher } = service(() => Response.json({ ...orderBody(ticket.ticketId), checkout: bad }, { status: 201 }));
             await expect(openCardOrder({
-                config, paymentServiceUrl: SERVICE, rail: 'sandbox', ckdKey, startIndex: 0, publicationId: 'lp-job', device,
+                config, paymentServiceUrl: SERVICE, rail: 'sandbox', ckdKey, startIndex: 0, publicationId: 'lp-job', device, consentVersion: INSTANT_ACCESS_CONSENT_VERSION,
                 deps: { view: async () => null as never, fetch: fetcher, now: () => NOW },
             })).rejects.toThrow('checkout_unavailable');
         }
@@ -106,7 +109,7 @@ describe('card order', () => {
     it('passes the service error code through', async () => {
         const { fetcher } = service(() => Response.json({ error: 'buyer_country_unknown' }, { status: 403 }));
         await expect(openCardOrder({
-            config, paymentServiceUrl: SERVICE, rail: 'sandbox', ckdKey, startIndex: 0, publicationId: 'lp-job', device,
+            config, paymentServiceUrl: SERVICE, rail: 'sandbox', ckdKey, startIndex: 0, publicationId: 'lp-job', device, consentVersion: INSTANT_ACCESS_CONSENT_VERSION,
             deps: { view: async () => null as never, fetch: fetcher, now: () => NOW },
         })).rejects.toThrow('buyer_country_unknown');
     });
