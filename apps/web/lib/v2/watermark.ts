@@ -1,7 +1,9 @@
-// Visible per-ticket watermark (roadmap E9). The code is the first 8 hex characters of the ticket
-// id, which is public on chain and carries no buyer account, so a leaked recording can be traced
-// to a ticket without putting personal data on screen. It is a deterrent, not a forensic mark:
-// Livepeer serves one stream to every viewer, so nothing is burned into the video itself.
+// Visible ticket-code overlay (roadmap E9; launch brief 2026-10-18, K14 and D5). The code is the
+// first 8 hex characters of the ticket id: sha256 of the ticket's public key, public on chain and
+// carrying no buyer account. It cannot be turned back into the ticket key and puts no personal data
+// on screen; the operator can match it against on-chain ticket ids. It is a deterrent overlay, not a
+// forensic mark: Livepeer serves one stream to every viewer, so nothing is burned into the video
+// itself, and no copy may describe it as a per-viewer watermark (claim register, claim 14).
 
 /** Seconds a watermark stays in one place; moving it makes cropping it out harder. */
 export const WATERMARK_MOVE_MS = 30_000;
