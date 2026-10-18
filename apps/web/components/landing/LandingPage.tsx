@@ -8,6 +8,7 @@ import {
     Film,
     Gauge,
     Github,
+    Info,
     Mail,
     Globe,
     Music,
@@ -16,20 +17,22 @@ import {
     ShieldCheck,
     Sparkles,
     Upload,
-    WalletCards,
 } from 'lucide-react';
 import { BrandWordmark } from '@/components/BrandWordmark';
 import { Button } from '@/components/ui/button';
+import { LAUNCH_STAGE, type LaunchStage } from '@/lib/constants';
 import { ROICalculator } from './ROICalculator';
-import { creatorApplyHref, getLandingCtas, landingCopy, type LandingCtas, type LandingLocale } from './landing-copy';
+import { creatorApplyHref, getLandingCopy, getLandingCtas, type LandingCtas, type LandingLocale } from './landing-copy';
 
 type Props = {
     locale: LandingLocale;
     enabled: boolean;
+    /** Copy layer to render; defaults to the configured stage (Prova unless released otherwise). */
+    stage?: LaunchStage;
 };
 
 const useCaseIcons = [Music, Film, Clapperboard, Sparkles];
-const trustIcons = [Upload, Gauge, ShieldCheck, WalletCards];
+const trustIcons = [Upload, Gauge, ShieldCheck, Info];
 
 function ActionButtons({ ctas }: { ctas: LandingCtas }) {
     return (
@@ -60,9 +63,9 @@ function LanguageSwitcher({ locale }: { locale: LandingLocale }) {
     );
 }
 
-export function LandingPage({ locale, enabled }: Props) {
-    const copy = landingCopy[locale];
-    const ctas = getLandingCtas(locale, enabled);
+export function LandingPage({ locale, enabled, stage = LAUNCH_STAGE }: Props) {
+    const copy = getLandingCopy(locale, stage);
+    const ctas = getLandingCtas(locale, enabled, stage);
     const applyHref = creatorApplyHref(locale);
 
     return (
@@ -153,17 +156,19 @@ export function LandingPage({ locale, enabled }: Props) {
                     <div className="relative min-h-[560px] overflow-hidden rounded-2xl border border-white/10 bg-black sm:aspect-[4/5] sm:min-h-0">
                         <Image src="/concert-crowd.webp" alt={copy.howItWorks.imageAlt} fill sizes="(min-width: 1024px) 50vw, 100vw" className="object-cover opacity-75" />
                         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-black/5" />
-                        <div className="absolute inset-x-5 bottom-5 rounded-xl border border-white/10 bg-black/85 p-5 backdrop-blur">
-                            <div className="flex items-start justify-between gap-4">
-                                <div><p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">{copy.howItWorks.previewLabel}</p><h3 className="mt-1 text-xl font-black sm:text-2xl">{copy.howItWorks.previewTitle}</h3></div>
-                                <span className="shrink-0 rounded-full bg-white px-3 py-1 text-sm font-black text-black">{copy.howItWorks.previewPrice}</span>
+                        {copy.howItWorks.preview && (
+                            <div className="absolute inset-x-5 bottom-5 rounded-xl border border-white/10 bg-black/85 p-5 backdrop-blur">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div><p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">{copy.howItWorks.preview.label}</p><h3 className="mt-1 text-xl font-black sm:text-2xl">{copy.howItWorks.preview.title}</h3></div>
+                                    <span className="shrink-0 rounded-full bg-white px-3 py-1 text-sm font-black text-black">{copy.howItWorks.preview.tag}</span>
+                                </div>
+                                <dl className="mt-5 grid gap-3 sm:grid-cols-3">
+                                    {copy.howItWorks.preview.details.map((item) => (
+                                        <div key={item.label} className="rounded-lg bg-white/5 p-3"><dt className="text-xs text-zinc-500">{item.label}</dt><dd className="mt-1 text-sm font-bold text-white">{item.value}</dd></div>
+                                    ))}
+                                </dl>
                             </div>
-                            <dl className="mt-5 grid gap-3 sm:grid-cols-3">
-                                {copy.howItWorks.previewDetails.map((item) => (
-                                    <div key={item.label} className="rounded-lg bg-white/5 p-3"><dt className="text-xs text-zinc-500">{item.label}</dt><dd className="mt-1 text-sm font-bold text-white">{item.value}</dd></div>
-                                ))}
-                            </dl>
-                        </div>
+                        )}
                     </div>
                 </div>
             </section>
@@ -190,7 +195,7 @@ export function LandingPage({ locale, enabled }: Props) {
                 </div>
             </section>
 
-            <ROICalculator locale={locale} copy={copy.roi} />
+            {copy.roi && <ROICalculator locale={locale} copy={copy.roi} />}
 
             <section id="trust" className="border-y border-white/5 bg-zinc-950 py-24">
                 <div className="container mx-auto px-4">
@@ -259,8 +264,9 @@ export function LandingPage({ locale, enabled }: Props) {
                         <p className="mt-3 max-w-sm text-sm leading-relaxed text-zinc-500">{copy.footer.description}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-5 gap-y-3 text-sm text-zinc-500">
-                        <a href="https://livepeer.org" target="_blank" rel="noreferrer" className="hover:text-white">Livepeer</a>
-                        <a href="https://near.org" target="_blank" rel="noreferrer" className="hover:text-white">NEAR</a>
+                        {copy.footer.links.map((link) => (
+                            <a key={link.href} href={link.href} target="_blank" rel="noreferrer" className="hover:text-white">{link.label}</a>
+                        ))}
                         <a href="https://github.com/4rmus/youtick" target="_blank" rel="noreferrer" aria-label="GitHub" className="hover:text-white"><Github aria-hidden="true" className="h-5 w-5" /></a>
                         <Link href="/privacy" className="hover:text-white">{copy.footer.privacy}</Link>
                         <Link href="/terms" className="hover:text-white">{copy.footer.terms}</Link>
