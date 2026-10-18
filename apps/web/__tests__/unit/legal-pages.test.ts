@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import RefundPolicyPage from '@/app/(site)/refund-policy/page';
 import TermsPage from '@/app/(site)/terms/page';
 import sitemap from '@/app/sitemap';
@@ -9,6 +9,9 @@ import { LEGAL_DRAFT_NOTICE } from '@/components/legal/legal-facts';
 import { CardCheckout } from '@/components/v2/CardCheckout';
 import { InstantAccessConsent } from '@/components/v2/InstantAccessConsent';
 import { INSTANT_ACCESS_CONSENT_TEXT, INSTANT_ACCESS_CONSENT_VERSION } from '@/components/v2/instant-access-consent';
+
+// sitemap() reads the request host (root-host gate, L3); a non-root host gets the full list.
+vi.mock('next/headers', () => ({ headers: async () => new Headers({ host: 'app.youtick.net' }) }));
 
 /** Claim register (design language plan §4.4): wording never used, plus claim 14 (per-viewer watermark). */
 const NEVER_USED = [
@@ -76,8 +79,8 @@ describe('refund policy draft', () => {
         expectNoNeverUsedClaims(policy);
     });
 
-    it('is listed in the sitemap', () => {
-        expect(sitemap().map((entry) => entry.url)).toContain('https://youtick.net/refund-policy');
+    it('is listed in the sitemap', async () => {
+        expect((await sitemap()).map((entry) => entry.url)).toContain('https://youtick.net/refund-policy');
     });
 });
 

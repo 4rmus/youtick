@@ -16,6 +16,9 @@ import {
     type ContentReportMail,
 } from '@/lib/content-report';
 
+// sitemap() reads the request host (root-host gate, L3); a non-root host gets the full list.
+vi.mock('next/headers', () => ({ headers: async () => new Headers({ host: 'app.youtick.net' }) }));
+
 const valid = {
     role: 'rights_holder',
     reason: 'copyright',
@@ -139,8 +142,8 @@ describe('report page and navigation', () => {
         expect(renderToStaticMarkup(React.createElement(LegalFooter, { lang: 'en' }))).toContain('Report content');
     });
 
-    it('lists the new pages in the sitemap and links them from the privacy notice', () => {
-        expect(sitemap().map((entry) => entry.url)).toEqual(expect.arrayContaining(['https://youtick.net/report', 'https://youtick.net/refund-policy']));
+    it('lists the new pages in the sitemap and links them from the privacy notice', async () => {
+        expect((await sitemap()).map((entry) => entry.url)).toEqual(expect.arrayContaining(['https://youtick.net/report', 'https://youtick.net/refund-policy']));
         const privacy = renderToStaticMarkup(React.createElement(PrivacyPage));
         expect(privacy).toContain('href="/report"');
         expect(privacy).toContain('href="/refund-policy"');
