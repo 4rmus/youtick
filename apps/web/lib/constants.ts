@@ -55,6 +55,47 @@ export const FEATURE_FLAGS = {
         && process.env.NEXT_PUBLIC_ENABLE_CURRENT_CATALOG === 'true',
 } as const;
 
+/**
+ * Launch stage of the public landing (design-language plan §4.3).
+ *
+ * `prova` is the only stage that renders without configuration. `gala` and
+ * `vizyon` are selected only through `NEXT_PUBLIC_LAUNCH_STAGE`, and a
+ * production build additionally requires `NEXT_PUBLIC_LAUNCH_STAGE_RELEASE`
+ * to repeat the same value, so a stray variable can never publish a later
+ * stage's claims. A stage change is a release and needs the owner's approval.
+ */
+export type LaunchStage = 'prova' | 'gala' | 'vizyon';
+
+export const LAUNCH_STAGES: readonly LaunchStage[] = ['prova', 'gala', 'vizyon'];
+
+export function isLaunchStage(value: string): value is LaunchStage {
+    return (LAUNCH_STAGES as readonly string[]).includes(value);
+}
+
+export function resolveLaunchStage(env: {
+    stage: string | undefined;
+    release: string | undefined;
+    nodeEnv: string | undefined;
+}): LaunchStage {
+    const stage = env.stage?.trim();
+    if (!stage) return 'prova';
+    if (!isLaunchStage(stage)) {
+        throw new Error('NEXT_PUBLIC_LAUNCH_STAGE must be prova, gala or vizyon');
+    }
+    if (stage !== 'prova' && env.nodeEnv === 'production' && env.release?.trim() !== stage) {
+        throw new Error(
+            `launch stage ${stage} needs NEXT_PUBLIC_LAUNCH_STAGE_RELEASE=${stage} in a production build`,
+        );
+    }
+    return stage;
+}
+
+export const LAUNCH_STAGE: LaunchStage = resolveLaunchStage({
+    stage: process.env.NEXT_PUBLIC_LAUNCH_STAGE,
+    release: process.env.NEXT_PUBLIC_LAUNCH_STAGE_RELEASE,
+    nodeEnv: process.env.NODE_ENV,
+});
+
 export const MEDIA_UPLOAD_POLICY = {
     paidSourceMaxBytes: publicTestnetVideoV1 ? 5_000_000_000 : 20_000_000_000,
     livepeerTusChunkBytes: 32 * 1024 * 1024,

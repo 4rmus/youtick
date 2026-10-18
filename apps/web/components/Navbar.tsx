@@ -7,8 +7,8 @@ import { ArrowRightLeft, LogOut, Menu, User, X } from 'lucide-react';
 import { BrandWordmark } from '@/components/BrandWordmark';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
-import { getLandingCtas, landingCopy, type LandingLocale } from '@/components/landing/landing-copy';
-import { FEATURE_FLAGS } from '@/lib/constants';
+import { getLandingCopy, getLandingCtas, type LandingLocale } from '@/components/landing/landing-copy';
+import { FEATURE_FLAGS, LAUNCH_STAGE } from '@/lib/constants';
 
 const LINKS = [
     { href: '/discover', label: 'Discover' },
@@ -23,8 +23,8 @@ export function Navbar() {
     // The creator application pages use the landing navigation in their own language.
     const isLanding = pathname === '/' || pathname === '/tr' || pathname === '/apply' || pathname === '/tr/apply';
     const locale: LandingLocale = pathname === '/tr' || pathname === '/tr/apply' ? 'tr' : 'en';
-    const copy = landingCopy[locale];
-    const ctas = getLandingCtas(locale, FEATURE_FLAGS.enablePaidMediaLivepeerV1);
+    const copy = getLandingCopy(locale, LAUNCH_STAGE);
+    const ctas = getLandingCtas(locale, FEATURE_FLAGS.enablePaidMediaLivepeerV1, LAUNCH_STAGE);
     const landingHome = locale === 'tr' ? '/tr' : '/';
     const appLinks = accountId ? LINKS : LINKS.filter((link) => link.href !== '/profile');
 
@@ -34,9 +34,9 @@ export function Navbar() {
                 <div className="container mx-auto flex min-h-16 flex-wrap items-center justify-between gap-4 px-4 py-2">
                     <Link href={landingHome} className="text-lg"><BrandWordmark /></Link>
                     <div className="hidden items-center gap-5 lg:flex">
-                        <Link href={`${landingHome}#audience`} className="text-sm text-zinc-400 hover:text-white">{copy.nav.audience}</Link>
-                        <Link href={`${landingHome}#how-it-works`} className="text-sm text-zinc-400 hover:text-white">{copy.nav.howItWorks}</Link>
-                        <Link href={`${landingHome}#roi-calculator`} className="text-sm text-zinc-400 hover:text-white">{copy.nav.calculator}</Link>
+                        {copy.nav.sections.map((section) => (
+                            <Link key={section.hash} href={`${landingHome}#${section.hash}`} className="text-sm text-zinc-400 hover:text-white">{section.label}</Link>
+                        ))}
                     </div>
                     <div className="flex items-center gap-3">
                         {ctas.status && <span className="hidden text-xs font-semibold text-near-green sm:inline">{ctas.status}</span>}

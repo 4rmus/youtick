@@ -2,12 +2,12 @@
 
 import { useMemo, useState } from 'react';
 import { Calculator } from 'lucide-react';
-import type { LandingCopy, LandingLocale } from './landing-copy';
+import type { LandingLocale, RoiCopy } from './landing-copy';
 import { calculateTicketSplit, formatMicroUsdc } from './roi';
 
 type Props = {
     locale: LandingLocale;
-    copy: LandingCopy['roi'];
+    copy: RoiCopy;
 };
 
 export function ROICalculator({ locale, copy }: Props) {

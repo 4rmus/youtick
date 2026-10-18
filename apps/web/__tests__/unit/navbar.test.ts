@@ -6,7 +6,7 @@ const navState = vi.hoisted(() => ({ publicTestnetVideoV1: false, menuOpen: fals
 vi.mock('react', async importOriginal => ({ ...await importOriginal<typeof import('react')>(), useState: () => [navState.menuOpen, vi.fn()] }));
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/' }));
-vi.mock('@/lib/constants', () => ({ FEATURE_FLAGS: { enablePaidMediaLivepeerV1: true, get publicTestnetVideoV1() { return navState.publicTestnetVideoV1; } } }));
+vi.mock('@/lib/constants', () => ({ LAUNCH_STAGE: 'prova', FEATURE_FLAGS: { enablePaidMediaLivepeerV1: true, get publicTestnetVideoV1() { return navState.publicTestnetVideoV1; } } }));
 vi.mock('@/components/providers/WalletProvider', () => ({
     useWallet: () => ({
         accountId: 'creator.testnet',

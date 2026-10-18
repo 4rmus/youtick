@@ -78,7 +78,7 @@ export const applyCopy = {
     tr: {
         eyebrow: 'Üretici davetleri',
         title: 'Davet için başvur',
-        intro: 'Az sayıda davetli film ve müzik üreticisiyle ücretli bir açılış hazırlıyoruz. Bize eserinden bahset; her başvuruyu bir kişi okur ve e-postayla dönüş yaparız. Başvuru hesap açmaz ve seni hiçbir şeye bağlamaz.',
+        intro: 'Az sayıda davetli film ve müzik üreticisiyle biletli bir açılış hazırlıyoruz. Bize eserinden bahset; her başvuruyu bir kişi okur ve e-postayla dönüş yaparız. Başvuru hesap açmaz ve seni hiçbir şeye bağlamaz.',
         fields: {
             name: 'Ad veya sanatçı adı',
             email: 'E-posta',
