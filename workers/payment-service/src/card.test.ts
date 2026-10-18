@@ -21,6 +21,7 @@ const vatKey = KeyPair.fromRandom('ed25519');
 const operatorKey = KeyPair.fromRandom('ed25519');
 const sessionKey = KeyPair.fromRandom('ed25519').getPublicKey().toString();
 const CERT = 'c'.repeat(64);
+const CONSENT = 'instant-access-en-2026-10-18';
 
 function b64(bytes: Uint8Array): string {
     return btoa(String.fromCharCode(...bytes));
@@ -70,7 +71,7 @@ function harness(options: { price?: string; cardEnabled?: boolean; provider?: bo
 }
 
 async function openOrder(h: ReturnType<typeof harness>, ticket = KeyPair.fromRandom('ed25519')) {
-    const response = await h.call('/v1/card-orders', { body: { publication_id: 'lp-job', ticket_public_key: ticket.getPublicKey().toString() } });
+    const response = await h.call('/v1/card-orders', { body: { publication_id: 'lp-job', ticket_public_key: ticket.getPublicKey().toString(), consent_version: CONSENT } });
     return { response, ticket, order: await response.json() as Record<string, string> };
 }
 
@@ -157,6 +158,27 @@ describe('card orders', () => {
         expect(order.payment_reference_hmac).toBe(await paymentReferenceHmac(SECRET, 'po-1'));
         // One order per ticket key.
         expect((await openOrder(h, ticket)).response.status).toBe(409);
+    });
+
+    it('needs the instant-access consent version and stores it on the order', async () => {
+        const h = harness();
+        const key = () => KeyPair.fromRandom('ed25519').getPublicKey().toString();
+        for (const body of [
+            { publication_id: 'lp-job', ticket_public_key: key() },
+            { publication_id: 'lp-job', ticket_public_key: key(), consent_version: '' },
+            { publication_id: 'lp-job', ticket_public_key: key(), consent_version: 'Instant Access' },
+            { publication_id: 'lp-job', ticket_public_key: key(), consent_version: 'a'.repeat(65) },
+            { publication_id: 'lp-job', ticket_public_key: key(), consent_version: true },
+        ]) {
+            const refused = await h.call('/v1/card-orders', { body });
+            expect(refused.status).toBe(400);
+            expect(await refused.json()).toEqual({ error: 'invalid_request' });
+        }
+        expect(await h.db.prepare(`SELECT count(*) AS n FROM card_orders`).first()).toMatchObject({ n: 0 });
+        const { order } = await openOrder(h);
+        expect(order).not.toHaveProperty('consent_version');
+        expect(await h.db.prepare(`SELECT consent_version FROM card_orders WHERE order_id = ?`).bind(order.order_id).first())
+            .toEqual({ consent_version: CONSENT });
     });
 
     it('refuses a price that is not whole cents and a ticket that exists', async () => {
@@ -395,6 +417,7 @@ describe('card events and operator', () => {
         const listed = await h.call('/internal/card-orders?status=void_pending', { method: 'GET', headers: auth });
         const { orders } = await listed.json() as { orders: Record<string, unknown>[] };
         expect(orders).toHaveLength(1);
+        expect(orders[0]).toMatchObject({ consent_version: CONSENT });
         expect(orders[0]).not.toHaveProperty('ticket_public_key');
         expect(orders[0]).not.toHaveProperty('device_signature');
     });

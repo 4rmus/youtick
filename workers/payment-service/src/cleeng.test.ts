@@ -166,7 +166,7 @@ describe('Cleeng adapter in the service', () => {
         const open = (country: string | null = 'GB') => {
             const request = new Request('https://pay.example/v1/card-orders', {
                 method: 'POST', headers: { Origin: 'http://localhost:3000', 'Content-Type': 'application/json' },
-                body: JSON.stringify({ publication_id: 'lp-job', ticket_public_key: KeyPair.fromRandom('ed25519').getPublicKey().toString() }),
+                body: JSON.stringify({ publication_id: 'lp-job', ticket_public_key: KeyPair.fromRandom('ed25519').getPublicKey().toString(), consent_version: 'instant-access-en-2026-10-18' }),
             });
             if (country) Object.defineProperty(request, 'cf', { value: { country } });
             return handle(request, env, deps);
