@@ -70,7 +70,9 @@ it('shows public limits and self-service token guidance without the legacy campa
     const terms = renderToStaticMarkup(React.createElement(Terms));
     expect(banner).toContain('5 GB/file');
     expect(banner).toContain('2 uploads/UTC day');
-    expect(banner + terms).not.toMatch(/14-day|10 uploads total|day 13/);
+    expect(banner).not.toMatch(/14-day|10 uploads total|day 13/);
+    // The terms name the statutory 14-day right to cancel (C3), never the retired 14-day campaign.
+    expect(terms).not.toMatch(/14-day (?:beta|public|campaign|testnet)|10 uploads total|day 13/);
     expect(terms).toContain('https://faucet.circle.com/');
     expect(terms).toContain('Near Testnet');
     expect(near.view).not.toHaveBeenCalled();
