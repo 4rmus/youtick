@@ -44,7 +44,6 @@ export default function PrivacyPage() {
 
             <Section id="visiting" title="2. Visiting the site">
                 <p>Cloudflare hosts youtick and our services. To deliver pages and protect the service, it receives your network (IP) address, browser details and the pages you request. Our pages set no cookies of their own and use no advertising trackers.</p>
-                <p>The site still includes a NEAR wallet connector from an earlier version of youtick. When a page loads, it fetches a list of supported wallets from GitHub, or from jsDelivr as a fallback, so those services receive your network address and browser details, and it may keep its own records in your browser&apos;s storage.</p>
                 <p>Forms on the site are protected by Cloudflare Turnstile, which receives your network address and browser details to check that a person is sending the form.</p>
             </Section>
 
@@ -97,7 +96,7 @@ export default function PrivacyPage() {
                     <li>IndexedDB keeps the playback key of this browser until you clear the site&apos;s data. Clearing it means the browser needs a new key before you can watch again.</li>
                     <li>While a creator uploads, browser storage keeps the upload key and the upload details until the upload finishes or the tab is closed; if an upload does not finish, localStorage keeps the creator&apos;s NEAR account and the upload&apos;s identifier until the site&apos;s data is cleared.</li>
                     <li>Your signed-in session, ticket keys and playback tokens are kept in memory only.</li>
-                    <li>The wallet connector described in section 2, the sign-in service and Google, the card payment provider&apos;s payment form and Turnstile may keep their own records in your browser.</li>
+                    <li>The sign-in service and Google, the card payment provider&apos;s payment form and Turnstile may keep their own records in your browser.</li>
                 </ul>
             </Section>
 
@@ -109,7 +108,6 @@ export default function PrivacyPage() {
                     <li>The NEAR network and NEAR RPC providers: blockchain records and requests. Blockchain records are copied to computers worldwide.</li>
                     <li>Livepeer: video processing, storage and delivery.</li>
                     <li>Our card payment provider: card payments, as described in section 4.</li>
-                    <li>GitHub and jsDelivr: the wallet list described in section 2.</li>
                 </ul>
                 <p>Some of these providers process data outside the UK under their own transfer safeguards.</p>
             </Section>
@@ -142,6 +140,7 @@ export default function PrivacyPage() {
                 <p>This section describes the wallet-based V1 testnet pilot.</p>
                 <p>youtick uses your connected NEAR account for publishing, ticket purchases, recovery and playback access. Wallet identifiers, transaction details and contract activity are public on NEAR. Clearing browser data does not delete public blockchain records.</p>
                 <p>IndexedDB holds playback device keys and certificates, authorization information and saved watch progress. localStorage holds public-testnet upload drafts, upload bookmarks and some preferences; sessionStorage holds upload job keys, recovery evidence and legacy drafts. These records support account access and recovery across reloads; they are separate from short-lived playback tokens.</p>
+                <p>On the pilot pages (Discover, Upload, Watch and Profile), or when you choose Connect, the NEAR wallet connector fetches a list of supported wallets from GitHub, or from jsDelivr as a fallback, so those services receive your network address and browser details, and it keeps its own records in your browser&apos;s storage.</p>
                 <p>Your selected wallet and NEAR RPC services handle wallet and chain requests. The video player may send playback/session identifiers and playback/device diagnostics to Livepeer. If the derived catalogue is enabled, it stores publication and activity data read from NEAR.</p>
             </Section>}
 
