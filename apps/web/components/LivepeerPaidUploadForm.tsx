@@ -231,6 +231,8 @@ export function LivepeerPaidUploadForm() {
     React.useEffect(() => {
         operation.current?.abort();
         operation.current = null;
+        // A new account aborts in-flight work and resets the form; the reset belongs with the abort, so it stays in this effect.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setBusy(false);
         setResumeAvailable(false);
         fileSelectionVersion.current += 1;
@@ -265,6 +267,8 @@ export function LivepeerPaidUploadForm() {
         if (!publicationPollingEnabled || !accountId || !publicationReady) return;
         clearLivepeerUploadDraft(accountId);
         if (jobId) clearLivepeerJobSessionKey(accountId, jobId);
+        // Follows the publication poll (an external result) together with the storage clean-up above.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         moveUploadStage('published');
         setFailedStep(null);
         setError(null);
@@ -417,7 +421,7 @@ export function LivepeerPaidUploadForm() {
             const source = validateLivepeerSourceFile(file);
             if (!source.ok) throw new Error(source.error);
             if (!payment.usable.includes(paymentAsset)) throw new Error('creator_fee_asset_unavailable');
-            if (paymentAsset === 'NEAR' && (!payment.nearQuote || BigInt(payment.nearQuote.quote.expires_at_ms) <= BigInt(Date.now()))) {
+            if (paymentAsset === 'NEAR' && nearQuoteExpired(payment.nearQuote)) {
                 setPayment(null);
                 setPaymentAsset(null);
                 setSponsorQuote(null);
@@ -853,6 +857,11 @@ export function LivepeerPaidUploadForm() {
             </Card>
         </div>
     );
+}
+
+/** True when there is no NEAR fee quote or it has expired (read at the time of the call, outside render). */
+function nearQuoteExpired(nearQuote: { quote: { expires_at_ms: string } } | null | undefined): boolean {
+    return !nearQuote || BigInt(nearQuote.quote.expires_at_ms) <= BigInt(Date.now());
 }
 
 function formatMicroUsdc(value: string): string {
