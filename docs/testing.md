@@ -139,6 +139,9 @@ What each value does:
   crypto checkout from a Turkish browser (the default list is `tr`, roadmap E7); without it a
   Turkish-language browser sees "Ticket sales are not available here yet" on `/tickets/buy`.
   Leave it out to test the rule itself.
+- `NEXT_PUBLIC_V2_DEVICE_LINK_ENABLED=true` shows "Watch on this device" and renews a device in
+  its last seven days. It needs a relayer deployed with `DAILY_DEVICE_LIMIT` and
+  `TICKET_DAILY_DEVICE_LIMIT`, which no environment has yet; leave it out until then.
 - `NEXT_PUBLIC_V2_CARD_RAIL=sandbox` shows the card option (E8.2). It needs a payment service with
   the card path on and a Cleeng sandbox configuration, which no environment has yet; leave it out
   until then.
@@ -200,7 +203,9 @@ npm run check
 
 The tests use a decoded-transaction chain model and fake id_tokens (real RS256 verification is
 tested with generated keys). They are LOCAL_TEST only: no NEAR Auth, MPC, `ckd-gate` or USDC
-provider was called.
+provider was called. The device-link tests (`/v1/devices`) replay the protocol `add_device`
+vectors against a chain model of the Market's `add_device` rules; the real gas use and the
+deployed Market are not exercised.
 
 ## Payment service
 

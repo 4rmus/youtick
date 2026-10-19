@@ -44,7 +44,8 @@ export function parseTicket(value: unknown, ticketId: string): MarketTicket | nu
         || typeof ticket.purchased_at_ms !== 'string' || !DECIMAL.test(ticket.purchased_at_ms)
         || !Number.isSafeInteger(ticket.device_epoch) || !Array.isArray(ticket.devices)
         || !ticket.devices.every((device) => device && typeof device.session_public_key === 'string'
-            && typeof device.expires_at_ms === 'string' && DECIMAL.test(device.expires_at_ms))) {
+            && typeof device.expires_at_ms === 'string' && DECIMAL.test(device.expires_at_ms)
+            && typeof device.authorized_at_ms === 'string' && DECIMAL.test(device.authorized_at_ms))) {
         throw new Error('invalid_ticket');
     }
     return ticket as MarketTicket;

@@ -5,13 +5,17 @@ import { Loader2, Maximize, Minimize, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { createLivepeerHlsConfig } from '@/lib/livepeer-playback';
 import type { DeviceKey } from '@/lib/v2/device-key';
+import { DEVICE_LINK_ENABLED } from '@/lib/v2/devices';
 import { requestPlaybackV3Token, type PlaybackV3Token } from '@/lib/v2/playback';
 import { watermarkCode, watermarkPosition, watermarkSlot, WATERMARK_MOVE_MS } from '@/lib/v2/watermark';
 
 const REFRESH_BEFORE_EXPIRY_MS = 60_000;
 
 const ERRORS: Record<string, string> = {
-    playback_denied: 'This ticket cannot be played on this device.',
+    // The device link may have ended (30 days without a renewal, or replaced by a fourth device).
+    playback_denied: DEVICE_LINK_ENABLED
+        ? 'This device is no longer linked to this ticket. Reload the page and choose "Watch on this device".'
+        : 'This ticket cannot be played on this device.',
     playback_pending: 'Your ticket is still being confirmed. Please try again in a moment.',
     playback_unsupported: 'This browser cannot play the video.',
 };
