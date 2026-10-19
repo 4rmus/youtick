@@ -284,7 +284,7 @@ export async function handle(request: Request, env: Env, deps: RelayerDeps = {})
             const args = parseAddDeviceArgs(body);
             const check = await checkAddDeviceArgs(near, { marketContractId: config.marketContractId, args, nowMs: (deps.now ?? Date.now)() });
             if (check.listed) return json({ deviceRequestId: await deviceRequestId(args), state: 'listed', txHash: null }, 200, cors);
-            return forward(env, '/device', { args, evicts: check.evicts }, cors);
+            return forward(env, '/device', { args, evicts: check.evicts, renewal: check.renewal }, cors);
         }
         if (url.pathname === '/v1/devices/status') {
             if (!config.devices) return json({ error: 'devices_disabled' }, 503, cors);

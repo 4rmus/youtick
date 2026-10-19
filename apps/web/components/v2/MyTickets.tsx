@@ -175,7 +175,8 @@ export function MyTickets() {
                     player={() => <TicketPlayer bridgeUrl={config.bridgeUrl} network={config.auth.network} contractId={config.marketContractId}
                         ticketId={ticket.ticket_id} device={device} firstPlay={ticket.status === 'purchased'} />}
                     link={(linkPlan) => <DeviceLink config={config} view={view} ticketKey={key} device={device} plan={linkPlan}
-                        onLinked={async () => { await tickets.refetch(); setOpen(ticket.ticket_id); }} />} />}
+                        onLinked={async () => { await tickets.refetch(); setOpen(ticket.ticket_id); }}
+                        onStale={async () => { await tickets.refetch(); }} />} />}
                 {takenDown && <p className="text-sm text-amber-200">This video was removed and can no longer be watched.</p>}
                 {session.status === 'signed_in' && refundRequestable(ticket, tickets.dataUpdatedAt, takenDown) && <RefundRequest
                     binding={{ network: config.auth.network, contractId: config.marketContractId }}

@@ -79,8 +79,12 @@ function errorCode(value: Record<string, unknown>, fallback: string): string {
  * Links (or renews) `device` on the ticket of `ticketKey` and returns the ticket once the chain lists
  * the device for more than seven days. The device epoch is read from final state just before
  * signing; when another link or removal moved it meanwhile, the ticket is read and signed once more.
+ * `allowEvict` is the device the viewer agreed to replace; a fresh read that would replace any other
+ * device stops with `eviction_not_confirmed` before anything is signed.
  */
-export async function linkDevice(input: { config: V2Config; ticketKey: TicketKey; device: DeviceKey; deps: DeviceLinkDeps }): Promise<MarketTicket> {
+export async function linkDevice(input: {
+    config: V2Config; ticketKey: TicketKey; device: DeviceKey; deps: DeviceLinkDeps; allowEvict?: string | null;
+}): Promise<MarketTicket> {
     const { config, ticketKey, device, deps } = input;
     const fetcher = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
     const sleep = deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -94,8 +98,12 @@ export async function linkDevice(input: { config: V2Config; ticketKey: TicketKey
     let state: unknown;
     for (let attempt = 0; ; attempt += 1) {
         const ticket = await read();
+        const plan = devicePlan(ticket, device.sessionPublicKey, now());
         // A retry after a link that already landed (and moved the epoch) needs no new signature.
-        if (attempt > 0 && devicePlan(ticket, device.sessionPublicKey, now()).kind === 'watch') return ticket;
+        if (attempt > 0 && plan.kind === 'watch') return ticket;
+        if (plan.kind === 'link' && plan.evicts && plan.evicts.session_public_key !== (input.allowEvict ?? null)) {
+            throw new DeviceLinkError('eviction_not_confirmed');
+        }
         const args = buildAddDeviceArgs({
             binding: { network: config.auth.network, contractId: config.marketContractId },
             ticket: ticketKey,
@@ -146,6 +154,7 @@ const DEVICE_LINK_ERRORS: Record<string, string> = {
     rate_limited: 'Too many attempts from your connection. Please wait a minute and try again.',
     signature_expired: 'The request took too long. Please try again.',
     device_epoch_stale: 'Another device was linked or removed at the same time. Please try again.',
+    eviction_not_confirmed: 'The devices on this ticket changed. Please check them and try again.',
     device_link_pending: 'The link is still being confirmed. Please check again in a minute.',
     device_link_not_confirmed: 'The link is still being confirmed. Please check again in a minute.',
 };

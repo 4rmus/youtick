@@ -971,6 +971,13 @@ describe('device links', () => {
     const device = (session: string, authorizedAtMs: number): TicketDevice => ({
         session_public_key: session, certificate_sha256: CERT, authorized_at_ms: String(authorizedAtMs), expires_at_ms: String(authorizedAtMs + 30 * DAY),
     });
+    /** A canonical 32-byte key of 42 base58 characters, which the Bridge would never play. */
+    const shortKey = (): string => {
+        const raw = crypto.getRandomValues(new Uint8Array(32));
+        raw.set([0, 0, 0]);
+        const key = `ed25519:${baseEncode(raw)}`;
+        return key.length === 'ed25519:'.length + 42 ? key : shortKey();
+    };
     const deviceSetup = (overrides: Partial<Env> = {}) => setup({ DAILY_DEVICE_LIMIT: '5', TICKET_DAILY_DEVICE_LIMIT: '3', ...overrides });
     const addDevices = (chain: ReturnType<typeof setup>['chain']) =>
         chain.sent.filter((tx) => (tx.action.functionCall as { methodName?: string } | undefined)?.methodName === 'add_device');
@@ -1075,13 +1082,7 @@ describe('device links', () => {
         // The Market's base64 decoder rejects non-zero trailing bits that `atob` ignores.
         const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
         const trailing = `${valid.signature.slice(0, 85)}${alphabet[alphabet.indexOf(valid.signature[85]) ^ 1]}==`;
-        // A canonical 32-byte key of 42 base58 characters, which the Bridge would never play.
-        let short = '';
-        while (short.length !== 'ed25519:'.length + 42) {
-            const raw = crypto.getRandomValues(new Uint8Array(32));
-            raw.set([0, 0, 0]);
-            short = `ed25519:${baseEncode(raw)}`;
-        }
+        const short = shortKey();
         const cases: [Record<string, unknown>, number, string][] = [
             [linkArgs(KeyPair.fromRandom('ed25519'), ticketId), 400, 'device_invalid'],
             [linkArgs(ticket, ticketId, { action: 'revoke_device' }), 400, 'device_invalid'],
@@ -1263,10 +1264,77 @@ describe('device links', () => {
         // The front pre-check passed; the Durable Object sees it 45 seconds later, too close to the expiry to land.
         clock += 45_000;
         const response = await control.fetch(new Request('https://relayer-control/device', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ args, evicts: null }),
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ args, evicts: null, renewal: false }),
         }));
         expect([response.status, await response.json()]).toEqual([409, { error: 'signature_expired' }]);
         expect(addDevices(chain)).toEqual([]);
         expect([...values.values()].some((value) => (value as { state?: string }).state === 'failed')).toBe(true);
+    });
+
+    it('keeps renewals out of the daily limit that new links can use up', async () => {
+        const { call, chain, values } = deviceSetup({ DAILY_DEVICE_LIMIT: '1', TICKET_DAILY_DEVICE_LIMIT: '3' });
+        const first = await ticketOnChain(chain);
+        const other = await ticketOnChain(chain);
+        expect((await call('/v1/devices', linkArgs(first.ticket, first.ticketId))).status).toBe(200);
+        expect(await call('/v1/devices', linkArgs(other.ticket, other.ticketId))).toEqual({ status: 429, body: { error: 'daily_limit_reached' } });
+        const expiring = sessionKey();
+        const renewing = await ticketOnChain(chain, { devices: [device(expiring, clock - 24 * DAY)] });
+        expect(await call('/v1/devices', linkArgs(renewing.ticket, renewing.ticketId, { session: expiring })))
+            .toMatchObject({ status: 200, body: { state: 'submitted' } });
+        // Still charged per ticket; not against the shared daily count.
+        expect([values.get(`count:${day()}:devices`), values.get(`count:${day()}:device:${renewing.ticketId}`)]).toEqual(['1', '1']);
+    });
+
+    it('answers listed when the link failed because another request linked the same device first', async () => {
+        const { call, chain } = deviceSetup();
+        const [a, b, c] = [sessionKey(), sessionKey(), sessionKey()];
+        const { ticket, ticketId } = await ticketOnChain(chain, { devices: [device(a, clock - 3 * DAY), device(b, clock - 2 * DAY), device(c, clock - DAY)] });
+        const args = linkArgs(ticket, ticketId);
+        // A second tab's link of this device landed first: it evicted the oldest device and moved the epoch.
+        chain.beforeSend = () => {
+            const view = chain.ticketViews.get(ticketId)!;
+            view.devices = [view.devices[1], view.devices[2], device(args.session_public_key, clock)];
+            view.device_epoch = 1;
+        };
+        const linked = await call('/v1/devices', args);
+        expect(linked).toMatchObject({ status: 200, body: { state: 'listed', txHash: null } });
+        expect(await call('/v1/devices/status', { device_request_id: linked.body.deviceRequestId })).toEqual(linked);
+        expect(addDevices(chain)).toHaveLength(1);
+    });
+
+    it('settles a pending link after the device limits are removed', async () => {
+        const { env, call, chain, alarm, values } = deviceSetup();
+        const { ticket, ticketId } = await ticketOnChain(chain);
+        chain.statusUnavailable = true;
+        const pending = await call('/v1/devices', linkArgs(ticket, ticketId));
+        expect(pending.status).toBe(202);
+        chain.statusUnavailable = false;
+        delete env.DAILY_DEVICE_LIMIT;
+        await alarm();
+        expect(await call('/v1/devices/status', { device_request_id: pending.body.deviceRequestId })).toEqual({ status: 503, body: { error: 'devices_disabled' } });
+        expect((values.get(`device:${pending.body.deviceRequestId}`) as { state: string }).state).toBe('submitted');
+    });
+
+    it('replaces an oldest device whose key is shorter than the Bridge plays', async () => {
+        const { call, chain } = deviceSetup();
+        const short = shortKey();
+        const { ticket, ticketId } = await ticketOnChain(chain, {
+            devices: [device(short, clock - 3 * DAY), device(sessionKey(), clock - 2 * DAY), device(sessionKey(), clock - DAY)],
+        });
+        expect(await call('/v1/devices', linkArgs(ticket, ticketId))).toMatchObject({ status: 200, body: { state: 'submitted', evicts_session_public_key: short } });
+    });
+
+    it('never signs a link again once its signature has expired', async () => {
+        const { call, chain } = deviceSetup();
+        const { ticket, ticketId } = await ticketOnChain(chain);
+        chain.dropSends = true;
+        const pending = await call('/v1/devices', linkArgs(ticket, ticketId));
+        expect(pending.status).toBe(202);
+        chain.keyNonce = addDevices(chain)[0].nonce;
+        chain.dropSends = false;
+        clock += 11 * 60_000;
+        expect(await call('/v1/devices/status', { device_request_id: pending.body.deviceRequestId }))
+            .toEqual({ status: 409, body: { error: 'signature_expired' } });
+        expect(addDevices(chain)).toHaveLength(1);
     });
 });

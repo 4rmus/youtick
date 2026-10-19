@@ -94,15 +94,21 @@ nothing is signed unless `RELAYER_MUTATIONS_ENABLED=true`.
     `signature_expired`, `storage_unavailable`.
   - A device already linked for more than seven days is answered `listed` without a transaction,
     also when its epoch has moved since (a retry after a link that evicted another device).
-  - Limits: `DAILY_DEVICE_LIMIT` in total and `TICKET_DAILY_DEVICE_LIMIT` per ticket and day,
-    charged once per link in the storage transaction that records it (`daily_limit_reached`,
-    `ticket_limit_reached`). A `listed` answer is not charged. The device variables are optional
-    on purpose: without them only the device routes are off.
+  - Limits: `TICKET_DAILY_DEVICE_LIMIT` per ticket and day for every link, and `DAILY_DEVICE_LIMIT`
+    in total for links of a device not yet listed. Each is charged once per link, in the storage
+    transaction that records it (`ticket_limit_reached`, `daily_limit_reached`).
+    - Renewals are not charged against the daily total. Otherwise new links on many tickets could
+      use it up and let devices expire. A renewed device is answered `listed` for the next 23 days,
+      so renewals limit themselves to three per ticket in that time.
+    - A `listed` answer is not charged.
+    - The device variables are optional on purpose: without them only the device routes are off.
+      Links already recorded still settle from the alarm.
   - A link is recorded under `sha256("device|ticket_id|session_public_key|certificate_sha256|device_epoch|expires_at_ms")`,
     without the signature (protocol rule 3), so repeated or concurrent requests send one
     transaction. Recovery is `check`: a transaction the chain does not know is signed again only
-    while the ticket does not list the device as authorized since the request. A failed
-    transaction is never sent again; the pre-check runs once more to name the reason, else
+    while the ticket does not list the device as authorized since the request, and never after the
+    signature has expired. A failed transaction is never sent again. The pre-check then runs once
+    more to name the reason, or answers `listed` when another request linked the device; otherwise
     `502 device_add_failed`. The alarm finishes links the client stopped asking about and deletes
     records after a day.
   - The relayer account must hold no Market role (Bridge, platform, payment operator, admin); the

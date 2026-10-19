@@ -32,6 +32,8 @@ export function DeviceLink(props: {
     device: DeviceKey;
     plan: Extract<DevicePlan, { kind: 'link' }>;
     onLinked: (ticket: MarketTicket) => void | Promise<void>;
+    /** Reloads the ticket when its devices changed after the page read them, so the next try asks again. */
+    onStale?: () => void | Promise<void>;
     /** Only for rendering a later step in tests. */
     initialPhase?: DeviceLinkPhase;
 }) {
@@ -42,11 +44,17 @@ export function DeviceLink(props: {
         setPhase('linking');
         setError('');
         try {
-            const ticket = await linkDevice({ config: props.config, ticketKey: props.ticketKey, device: props.device, deps: { view: props.view } });
+            // Only the device shown in the confirmation may be replaced.
+            const ticket = await linkDevice({
+                config: props.config, ticketKey: props.ticketKey, device: props.device, deps: { view: props.view },
+                allowEvict: props.plan.evicts?.session_public_key ?? null,
+            });
             await props.onLinked(ticket);
         } catch (failure) {
+            const code = failure instanceof DeviceLinkError ? failure.message : '';
             setPhase('error');
-            setError(deviceLinkErrorMessage(failure instanceof DeviceLinkError ? failure.message : ''));
+            setError(deviceLinkErrorMessage(code));
+            if (code === 'eviction_not_confirmed' || code === 'device_epoch_stale') await props.onStale?.();
         }
     }
 

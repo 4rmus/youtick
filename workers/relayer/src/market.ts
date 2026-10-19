@@ -344,6 +344,16 @@ interface DeviceView {
     expires_at_ms: string;
 }
 
+/** A canonical `ed25519:<base58 of 32 bytes>` key, of any length the chain may hold. */
+export function isCanonicalEd25519(value: string): boolean {
+    try {
+        ed25519Key(value);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 /** The six string arguments in protocol order, nothing else. */
 export function parseAddDeviceArgs(value: unknown): AddDeviceArgs {
     if (!exactStrings(value, [...ADD_DEVICE_KEYS])) throw new Error('invalid_request');
@@ -374,11 +384,12 @@ export function ticketDevices(ticket: unknown): DeviceView[] {
  * a signature expiring between one minute and one hour from now, a playable ticket whose publication
  * is not taken down, the ticket key's `add_device` signature, the current device epoch and enough
  * storage runway. `listed` means the device is already linked for more than seven days, so no
- * transaction is needed; `evicts` is the device a fourth link would replace.
+ * transaction is needed; `renewal` means it is linked but expires within seven days; `evicts` is
+ * the device a fourth link would replace.
  */
 export async function checkAddDeviceArgs(near: NearClient, input: {
     marketContractId: string; args: AddDeviceArgs; nowMs: number;
-}): Promise<{ listed: boolean; evicts: string | null }> {
+}): Promise<{ listed: boolean; renewal: boolean; evicts: string | null }> {
     const { args, nowMs } = input;
     if (!HEX64.test(args.ticket_id) || !HEX64.test(args.certificate_sha256) || !SESSION_KEY.test(args.session_public_key)
         || !U32.test(args.device_epoch) || Number(args.device_epoch) > 0xffff_ffff || !BASE64_SIGNATURE.test(args.signature)) {
@@ -412,12 +423,12 @@ export async function checkAddDeviceArgs(near: NearClient, input: {
     // which moves the epoch) gets "listed", not a request to sign again.
     const active = devices.filter((device) => Number(device.expires_at_ms) > nowMs);
     const own = active.find((device) => device.session_public_key === args.session_public_key);
-    if (own && Number(own.expires_at_ms) > nowMs + DEVICE_RENEW_WITHIN_MS) return { listed: true, evicts: null };
+    if (own && Number(own.expires_at_ms) > nowMs + DEVICE_RENEW_WITHIN_MS) return { listed: true, renewal: false, evicts: null };
     if (Number(args.device_epoch) !== ticket.device_epoch) throw new Error('device_epoch_stale');
     const reserve = await near.view<{ reserve_runway_bytes?: unknown } | null>(input.marketContractId, 'get_storage_reserve_status', {});
     if (typeof reserve?.reserve_runway_bytes !== 'string' || !DECIMAL.test(reserve.reserve_runway_bytes)) throw new Error('rpc_unavailable');
     if (BigInt(reserve.reserve_runway_bytes) < DEVICE_MIN_RUNWAY_BYTES) throw new Error('storage_unavailable');
     // A renewal removes the same key first and never evicts.
     const others = active.filter((device) => device.session_public_key !== args.session_public_key);
-    return { listed: false, evicts: others.length >= MAX_TICKET_DEVICES ? others[0].session_public_key : null };
+    return { listed: false, renewal: Boolean(own), evicts: others.length >= MAX_TICKET_DEVICES ? others[0].session_public_key : null };
 }

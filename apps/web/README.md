@@ -118,7 +118,8 @@ for a ticket this browser is not linked to, and Watch first renews a device in i
 days (`lib/v2/devices.ts`, `components/v2/DeviceLink.tsx`). The ticket key signs `add_device` in
 the browser with the device epoch read from final state; the relayer's `POST /v1/devices` submits
 it from its own account, so there is no approval window and no fee. A fourth device asks first,
-because the contract then unlinks the device linked or renewed longest ago. The link counts only
+because the contract then unlinks the device linked or renewed longest ago; if a fresh read before
+signing would unlink a different device, nothing is signed and the page asks again. The link counts only
 once `get_ticket` lists the device. The flag needs a relayer with `DAILY_DEVICE_LIMIT` and
 `TICKET_DAILY_DEVICE_LIMIT` set; without the flag the page shows a neutral notice and renews
 nothing, so a device stops playing 30 days after its last link.

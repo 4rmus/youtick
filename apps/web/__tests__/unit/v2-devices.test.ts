@@ -123,7 +123,7 @@ describe('linkDevice', () => {
             [202, { deviceRequestId: ID, state: 'pending', txHash: 'tx' }], [202, { deviceRequestId: ID, state: 'pending' }],
             [200, { deviceRequestId: ID, state: 'submitted', txHash: 'tx' }],
         ]);
-        const sleep = vi.fn(async (_ms: number) => undefined);
+        const sleep = vi.fn<(ms: number) => Promise<void>>(async () => undefined);
         const before = ticket([]);
         const view = chain([before, before, before, ticket([device(secondSession, NOW)])]);
         await linkDevice({ config, ticketKey: key, device: deviceKey(secondSession), deps: { view, fetch: fetcher, sleep, now: () => NOW } });
@@ -158,6 +158,28 @@ describe('linkDevice', () => {
         const edge = ticket([device(secondSession, NOW - 23 * DAY + 60_000)]);
         await expect(linkDevice({ config, ticketKey: key, device: deviceKey(secondSession),
             deps: { view: chain([edge]), fetch: fetcher, now: () => NOW + 2 * 60_000 } })).resolves.toEqual(edge);
+    });
+
+    it('replaces only the device the viewer agreed to, as read just before signing', async () => {
+        const [a, b, c] = ['ed25519:A', 'ed25519:B', 'ed25519:C'].map((session, index) => device(session, NOW - (3 - index) * DAY));
+        const full = ticket([a, b, c]);
+        const linked = ticket([b, c, device(secondSession, NOW)], 1);
+        const run = (reads: MarketTicket[], allowEvict?: string | null) => {
+            const { fetcher, calls } = relayer([[200, { deviceRequestId: ID, state: 'submitted', evicts_session_public_key: 'ed25519:A' }]]);
+            return { calls, result: linkDevice({ config, ticketKey: key, device: deviceKey(secondSession), allowEvict,
+                deps: { view: chain(reads), fetch: fetcher, sleep: async () => undefined, now: () => NOW } }) };
+        };
+        // The page showed two devices, a third was linked since: nothing is signed without asking.
+        const unconfirmed = run([full]);
+        await expect(unconfirmed.result).rejects.toThrow('eviction_not_confirmed');
+        expect(unconfirmed.calls).toEqual([]);
+        // The viewer agreed to replace A, but A has expired since and a link would now replace B.
+        const changed = run([ticket([device('ed25519:A', NOW - 31 * DAY), b, c, device('ed25519:D', NOW)])], 'ed25519:A');
+        await expect(changed.result).rejects.toThrow('eviction_not_confirmed');
+        const agreed = run([full, linked], 'ed25519:A');
+        await expect(agreed.result).resolves.toEqual(linked);
+        expect(agreed.calls).toHaveLength(1);
+        expect(deviceLinkErrorMessage('eviction_not_confirmed')).toContain('changed');
     });
 
     it('reports relayer refusals, an unconfirmed link and an unknown ticket with fixed codes', async () => {
