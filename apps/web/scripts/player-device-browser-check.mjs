@@ -46,6 +46,8 @@ try {
     const url=`http://localhost:${server.address().port}`;
     for(const mode of ['success','lost','token-denied','cancelled','pending']) {
         await page.goto(url);
+        // Since #266 the player asks for playback only after Play; device verification follows that press.
+        await page.getByRole('button',{name:'Oynat',exact:true}).first().click();
         await page.getByRole('button',{name:'Bu cihazı doğrula',exact:true}).waitFor();
         if(mode==='success') {
             assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=320));
