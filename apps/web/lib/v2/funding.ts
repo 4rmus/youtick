@@ -20,9 +20,21 @@ export function cryptoRailDisabledLanguages(
     return list.every((entry) => /^[a-z]{2,3}$/.test(entry)) ? list : ['tr'];
 }
 
-/** False when any of the user's languages is one where the crypto rail is off. */
-export function cryptoRailEnabled(languages: readonly string[], disabled = cryptoRailDisabledLanguages()): boolean {
-    return !languages.some((language) => disabled.includes(language.trim().toLowerCase().split('-')[0]));
+/**
+ * Whether this build offers the crypto rail at all. `NEXT_PUBLIC_V2_CRYPTO_RAIL=off` turns it off for
+ * every buyer (the card-only public launch, K9); unset or any other value keeps today's behaviour.
+ */
+export function cryptoRailConfigured(value: string | undefined = process.env.NEXT_PUBLIC_V2_CRYPTO_RAIL): boolean {
+    return value?.trim().toLowerCase() !== 'off';
+}
+
+/** False when the rail is off for this build, or when any of the user's languages is one where it is off. */
+export function cryptoRailEnabled(
+    languages: readonly string[],
+    disabled = cryptoRailDisabledLanguages(),
+    configured = cryptoRailConfigured(),
+): boolean {
+    return configured && !languages.some((language) => disabled.includes(language.trim().toLowerCase().split('-')[0]));
 }
 
 export function fundingAvailable(mode = multiAssetPaymentMode): boolean {

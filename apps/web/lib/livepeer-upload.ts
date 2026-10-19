@@ -240,6 +240,17 @@ export function rememberLivepeerUploadJob(accountId: string, jobId: string): voi
     }
 }
 
+/** Removes the job bookmark when it points at this job, once the upload is published or abandoned. */
+export function forgetLivepeerUploadJob(accountId: string, jobId: string): void {
+    try {
+        if (readRememberedLivepeerUploadJob(accountId) === jobId) {
+            localStorage.removeItem(`${LIVEPEER_LAST_JOB_STORAGE_PREFIX}${NEAR_NETWORK}:${NEAR_CONFIG.marketContractId}:${accountId}`);
+        }
+    } catch {
+        // A stale bookmark is ignored by the pending lookup.
+    }
+}
+
 export function readRememberedLivepeerUploadJob(accountId: string): string | null {
     try {
         const jobId = localStorage.getItem(`${LIVEPEER_LAST_JOB_STORAGE_PREFIX}${NEAR_NETWORK}:${NEAR_CONFIG.marketContractId}:${accountId}`);
@@ -424,9 +435,7 @@ export function abandonLivepeerUploadJob(accountId: string, jobId: string): void
     // The abandoned list above already hides this job; the rest is best-effort cleanup.
     try {
         if (readStoredUploadDraft(accountId)?.jobId === jobId) clearLivepeerUploadDraft(accountId);
-        if (readRememberedLivepeerUploadJob(accountId) === jobId) {
-            localStorage.removeItem(`${LIVEPEER_LAST_JOB_STORAGE_PREFIX}${NEAR_NETWORK}:${NEAR_CONFIG.marketContractId}:${accountId}`);
-        }
+        forgetLivepeerUploadJob(accountId, jobId);
         clearLivepeerJobSessionKey(accountId, jobId);
     } catch {
         // Keep the abandonment; stale local records are ignored by the pending lookup.

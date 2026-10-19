@@ -108,7 +108,7 @@ describe('root public set', () => {
             .filter((file) => /\/(page\.tsx|route\.ts)$/.test(file) && !file.includes('[...missing]'))
             .map(routeOf);
         const admitted = routes.filter((route) => isPublicRootRequest(route, route.startsWith('/api/') ? 'POST' : 'GET')).sort();
-        expect(admitted).toEqual(['/', '/api/content-reports', '/api/creator-applications', '/apply', '/privacy', '/refund-policy', '/report', '/terms', '/tr', '/tr/apply']);
+        expect(admitted).toEqual(['/', '/api/content-reports', '/api/creator-applications', '/api/opening-notices', '/apply', '/notify', '/privacy', '/refund-policy', '/report', '/terms', '/tr', '/tr/apply', '/tr/notify']);
     });
 
     it('lists only existing public pages in the root sitemap', async () => {
@@ -229,7 +229,8 @@ describe('root-host robots and sitemap', () => {
         const { default: sitemap } = await import('@/app/sitemap');
         const root = (await sitemap()).map((entry) => entry.url);
         expect(root).toEqual(['https://youtick.net', 'https://youtick.net/tr', 'https://youtick.net/apply',
-            'https://youtick.net/tr/apply', 'https://youtick.net/privacy', 'https://youtick.net/terms',
+            'https://youtick.net/tr/apply', 'https://youtick.net/notify', 'https://youtick.net/tr/notify',
+            'https://youtick.net/privacy', 'https://youtick.net/terms',
             'https://youtick.net/refund-policy', 'https://youtick.net/report']);
 
         requestHost.value = 'app.youtick.net';

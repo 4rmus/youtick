@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PaymentQuoteResponse, requestPaymentQuote } from '@/lib/multi-asset-payments';
-import { cryptoRailDisabledLanguages, cryptoRailEnabled, fundingAvailable, fundingStep, quoteTicketFunding } from '@/lib/v2/funding';
+import { cryptoRailConfigured, cryptoRailDisabledLanguages, cryptoRailEnabled, fundingAvailable, fundingStep, quoteTicketFunding } from '@/lib/v2/funding';
 
 const ACCOUNT = 'ab'.repeat(32);
 
@@ -53,6 +53,14 @@ describe('V2 balance funding', () => {
 });
 
 describe('V2 crypto rail', () => {
+    it('turns the rail off for every buyer when the build says off (card-only launch)', () => {
+        expect(cryptoRailConfigured(undefined)).toBe(true);
+        expect(cryptoRailConfigured('on')).toBe(true);
+        expect(cryptoRailConfigured(' OFF ')).toBe(false);
+        expect(cryptoRailEnabled(['en-GB'], ['tr'], false)).toBe(false);
+        expect(cryptoRailEnabled(['en-GB'], ['tr'], true)).toBe(true);
+    });
+
     it('is off for Turkish by default and follows any of the browser languages', () => {
         expect(cryptoRailDisabledLanguages(undefined)).toEqual(['tr']);
         expect(cryptoRailEnabled(['en-GB', 'en'], ['tr'])).toBe(true);

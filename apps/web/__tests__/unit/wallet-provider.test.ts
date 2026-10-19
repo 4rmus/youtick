@@ -67,6 +67,8 @@ vi.mock('@hot-labs/near-connect', () => ({
     },
 }));
 
+// A V1 page, where the connector loads on visit (wallet-provider-pages.test.ts covers the other pages).
+vi.mock('next/navigation', () => ({ usePathname: () => '/discover' }));
 vi.mock('@/lib/device-session', () => ({
     connectDeviceSession: walletTestState.connectDeviceSession,
     clearDeviceSession: walletTestState.clearDeviceSession,

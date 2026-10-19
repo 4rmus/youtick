@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { formatUsdc } from '@/lib/livepeer-publication';
 import type { TicketKey } from '@/lib/ticket-keys/keys';
+import { cardPriceLabel } from '@/lib/v2/card-checkout';
 import { loadDeviceKey, type DeviceKey } from '@/lib/v2/device-key';
 import { DEVICE_LINK_ENABLED, devicePlan, linkDevice, type DevicePlan } from '@/lib/v2/devices';
 import { findOwnedTickets, playableStatus, refundRequestable, takenDownPublications, type TicketStatus } from '@/lib/v2/tickets';
@@ -25,6 +26,11 @@ const STATUS_LABELS: Record<TicketStatus, string> = {
     released: 'Watch window closed, still playable',
     voided: 'Cancelled',
 };
+
+/** A card ticket shows the dollar price the buyer paid; a crypto ticket keeps its USDC amount. */
+function ticketPrice(rail: 'crypto' | 'card', grossUsdcMicro: string): string {
+    return (rail === 'card' ? cardPriceLabel(grossUsdcMicro) : null) ?? `${formatUsdc(grossUsdcMicro)} USDC`;
+}
 
 /** Shown instead of "Watch on this device" while device links are off (NEXT_PUBLIC_V2_DEVICE_LINK_ENABLED). */
 export const UNLINKED_DEVICE_NOTICE = 'This device is not linked to this ticket. Watch on a device where you bought or watched it, '
@@ -164,7 +170,7 @@ export function MyTickets() {
                     <div>
                         <p className="font-medium">{ticket.publication_id}</p>
                         <p className="text-sm text-white/60">
-                            {formatUsdc(ticket.gross_usdc_micro)} USDC · {new Date(Number(ticket.purchased_at_ms)).toLocaleDateString()}
+                            {ticketPrice(ticket.rail, ticket.gross_usdc_micro)} · {new Date(Number(ticket.purchased_at_ms)).toLocaleDateString()}
                         </p>
                     </div>
                     <span className="rounded border border-white/15 px-2 py-1 text-xs text-white/80">{STATUS_LABELS[ticket.status]}</span>

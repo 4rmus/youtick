@@ -97,7 +97,7 @@ export function ContentReportForm({ siteKey }: { siteKey: string | null }) {
 
     if (!siteKey) {
         return <p className="rounded-xl border border-white/10 bg-zinc-950 p-5 text-sm leading-relaxed text-zinc-300">
-            The report form is not open yet. Please email your report, with the details listed above, to{' '}
+            The report form is not available at the moment. Please email your report, with the details listed above, to{' '}
             <a className="text-emerald-300" href={`mailto:${COMPANY.reportsEmail}`}>{COMPANY.reportsEmail}</a>.
         </p>;
     }

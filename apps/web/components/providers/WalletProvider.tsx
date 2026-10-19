@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { NearConnector, type Account, type NearWalletBase, type WalletManifest } from '@hot-labs/near-connect';
 import { clearSessionGrantCache } from '@/lib/access-grants';
 import { clearDeviceSession, connectDeviceSession, suspendDeviceSession } from '@/lib/device-session';
@@ -32,6 +33,18 @@ const SPONSORED_DELEGATE_MAX_BLOCKS = 200;
 const VERIFIED_WALLET_WINDOWS: Record<string, number> = {
     'meteor-wallet': 200,
 };
+
+/**
+ * The V1 pages that use the wallet. Creating the connector fetches the wallet list from GitHub (jsDelivr as
+ * fallback) and opens its own browser storage, so every other page (the public pages, the V2 pages, a missing
+ * page) creates it only when someone chooses Connect.
+ */
+const V1_WALLET_PAGES = ['/discover', '/upload', '/watch', '/profile'];
+
+export function loadsWalletOnVisit(pathname: string): boolean {
+    const path = pathname.replace(/\/+$/, '') || '/';
+    return V1_WALLET_PAGES.some((page) => path === page || path.startsWith(`${page}/`));
+}
 
 function sponsoredDelegateWindow(wallet: NearWalletBase, trusted: boolean): number | null {
     if (!trusted || !isPinnedMeteorManifest(wallet.manifest)) return null;
@@ -106,6 +119,7 @@ export function createWalletAdapter(
 }
 
 export function WalletProvider({ children, cspNonce }: { children: React.ReactNode; cspNonce?: string }) {
+    const walletPage = loadsWalletOnVisit(usePathname());
     const connectorRef = useRef<NearConnector | null>(null);
     const walletRef = useRef<NearWalletBase | null>(null);
     const pinnedWalletRef = useRef<NearWalletBase | null>(null);
@@ -117,6 +131,11 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
     const [accountId, setAccountId] = useState<string | null>(null);
     const [isReady, setIsReady] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Once created, the connector stays for the rest of the visit, so client-side navigation keeps the session.
+    const [loaded, setLoaded] = useState(walletPage);
+    if (walletPage && !loaded) setLoaded(true);
+    const readyWaitersRef = useRef<Array<() => void>>([]);
+    const loadingRef = useRef<Promise<void> | null>(null);
 
     const clearAuth = useCallback(async (id: string | null, preserveDevice = false) => {
         if (!id) return;
@@ -140,7 +159,12 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
     }, [clearAuth]);
 
     useEffect(() => {
+        if (!loaded) return;
         let mounted = true;
+        const markReady = () => {
+            setIsReady(true);
+            for (const wake of readyWaitersRef.current.splice(0)) wake();
+        };
         const providers = NEAR_NETWORK === 'testnet'
             ? { mainnet: [], testnet: getRpcEndpoints() }
             : { mainnet: getRpcEndpoints(), testnet: [] };
@@ -205,7 +229,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         // Bound UI readiness without discarding the SDK's eventual restore result.
         const timeoutId = setTimeout(() => {
             if (!mounted) return;
-            setIsReady(true);
+            markReady();
             if (!canRestore()) return;
             finishRestore('delayed');
             setError('Your wallet connection is taking longer than expected. You can wait or reload this page.');
@@ -253,7 +277,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             .finally(() => {
                 clearTimeout(timeoutId);
                 finishRestore('cancelled');
-                if (mounted) setIsReady(true);
+                if (mounted) markReady();
             });
 
         return () => {
@@ -267,7 +291,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
             if (connectorRef.current === connector) connectorRef.current = null;
             pinnedWalletRef.current = null;
         };
-    }, [applyWallet, clearAuth, cspNonce]);
+    }, [applyWallet, clearAuth, cspNonce, loaded]);
 
     const getWallet = useCallback(async (): Promise<WalletInstance> => {
         const connector = connectorRef.current;
@@ -287,10 +311,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         });
     }, []);
 
-    const connect = useCallback((): Promise<void> => {
-        if (connectingRef.current) return connectingRef.current;
-        const connector = connectorRef.current;
-        if (!connector) return Promise.resolve();
+    const startConnect = useCallback((connector: NearConnector): Promise<void> => {
         const expectedGeneration = ++authGenerationRef.current;
         const controller = new AbortController();
         connectAbortRef.current = controller;
@@ -332,6 +353,24 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
         return work;
     }, [applyWallet, clearAuth]);
 
+    const connect = useCallback((): Promise<void> => {
+        if (connectingRef.current) return connectingRef.current;
+        const connector = connectorRef.current;
+        if (connector) return startConnect(connector);
+        // Without a connector yet, Connect creates it and waits for its restore (and the pinned Meteor
+        // manifest); a restored session needs no new connection.
+        loadingRef.current ??= new Promise<void>((resolve) => {
+            readyWaitersRef.current.push(resolve);
+            setLoaded(true);
+        }).then(() => {
+            loadingRef.current = null;
+            if (connectingRef.current) return connectingRef.current;
+            const created = connectorRef.current;
+            return created && !accountIdRef.current ? startConnect(created) : undefined;
+        });
+        return loadingRef.current;
+    }, [startConnect]);
+
     const signOut = useCallback(async () => {
         const id = accountIdRef.current;
         authGenerationRef.current += 1;
@@ -364,7 +403,7 @@ export function WalletProvider({ children, cspNonce }: { children: React.ReactNo
     }, [clearAuth, getWallet]);
 
     return (
-        <WalletContext.Provider value={{ accountId, getWallet, signOut, connect, isReady }}>
+        <WalletContext.Provider value={{ accountId, getWallet, signOut, connect, isReady: isReady || !loaded }}>
             {error && <p role="alert" className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md rounded-lg border border-red-500/40 bg-black p-3 text-sm text-red-300">{error}</p>}
             {children}
         </WalletContext.Provider>

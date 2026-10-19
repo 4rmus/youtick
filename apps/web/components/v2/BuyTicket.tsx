@@ -118,11 +118,11 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     }, [onSale, signedIn, balanceLow, cryptoRail, track]);
 
     if (!valid) return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Screening not found" />;
-    if (!config.paymentServiceUrl) return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Ticket sales are not open yet" />;
+    if (!config.paymentServiceUrl) return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Ticket sales are not available right now" />;
     if (cryptoRail === null) return <p className="text-center text-white/70" role="status">Loading…</p>;
     if (!cryptoRail && !CARD_RAIL) {
-        return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Ticket sales are not available here yet"
-            description="Paying with crypto is not offered in your language. Card payments are coming." />;
+        return <ScreenState icon={<Ticket className="h-7 w-7" />} title="Ticket sales are not available right now"
+            description="Please try again later or write to contact@youtick.net." />;
     }
     if (publication.isLoading) return <p className="text-center text-white/70" role="status">Loading…</p>;
     const item = publication.data;
@@ -131,7 +131,9 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     const cardPrice = CARD_RAIL ? cardPriceLabel(item.price_usdc) : null;
     if (!signedIn) {
         return <ScreenState icon={<Ticket className="h-7 w-7" />} title={cryptoRail ? `Ticket: ${formatUsdc(item.price_usdc)} USDC` : `Ticket: ${cardPrice ?? '…'}`}
-            description="Sign in to buy. You approve the payment once on the sign-in screen; no wallet is needed.">
+            description={cryptoRail
+                ? 'Sign in to buy. You approve the payment once on the sign-in screen; no wallet is needed.'
+                : 'Sign in to buy a ticket. Your tickets stay with your account and appear on any device you sign in on.'}>
             <div className="mt-6 flex justify-center"><SignInPanel /></div>
         </ScreenState>;
     }
@@ -186,7 +188,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     if (state === 'done') {
         return <ScreenState tone="success" icon={<CheckCircle2 className="h-7 w-7" />} title="Your ticket is ready"
             description={paidBy === 'card'
-                ? 'It is linked to this device. Card payments are handled by Cleeng, our payment partner. If the video does not play properly, write to contact@youtick.net.'
+                ? 'It is linked to this device. If the video does not play properly, write to contact@youtick.net with your ticket code.'
                 : 'It is linked to this device. If the video does not play properly, you can request a refund within 27 days.'}>
             <div className="mt-6 flex justify-center"><Button asChild><Link href="/tickets">Go to My tickets</Link></Button></div>
         </ScreenState>;
@@ -202,7 +204,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
                 setState('error');
                 setError(ERRORS[code] ?? 'The card payment did not complete. No ticket was issued; please try again.');
             }} />
-        <p className="text-xs text-white/50">Card payments are processed by Cleeng, our payment partner, which may add tax for your country.</p>
+        <p className="text-xs text-white/50">Your card payment is processed by our card payment provider, which may add tax for your country.</p>
     </div>;
 
     if (!cryptoRail) {
@@ -231,7 +233,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
             {state === 'buying' && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {state === 'buying' ? 'Waiting for your approval…' : `Buy for ${formatUsdc(item.price_usdc)} USDC`}
         </Button>
-        <p className="text-xs text-white/50">A ticket you have not played can be refunded. After playback starts, refunds are for technical problems (the video does not play or is not as described). Ask within 27 days of purchase. <Link className="underline" href="/refund-policy">Refund policy</Link></p>
+        <p className="text-xs text-white/50">A ticket you have not played can be refunded. After playback starts, refunds are for technical problems (the video does not play or is not as described). Ask from My tickets within 27 days of purchase.</p>
         {card}
         {state === 'error' && <p className="text-sm text-red-300" role="alert">{error}</p>}
     </Card>;

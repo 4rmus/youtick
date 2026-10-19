@@ -3,18 +3,20 @@ import { constants } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import TermsPage from '@/app/(site)/terms/page';
-import PrivacyPage from '@/app/(site)/privacy/page';
 import { describe, expect, it, vi } from 'vitest';
 import { LandingPage } from '@/components/landing/LandingPage';
 import {
     getLandingCopy,
     getLandingCtas,
+    heroProgrammeLink,
     landingCopy,
     landingCopyLayers,
+    landingNavSections,
     type LandingLocale,
 } from '@/components/landing/landing-copy';
-import { calculateTicketSplit, formatMicroUsdc } from '@/components/landing/roi';
-import type { LaunchStage } from '@/lib/constants';
+import { openingProgrammeMode, type OpeningProgrammeEntry } from '@/components/landing/opening-programme';
+import { formatDollars, revenueSplit } from '@/components/landing/revenue';
+import { LAUNCH_STAGES, type LaunchStage } from '@/lib/constants';
 
 vi.mock('next/image', () => ({
     default: (props: { alt: string }) => React.createElement('img', { alt: props.alt }),
@@ -22,7 +24,7 @@ vi.mock('next/image', () => ({
 
 const LOCALES: readonly LandingLocale[] = ['en', 'tr'];
 
-/** Type shape of the copy; arrays compare by element shape, not by length (the Turkish footer names fewer projects). */
+/** Type shape of the copy; arrays compare by element shape, not by length. */
 function shape(value: unknown): unknown {
     if (Array.isArray(value)) return value.length ? [shape(value[0])] : [];
     if (value && typeof value === 'object') {
@@ -35,152 +37,166 @@ function shape(value: unknown): unknown {
  * Rendered landing text plus its link targets: tags and class attributes are removed so utility
  * classes (`text-near-green`) and markup are not read as copy.
  */
-function renderLandingText(locale: LandingLocale, stage: LaunchStage, enabled = false): string {
-    const html = renderToStaticMarkup(React.createElement(LandingPage, { locale, enabled, stage }));
+function renderLandingText(locale: LandingLocale, stage: LaunchStage, programme: readonly OpeningProgrammeEntry[] = []): string {
+    const html = renderToStaticMarkup(React.createElement(LandingPage, { locale, stage, programme }));
     const hrefs = Array.from(html.matchAll(/ href="[^"]*"/g), (match) => match[0].trim());
     return `${html.replace(/ class="[^"]*"/g, '').replace(/<[^>]+>/g, ' ')}\n${hrefs.join(' ')}`;
 }
 
-/** Prova output (copy and rendered page, both locales). */
-function provaOutput(locale: LandingLocale): string {
-    return `${JSON.stringify(getLandingCopy(locale, 'prova'))}\n${renderLandingText(locale, 'prova')}\n${renderLandingText(locale, 'prova', true)}`;
+/** Every string value in the copy (keys such as `cards` are not copy). */
+function copyText(value: unknown): string[] {
+    if (typeof value === 'string') return [value];
+    if (Array.isArray(value)) return value.flatMap(copyText);
+    if (value && typeof value === 'object') return Object.values(value).flatMap(copyText);
+    return [];
 }
 
-// Claim register 2–16 (design-language plan §4.4), the "never used" list, dates and "soon".
-const FORBIDDEN_IN_PROVA: readonly RegExp[] = [
-    /Apple Pay/i, /Google Pay/i, /pay (by|with) card/i, /kartla (öde|ödeme)/i, // 2
-    /pay (in|with) USDC/i, /USDC ile öde/i, // 3
-    /no second password/i, /ikinci şifre/i, // 4
-    /wallet/i, /cüzdan/i, /seed phrase/i, /gas fee/i, // 5 and the removed V1 instructions
-    /the moment (they are|it is) played/i, /oynatıldığı anda/i, // 6
-    /bank account/i, /banka hesab/i, /every month/i, /her ay/i, // 7
-    /refund/i, /iade/i, // 8
-    /\b(3|three) devices/i, /3 cihaz/i, // 9
-    /never expires?/i, /does not expire/i, /süresi dolmaz/i, // 10
-    /VAT included/i, /KDV dahil/i, /\$ ?5\b/, /\b5 ?\$/, // 11
-    /3[.,]9 ?%/, /%3[.,]9/, /0[.,]39/, // 12
-    /fan list/i, /hayran listesi/i, /tell your fans/i, /hayranlarına haber/i, // 13
-    /watermark/i, /filigran/i, // 14
-    /takedown/i, /freeze/i, /dondur/i, // 15
-    /audit/i, /external review/i, /dış inceleme/i, // 16
-    /35\+/, /chain/i, /zincir/i, /(any|every) token/i, /her token/i,
-    /licen[sc]ed/i, /lisanslı/i, /\bFCA\b/, /MiCA/i,
-    /invest/i, /yatırım/i,
-    /screen recording/i, /ekran kaydı/i,
-    /instant card/i, /kartla anında/i,
-    /founder/i, /kurucu/i,
-    /cheaper/i, /daha ucuz/i,
-    /\bsoon\b/i, /yakında/i, /\b20\d\d\b/,
-    /\b(January|February|March|April|June|July|August|September|October|November|December)\b/i,
-    /\b(Ocak|Şubat|Nisan|Mayıs|Haziran|Temmuz|Ağustos|Eylül|Ekim|Kasım|Aralık)\b/,
-    // the V1 wallet pilot (the 95/5 split stays only in the simulator section, never in the hero)
-    /test USDC from your/i, /testnet cüzdan/i, /V1\b/, /pilot/i,
+/** Everything a stage can publish: the copy values and the rendered page. */
+function publicOutput(locale: LandingLocale, stage: LaunchStage = 'prova'): string {
+    return `${copyText(getLandingCopy(locale, stage)).join('\n')}\n${renderLandingText(locale, stage)}`;
+}
+
+// Owner brief 2026-10-19: no rehearsal, beta, test or invitation phase, no payment provider name, no
+// USDC or crypto, no exact opening day, and the never-used list of the claim register.
+const FORBIDDEN_IN_PUBLIC: readonly RegExp[] = [
+    /cleeng/i, /payment partner/i, /merchant of record/i,
+    /rehearsal/i, /\bprova/i, /\bbeta\b/i, /testnet/i, /\btest\b/i, /sandbox/i, /pilot/i, /invit/i, /davet/i, /deneme/i,
+    /\bsoon\b/i, /yakında/i, /\b\d{1,2}\.? ?(February|Şubat)\b/i, /\b(February|Şubat) \d{1,2}\b/i, /\bNov(ember)?\b/i, /Kasım/,
+    /USDC/i, /crypto/i, /kripto/i, /token/i, /wallet/i, /cüzdan/i, /seed phrase/i, /\bgas\b/i, /1Click/i, /\bNFT/i,
+    /Apple Pay/i, /Google Pay/i,
+    /revolution/i, /devrim/i, /licensed/i, /lisanslı/i, /\bFCA\b/, /MiCA/i, /invest/i, /yatırım/i,
+    /audit/i, /external review/i, /dış inceleme/i, /watermark/i, /filigran/i, /founder/i, /kurucu/i,
+    /cheaper/i, /ucuz/i, /screen recording is blocked/i, /ekran kaydı engellenir/i, /fan list/i, /hayran/i,
 ];
 
-// K6: the Turkish layer carries no payment, card, USDC or crypto wording and names no chain.
+// K6 interim Turkish page: no payment, price, refund, card or chain wording until counsel (X4).
+// `[iİ]` because a case-insensitive /i does not fold the dotted capital İ ("İade").
 const FORBIDDEN_IN_TURKISH: readonly RegExp[] = [
     /USDC/i, /kripto/i, /crypto/i, /\bNEAR\b/, /token/i, /blockchain/i, /zincir/i, /1Click/i,
     /\bkart/i, /\bcard/i, /öde/i, /ödeme/i, /banka/i, /fiyat/i, /ücret/i, /\bpara\b/i, /satın/i, /satış/i,
-    /\bTL\b/, /dolar/i, /\$/, /%/, /Apple Pay/i, /Google Pay/i, /iade/i, /vergi/i, /KDV/i,
+    /\bTL\b/, /dolar/i, /\$/, /%/, /Apple Pay/i, /Google Pay/i, /[iİ]ade/i, /vergi/i, /KDV/i,
+];
+
+const ARTISTS: readonly OpeningProgrammeEntry[] = [{ artist: 'Example Artist' }];
+const PROGRAMME: readonly OpeningProgrammeEntry[] = [
+    { artist: 'Example Artist', work: { title: 'Example Concert', type: 'concert', note: { en: 'A live set.', tr: 'Canlı bir set.' }, href: '/s/example' } },
 ];
 
 describe('bilingual landing', () => {
-    it('keeps English and Turkish copy in the same typed shape, with the simulator only in English', () => {
-        const { roi: englishRoi, ...english } = landingCopy.en;
-        const { roi: turkishRoi, ...turkish } = landingCopy.tr;
-        expect(shape(turkish)).toEqual(shape(english));
-        expect(englishRoi).not.toBeNull();
-        expect(turkishRoi).toBeNull();
-        expect(JSON.stringify(landingCopy)).not.toMatch(/98%|%98|2%|%2/);
+    it('keeps English and Turkish copy in the same typed shape; figures, refund and legal links only in English', () => {
+        const strip = (copy: (typeof landingCopy)['en']) => {
+            const { artists: { example, ...artists }, ticket: { links, ...ticket }, footer: { refund, ...footer }, ...rest } = copy;
+            return { parts: { example, links, refund }, rest: { ...rest, artists, ticket, footer } };
+        };
+        const english = strip(landingCopy.en);
+        const turkish = strip(landingCopy.tr);
+        expect(shape(turkish.rest)).toEqual(shape(english.rest));
+        expect(english.parts.example).not.toBeNull();
+        expect(english.parts.links).not.toBeNull();
+        expect(english.parts.refund).not.toBeNull();
+        expect(turkish.parts).toEqual({ example: null, links: null, refund: null });
     });
 
-    it('describes the V2 testnet rehearsal in Prova and nothing beyond it', () => {
-        const en = getLandingCopy('en', 'prova');
-        expect(en.hero.badge).toMatch(/Invite-only rehearsal on the NEAR testnet/);
-        expect(en.hero.title).toMatch(/Ticketed screenings for independent film and music/);
-        expect(en.hero.description).toMatch(/Google or a passkey/);
-        expect(en.hero.description).toMatch(/invite credit/);
-        expect(en.hero.description).toMatch(/Card checkout exists in a sandbox and is not public/);
-        expect(en.hero.description).toMatch(/apply for an invite/);
-        expect(JSON.stringify(en.hero)).not.toMatch(/95|simulat/i);
-        expect(en.howItWorks.steps.map((step) => step.title)).toEqual([
-            'Sign in', 'Upload with an invite credit', 'Publish after processing', 'Test ticket and playback',
-        ]);
-        expect(en.howItWorks.steps[3].description).toMatch(/buy a test ticket/);
-        expect(en.howItWorks.steps[3].description).toMatch(/sandbox and is not public/);
-        expect(en.roi?.description).toMatch(/simulation.*illustrative rehearsal split/);
-        expect(en.roi?.estimateNote).toMatch(/no real value/);
-        expect(en.trust.technologyLabel).toBe('Built with Livepeer and NEAR');
-
-        const tr = getLandingCopy('tr', 'prova');
-        expect(tr.hero.badge).toBe('Davetli prova dönemi');
-        expect(tr.hero.description).toMatch(/davet için başvurabilir/);
-        expect(tr.howItWorks.eyebrow).toBe('Nasıl başvurulur');
-        expect(tr.creators.action).toBe('Davet için başvur');
-
+    it('announces the February 2027 opening with a viewer and an artist path', () => {
+        expect(getLandingCopy('en').hero.badge).toBe('Opening February 2027');
+        expect(getLandingCopy('tr').hero.badge).toBe('Şubat 2027’de açılıyor');
+        expect(getLandingCtas('en')).toEqual({
+            primary: { label: 'Notify me when it opens', href: '/notify' },
+            secondary: { label: 'Apply as an artist', href: '/apply' },
+        });
+        expect(getLandingCtas('tr')).toEqual({
+            primary: { label: 'Açılıştan haberdar ol', href: '/tr/notify' },
+            secondary: { label: 'Sanatçı olarak başvur', href: '/tr/apply' },
+        });
         for (const locale of LOCALES) {
-            const text = JSON.stringify(getLandingCopy(locale, 'prova'));
-            expect(text).toContain('5 GB');
-            expect(text).not.toMatch(/120 minutes per video|120 dakika/);
-            expect(text).not.toContain('20 GB');
-            expect(text).not.toMatch(/pilot/i);
+            const html = renderToStaticMarkup(React.createElement(LandingPage, { locale, stage: 'prova', programme: [] }));
+            const ids = Array.from(html.matchAll(/ id="([^"]+)"/g), (match) => match[1]);
+            expect(ids).toEqual(['programme', 'box-office', 'ticket', 'artists', 'apply', 'how-it-works']);
+            expect(html).toContain(`href="${locale === 'tr' ? '/tr/notify' : '/notify'}"`);
+            expect(html).toContain(`href="${locale === 'tr' ? '/tr/apply' : '/apply'}"`);
+            expect(html).not.toContain('roi-calculator');
+            expect(html).not.toContain('github.com');
         }
     });
 
-    it('renders no claim-register or never-used wording in Prova output', () => {
+    it('publishes no rehearsal, provider, crypto or never-used wording at any stage', () => {
         for (const locale of LOCALES) {
-            const output = provaOutput(locale);
-            for (const pattern of FORBIDDEN_IN_PROVA) expect(output, `${locale}: ${pattern}`).not.toMatch(pattern);
-            // Later-stage text stays out of Prova.
-            for (const stage of ['gala', 'vizyon'] as const) {
-                const later: { hero?: Record<string, string> } = landingCopyLayers[stage][locale];
-                for (const line of Object.values(later.hero ?? {})) expect(output).not.toContain(line);
+            for (const stage of LAUNCH_STAGES) {
+                const output = `${publicOutput(locale, stage)}\n${renderLandingText(locale, stage, PROGRAMME)}`;
+                for (const pattern of FORBIDDEN_IN_PUBLIC) expect(output, `${locale}/${stage}: ${pattern}`).not.toMatch(pattern);
             }
         }
     });
 
-    it('keeps the Turkish Prova output free of payment, card, USDC and crypto wording', () => {
-        const output = provaOutput('tr');
+    it('keeps the interim Turkish page free of payment, price, refund, card and chain wording', () => {
+        const output = `${publicOutput('tr')}\n${renderLandingText('tr', 'prova', PROGRAMME)}`;
         for (const pattern of FORBIDDEN_IN_TURKISH) expect(output, String(pattern)).not.toMatch(pattern);
-        expect(output).not.toContain('roi-calculator');
-        expect(output).toContain('Davet için başvur');
-        expect(output).toContain('href="/tr/apply"');
-        expect(getLandingCopy('tr', 'prova').footer.links.map((link) => link.label)).toEqual(['Livepeer']);
+        expect('İade politikası').toMatch(FORBIDDEN_IN_TURKISH.find((pattern) => pattern.source === '[iİ]ade')!);
     });
 
-    it('renders the English Prova page with the rehearsal sections and the apply link', () => {
-        const output = provaOutput('en');
-        expect(output).toContain('Invite-only rehearsal on the NEAR testnet');
-        expect(output).toContain('roi-calculator');
-        expect(output).toContain('href="/apply"');
-        expect(output).toContain('Publishing is open to invited creators only');
+    it('names Livepeer and NEAR only in the How it works section of the English page', () => {
+        const html = renderToStaticMarkup(React.createElement(LandingPage, { locale: 'en', stage: 'prova', programme: [] }));
+        const howItWorks = html.slice(html.indexOf('id="how-it-works"'), html.indexOf('</section>', html.indexOf('id="how-it-works"')));
+        const rest = html.replace(howItWorks, '');
+        expect(howItWorks).toContain('Built with Livepeer and NEAR');
+        expect(rest).not.toMatch(/Livepeer|\bNEAR\b/);
+        expect(renderToStaticMarkup(React.createElement(LandingPage, { locale: 'tr', stage: 'prova', programme: [] }))).toContain('Livepeer ile geliştirildi');
     });
 
-    it('layers Gala and Vizyon over the shared copy and reaches them only by explicit stage', () => {
-        for (const locale of LOCALES) {
-            const prova = getLandingCopy(locale, 'prova');
-            const gala = getLandingCopy(locale, 'gala');
-            const vizyon = getLandingCopy(locale, 'vizyon');
-            expect(getLandingCopy(locale)).toBe(prova);
-            expect(landingCopy[locale]).toBe(prova);
-            expect(gala.hero.subtitle).not.toBe(prova.hero.subtitle);
-            expect(vizyon.hero.title).not.toBe(gala.hero.title);
-            // inherited, not overridden
-            expect(gala.nav).toEqual(prova.nav);
-            expect(gala.footer).toEqual(prova.footer);
-            expect(gala.howItWorks).toEqual(prova.howItWorks);
-            expect(vizyon.creators).toEqual(prova.creators);
-            expect(shape(gala)).toEqual(shape(prova));
+    it('shows the worked revenue example on the English page only', () => {
+        const english = renderLandingText('en', 'prova');
+        for (const value of ['$10.00', '−$2.00', '−$0.80', '−$0.40', '$6.80', 'VAT (25%)', 'Card payment cost (4% + $0.40)', 'youtick fee (5% of the price before VAT)']) {
+            expect(english).toContain(value);
         }
-        expect(getLandingCopy('en', 'gala').hero.subtitle).toBe(
-            'Sell your video to the world with one link. Ticket, payment and playback on the same page; tax, collection and refunds are on us.',
-        );
-        expect(getLandingCopy('tr', 'gala').hero.title).toBe('Sahnen bir link.');
-        expect(getLandingCopy('en', 'vizyon').hero.title).toBe('When the curtain rises, the artist gets paid.');
-        // The page without an explicit stage renders the configured stage, which is Prova in this environment.
-        const defaultHtml = renderToStaticMarkup(React.createElement(LandingPage, { locale: 'en', enabled: false }));
-        expect(defaultHtml).toContain('Invite-only rehearsal on the NEAR testnet');
-        expect(defaultHtml).not.toContain('Your stage is a link.');
+        expect(renderLandingText('tr', 'prova')).not.toContain('6.80');
+    });
+
+    it('splits a VAT-inclusive ticket into VAT, card cost, youtick fee and the artist share', () => {
+        expect(revenueSplit(1000)).toEqual({ priceCents: 1000, vatCents: 200, cardCents: 80, youtickCents: 40, artistCents: 680 });
+        expect(revenueSplit(1500)).toEqual({ priceCents: 1500, vatCents: 300, cardCents: 100, youtickCents: 60, artistCents: 1040 });
+        expect(revenueSplit(999)).toEqual({ priceCents: 999, vatCents: 200, cardCents: 80, youtickCents: 40, artistCents: 679 });
+        for (const price of [0, -100, 10.5]) expect(() => revenueSplit(price)).toThrow();
+        expect(formatDollars(680)).toBe('$6.80');
+        expect(formatDollars(-200)).toBe('−$2.00');
+    });
+
+    it('renders the opening programme only once entries exist, and follows its state in the links', () => {
+        expect(openingProgrammeMode([])).toBe('hidden');
+        expect(openingProgrammeMode(ARTISTS)).toBe('artists');
+        expect(openingProgrammeMode(PROGRAMME)).toBe('programme');
+        expect(renderLandingText('en', 'prova', [])).not.toContain('Opening programme');
+
+        const artists = renderToStaticMarkup(React.createElement(LandingPage, { locale: 'en', stage: 'prova', programme: ARTISTS }));
+        expect(artists).toContain('id="opening-programme"');
+        expect(artists).toContain('Opening artists');
+        expect(artists).toContain('Example Artist');
+        expect(artists).toContain('See the opening artists');
+
+        const programme = renderToStaticMarkup(React.createElement(LandingPage, { locale: 'tr', stage: 'prova', programme: PROGRAMME }));
+        expect(programme).toContain('Açılış programı');
+        expect(programme).toContain('Example Concert');
+        expect(programme).toContain('Konser kaydı');
+        expect(programme).toContain('Canlı bir set.');
+        expect(programme).toContain('href="/s/example"');
+        expect(programme).toContain('Açılış programına göz at');
+
+        const en = getLandingCopy('en');
+        expect(landingNavSections(en, 'hidden').map((section) => section.hash)).toEqual(['programme', 'box-office', 'artists', 'how-it-works']);
+        expect(landingNavSections(en, 'programme')[0]).toEqual({ hash: 'opening-programme', label: 'Opening programme' });
+        expect(landingNavSections(en, 'artists')[0]).toEqual({ hash: 'opening-programme', label: 'Opening artists' });
+        expect(heroProgrammeLink(en, 'hidden')).toEqual({ label: 'What you will be able to watch', hash: 'programme' });
+    });
+
+    it('keeps the launch-stage mechanism with empty stage overrides', () => {
+        for (const locale of LOCALES) {
+            const shared = getLandingCopy(locale, 'prova');
+            expect(getLandingCopy(locale)).toBe(shared);
+            expect(landingCopy[locale]).toBe(shared);
+            expect(landingCopyLayers.gala[locale]).toEqual({});
+            expect(landingCopyLayers.vizyon[locale]).toEqual({});
+            expect(getLandingCopy(locale, 'gala')).toEqual(shared);
+            expect(getLandingCopy(locale, 'vizyon')).toEqual(shared);
+        }
     });
 
     it('contains only current media architecture in landing copy', () => {
@@ -197,78 +213,30 @@ describe('bilingual landing', () => {
 
         for (const term of retiredTerms) expect(copy).not.toContain(term);
         expect(copy).toContain('livepeer');
-        expect(copy).not.toContain('video livepeer ile; biletler ve ödemeler near üzerinde kaydedilir.');
     });
 
-    it('keeps disabled calls to action on the landing and opens product routes only when enabled', () => {
-        expect(getLandingCtas('en', false)).toEqual({
-            primary: { label: 'See how it works', href: '#how-it-works' },
-            secondary: { label: 'Why youtick', href: '#trust' },
-            status: 'Publishing is open to invited creators only',
-        });
-        expect(getLandingCtas('tr', false)).toEqual({
-            primary: { label: 'Nasıl başvurulur', href: '#how-it-works' },
-            secondary: { label: 'Neden youtick', href: '#trust' },
-            status: 'Yayın şu anda yalnız davetli üreticilere açık',
-        });
-        expect(getLandingCtas('tr', true)).toEqual({
-            primary: { label: 'Gösterim aç', href: '/upload' },
-            secondary: { label: 'Gösterimleri keşfet', href: '/discover' },
-        });
-    });
-
-    it('matches the contract per-ticket split with exact micro-USDC arithmetic', () => {
-        expect(calculateTicketSplit('2', 1n)).toEqual({
-            grossMicroUsdc: 2_000_000n,
-            platformMicroUsdc: 100_000n,
-            creatorMicroUsdc: 1_900_000n,
-        });
-        expect(calculateTicketSplit('12', 800n)).toEqual({
-            grossMicroUsdc: 9_600_000_000n,
-            platformMicroUsdc: 480_000_000n,
-            creatorMicroUsdc: 9_120_000_000n,
-        });
-        expect(calculateTicketSplit('2.000049', 2n)).toEqual({
-            grossMicroUsdc: 4_000_098n,
-            platformMicroUsdc: 200_004n,
-            creatorMicroUsdc: 3_800_094n,
-        });
-        expect(calculateTicketSplit('100.000001', 100_000n)).toEqual({
-            grossMicroUsdc: 10_000_000_100_000n,
-            platformMicroUsdc: 500_000_000_000n,
-            creatorMicroUsdc: 9_500_000_100_000n,
-        });
-        expect(() => calculateTicketSplit('1.999999', 1n)).toThrow('invalid_ticket_price');
-        expect(formatMicroUsdc(9_120_000_000n, 'en')).toBe('9,120 USDC');
-        expect(formatMicroUsdc(9_120_000_000n, 'tr')).toBe('9.120 USDC');
-    });
-
-    it('shows pilot, responsibility and local-data notices without blanket refund or storage claims', () => {
+    it('keeps the terms free of the provider name, USDC and the pilot', () => {
         const terms = renderToStaticMarkup(React.createElement(TermsPage));
-        const privacy = renderToStaticMarkup(React.createElement(PrivacyPage));
-        // The terms are the V2 launch draft (C3); the V1 wallet pilot keeps its own section.
-        expect(terms).toContain('V1 wallet pilot on NEAR testnet');
-        expect(terms).toContain('statutory consumer rights');
+        expect(terms).toContain('your statutory rights as a consumer');
         expect(terms).toContain('pending review by our legal counsel');
-        expect(terms).not.toMatch(/non-refundable|14-day beta/);
-        expect(privacy).toContain('IndexedDB');
-        expect(privacy).toContain('localStorage');
-        expect(privacy).toContain('sessionStorage');
-        expect(privacy).toContain('before collecting personal data');
-        expect(privacy).toContain('does not delete public blockchain');
-        for (const html of [terms, privacy]) expect(html).toContain('mailto:contact@youtick.net');
+        expect(terms).toContain('our card payment provider processes the payment as reseller (merchant of record)');
+        expect(terms).not.toMatch(/cleeng|USDC|pilot|testnet|test tokens|non-refundable|14-day beta/i);
+        expect(terms).toContain('mailto:contact@youtick.net');
     });
 
-    it('ships the Turkish static route, locale alternates, and both optimized images', async () => {
-        const [englishPage, turkishPage, sitemap] = await Promise.all([
+    it('ships the Turkish static routes, locale alternates, and both optimized images', async () => {
+        const [englishPage, turkishPage, turkishNotify, sitemap] = await Promise.all([
             readFile('app/(site)/page.tsx', 'utf8'),
             readFile('app/(tr)/tr/page.tsx', 'utf8'),
+            readFile('app/(tr)/tr/notify/page.tsx', 'utf8'),
             readFile('app/sitemap.ts', 'utf8'),
         ]);
 
         expect(englishPage).toContain("languages: { en: '/', tr: '/tr', 'x-default': '/' }");
         expect(turkishPage).toContain('locale="tr"');
+        expect(turkishNotify).toContain('locale="tr"');
         expect(sitemap).toContain("'/tr'");
+        expect(sitemap).toContain("'/tr/notify'");
         await expect(Promise.all([
             access('public/hero-concert.webp', constants.F_OK),
             access('public/concert-crowd.webp', constants.F_OK),

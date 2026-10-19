@@ -165,7 +165,8 @@ describe('creator application pages', () => {
     it('links both landings to their application page', () => {
         expect(creatorApplyHref('en')).toBe('/apply');
         expect(creatorApplyHref('tr')).toBe('/tr/apply');
-        expect(landingCopy.tr.creators.action).toBe('Davet için başvur');
+        expect(landingCopy.tr.apply.action).toBe('Sanatçı olarak başvur');
+        expect(landingCopy.en.apply.action).toBe('Apply as an artist');
     });
 
     it('shows the e-mail fallback when the form is not configured', () => {
