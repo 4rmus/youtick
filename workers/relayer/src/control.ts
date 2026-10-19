@@ -5,7 +5,10 @@ import { KeyPairSigner, Signature, actions, baseDecode, baseEncode, createTransa
 import type { Env } from './env';
 import { relayerConfig, type RelayerConfig } from './env';
 import { createNearClient, type NearClient, type TxOutcome } from './near';
-import { purchaseExpiresAtMs, uploadExpiresAtMs } from './market';
+import {
+    checkAddDeviceArgs, deviceRequestId, isCanonicalEd25519, parseAddDeviceArgs, purchaseExpiresAtMs, ticketDevices, uploadExpiresAtMs,
+    type AddDeviceArgs,
+} from './market';
 import { parsePurchaseFields, purchaseDelegate, sameBytes, type PurchaseFields } from './purchase';
 import { parseUploadFields, parseUploadKeyFields, uploadDelegate, uploadKeyDelegate, type UploadFields, type UploadKeyFields } from './upload';
 
@@ -15,6 +18,10 @@ const FT_TRANSFER_GAS = 30_000_000_000_000n;
 /** fast-auth `sign` forwards to the MPC network; the spike used the full 300 TGas and 1 yocto. */
 const FAST_AUTH_SIGN_GAS = 300_000_000_000_000n;
 const ONE_YOCTO = 1n;
+/** `add_device`, the relayer's one direct Market call. 1 to 2 devices used under 10 TGas in the sandbox; the eviction case is unmeasured. */
+const ADD_DEVICE_GAS = 30_000_000_000_000n;
+/** A device listed with `authorized_at_ms` this close to the request (block time vs. this clock) counts as its effect. */
+const DEVICE_EFFECT_SLACK_MS = 5 * 60 * 1000;
 /** Before this, an unconfirmed transaction is simply still in flight. */
 const RESEND_AFTER_MS = 30 * 1000;
 /** After this, a transaction the chain reports as unknown, with its nonce passed, did not land. */
@@ -25,7 +32,7 @@ const CKD_RECORD_TTL_MS = 10 * 60 * 1000;
 const SIGN_TIMEOUT_MS = 10 * 60 * 1000;
 /** A relay must still land before the message's device and VAT signatures expire. */
 const RELAY_EXPIRY_MARGIN_MS = 30 * 1000;
-/** Finished purchases stay readable on the status route for this long. */
+/** Finished purchases and device links stay readable on the status route for this long. */
 const PURCHASE_RECORD_TTL_MS = 24 * 60 * 60 * 1000;
 const POLL_DELAYS_MS = [1_000, 2_000, 3_000, 4_000];
 
@@ -73,6 +80,29 @@ interface PurchaseRecord {
     updatedAtMs: number;
 }
 
+/**
+ * One device link (`add_device` signed by the ticket key), keyed by `deviceRequestId`. The relayer
+ * learns no account: only the ticket id and the device's public key and certificate hash.
+ */
+interface DeviceRecord {
+    /** `listed`: the transaction failed, but the ticket lists the device anyway (another request linked it). */
+    state: 'submitting' | 'submitted' | 'listed' | 'failed';
+    ticketId: string;
+    args: AddDeviceArgs;
+    /** The device this link replaces, as the pre-check read it. */
+    evicts: string | null;
+    /** The device was already linked; renewals are not charged against the daily limit. */
+    renewal?: boolean;
+    txHash: string | null;
+    error?: string;
+    createdAtMs: number;
+    updatedAtMs: number;
+}
+
+/** What the pre-check reports again after an `add_device` transaction failed on chain. */
+const DEVICE_FAILURES = new Set(['device_invalid', 'ticket_not_found', 'ticket_not_playable', 'publication_unavailable',
+    'device_epoch_stale', 'signature_expired', 'storage_unavailable']);
+
 interface IdentityRecord {
     accountId: string;
     ready: boolean;
@@ -99,6 +129,8 @@ type Action = ReturnType<typeof actions.transfer>;
 interface SubmitPolicy {
     recovery: 'resign' | 'check' | 'manual';
     effectDone?: () => Promise<boolean>;
+    /** False once signing again could only fail on chain (an expired signature inside the call): the record fails instead. */
+    canResign?: () => boolean;
     /** Allow a new attempt after a final on-chain failure (nothing moved). */
     retryFailed?: boolean;
 }
@@ -157,6 +189,8 @@ export class RelayerControl {
                 case '/upload': return await this.relayDelegate(config, body, 'upload');
                 case '/upload-key': return await this.relayDelegate(config, body, 'upload_key');
                 case '/upload/status': return await this.advancePurchase(config, requireHex64(body.uploadId), 'upload');
+                case '/device': return await this.linkDevice(config, body);
+                case '/device/status': return await this.advanceDevice(config, requireHex64(body.deviceRequestId));
                 default: return json({ error: 'not_found' }, 404);
             }
         } catch (error) {
@@ -167,6 +201,9 @@ export class RelayerControl {
                 tx_needs_review: 503, mutations_disabled: 503, relayer_key_invalid: 503, rpc_unavailable: 503,
                 payload_conflict: 409, invalid_request: 400, purchase_not_found: 404, approval_rejected: 409,
                 approval_expired: 409, relay_failed: 502, signature_expired: 409, upload_not_found: 404, upload_key_expired: 409,
+                devices_disabled: 503, device_request_not_found: 404, ticket_limit_reached: 429, device_add_failed: 502,
+                device_invalid: 400, ticket_not_found: 404, ticket_not_playable: 409, publication_unavailable: 409,
+                device_epoch_stale: 409, storage_unavailable: 503,
             };
             if (known[code]) return json({ error: code }, known[code]);
             // The object only reads the relayer's own access key.
@@ -177,8 +214,8 @@ export class RelayerControl {
     }
 
     /**
-     * Strips id_tokens from stale CKD records and drops settled ones, finishes purchases whose
-     * client stopped asking, and removes finished purchase records after their TTL.
+     * Strips id_tokens from stale CKD records and drops settled ones, finishes purchases and device
+     * links whose client stopped asking, and removes finished records after their TTL.
      */
     async alarm(): Promise<void> {
         const config = relayerConfig(this.env);
@@ -223,6 +260,24 @@ export class RelayerControl {
             if (current?.state === 'signing' && this.now() - current.createdAtMs > SIGN_TIMEOUT_MS) {
                 // Not retryable: an unconfirmed sign may still have landed, and its signature is public.
                 await this.failPurchase(id, 'approval_expired', false).catch(() => undefined);
+            }
+        }
+        for (const [key, record] of await this.state.storage.list<DeviceRecord>({ prefix: 'device:' })) {
+            const id = key.slice('device:'.length);
+            if (record.state !== 'submitting') {
+                if (this.now() - record.updatedAtMs > PURCHASE_RECORD_TTL_MS) {
+                    await this.state.storage.delete([key, `tx:device:${id}`]);
+                } else {
+                    pending = true;
+                }
+                continue;
+            }
+            pending = true;
+            if (!config) continue;
+            try {
+                await this.advanceDevice(config, id);
+            } catch {
+                // Recorded on the device link; the status route reports it.
             }
         }
         if (pending) await this.state.storage.setAlarm(this.now() + CKD_RECORD_TTL_MS);
@@ -495,6 +550,130 @@ export class RelayerControl {
         return signature;
     }
 
+    // --- Device links ------------------------------------------------------------------------
+
+    /**
+     * Records a device link the front Worker pre-checked and charges the daily and per-ticket
+     * limits in the same storage transaction, so a repeated or concurrent request of the same link
+     * is charged once and submits one transaction.
+     */
+    private async linkDevice(config: RelayerConfig, body: Record<string, unknown>): Promise<Response> {
+        const limits = config.devices;
+        if (!limits) throw new Error('devices_disabled');
+        const args = parseAddDeviceArgs(body.args);
+        const { evicts, renewal } = body;
+        // `evicts` comes from the chain, where a key added outside the web app may be shorter than the Bridge plays.
+        if ((evicts !== null && (typeof evicts !== 'string' || !isCanonicalEd25519(evicts))) || typeof renewal !== 'boolean') {
+            throw new Error('invalid_request');
+        }
+        if (!config.mutationsEnabled) throw new Error('mutations_disabled');
+        const id = await deviceRequestId(args);
+        await this.state.storage.transaction(async (txn) => {
+            if (await txn.get(`device:${id}`)) return;
+            const ticketKey = `count:${this.day()}:device:${args.ticket_id}`;
+            const used = BigInt(await txn.get<string>(ticketKey) ?? '0');
+            if (used >= BigInt(limits.ticketDailyLimit)) throw new Error('ticket_limit_reached');
+            // Renewals keep tickets playing, so new links cannot use up their room. They limit themselves:
+            // a renewed device is answered "listed" for the next 23 days, so at most 3 per ticket in that time.
+            if (!renewal) await this.consumeDaily(txn, 'devices', 1n, BigInt(limits.dailyLimit));
+            await txn.put(ticketKey, String(used + 1n));
+            const record: DeviceRecord = {
+                state: 'submitting', ticketId: args.ticket_id, args, evicts, renewal, txHash: null, createdAtMs: this.now(), updatedAtMs: this.now(),
+            };
+            await txn.put(`device:${id}`, record);
+        });
+        await this.ensureAlarm();
+        return this.advanceDevice(config, id);
+    }
+
+    /**
+     * Sends `add_device` from the relayer account through the outbox, or reads the result. Recovery
+     * `check`: a transaction the chain does not know is signed again only while the ticket does not
+     * list the device as linked since this request.
+     */
+    private async advanceDevice(config: RelayerConfig, id: string): Promise<Response> {
+        // No `config.devices` check: a link already recorded still settles after the limits are removed.
+        const record = await this.state.storage.get<DeviceRecord>(`device:${id}`);
+        if (!record) throw new Error('device_request_not_found');
+        if (record.state === 'failed') throw new Error(record.error ?? 'device_add_failed');
+        if (record.state === 'submitted' || record.state === 'listed') return RelayerControl.deviceReply(id, record);
+        const txKey = `tx:device:${id}`;
+        // A send after the signature expired would only fail on chain: never the first, never a new signature.
+        const signable = () => Number(record.args.expires_at_ms) > this.now() + RELAY_EXPIRY_MARGIN_MS;
+        if (!await this.state.storage.get(txKey) && !signable()) return this.failDevice(id, 'signature_expired');
+        const effectDone = async () => {
+            const ticket = await this.near.view<unknown>(config.marketContractId, 'get_ticket', { ticket_id: record.ticketId });
+            return ticket !== null && ticketDevices(ticket).some((device) => device.session_public_key === record.args.session_public_key
+                && Number(device.authorized_at_ms) >= record.createdAtMs - DEVICE_EFFECT_SLACK_MS);
+        };
+        let done: { done: boolean };
+        try {
+            done = await this.submit(config, txKey, config.marketContractId, `device|${id}|${JSON.stringify(record.args)}`,
+                () => [addDeviceAction(record.args)], { recovery: 'check', effectDone, canResign: signable });
+        } catch (error) {
+            if (!(error instanceof Error) || error.message !== 'tx_failed') throw error;
+            // The chain gives no reason; the pre-check, run again, usually names it (a moved epoch, a refund).
+            const reason = await this.deviceFailure(config, record);
+            return reason === 'listed' ? this.listDevice(id) : this.failDevice(id, reason);
+        }
+        const tx = await this.state.storage.get<TxRecord>(txKey);
+        if (!done.done) return json({ deviceRequestId: id, state: 'pending', txHash: tx?.txHash ?? null }, 202);
+        const submitted = await this.state.storage.transaction(async (txn) => {
+            const current = await txn.get<DeviceRecord>(`device:${id}`);
+            if (current?.state !== 'submitting') return current;
+            const next: DeviceRecord = { ...current, state: 'submitted', txHash: tx?.txHash ?? null, updatedAtMs: this.now() };
+            await txn.put(`device:${id}`, next);
+            return next;
+        });
+        if (submitted?.state === 'failed') throw new Error(submitted.error ?? 'device_add_failed');
+        // Another request settled it as listed meanwhile; the reply follows the record.
+        return RelayerControl.deviceReply(id, submitted ?? record);
+    }
+
+    private static deviceReply(id: string, record: DeviceRecord): Response {
+        return json({
+            deviceRequestId: id, state: record.state === 'listed' ? 'listed' : 'submitted', txHash: record.txHash,
+            ...(record.evicts ? { evicts_session_public_key: record.evicts } : {}),
+        });
+    }
+
+    /** The pre-check's reason for a failed transaction; `listed` when the device got linked by another request. */
+    private async deviceFailure(config: RelayerConfig, record: DeviceRecord): Promise<string> {
+        try {
+            const check = await checkAddDeviceArgs(this.near, { marketContractId: config.marketContractId, args: record.args, nowMs: this.now() });
+            if (check.listed) return 'listed';
+        } catch (error) {
+            if (error instanceof Error && DEVICE_FAILURES.has(error.message)) return error.message;
+        }
+        return 'device_add_failed';
+    }
+
+    private async listDevice(id: string): Promise<Response> {
+        const current = await this.state.storage.transaction(async (txn) => {
+            const record = await txn.get<DeviceRecord>(`device:${id}`);
+            if (!record || record.state !== 'submitting') return record;
+            const listed: DeviceRecord = { ...record, state: 'listed', txHash: null, evicts: null, updatedAtMs: this.now() };
+            await txn.put(`device:${id}`, listed);
+            return listed;
+        });
+        if (!current) throw new Error('device_request_not_found');
+        if (current.state === 'failed') throw new Error(current.error ?? 'device_add_failed');
+        return RelayerControl.deviceReply(id, current);
+    }
+
+    private async failDevice(id: string, error: string): Promise<Response> {
+        const current = await this.state.storage.transaction(async (txn) => {
+            const record = await txn.get<DeviceRecord>(`device:${id}`);
+            if (!record || record.state !== 'submitting') return record;
+            const failed: DeviceRecord = { ...record, state: 'failed', error, updatedAtMs: this.now() };
+            await txn.put(`device:${id}`, failed);
+            return failed;
+        });
+        // Another request may have finished it meanwhile.
+        if (current?.state === 'submitted' || current?.state === 'listed') return RelayerControl.deviceReply(id, current);
+        throw new Error(current?.error ?? error);
+    }
+
     private async createInvite(config: RelayerConfig, body: Record<string, unknown>): Promise<Response> {
         const codeHash = requireHex64(body.codeHash);
         const amount = body.amountMicro;
@@ -633,15 +812,15 @@ export class RelayerControl {
             const resent = await this.near.sendTx(current.signedTxBase64);
             if (resent.kind === 'success' || resent.kind === 'failed') return this.settle(key, current, resent);
             // An expired block hash means it can never land: safe to sign again for every policy.
-            if (resent.kind === 'expired') return this.resign(config, key, current, build);
+            if (resent.kind === 'expired') return this.resign(config, key, current, build, policy);
             return current;
         }
         // The nonce has passed. Only "not found" after the landing window counts as not landed.
         if (outcome.kind !== 'not_found' || this.now() - current.broadcastAtMs < LANDING_WINDOW_MS) return current;
-        if (policy.recovery === 'resign') return this.resign(config, key, current, build);
+        if (policy.recovery === 'resign') return this.resign(config, key, current, build, policy);
         if (policy.recovery === 'check' && policy.effectDone) {
             if (await policy.effectDone()) return this.settle(key, current, { kind: 'success', value: null });
-            return this.resign(config, key, current, build);
+            return this.resign(config, key, current, build, policy);
         }
         console.warn(JSON.stringify({ event: 'relayer_tx_needs_review', kind: key.split(':')[1], txHash: current.txHash }));
         const stuck: TxRecord = { ...current, state: 'STUCK' };
@@ -655,7 +834,9 @@ export class RelayerControl {
         return next;
     }
 
-    private async resign(config: RelayerConfig, key: string, current: TxRecord, build: () => Action[]): Promise<TxRecord> {
+    private async resign(config: RelayerConfig, key: string, current: TxRecord, build: () => Action[], policy: SubmitPolicy): Promise<TxRecord> {
+        // The earlier transaction did not land and a new one could only fail: nothing happened on chain.
+        if (policy.canResign && !policy.canResign()) return this.settle(key, current, { kind: 'failed' });
         if (!config.mutationsEnabled) throw new Error('mutations_disabled');
         console.warn(JSON.stringify({ event: 'relayer_tx_resigned', kind: key.split(':')[1], previous: current.txHash }));
         return this.signAndBroadcast(config, key, current.receiverId, current.payloadSha256, build);
@@ -695,6 +876,11 @@ export class RelayerControl {
         this.lock = run.catch(() => undefined);
         return run;
     }
+}
+
+/** The only Market call the relayer signs itself: `add_device` with no deposit. */
+function addDeviceAction(args: AddDeviceArgs): Action {
+    return actions.functionCall('add_device', { ...args }, ADD_DEVICE_GAS, 0n);
 }
 
 /** Drops the parse helpers' extra lookup fields so the stored record holds the relayed fields only. */

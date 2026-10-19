@@ -1,15 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, LogOut, Ticket } from 'lucide-react';
 import { ScreenState } from '@/components/ScreenState';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { formatUsdc } from '@/lib/livepeer-publication';
+import type { TicketKey } from '@/lib/ticket-keys/keys';
 import { cardPriceLabel } from '@/lib/v2/card-checkout';
 import { loadDeviceKey, type DeviceKey } from '@/lib/v2/device-key';
-import { deviceIsListed, findOwnedTickets, playableStatus, refundRequestable, takenDownPublications, type TicketStatus } from '@/lib/v2/tickets';
+import { DEVICE_LINK_ENABLED, devicePlan, linkDevice, type DevicePlan } from '@/lib/v2/devices';
+import { findOwnedTickets, playableStatus, refundRequestable, takenDownPublications, type TicketStatus } from '@/lib/v2/tickets';
+import { DeviceLink } from './DeviceLink';
 import { useNearAuthV2 } from './NearAuthV2Provider';
 import { RefundRequest } from './RefundRequest';
 import { SignInPanel } from './SignInPanel';
@@ -29,11 +32,53 @@ function ticketPrice(rail: 'crypto' | 'card', grossUsdcMicro: string): string {
     return (rail === 'card' ? cardPriceLabel(grossUsdcMicro) : null) ?? `${formatUsdc(grossUsdcMicro)} USDC`;
 }
 
+/** Shown instead of "Watch on this device" while device links are off (NEXT_PUBLIC_V2_DEVICE_LINK_ENABLED). */
+export const UNLINKED_DEVICE_NOTICE = 'This device is not linked to this ticket. Watch on a device where you bought or watched it, '
+    + 'or write to contact@youtick.net.';
+
+/** How long a linked device stays linked, and how watching renews it. */
+export function linkedUntilNotice(expiresAtMs: number): string {
+    return `This device is linked until ${new Date(expiresAtMs).toLocaleDateString()}. Watching here in its last week renews it for 30 days.`;
+}
+
+/**
+ * Watching controls for one playable ticket on this device. `linkEnabled` is
+ * NEXT_PUBLIC_V2_DEVICE_LINK_ENABLED: while it is off, an unlinked device gets a notice instead of a
+ * link button, and nothing is renewed.
+ */
+export function TicketDeviceArea(props: {
+    linkEnabled: boolean;
+    plan: DevicePlan;
+    open: boolean;
+    renewing: boolean;
+    renewFailed: boolean;
+    onWatch: () => void;
+    player: () => ReactNode;
+    link: (plan: Extract<DevicePlan, { kind: 'link' }>) => ReactNode;
+}) {
+    const { plan } = props;
+    if (plan.kind === 'link') {
+        return props.linkEnabled ? props.link(plan) : <p className="text-sm text-white/60">{UNLINKED_DEVICE_NOTICE}</p>;
+    }
+    return <>
+        {props.open ? props.player() : <Button className="gap-2" disabled={props.renewing} onClick={props.onWatch}>
+            {props.renewing && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+            Watch
+        </Button>}
+        {props.linkEnabled && <p className="text-xs text-white/50">{linkedUntilNotice(plan.expiresAtMs)}</p>}
+        {props.renewFailed && <p className="text-sm text-amber-200" role="status">
+            This device&apos;s link could not be renewed just now. It still plays until the date above; watching again later retries.
+        </p>}
+    </>;
+}
+
 export function MyTickets() {
     const { config, session, view, pendingGates, unlockGate, signOut } = useNearAuthV2();
     const [device, setDevice] = useState<DeviceKey | null>(null);
     const [deviceError, setDeviceError] = useState(false);
     const [open, setOpen] = useState<string | null>(null);
+    const [renewing, setRenewing] = useState<string | null>(null);
+    const [renewFailed, setRenewFailed] = useState<string | null>(null);
     const signedIn = session.status === 'signed_in';
 
     useEffect(() => {
@@ -58,6 +103,28 @@ export function MyTickets() {
         // The CKD key must not leave memory through the query cache's persistence or devtools.
         gcTime: 0,
     });
+
+    /**
+     * Watch. A device in its last seven days is renewed first, silently: no confirmation, because a
+     * renewal never unlinks another device. If the renewal fails the device still plays until it expires.
+     */
+    async function watch(ticketId: string, key: TicketKey, plan: DevicePlan) {
+        if (!DEVICE_LINK_ENABLED || plan.kind !== 'renew' || !device) {
+            setOpen(ticketId);
+            return;
+        }
+        setRenewing(ticketId);
+        setRenewFailed(null);
+        try {
+            await linkDevice({ config, ticketKey: key, device, deps: { view } });
+            await tickets.refetch();
+        } catch {
+            setRenewFailed(ticketId);
+        } finally {
+            setRenewing(null);
+            setOpen(ticketId);
+        }
+    }
 
     if (!signedIn) {
         return <ScreenState icon={<Ticket className="h-7 w-7" />} title="My tickets"
@@ -94,7 +161,7 @@ export function MyTickets() {
             </div>)}
         </Card>}
         {tickets.data?.tickets.map(({ key, ticket }) => {
-            const listed = Boolean(device && deviceIsListed(ticket, device.sessionPublicKey, tickets.dataUpdatedAt));
+            const plan = device ? devicePlan(ticket, device.sessionPublicKey, tickets.dataUpdatedAt) : null;
             const takenDown = tickets.data.takenDown.has(ticket.publication_id);
             // A taken-down video cannot be played; the Bridge refuses it too.
             const playable = playableStatus(ticket.status) && !takenDown;
@@ -108,13 +175,14 @@ export function MyTickets() {
                     </div>
                     <span className="rounded border border-white/15 px-2 py-1 text-xs text-white/80">{STATUS_LABELS[ticket.status]}</span>
                 </div>
-                {playable && listed && device && (open === ticket.ticket_id
-                    ? <TicketPlayer bridgeUrl={config.bridgeUrl} network={config.auth.network} contractId={config.marketContractId}
-                        ticketId={ticket.ticket_id} device={device} firstPlay={ticket.status === 'purchased'} />
-                    : <Button onClick={() => setOpen(ticket.ticket_id)}>Watch</Button>)}
-                {playable && !listed && device && <p className="text-sm text-white/60">
-                    This device is not linked to this ticket. Watch on a device where you bought or watched it, or write to contact@youtick.net.
-                </p>}
+                {playable && plan && device && <TicketDeviceArea linkEnabled={DEVICE_LINK_ENABLED} plan={plan}
+                    open={open === ticket.ticket_id} renewing={renewing === ticket.ticket_id} renewFailed={renewFailed === ticket.ticket_id}
+                    onWatch={() => void watch(ticket.ticket_id, key, plan)}
+                    player={() => <TicketPlayer bridgeUrl={config.bridgeUrl} network={config.auth.network} contractId={config.marketContractId}
+                        ticketId={ticket.ticket_id} device={device} firstPlay={ticket.status === 'purchased'} />}
+                    link={(linkPlan) => <DeviceLink config={config} view={view} ticketKey={key} device={device} plan={linkPlan}
+                        onLinked={async () => { await tickets.refetch(); setOpen(ticket.ticket_id); }}
+                        onStale={async () => { await tickets.refetch(); }} />} />}
                 {takenDown && <p className="text-sm text-amber-200">This video was removed and can no longer be watched.</p>}
                 {session.status === 'signed_in' && refundRequestable(ticket, tickets.dataUpdatedAt, takenDown) && <RefundRequest
                     binding={{ network: config.auth.network, contractId: config.marketContractId }}

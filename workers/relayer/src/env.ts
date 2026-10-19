@@ -25,6 +25,12 @@ export interface Env {
     /** Uploads (fee payments and upload-key replacements) relayed per day, in total and per identity. */
     DAILY_UPLOAD_LIMIT?: string;
     IDENTITY_DAILY_UPLOAD_LIMIT?: string;
+    /**
+     * Device links (`add_device`) relayed per day, in total and per ticket. Optional: without both,
+     * only `/v1/devices*` answer `devices_disabled`; every other route keeps working.
+     */
+    DAILY_DEVICE_LIMIT?: string;
+    TICKET_DAILY_DEVICE_LIMIT?: string;
     INVITE_AMOUNTS_USDC_MICRO?: string;
     INVITE_TTL_DAYS?: string;
     ALLOWED_ORIGINS?: string;
@@ -68,6 +74,8 @@ export interface RelayerConfig {
     identityDailyPurchaseLimit: string;
     dailyUploadLimit: string;
     identityDailyUploadLimit: string;
+    /** Null unless both device limits are set and well-formed: the device routes are then off. */
+    devices: { dailyLimit: string; ticketDailyLimit: string } | null;
     inviteAmountsMicro: string[];
     inviteTtlMs: number;
     allowedOrigins: string[];
@@ -113,6 +121,9 @@ export function relayerConfig(env: Env): RelayerConfig | null {
         marketContractId: env.MARKET_V2_CONTRACT_ID!, dailyPurchaseLimit: env.DAILY_PURCHASE_LIMIT!,
         identityDailyPurchaseLimit: env.IDENTITY_DAILY_PURCHASE_LIMIT!,
         dailyUploadLimit: env.DAILY_UPLOAD_LIMIT!, identityDailyUploadLimit: env.IDENTITY_DAILY_UPLOAD_LIMIT!,
+        // Kept out of `numbers`: a release without these values must not switch the whole relayer off.
+        devices: POSITIVE.test(env.DAILY_DEVICE_LIMIT ?? '') && POSITIVE.test(env.TICKET_DAILY_DEVICE_LIMIT ?? '')
+            ? { dailyLimit: env.DAILY_DEVICE_LIMIT!, ticketDailyLimit: env.TICKET_DAILY_DEVICE_LIMIT! } : null,
         inviteTtlMs: Number(env.INVITE_TTL_DAYS) * 86_400_000, allowedOrigins,
     };
 }

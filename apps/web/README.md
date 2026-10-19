@@ -113,6 +113,17 @@ moving watermark with the ticket code (the first 8 hex characters of the public 
 carries no buyer account). It is a visible deterrent only; full screen applies to the player
 frame so the watermark stays, and picture-in-picture is off. iOS Safari's own full-screen video
 cannot be overlaid.
+Every V2 device record lasts 30 days from its link or renewal (Market V2). With
+`NEXT_PUBLIC_V2_DEVICE_LINK_ENABLED=true` (default off) `/tickets` offers "Watch on this device"
+for a ticket this browser is not linked to, and Watch first renews a device in its last seven
+days (`lib/v2/devices.ts`, `components/v2/DeviceLink.tsx`). The ticket key signs `add_device` in
+the browser with the device epoch read from final state; the relayer's `POST /v1/devices` submits
+it from its own account, so there is no approval window and no fee. A fourth device asks first,
+because the contract then unlinks the device linked or renewed longest ago; if a fresh read before
+signing would unlink a different device, nothing is signed and the page asks again. The link counts only
+once `get_ticket` lists the device. The flag needs a relayer with `DAILY_DEVICE_LIMIT` and
+`TICKET_DAILY_DEVICE_LIMIT` set; without the flag the page shows a neutral notice and renews
+nothing, so a device stops playing 30 days after its last link.
 Multi-asset payments also default to `off`. `preview` is dry-quote only; `live`
 requires the Bridge to use the same mode and a positive
 `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`.

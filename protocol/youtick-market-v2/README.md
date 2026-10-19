@@ -206,6 +206,16 @@ could be reversed.
 | `release_expired` (anyone) | `{ ticket_ids: [1..25] }`; NEAR caps one call's logs at 16,384 bytes |
 | `replace_upload_key` (job creator) | `{ job_id, new_public_key, expires_at_ms }`; see "Upload through NEAR Auth" |
 
+The relayer submits `add_device` from its own account (`workers/relayer`, `POST /v1/devices`), so
+linking or renewing a device needs no transaction by the holder. The `device_link` vectors apply
+in order after `calls.revoke_device_args`, at device epoch 1:
+- `link_at_epoch_1` links the revoked second session again;
+- `renewal` renews the purchase session: same key and epoch, nothing is evicted and the epoch
+  stays.
+
+Each holds the ticket signature, the `add_device` arguments and the `device_added` event at block
+time `issued_at_ms` (a link or renewal lasts 30 days from the block).
+
 ## Contract rules this protocol relies on
 
 1. **Messages from raw arguments.** Build every signed message from the raw argument strings,
@@ -322,7 +332,9 @@ LOCAL_TEST: the checker reproduces every vector, verifies every signature and ch
 - the VAT attestation binds the VAT amount and the network;
 - the split adds up to the gross amount;
 - the upload and `replace_upload_key` delegates rebuild byte-for-byte from their fields and
-  bind the nonce and the sender, and the upload amount equals the fee formula.
+  bind the nonce and the sender, and the upload amount equals the fee formula;
+- the `device_link` messages rebuild from their arguments, bind the device epoch and carry the
+  epoch after the revoke vector.
 
 It rejects:
 - a gross amount below the minimum
