@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageShell } from '@/components/PageShell';
 import { LegalDraftNotice } from '@/components/legal/LegalDraftNotice';
-import { CANCELLATION_DAYS, COMPANY, TICKET_DEVICE_LIMIT, USDC_REFUND_WINDOW_DAYS } from '@/components/legal/legal-facts';
+import { CANCELLATION_DAYS, COMPANY, TICKET_DEVICE_LIMIT } from '@/components/legal/legal-facts';
 
 export const metadata: Metadata = {
     title: 'Terms',
@@ -34,7 +34,7 @@ export default function TermsPage() {
 
             <Section id="licence" title="2. How youtick sells access">
                 <p>Creators keep the rights in their work. A creator who releases a video on youtick grants {COMPANY.name} a licence to make that video available to ticket holders. {COMPANY.name} sells access to the video in its own name; the creator is paid under their agreement with us.</p>
-                <p>When you pay by card, our payment partner Cleeng processes the payment as reseller (merchant of record) and its own terms apply to the payment. When you pay with USDC, you buy from {COMPANY.name} directly.</p>
+                <p>When you pay by card, our card payment provider processes the payment as reseller (merchant of record) and its own terms apply to the payment.</p>
             </Section>
 
             <Section id="ticket" title="3. What a ticket is">
@@ -54,10 +54,9 @@ export default function TermsPage() {
             </Section>
 
             <Section id="refunds" title="6. Refunds">
-                <p>The <Link className={link} href="/refund-policy">refund policy</Link> sets out the rules for each payment method. In short:</p>
+                <p>The <Link className={link} href="/refund-policy">refund policy</Link> sets out the rules. In short:</p>
                 <ul className="list-disc space-y-2 pl-5">
-                    <li><strong className="text-white">Card payments</strong> follow Cleeng&apos;s standard refund policy, which covers technical problems such as a video that does not play.</li>
-                    <li><strong className="text-white">USDC payments:</strong> a ticket you have not played can be refunded through youtick within {USDC_REFUND_WINDOW_DAYS} days of purchase. After playback starts, a refund is for a technical problem or a video that is not as described.</li>
+                    <li><strong className="text-white">Card payments</strong> follow our card payment provider&apos;s standard refund policy, which covers technical problems such as a video that does not play.</li>
                     <li>A change of mind after playback starts is not refunded.</li>
                 </ul>
             </Section>
@@ -89,13 +88,6 @@ export default function TermsPage() {
             <Section id="law" title="10. Governing law and complaints">
                 <p>These terms are governed by the law of {COMPANY.jurisdiction}. If you live elsewhere in the United Kingdom, you may also bring proceedings in your local courts, and you keep any mandatory protection of the law of the country where you live.</p>
                 <p>Questions or complaints: <a className={link} href={`mailto:${COMPANY.contactEmail}`}>{COMPANY.contactEmail}</a>. Content reports: the <Link className={link} href="/report">content report page</Link> or <a className={link} href={`mailto:${COMPANY.reportsEmail}`}>{COMPANY.reportsEmail}</a>. Content restrictions and provider removal are separate actions and removal may not be immediate.</p>
-            </Section>
-
-            <Section id="v1-pilot" title="V1 wallet pilot on NEAR testnet">
-                <p>The earlier wallet-based pilot uses a connected NEAR testnet wallet and test tokens with no real value. It is not a real-money commercial launch. In that pilot youtick operates the publishing, ticket and viewing interface; NEAR records settlement and access rights; Livepeer processes and delivers media. The illustrative pilot fee model allocates 5% of a ticket to youtick and 95% to the creator balance, withdrawn to the creator&apos;s own NEAR wallet. This is not a promise of earnings or bank payout.</p>
-                <p>The pilot source-file limit is 5 GB per video; tickets start at 2 test USDC. The upload fee is separate from the ticket price. Your upload must publish within 24 hours of accepted payment; resuming does not extend that deadline. A 30-day device authorization is a device access check, not the duration of your ticket right.</p>
-                <p>Completed blockchain operations may be irreversible. The pilot flow does not automatically refund a processed upload or a cancelled job. Returned tokens for a rejected or duplicate transfer follow the protocol; they are not a commercial refund promise. Nothing in this notice excludes applicable statutory consumer rights.</p>
-                <p id="test-tokens">Use only test tokens on NEAR testnet. Free <a className="underline" href="https://docs.near.org/getting-started/faucet" target="_blank" rel="noreferrer">test NEAR</a> and <a className="underline" href="https://faucet.circle.com/" target="_blank" rel="noreferrer">test USDC</a> may be available from their respective faucets. If Near Testnet is offered by the Circle faucet, select USDC and that network for your connected testnet account. Availability and request limits are controlled by the providers. Do not send real-money assets for this pilot.</p>
             </Section>
 
             <Link href="/" className="inline-block text-emerald-300">Back home</Link>

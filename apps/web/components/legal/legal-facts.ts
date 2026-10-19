@@ -4,7 +4,7 @@
 export const LEGAL_DRAFT_DATE = '18 October 2026';
 
 /** The visible line on every draft legal page. */
-export const LEGAL_DRAFT_NOTICE = `Draft of ${LEGAL_DRAFT_DATE}, pending review by our legal counsel. It may change before tickets are sold for real money.`;
+export const LEGAL_DRAFT_NOTICE = `Draft of ${LEGAL_DRAFT_DATE}, pending review by our legal counsel. It may change before ticket sales open.`;
 
 export const COMPANY = {
     name: 'YOUTICK LTD',
@@ -20,9 +20,3 @@ export const TICKET_DEVICE_LIMIT = 3;
 
 /** The statutory cancellation period for distance contracts (Consumer Contracts Regulations 2013). */
 export const CANCELLATION_DAYS = 14;
-
-/** Market V2 refund window for crypto tickets, from purchase (contract README, "Refund window"). */
-export const USDC_REFUND_WINDOW_DAYS = 30;
-
-/** youtick's answer time for a refund request (payment service `ANSWER_WITHIN_MS`). */
-export const REFUND_ANSWER_HOURS = 72;

@@ -2,11 +2,11 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageShell } from '@/components/PageShell';
 import { LegalDraftNotice } from '@/components/legal/LegalDraftNotice';
-import { CANCELLATION_DAYS, COMPANY, REFUND_ANSWER_HOURS, USDC_REFUND_WINDOW_DAYS } from '@/components/legal/legal-facts';
+import { CANCELLATION_DAYS, COMPANY } from '@/components/legal/legal-facts';
 
 export const metadata: Metadata = {
     title: 'Refund policy',
-    description: 'When a youtick ticket can be refunded, for card and USDC payments.',
+    description: 'When a youtick ticket can be refunded.',
     alternates: { canonical: '/refund-policy' },
 };
 
@@ -29,23 +29,13 @@ export default function RefundPolicyPage() {
 
             <section id="card" className="space-y-3">
                 <h2 className="text-xl font-semibold text-white">Tickets paid by card</h2>
-                <p>Card payments are processed by our payment partner Cleeng, which sells the ticket to you as reseller (merchant of record). Refunds of card payments follow Cleeng&apos;s standard refund policy, which covers technical problems such as a video that does not play. Cleeng returns the money to the card you paid with.</p>
-                <p>To ask for a refund, write to <a className={link} href={`mailto:${COMPANY.contactEmail}`}>{COMPANY.contactEmail}</a> with your ticket code and what went wrong. We pass the request to Cleeng. When a card payment is refunded, the ticket stops working.</p>
-            </section>
-
-            <section id="usdc" className="space-y-3">
-                <h2 className="text-xl font-semibold text-white">Tickets paid with USDC</h2>
-                <p>When you pay with USDC, the price stays held for {USDC_REFUND_WINDOW_DAYS} days before it is paid out. During that time:</p>
-                <ul className="list-disc space-y-2 pl-5">
-                    <li><strong className="text-white">A ticket you have not played</strong> can be refunded through youtick.</li>
-                    <li><strong className="text-white">A ticket you have played</strong> can be refunded if the video did not play properly or was not as described. A change of mind is not refunded.</li>
-                </ul>
-                <p>Ask from <Link className={link} href="/tickets">My tickets</Link> within 27 days of purchase, so that we can answer within {REFUND_ANSWER_HOURS} hours and inside the {USDC_REFUND_WINDOW_DAYS}-day period. An approved refund returns the full price to your youtick balance; only your own account can receive it.</p>
+                <p>Card payments are processed by our card payment provider, which sells the ticket to you as reseller (merchant of record). Refunds of card payments follow our card payment provider&apos;s standard refund policy, which covers technical problems such as a video that does not play. The provider returns the money to the card you paid with.</p>
+                <p>To ask for a refund, write to <a className={link} href={`mailto:${COMPANY.contactEmail}`}>{COMPANY.contactEmail}</a> with your ticket code and what went wrong. We pass the request to our card payment provider. When a card payment is refunded, the ticket stops working.</p>
             </section>
 
             <section id="takedown" className="space-y-3">
                 <h2 className="text-xl font-semibold text-white">If a video is taken down</h2>
-                <p>If we take a video down, access ends for every ticket. Tickets that were never played are refunded, whichever way you paid. Tickets that were already played are not refunded, because the video was supplied; this does not affect your rights if the video was faulty or not as described.</p>
+                <p>If we take a video down, access ends for every ticket. Tickets that were never played are refunded. Tickets that were already played are not refunded, because the video was supplied; this does not affect your rights if the video was faulty or not as described.</p>
             </section>
 
             <section id="contact" className="space-y-3">
