@@ -47,7 +47,7 @@ const ERRORS: Record<string, string> = {
     daily_limit_reached: 'Uploads are paused for today. Please try again tomorrow.',
     rate_limited: 'Too many attempts. Please wait a minute and try again.',
     uploads_paused: 'Uploads are paused right now. Please try again later.',
-    admission_closed: 'Your account is not enabled for uploads yet. Ask for an invite first.',
+    admission_closed: 'Your account is not open for uploads. Apply at youtick.net/apply or write to contact@youtick.net.',
     admission_denied: 'Uploads are busy right now. Please try again in a few minutes.',
     job_conflict: 'This upload id is already in use. Reload the page and start again.',
     upload_not_confirmed: 'The fee was returned, so no upload was created. Please try again.',

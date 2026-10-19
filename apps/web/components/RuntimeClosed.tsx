@@ -7,8 +7,8 @@ export function RuntimeClosed() {
         <PageShell className="flex items-center justify-center">
             <ScreenState
                 icon={<Lock className="h-7 w-7" />}
-                title="Publishing is not open yet"
-                description="Video publishing, discovery and ticketed viewing will be available after launch."
+                title="Opening February 2027"
+                description="youtick opens in February 2027. Artists can apply to show their work at youtick.net/apply."
             />
         </PageShell>
     );
