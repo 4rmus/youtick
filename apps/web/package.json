@@ -28,26 +28,26 @@
     "hls.js": "1.6.16",
     "lucide-react": "^0.577.0",
     "near-api-js": "^7.0.3",
-    "next": "^16.4.0",
+    "next": "^16.4.2",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "tailwind-merge": "^3.7.0",
     "tus-js-client": "4.3.1"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.18.0",
+    "@opennextjs/cloudflare": "1.20.12",
     "@playwright/test": "^1.64.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24.19.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.4.0",
+    "eslint-config-next": "16.4.2",
     "tailwindcss": "^4",
     "tweetnacl": "^1.0.3",
     "typescript": "^5",
     "vitest": "^4.1.11",
-    "wrangler": "4.147.0"
+    "wrangler": "4.151.2"
   },
   "overrides": {
     "sharp": "^0.35.5"
