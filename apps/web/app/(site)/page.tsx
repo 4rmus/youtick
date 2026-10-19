@@ -1,10 +1,9 @@
 import type { Metadata } from 'next';
 import { LandingPage } from '@/components/landing/LandingPage';
-import { FEATURE_FLAGS } from '@/lib/constants';
 
 export const metadata: Metadata = {
-    title: 'Ticketed screenings for independent film and music',
-    description: 'Sell a film or concert recording directly to your audience with a digital ticket and Livepeer video playback.',
+    title: 'Ticketed screenings of concerts, films and performances',
+    description: 'youtick opens in February 2027. Buy a ticket to an artist’s concert, film or recorded performance and watch it in your own time. Artists can apply now.',
     alternates: {
         canonical: '/',
         languages: { en: '/', tr: '/tr', 'x-default': '/' },
@@ -15,11 +14,11 @@ export const metadata: Metadata = {
         locale: 'en_US',
         alternateLocale: ['tr_TR'],
         title: 'youtick — Ticketed digital screenings',
-        description: 'Upload the work, set the ticket price, and sell directly to your audience.',
+        description: 'Opening February 2027. Concerts, films and recorded performances, by ticket.',
         images: [{ url: '/hero-concert.webp', width: 1024, height: 1024, alt: 'A concert stage facing a live audience' }],
     },
 };
 
 export default function Home() {
-    return <LandingPage locale="en" enabled={FEATURE_FLAGS.enablePaidMediaLivepeerV1} />;
+    return <LandingPage locale="en" />;
 }

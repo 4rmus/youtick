@@ -1,10 +1,9 @@
 import type { Metadata } from 'next';
 import { LandingPage } from '@/components/landing/LandingPage';
-import { FEATURE_FLAGS } from '@/lib/constants';
 
 export const metadata: Metadata = {
-    title: 'Bağımsız film ve müzik için biletli gösterimler',
-    description: 'Filmini veya konser kaydını dijital bilet ve Livepeer video deneyimiyle doğrudan kendi izleyicine sat.',
+    title: 'Konserler, filmler ve performanslar için biletli gösterim',
+    description: 'youtick Şubat 2027’de açılıyor. Bir sanatçının konserini, filmini ya da performans kaydını kendi biletli gösterim sayfasında, dilediğin zaman izle. Sanatçılar şimdiden başvurabilir.',
     alternates: {
         canonical: '/tr',
         languages: { en: '/', tr: '/tr', 'x-default': '/' },
@@ -15,11 +14,11 @@ export const metadata: Metadata = {
         locale: 'tr_TR',
         alternateLocale: ['en_US'],
         title: 'youtick — Biletli dijital gösterimler',
-        description: 'Eseri yükle, bilet fiyatını belirle ve kendi izleyicine doğrudan sat.',
+        description: 'Şubat 2027’de açılıyor. Konserler, filmler ve performans kayıtları, biletle.',
         images: [{ url: '/hero-concert.webp', width: 1024, height: 1024, alt: 'Canlı izleyiciye bakan bir konser sahnesi' }],
     },
 };
 
 export default function TurkishHome() {
-    return <LandingPage locale="tr" enabled={FEATURE_FLAGS.enablePaidMediaLivepeerV1} />;
+    return <LandingPage locale="tr" />;
 }

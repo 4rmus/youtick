@@ -7,8 +7,13 @@ import { ArrowRightLeft, LogOut, Menu, User, X } from 'lucide-react';
 import { BrandWordmark } from '@/components/BrandWordmark';
 import { useWallet } from '@/components/providers/WalletProvider';
 import { Button } from '@/components/ui/button';
-import { getLandingCopy, getLandingCtas, type LandingLocale } from '@/components/landing/landing-copy';
+import { getLandingCopy, getLandingCtas, landingHomeHref, landingNavSections, type LandingLocale } from '@/components/landing/landing-copy';
+import { openingProgrammeMode } from '@/components/landing/opening-programme';
 import { FEATURE_FLAGS, LAUNCH_STAGE } from '@/lib/constants';
+
+/** Public pages that use the landing navigation: the landing, the application and opening-notice pages, and the legal pages. */
+const LANDING_NAV_PATHS = ['/', '/tr', '/apply', '/tr/apply', '/notify', '/tr/notify', '/privacy', '/terms', '/refund-policy', '/report'];
+const TURKISH_PATHS = ['/tr', '/tr/apply', '/tr/notify'];
 
 const LINKS = [
     { href: '/discover', label: 'Discover' },
@@ -20,12 +25,13 @@ export function Navbar() {
     const pathname = usePathname();
     const { accountId, connect, isReady, signOut } = useWallet();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
-    // The creator application pages use the landing navigation in their own language.
-    const isLanding = pathname === '/' || pathname === '/tr' || pathname === '/apply' || pathname === '/tr/apply';
-    const locale: LandingLocale = pathname === '/tr' || pathname === '/tr/apply' ? 'tr' : 'en';
+    // The public pages use the landing navigation in their own language.
+    const isLanding = LANDING_NAV_PATHS.includes(pathname);
+    const locale: LandingLocale = TURKISH_PATHS.includes(pathname) ? 'tr' : 'en';
     const copy = getLandingCopy(locale, LAUNCH_STAGE);
-    const ctas = getLandingCtas(locale, FEATURE_FLAGS.enablePaidMediaLivepeerV1, LAUNCH_STAGE);
-    const landingHome = locale === 'tr' ? '/tr' : '/';
+    const ctas = getLandingCtas(locale, LAUNCH_STAGE);
+    const landingHome = landingHomeHref(locale);
+    const sections = landingNavSections(copy, openingProgrammeMode());
     const appLinks = accountId ? LINKS : LINKS.filter((link) => link.href !== '/profile');
 
     if (isLanding && !accountId) {
@@ -34,12 +40,11 @@ export function Navbar() {
                 <div className="container mx-auto flex min-h-16 flex-wrap items-center justify-between gap-4 px-4 py-2">
                     <Link href={landingHome} className="text-lg"><BrandWordmark /></Link>
                     <div className="hidden items-center gap-5 lg:flex">
-                        {copy.nav.sections.map((section) => (
+                        {sections.map((section) => (
                             <Link key={section.hash} href={`${landingHome}#${section.hash}`} className="text-sm text-zinc-400 hover:text-white">{section.label}</Link>
                         ))}
                     </div>
                     <div className="flex items-center gap-3">
-                        {ctas.status && <span className="hidden text-xs font-semibold text-near-green sm:inline">{ctas.status}</span>}
                         <Button asChild size="sm"><Link href={ctas.primary.href}>{ctas.primary.label}</Link></Button>
                         {FEATURE_FLAGS.enablePaidMediaLivepeerV1 && (
                             <Button size="sm" disabled={!isReady} onClick={() => void connect()}>{copy.nav.connect}</Button>

@@ -1,4 +1,5 @@
 import type { LaunchStage } from '@/lib/constants';
+import type { OpeningProgrammeMode, OpeningWorkType } from './opening-programme';
 
 export type LandingLocale = 'en' | 'tr';
 
@@ -13,18 +14,16 @@ type CardCopy = {
     description: string;
 };
 
-export type RoiCopy = Intro & {
-    presets: readonly { label: string; price: string; sales: number }[];
-    ticketPrice: string;
-    invalidTicketPrice: string;
-    estimatedSales: string;
-    totalSales: string;
-    creatorShare: string;
-    platformFee: string;
-    creatorShareDescription: string;
-    estimateNote: string;
-    uploadFeeTitle: string;
-    uploadFeeDescription: string;
+type ListCard = CardCopy & { items: readonly string[] };
+
+export type RevenueExampleCopy = {
+    title: string;
+    price: string;
+    vat: string;
+    card: string;
+    youtick: string;
+    artist: string;
+    note: string;
 };
 
 export type LandingCopy = {
@@ -32,6 +31,9 @@ export type LandingCopy = {
     nav: {
         /** In-page anchors of the landing navigation, in display order. */
         sections: readonly { hash: string; label: string }[];
+        /** Replaces the first link while the opening programme is shown. */
+        openingProgramme: string;
+        openingArtists: string;
         switchLanguage: string;
         connect: string;
         disconnect: string;
@@ -42,69 +44,72 @@ export type LandingCopy = {
         subtitle: string;
         description: string;
         imageAlt: string;
+        /** The text link under the buttons, by opening-programme state. */
+        programmeLink: string;
+        openingProgrammeLink: string;
+        openingArtistsLink: string;
     };
-    audience: Intro & {
-        creator: CardCopy & { benefits: readonly string[] };
-        viewer: CardCopy & { benefits: readonly string[] };
+    openingProgramme: {
+        eyebrow: string;
+        programme: { title: string; description: string };
+        artists: { title: string; description: string };
+        workTypes: Record<OpeningWorkType, string>;
+        screeningPage: string;
     };
-    howItWorks: Intro & {
+    programme: Intro & { items: readonly CardCopy[] };
+    boxOffice: Intro & {
         steps: readonly CardCopy[];
         imageAlt: string;
-        /** The screening card over the image; `null` leaves the image alone. */
         preview: {
             label: string;
             title: string;
             tag: string;
             details: readonly { label: string; value: string }[];
-        } | null;
+        };
     };
-    useCases: Intro & { items: readonly CardCopy[] };
-    /** The ticket-split simulator; `null` hides the section (the Turkish layer carries no payment copy, K6). */
-    roi: RoiCopy | null;
-    trust: Intro & {
-        items: readonly CardCopy[];
-        technologyLabel: string;
+    ticket: Intro & {
+        cards: readonly [ListCard, ListCard];
+        /** Links to the legal pages; `null` on the Turkish page, whose legal texts wait for counsel. */
+        links: { terms: string; refund: string } | null;
     };
-    creators: Intro & {
+    artists: Intro & {
+        cards: readonly [ListCard, ListCard];
+        /** The worked revenue example; `null` on the Turkish page (no figures before counsel, K6). */
+        example: RevenueExampleCopy | null;
+    };
+    apply: Intro & {
         points: readonly string[];
         action: string;
         note: string;
-        heroLink: string;
     };
-    cta: Intro;
+    howItWorks: Intro & {
+        items: readonly CardCopy[];
+        technologyLabel: string;
+    };
+    closing: Intro;
     footer: {
         description: string;
-        /** External project links; the Turkish layer names no chain. */
-        links: readonly { label: string; href: string }[];
         privacy: string;
         terms: string;
+        /** `null` on the Turkish page until the Turkish refund wording clears counsel. */
+        refund: string | null;
+        report: string;
         support: string;
     };
     ctas: {
-        enabled: {
-            primary: string;
-            secondary: string;
-        };
-        disabled: {
-            primary: string;
-            secondary: string;
-            status: string;
-        };
+        notify: string;
+        apply: string;
     };
 };
 
 /**
- * Launch-stage copy layers (design-language plan §4.3).
+ * Landing copy (public copy rewrite, 2026-10-19; draft in claudedocs/landing-metin-taslagi-20261019.md).
  *
- * `shared` is the Prova layer and the base every stage inherits. `gala` and
- * `vizyon` override only what differs; their text is a placeholder carrying
- * the plan's §4.5 lines and is never rendered while `LAUNCH_STAGE` is `prova`.
- *
- * Prova describes today's V2 testnet rehearsal and nothing beyond it: no
- * payment, payout, refund, device, fan or review promises (claim register
- * 2–16), no dates and no "soon". The Turkish layer stays neutral (K6): who we
- * are, the invitation and how to apply, with no payment, card, USDC or crypto
- * wording and no chain named.
+ * `shared` is the copy every launch stage renders. The stage mechanism stays (`gala` and `vizyon`
+ * override only what differs) but both overrides are empty: stages no longer appear in public copy.
+ * Public copy never names the card payment provider, a rehearsal, beta, test or invitation phase,
+ * USDC or crypto. The Turkish layer is the interim version: it carries no payment, price, refund,
+ * card or chain wording until the Turkish counsel opinion (K6, X4).
  */
 export const landingCopyLayers = {
     shared: {
@@ -112,349 +117,357 @@ export const landingCopyLayers = {
             languageName: 'Türkçe',
             nav: {
                 sections: [
-                    { hash: 'audience', label: 'For creators and viewers' },
+                    { hash: 'programme', label: 'Programme' },
+                    { hash: 'box-office', label: 'Box office' },
+                    { hash: 'artists', label: 'For artists' },
                     { hash: 'how-it-works', label: 'How it works' },
-                    { hash: 'roi-calculator', label: 'Fee model' },
                 ],
+                openingProgramme: 'Opening programme',
+                openingArtists: 'Opening artists',
                 switchLanguage: 'Türkçe',
                 connect: 'Connect',
                 disconnect: 'Disconnect',
             },
             hero: {
-                badge: 'Invite-only rehearsal on the NEAR testnet',
-                title: 'Ticketed screenings for independent film and music.',
-                subtitle: 'youtick is a ticketed-screening platform. Today it runs as an invite-only rehearsal on the NEAR testnet, with test tickets that have no real value.',
-                description: 'Invited creators sign in with Google or a passkey, upload with an invite credit and open a test screening for their viewers. Card checkout exists in a sandbox and is not public. Film and music creators can apply for an invite.',
+                badge: 'Opening February 2027',
+                title: 'Ticketed screenings of concerts, films and recorded performances.',
+                subtitle: 'youtick is a digital screening room. Buy a ticket to an artist’s concert, film or performance and watch it in your own time.',
+                description: 'We open with work by artists we have been talking to; their names and works will be announced on this page. Artists who want to show their work on youtick can apply now.',
                 imageAlt: 'A concert stage facing a live audience',
+                programmeLink: 'What you will be able to watch',
+                openingProgrammeLink: 'See the opening programme',
+                openingArtistsLink: 'See the opening artists',
             },
-            audience: {
-                eyebrow: 'The rehearsal',
-                title: 'A clear experience for both sides of the screen.',
-                description: 'Invited creators and their viewers try the release and ticket flow on the testnet. The rehearsal is not a commercial launch: nothing here is sold for real money.',
-                creator: {
-                    title: 'For creators',
-                    description: 'Try releasing a film, concert recording or special video in the invite-only rehearsal.',
-                    benefits: [
-                        'Sign in with Google or a passkey.',
-                        'Upload with an invite credit and publish when processing is complete.',
-                        'Set a test ticket price and publish from your studio page.',
-                    ],
+            openingProgramme: {
+                eyebrow: 'February 2027',
+                programme: {
+                    title: 'Opening programme',
+                    description: 'The first works on youtick, and the artists who made them. Each work has its own screening page.',
                 },
-                viewer: {
-                    title: 'For viewers',
-                    description: 'Try access to a specific work with a test ticket.',
-                    benefits: [
-                        'See the creator and the test ticket price before you decide.',
-                        'Sign in with Google or a passkey; test tickets use test tokens that have no real value.',
-                        'Start playback once your ticket is confirmed.',
-                    ],
+                artists: {
+                    title: 'Opening artists',
+                    description: 'youtick opens with work by these artists. The works will be announced here.',
                 },
+                workTypes: {
+                    concert: 'Concert recording',
+                    film: 'Film',
+                    documentary: 'Documentary',
+                    festival: 'Festival selection',
+                    special: 'Special edition',
+                },
+                screeningPage: 'Screening page',
             },
-            howItWorks: {
-                eyebrow: 'How it works today',
-                title: 'From sign-in to playback in four steps.',
-                description: 'youtick handles sign-in, upload and the ticket flow while Livepeer prepares the video for reliable playback.',
+            programme: {
+                eyebrow: 'Programme',
+                title: 'From concert recordings to independent cinema.',
+                description: 'Each work has its own screening page and its own ticket. You reach it through the link the artist shares; the opening programme will also be listed here.',
+                items: [
+                    { title: 'Concert recordings', description: 'Full concerts, live sessions and tour recordings.' },
+                    { title: 'Independent films', description: 'Short films, features and documentaries, shown to their own audience.' },
+                    { title: 'Festival selections', description: 'Curated programmes, recorded premieres and director talks.' },
+                    { title: 'Special editions', description: 'Album films, commentary cuts and backstage footage.' },
+                ],
+            },
+            boxOffice: {
+                eyebrow: 'Box office',
+                title: 'Buy a ticket. Watch in your own time.',
+                description: 'A ticket is your personal right to watch one work. It does not expire: watch as often as you like for as long as the work is on youtick.',
                 steps: [
-                    { title: 'Sign in', description: 'Creators and viewers sign in with Google or a passkey. Publishing is open to invited creators only.' },
-                    { title: 'Upload with an invite credit', description: 'An invite credit covers the upload of your source file (rehearsal limit: 5 GB). Confirm your publishing rights before the upload starts.' },
-                    { title: 'Publish after processing', description: 'When Livepeer finishes processing, the screening is recorded on the NEAR testnet and gets its own page.' },
-                    { title: 'Test ticket and playback', description: 'Viewers buy a test ticket with test tokens that have no real value and watch once the ticket is confirmed. Card checkout runs in a sandbox and is not public.' },
+                    { title: 'Open the screening page', description: 'Follow the artist’s link to the screening page. You see the ticket price before you pay.' },
+                    { title: 'Sign in', description: 'Your tickets stay with your account and appear on any device you sign in on.' },
+                    { title: 'Pay by card', description: 'Pay by credit or debit card. The price includes VAT where it applies.' },
+                    { title: 'Press play', description: 'Watch when you are ready, as often as you like. One ticket works on up to three devices at a time.' },
                 ],
                 imageAlt: 'A packed concert audience watching the stage',
                 preview: {
-                    label: 'Screening preview',
-                    title: 'Independent concert premiere',
-                    tag: 'Test ticket',
+                    label: 'Screening page',
+                    title: 'A concert recording',
+                    tag: 'Example',
                     details: [
-                        { label: 'Video', value: 'Playback with Livepeer' },
-                        { label: 'Sign-in', value: 'Google or passkey' },
-                        { label: 'Access', value: 'Ticket check before playback' },
+                        { label: 'Payment', value: 'Credit or debit card' },
+                        { label: 'Devices', value: 'Up to 3 at a time' },
+                        { label: 'Access', value: 'While the work is on youtick' },
                     ],
                 },
             },
-            useCases: {
-                eyebrow: 'Film and music releases',
-                title: 'For work that deserves more than another video link.',
-                description: 'Create a focused ticketed screening for the release your audience is waiting for.',
-                items: [
-                    { title: 'Concert recordings', description: 'Offer a full show, acoustic session, rehearsal, or tour recording.' },
-                    { title: 'Independent films', description: 'Release a short film, documentary, or feature to your own audience.' },
-                    { title: 'Festival selections', description: 'Share a curated film selection, director talk, or recorded premiere.' },
-                    { title: 'Special editions', description: 'Publish album films, commentary cuts, backstage footage, or supporter extras.' },
+            ticket: {
+                eyebrow: 'Ticket information',
+                title: 'Your ticket and your rights, in plain words.',
+                description: 'What you buy, what you can do with it, and what happens if something goes wrong. The full rules are in the terms and the refund policy.',
+                cards: [
+                    {
+                        title: 'Your ticket',
+                        description: 'A personal right to watch one work.',
+                        items: [
+                            'Watch as often as you like for as long as the work is on youtick.',
+                            'One ticket works on up to three devices at a time.',
+                            'The ticket is for you alone: it cannot be resold, lent or transferred, and it gives no right to copy, download or show the work in public.',
+                        ],
+                    },
+                    {
+                        title: 'Cancelling and refunds',
+                        description: 'Your statutory rights are not affected.',
+                        items: [
+                            'Until you start playback, you can cancel within 14 days of purchase.',
+                            'After playback starts, refunds cover technical problems, such as a video that does not play. There is no refund for a change of mind. If a video is faulty or not as described, you keep your statutory rights.',
+                            'If a work is taken down, tickets that were never played are refunded.',
+                            'Refunds go back to the card you paid with. Write to contact@youtick.net with your ticket code.',
+                        ],
+                    },
                 ],
+                links: { terms: 'Terms', refund: 'Refund policy' },
             },
-            roi: {
-                eyebrow: 'Fee model in the rehearsal',
-                title: 'Explore the test-ticket split.',
-                description: 'This simulation uses the illustrative rehearsal split: 95% creator balance and 5% youtick fee, in test tokens that have no real value. It is not a promise of earnings, and the launch fee model is not final.',
-                presets: [
-                    { label: 'Short film', price: '6', sales: 250 },
-                    { label: 'Concert recording', price: '12', sales: 800 },
-                    { label: 'Festival selection', price: '18', sales: 1200 },
-                    { label: 'Documentary', price: '10', sales: 600 },
+            artists: {
+                eyebrow: 'For artists',
+                title: 'Your work, your screening page, your rights.',
+                description: 'youtick is for musicians, filmmakers and performers who want to show recorded work to their own audience, by ticket.',
+                cards: [
+                    {
+                        title: 'Why youtick',
+                        description: 'One link for your audience.',
+                        items: [
+                            'Each work gets its own ticketed screening page. You share one link; viewers buy their ticket and watch there.',
+                            'You do not need a shop or a checkout of your own: we sell the tickets, take card payments through our card payment provider and answer refund requests.',
+                            'Your rights stay with you. You grant YOUTICK LTD a licence to make your work available to ticket holders.',
+                        ],
+                    },
+                    {
+                        title: 'How you are paid',
+                        description: 'Clear terms before your work goes on sale.',
+                        items: [
+                            'You set the ticket price for each work.',
+                            'From each ticket, VAT, the card payment cost and a 5% youtick fee on the price before VAT are deducted. The rest is your share, paid out monthly.',
+                            'The rates for your work are confirmed with you in writing before it goes on sale.',
+                        ],
+                    },
                 ],
-                ticketPrice: 'Ticket price (test USDC)',
-                invalidTicketPrice: 'Enter at least 2 test USDC with up to six decimal places.',
-                estimatedSales: 'Simulated ticket count',
-                totalSales: 'Simulated total (test tokens)',
-                creatorShare: 'Simulated creator balance',
-                platformFee: '5% illustrative rehearsal fee',
-                creatorShareDescription: 'Test-token balance after the illustrative fee; not a payout.',
-                estimateNote: 'Simulation only; test tokens have no real value. Earnings, tax and seller responsibilities for a launch are not established.',
-                uploadFeeTitle: 'Upload in the rehearsal',
-                uploadFeeDescription: 'In the rehearsal an invite credit covers the upload fee shown in the studio. Upload fees for a launch are not final.',
+                example: {
+                    title: 'Example: one ticket',
+                    price: 'Ticket price, VAT included',
+                    vat: 'VAT (25%)',
+                    card: 'Card payment cost (4% + $0.40)',
+                    youtick: 'youtick fee (5% of the price before VAT)',
+                    artist: 'Your share',
+                    note: 'Approximate costs, for illustration. VAT depends on the viewer’s country and the card cost on the card used.',
+                },
             },
-            trust: {
-                eyebrow: 'Why youtick',
-                title: 'Release, tickets, and viewing in one place.',
-                description: 'youtick keeps the audience experience simple while Livepeer handles video processing and streaming, and the NEAR testnet records publication, tickets and access during the rehearsal.',
+            apply: {
+                eyebrow: 'Artist applications',
+                title: 'Apply to show your work on youtick.',
+                description: 'Tell us about your work. A person reads every application, and we reply by email within a few working days.',
+                points: [
+                    'The form asks for your name, country and a link to your work: a channel, portfolio, trailer or press page.',
+                    'We read applications for concert recordings, independent films, documentaries, festival selections and special editions.',
+                    'If we decide to work together, we open your account for uploads; you upload the work, set the price and share your screening page.',
+                    'Applying does not open an account or commit you to anything.',
+                ],
+                action: 'Apply as an artist',
+                note: 'Questions before you apply? Write to contact@youtick.net.',
+            },
+            howItWorks: {
+                eyebrow: 'How it works',
+                title: 'What happens when you press play.',
+                description: 'youtick runs the screening page, the ticket and the check before playback. Two networks work in the background: Livepeer for the video, NEAR for the ticket record.',
                 items: [
-                    { title: 'One release flow', description: 'Create the screening, set the ticket price, and publish without piecing together separate tools.' },
-                    { title: 'Your own screening page', description: 'Bring viewers to your own ticketed screening instead of another generic video page.' },
-                    { title: 'Ticket-checked viewing', description: 'youtick confirms the signed-in account’s ticket before issuing short-lived playback access.' },
-                    { title: 'Honest about the stage', description: 'What you see is a rehearsal on the testnet: test tickets have no real value and no launch terms are final.' },
+                    { title: 'Ticket checked first', description: 'Before playback, youtick checks that the signed-in account holds a ticket, then gives short-lived access to the video.' },
+                    { title: 'Ticket record on NEAR', description: 'Screenings and tickets are recorded on the NEAR blockchain, so a ticket’s status can be checked. The ticket record holds no name or email, and it does not make the ticket something you can trade.' },
+                    { title: 'Video by Livepeer', description: 'Livepeer processes, stores and delivers the video to your screen.' },
+                    { title: 'What we cannot prevent', description: 'A short ticket code is shown on screen while the video plays. Screen recording cannot be blocked.' },
                 ],
                 technologyLabel: 'Built with Livepeer and NEAR',
             },
-            creators: {
-                eyebrow: 'Creator invitations',
-                title: 'Apply to release your work with youtick.',
-                description: 'We are preparing a paid launch with a small group of invited film and music creators. Tell us about your work and we will reply by email.',
-                points: [
-                    'Concert recordings, independent films, festival selections and special editions.',
-                    'Every application is read by a person; there is no automatic approval.',
-                    'Applying does not open an account or commit you to anything.',
-                ],
-                action: 'Apply for an invite',
-                note: 'Launch timing, fees and payment methods are confirmed with invited creators before any release.',
-                heroLink: 'Creator? Apply for an invite',
-            },
-            cta: {
-                eyebrow: 'Your next screening',
-                title: 'Put your film, concert recording, or special release in front of its audience.',
-                description: 'Join the rehearsal as an invited creator, or apply and tell us about your work. Nothing in the rehearsal is sold for real money.',
+            closing: {
+                eyebrow: 'Opening February 2027',
+                title: 'Come to watch, or bring your work.',
+                description: 'Leave your email and we will write to you once, when youtick opens. If you are an artist, you can apply now.',
             },
             footer: {
-                description: 'Ticketed digital screenings for independent film and music.',
-                links: [
-                    { label: 'Livepeer', href: 'https://livepeer.org' },
-                    { label: 'NEAR', href: 'https://near.org' },
-                ],
+                description: 'Ticketed digital screenings of concerts, films and recorded performances. youtick is run by YOUTICK LTD, registered in England and Wales (company number 17290900).',
                 privacy: 'Privacy',
                 terms: 'Terms',
+                refund: 'Refund policy',
+                report: 'Report content',
                 support: 'Support',
             },
             ctas: {
-                enabled: {
-                    primary: 'Open a screening',
-                    secondary: 'Discover screenings',
-                },
-                disabled: {
-                    primary: 'See how it works',
-                    secondary: 'Why youtick',
-                    status: 'Publishing is open to invited creators only',
-                },
+                notify: 'Notify me when it opens',
+                apply: 'Apply as an artist',
             },
         },
         tr: {
             languageName: 'English',
             nav: {
                 sections: [
-                    { hash: 'audience', label: 'Üretici ve izleyiciler için' },
-                    { hash: 'how-it-works', label: 'Nasıl başvurulur' },
-                    { hash: 'use-cases', label: 'Film ve müzik' },
+                    { hash: 'programme', label: 'Program' },
+                    { hash: 'box-office', label: 'Gişe' },
+                    { hash: 'artists', label: 'Sanatçılar için' },
+                    { hash: 'how-it-works', label: 'Nasıl çalışır' },
                 ],
+                openingProgramme: 'Açılış programı',
+                openingArtists: 'Açılış sanatçıları',
                 switchLanguage: 'English',
                 connect: 'Bağlan',
                 disconnect: 'Bağlantıyı kes',
             },
             hero: {
-                badge: 'Davetli prova dönemi',
-                title: 'Bağımsız film ve müzik için biletli gösterimler.',
-                subtitle: 'youtick, biletli dijital gösterim platformudur. Şu anda az sayıda davetli üreticiyle kapalı bir prova yürütüyoruz.',
-                description: 'Prova herkese açık değildir ve ticari bir açılış değildir. Film ve müzik üreticileri davet için başvurabilir; her başvuruyu bir kişi okur ve e-postayla dönüş yaparız.',
+                badge: 'Şubat 2027’de açılıyor',
+                title: 'Konserler, filmler ve performans kayıtları için biletli gösterim.',
+                subtitle: 'youtick dijital bir gösterim salonu. Bir sanatçının konserini, filmini ya da performansını kendi biletli gösterim sayfasında, dilediğin zaman izle.',
+                description: 'Açılışı, görüştüğümüz sanatçıların eserleriyle yapıyoruz; isimleri ve eserleri bu sayfada duyuracağız. Eserini youtick’te göstermek isteyen sanatçılar şimdiden başvurabilir.',
                 imageAlt: 'Canlı izleyiciye bakan bir konser sahnesi',
+                programmeLink: 'Neler izleyebileceksin',
+                openingProgrammeLink: 'Açılış programına göz at',
+                openingArtistsLink: 'Açılış sanatçılarına göz at',
             },
-            audience: {
-                eyebrow: 'Prova dönemi',
-                title: 'Ekranın iki tarafı için de açık bir deneyim.',
-                description: 'Davetli üreticiler ve izleyicileri yayın ve izleme akışını kapalı provada dener. Prova ticari bir açılış değildir.',
-                creator: {
-                    title: 'Üreticiler için',
-                    description: 'Film, konser kaydı veya özel videonu kapalı provada yayınlamayı dene.',
-                    benefits: [
-                        'Google ya da passkey ile giriş yap.',
-                        'Davetle video yükle, işleme tamamlanınca yayınla.',
-                        'Gösterimin kendi sayfası olur; izleyicini oraya yönlendirirsin.',
-                    ],
+            openingProgramme: {
+                eyebrow: 'Şubat 2027',
+                programme: {
+                    title: 'Açılış programı',
+                    description: 'youtick’teki ilk eserler ve onları yapan sanatçılar. Her eserin kendi gösterim sayfası var.',
                 },
-                viewer: {
-                    title: 'İzleyiciler için',
-                    description: 'Seçtiğin esere kendi gösterim sayfasından ulaş.',
-                    benefits: [
-                        'İzlemeden önce üreticiyi ve eseri gör.',
-                        'Google ya da passkey ile giriş yap.',
-                        'Erişimin doğrulandıktan sonra izlemeye başla.',
-                    ],
+                artists: {
+                    title: 'Açılış sanatçıları',
+                    description: 'youtick bu sanatçıların eserleriyle açılıyor. Eserleri burada duyuracağız.',
                 },
+                workTypes: {
+                    concert: 'Konser kaydı',
+                    film: 'Film',
+                    documentary: 'Belgesel',
+                    festival: 'Festival seçkisi',
+                    special: 'Özel sürüm',
+                },
+                screeningPage: 'Gösterim sayfası',
             },
-            howItWorks: {
-                eyebrow: 'Nasıl başvurulur',
-                title: 'Başvurudan provaya dört adım.',
-                description: 'Prova davetlidir. Başvurular e-postayla yürür; otomatik onay yoktur.',
+            programme: {
+                eyebrow: 'Program',
+                title: 'Konser kayıtlarından bağımsız sinemaya.',
+                description: 'Her eserin kendi gösterim sayfası ve kendi bileti var. Ona sanatçının paylaştığı bağlantıyla ulaşırsın; açılış programı burada da yer alacak.',
+                items: [
+                    { title: 'Konser kayıtları', description: 'Tam konser kayıtları, canlı oturumlar ve turne kayıtları.' },
+                    { title: 'Bağımsız filmler', description: 'Kısa filmler, uzun metrajlar ve belgeseller, kendi izleyicisiyle buluşur.' },
+                    { title: 'Festival seçkileri', description: 'Seçki programları, gala gösterimi kayıtları ve yönetmen söyleşileri.' },
+                    { title: 'Özel sürümler', description: 'Albüm filmleri, yorumlu sürümler ve sahne arkası görüntüleri.' },
+                ],
+            },
+            boxOffice: {
+                eyebrow: 'Gişe',
+                title: 'Biletinle, dilediğin zaman izle.',
+                description: 'Bilet, bir eseri izlemen için sana özel bir haktır. Süresi dolmaz: eser youtick’te kaldıkça istediğin kadar izlersin.',
                 steps: [
-                    { title: 'Eserinden bahset', description: 'Başvuru formunda adını, ülkeni ve eserine bir bağlantıyı bırak. Form açık değilse e-postayla yazabilirsin.' },
-                    { title: 'Bir kişi okur', description: 'Her başvuruyu bir kişi okur. Birkaç iş günü içinde e-postayla dönüş yaparız.' },
-                    { title: 'Davet ve giriş', description: 'Davet alan üretici Google ya da passkey ile giriş yapar ve kaynak dosyasını yükler (prova sınırı: 5 GB).' },
-                    { title: 'Gösterim ve izleme', description: 'Livepeer işlemeyi bitirdiğinde gösterim kendi sayfasına çıkar; izleyici erişimi doğrulandıktan sonra izler.' },
+                    { title: 'Gösterim sayfasını aç', description: 'Sanatçının paylaştığı bağlantıdan gösterim sayfasına git.' },
+                    { title: 'Giriş yap', description: 'Biletlerin hesabında durur; giriş yaptığın her cihazda görünür.' },
+                    { title: 'Bilet kontrolü', description: 'İzlemeden önce youtick, hesabındaki bileti doğrular.' },
+                    { title: 'Oynat', description: 'Hazır olduğunda izle; istediğin kadar tekrar izleyebilirsin. Bir bilet aynı anda en fazla üç cihazda kullanılabilir.' },
                 ],
                 imageAlt: 'Sahneyi izleyen kalabalık bir konser seyircisi',
                 preview: {
-                    label: 'Gösterim önizlemesi',
-                    title: 'Bağımsız konser galası',
-                    tag: 'Davetli prova',
+                    label: 'Gösterim sayfası',
+                    title: 'Bir konser kaydı',
+                    tag: 'Örnek',
                     details: [
-                        { label: 'Video', value: 'Livepeer ile izleme' },
-                        { label: 'Giriş', value: 'Google ya da passkey' },
-                        { label: 'Erişim', value: 'İzleme öncesi doğrulama' },
+                        { label: 'Bilet', value: 'Kişiye özel' },
+                        { label: 'Cihaz', value: 'Aynı anda en fazla 3' },
+                        { label: 'Erişim', value: 'Eser youtick’te kaldıkça' },
                     ],
                 },
             },
-            useCases: {
-                eyebrow: 'Film ve müzik yayınları',
-                title: 'Sıradan bir video bağlantısından fazlasını hak eden işler için.',
-                description: 'İzleyicinin beklediği eser için odaklı, biletli bir gösterim oluştur.',
-                items: [
-                    { title: 'Konser kayıtları', description: 'Tam konseri, akustik oturumu, prova veya turne kaydını sun.' },
-                    { title: 'Bağımsız filmler', description: 'Kısa film, belgesel veya uzun metrajını kendi izleyicine ulaştır.' },
-                    { title: 'Festival seçkileri', description: 'Film seçkisi, yönetmen söyleşisi veya kayıtlı gala paylaş.' },
-                    { title: 'Özel sürümler', description: 'Albüm filmi, yorumlu kurgu, sahne arkası veya destekçi ekstraları yayınla.' },
+            ticket: {
+                eyebrow: 'Bilet bilgileri',
+                title: 'Biletin ve hakların, sade bir dille.',
+                description: 'Biletinle neler yapabileceğin.',
+                cards: [
+                    {
+                        title: 'Biletin',
+                        description: 'Bir eseri izlemek için sana özel bir hak.',
+                        items: [
+                            'Eser youtick’te kaldıkça istediğin kadar izle.',
+                            'Bir bileti aynı anda en fazla üç cihazda kullanabilirsin.',
+                            'Bilet yalnız senindir: satılamaz, ödünç verilemez, devredilemez; eseri kopyalama, indirme ya da herkese açık gösterme hakkı vermez.',
+                        ],
+                    },
+                    {
+                        title: 'Bize ulaş',
+                        description: 'Biletin ya da bir gösterim hakkında sorun varsa bize yaz.',
+                        items: [
+                            'Biletin ya da bir gösterimle ilgili soruların için contact@youtick.net adresine yaz.',
+                            'Bir eserle ilgili bildirim için İçerik bildir sayfasını kullan.',
+                        ],
+                    },
                 ],
+                links: null,
             },
-            roi: null,
-            trust: {
-                eyebrow: 'Neden youtick',
-                title: 'Yayın, bilet ve izleme tek yerde.',
-                description: 'youtick izleyici deneyimini sade tutar; Livepeer video işleme ve aktarımını yönetir.',
+            artists: {
+                eyebrow: 'Sanatçılar için',
+                title: 'Eserin, gösterim sayfan, hakların.',
+                description: 'youtick, eserlerinin kayıtlarını kendi izleyicisine biletle göstermek isteyen müzisyenler, yönetmenler ve sahne sanatçıları için.',
+                cards: [
+                    {
+                        title: 'Neden youtick',
+                        description: 'İzleyicin için tek bir bağlantı.',
+                        items: [
+                            'Her eserin kendi biletli gösterim sayfası olur. Sen tek bir bağlantı paylaşırsın; izleyicin eseri orada, biletle izler.',
+                            'Ayrı bir site ya da mağaza kurmana gerek yok; izleyicin eserine doğrudan gösterim sayfandan ulaşır.',
+                            'Eserinin hakları sende kalır. Eserini bilet sahiplerine sunması için YOUTICK LTD şirketine lisans verirsin.',
+                        ],
+                    },
+                    {
+                        title: 'Koşullar',
+                        description: 'Önce konuşuruz.',
+                        items: [
+                            'Her eserin koşullarını seninle birlikte netleştiririz.',
+                            'Çalışma koşullarının ayrıntıları, eserin yayına girmeden önce yazılı olarak paylaşılır.',
+                        ],
+                    },
+                ],
+                example: null,
+            },
+            apply: {
+                eyebrow: 'Sanatçı başvuruları',
+                title: 'Eserini youtick’te göstermek için başvur.',
+                description: 'Bize eserinden bahset. Her başvuruyu bir kişi okur; birkaç iş günü içinde e-postayla dönüş yaparız.',
+                points: [
+                    'Formda adını, ülkeni ve eserine bir bağlantı isteriz: kanal, portfolyo, fragman ya da basın sayfası.',
+                    'Konser kayıtları, bağımsız filmler, belgeseller, festival seçkileri ve özel sürümler için başvuruları okuyoruz.',
+                    'Birlikte çalışmaya karar verirsek hesabını yüklemeye açarız; eserini yükler ve gösterim sayfanı paylaşırsın.',
+                    'Başvuru hesap açmaz ve seni hiçbir şeye bağlamaz.',
+                ],
+                action: 'Sanatçı olarak başvur',
+                note: 'Başvurmadan önce sormak istediğin bir şey varsa contact@youtick.net adresine yaz.',
+            },
+            howItWorks: {
+                eyebrow: 'Nasıl çalışır',
+                title: 'Oynat’a bastığında ne olur?',
+                description: 'Gösterim sayfasını, bileti ve izleme öncesi kontrolü youtick yürütür; videoyu Livepeer işler.',
                 items: [
-                    { title: 'Tek yayın akışı', description: 'Gösterimi oluştur ve ayrı araçları birleştirmeden yayınla.' },
-                    { title: 'Kendi gösterim sayfan', description: 'İzleyicini genel bir video sayfası yerine kendi biletli gösterimine getir.' },
-                    { title: 'Bilet kontrollü izleme', description: 'youtick, kısa süreli izleme erişimi vermeden önce giriş yapan hesabın biletini doğrular.' },
-                    { title: 'Dönem hakkında açık', description: 'Bugün gördüğün kapalı bir provadır; açılış koşulları henüz kesinleşmemiştir.' },
+                    { title: 'Önce bilet kontrolü', description: 'İzleme başlamadan önce youtick, giriş yapan hesabın biletini doğrular ve videoya kısa süreli erişim verir.' },
+                    { title: 'Kayıtlı bilet', description: 'Her bilet kayıt altındadır; böylece durumu doğrulanabilir.' },
+                    { title: 'Video Livepeer ile', description: 'Videoyu Livepeer işler, saklar ve ekranına ulaştırır.' },
+                    { title: 'Engelleyemediğimiz şey', description: 'Video oynarken ekranda kısa bir bilet kodu görünür. Ekran kaydı engellenemez.' },
                 ],
                 technologyLabel: 'Livepeer ile geliştirildi',
             },
-            creators: {
-                eyebrow: 'Üretici davetleri',
-                title: 'Eserini youtick ile yayınlamak için başvur.',
-                description: 'Az sayıda davetli film ve müzik üreticisiyle biletli bir açılış hazırlıyoruz. Bize eserinden bahset; e-postayla dönüş yapacağız.',
-                points: [
-                    'Konser kayıtları, bağımsız filmler, festival seçkileri ve özel sürümler.',
-                    'Her başvuruyu bir kişi okur; otomatik onay yoktur.',
-                    'Başvuru hesap açmaz ve seni hiçbir şeye bağlamaz.',
-                ],
-                action: 'Davet için başvur',
-                note: 'Açılış zamanı ve koşulları, herhangi bir yayından önce davetli üreticilerle netleştirilir.',
-                heroLink: 'Üretici misin? Davet için başvur',
-            },
-            cta: {
-                eyebrow: 'Sıradaki gösterimin',
-                title: 'Filmini, konser kaydını veya özel yayınını izleyicisiyle buluştur.',
-                description: 'Davetli üretici olarak provaya katıl ya da başvurup eserinden bahset.',
+            closing: {
+                eyebrow: 'Şubat 2027’de açılıyor',
+                title: 'İzlemeye gel ya da eserini getir.',
+                description: 'E-posta adresini bırak, youtick açıldığında sana bir kez yazalım. Sanatçıysan şimdiden başvurabilirsin.',
             },
             footer: {
-                description: 'Bağımsız film ve müzik için biletli dijital gösterimler.',
-                links: [
-                    { label: 'Livepeer', href: 'https://livepeer.org' },
-                ],
+                description: 'Konserler, filmler ve performans kayıtları için biletli dijital gösterimler. youtick’i İngiltere ve Galler’de kayıtlı YOUTICK LTD (şirket numarası 17290900) işletir.',
                 privacy: 'Gizlilik',
                 terms: 'Koşullar',
+                refund: null,
+                report: 'İçerik bildir',
                 support: 'Destek',
             },
             ctas: {
-                enabled: {
-                    primary: 'Gösterim aç',
-                    secondary: 'Gösterimleri keşfet',
-                },
-                disabled: {
-                    primary: 'Nasıl başvurulur',
-                    secondary: 'Neden youtick',
-                    status: 'Yayın şu anda yalnız davetli üreticilere açık',
-                },
+                notify: 'Açılıştan haberdar ol',
+                apply: 'Sanatçı olarak başvur',
             },
         },
     } as const satisfies Record<LandingLocale, LandingCopy>,
-    // Placeholders from the design-language plan §4.5. Not rendered in Prova.
-    gala: {
-        en: {
-            hero: {
-                badge: 'Open to everyone',
-                title: 'Your stage is a link.',
-                subtitle: 'Sell your video to the world with one link. Ticket, payment and playback on the same page; tax, collection and refunds are on us.',
-                description: 'Viewers sign in with Google or a passkey and pay by card, Apple Pay, Google Pay or in USDC. No wallet app, no seed phrase, no gas fees.',
-            },
-            audience: {
-                creator: {
-                    benefits: [
-                        'Sign in with Google or a passkey.',
-                        'Upload and publish when processing is complete.',
-                        'USDC sales reach you the moment they are played; card sales land in your bank account every month.',
-                    ],
-                },
-            },
-            cta: { title: 'Let’s open your first screening.' },
-        },
-        tr: {
-            hero: {
-                badge: 'Herkese açık',
-                title: 'Sahnen bir link.',
-                subtitle: 'Videonu bir linkle dünyaya sat. Bilet, ödeme ve izleme aynı sayfada; vergi, tahsilat ve iade bizde.',
-                description: 'İzleyici Google ya da passkey ile girer; kartla, Apple Pay ya da Google Pay ile öder. İkinci şifre yok.',
-            },
-            audience: {
-                creator: {
-                    benefits: [
-                        'Google ya da passkey ile giriş yap.',
-                        'Yükle, işleme tamamlanınca yayınla.',
-                        'Kartla satılan biletlerin payı her ay banka hesabına TL olarak yatar.',
-                    ],
-                },
-            },
-            cta: { title: 'İlk gösterimini birlikte açalım.' },
-        },
-    } as const satisfies Record<LandingLocale, LandingCopyOverride>,
-    vizyon: {
-        en: {
-            hero: {
-                badge: 'Open to everyone',
-                title: 'When the curtain rises, the artist gets paid.',
-                subtitle: 'Sell your video to the world with one link. Ticket, payment and playback on the same page; tax, collection and refunds are on us.',
-            },
-            trust: {
-                items: [
-                    { title: 'Your stage is a link.', description: 'Create the screening, set the ticket price, and publish without piecing together separate tools.' },
-                    { title: 'To the last cent.', description: 'Every ticket is accounted for on the same page as the screening.' },
-                    { title: 'Reach your fans without an algorithm.', description: 'Bring viewers to your own ticketed screening instead of another generic video page.' },
-                    { title: 'Share the link, not the ticket.', description: 'youtick confirms the signed-in account’s ticket before issuing short-lived playback access.' },
-                ],
-            },
-        },
-        tr: {
-            hero: {
-                badge: 'Herkese açık',
-                title: 'Perde açılınca bilet kopar.',
-                subtitle: 'Videonu bir linkle dünyaya sat. Bilet, ödeme ve izleme aynı sayfada; vergi, tahsilat ve iade bizde.',
-            },
-            trust: {
-                items: [
-                    { title: 'Sahnen bir link.', description: 'Gösterimi oluştur ve ayrı araçları birleştirmeden yayınla.' },
-                    { title: 'Kuruşu kuruşuna.', description: 'Her bilet gösterimle aynı sayfada hesaplanır.' },
-                    { title: 'Hayranına algoritmasız ulaş.', description: 'İzleyicini genel bir video sayfası yerine kendi biletli gösterimine getir.' },
-                    { title: 'Link paylaşılır, bilet paylaşılmaz.', description: 'youtick, kısa süreli izleme erişimi vermeden önce giriş yapan hesabın biletini doğrular.' },
-                ],
-            },
-        },
-    } as const satisfies Record<LandingLocale, LandingCopyOverride>,
+    // Stage overrides stay available but empty: no stage wording or stage-specific claim is public.
+    gala: { en: {}, tr: {} } as const satisfies Record<LandingLocale, LandingCopyOverride>,
+    vizyon: { en: {}, tr: {} } as const satisfies Record<LandingLocale, LandingCopyOverride>,
 };
 
 type DeepPartial<T> = T extends readonly (infer U)[]
@@ -484,7 +497,7 @@ export function getLandingCopy(locale: LandingLocale, stage: LaunchStage = 'prov
     return mergeCopy(shared, landingCopyLayers[stage][locale]);
 }
 
-/** The Prova (shared) layer. Stage-aware callers use `getLandingCopy` with `LAUNCH_STAGE`. */
+/** The shared layer. Stage-aware callers use `getLandingCopy` with `LAUNCH_STAGE`. */
 export const landingCopy: Record<LandingLocale, LandingCopy> = landingCopyLayers.shared;
 
 /** The creator application page for each landing locale. */
@@ -492,22 +505,39 @@ export function creatorApplyHref(locale: LandingLocale): string {
     return locale === 'tr' ? '/tr/apply' : '/apply';
 }
 
+/** The opening-notice sign-up page for each landing locale. */
+export function openingNoticeHref(locale: LandingLocale): string {
+    return locale === 'tr' ? '/tr/notify' : '/notify';
+}
+
+export function landingHomeHref(locale: LandingLocale): string {
+    return locale === 'tr' ? '/tr' : '/';
+}
+
 export type LandingCtas = {
     primary: { label: string; href: string };
     secondary: { label: string; href: string };
-    status?: string;
 };
 
-export function getLandingCtas(locale: LandingLocale, enabled: boolean, stage: LaunchStage = 'prova'): LandingCtas {
+/** Viewer and artist calls to action: the opening notice and the artist application. */
+export function getLandingCtas(locale: LandingLocale, stage: LaunchStage = 'prova'): LandingCtas {
     const copy = getLandingCopy(locale, stage).ctas;
-    return enabled
-        ? {
-            primary: { label: copy.enabled.primary, href: '/upload' },
-            secondary: { label: copy.enabled.secondary, href: '/discover' },
-        }
-        : {
-            primary: { label: copy.disabled.primary, href: '#how-it-works' },
-            secondary: { label: copy.disabled.secondary, href: '#trust' },
-            status: copy.disabled.status,
-        };
+    return {
+        primary: { label: copy.notify, href: openingNoticeHref(locale) },
+        secondary: { label: copy.apply, href: creatorApplyHref(locale) },
+    };
+}
+
+/** The navigation links: the first one follows the opening-programme state. */
+export function landingNavSections(copy: LandingCopy, mode: OpeningProgrammeMode): readonly { hash: string; label: string }[] {
+    if (mode === 'hidden') return copy.nav.sections;
+    const label = mode === 'programme' ? copy.nav.openingProgramme : copy.nav.openingArtists;
+    return [{ hash: 'opening-programme', label }, ...copy.nav.sections.slice(1)];
+}
+
+/** The hero text link under the buttons, by opening-programme state. */
+export function heroProgrammeLink(copy: LandingCopy, mode: OpeningProgrammeMode): { label: string; hash: string } {
+    if (mode === 'programme') return { label: copy.hero.openingProgrammeLink, hash: 'opening-programme' };
+    if (mode === 'artists') return { label: copy.hero.openingArtistsLink, hash: 'opening-programme' };
+    return { label: copy.hero.programmeLink, hash: 'programme' };
 }
