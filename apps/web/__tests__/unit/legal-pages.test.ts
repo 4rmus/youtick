@@ -45,11 +45,12 @@ describe('terms draft', () => {
         expect(terms).toContain('A ticket does not expire');
     });
 
-    it('states the takedown and refund rules per payment method', () => {
+    it('states the takedown and card refund rules without naming the provider', () => {
         expect(terms).toContain('Tickets that were never played are refunded. Tickets that were already played are not refunded');
-        expect(terms).toContain('Card payments follow Cleeng\'s standard refund policy');
-        expect(terms).toContain('a ticket you have not played can be refunded through youtick within 30 days of purchase');
+        expect(terms).toContain('our card payment provider processes the payment as reseller (merchant of record) and its own terms apply to the payment');
+        expect(terms).toContain('Card payments follow our card payment provider\'s standard refund policy');
         expect(terms).toContain('Nothing in these terms excludes or limits your statutory rights as a consumer');
+        expect(terms).not.toMatch(/cleeng|payment partner|USDC/i);
     });
 
     it('names the company, the governing law and the content rules', () => {
@@ -59,8 +60,11 @@ describe('terms draft', () => {
         expect(renderToStaticMarkup(React.createElement(TermsPage))).toContain('href="/report"');
     });
 
-    it('keeps the pilot test-token anchor and uses no never-used claim', () => {
-        expect(renderToStaticMarkup(React.createElement(TermsPage))).toContain('id="test-tokens"');
+    it('keeps the V1 pilot section out of the public build and uses no never-used claim', () => {
+        const html = renderToStaticMarkup(React.createElement(TermsPage));
+        expect(html).not.toContain('id="v1-pilot"');
+        expect(html).not.toContain('id="test-tokens"');
+        expect(terms).not.toMatch(/pilot|testnet|test tokens/i);
         expectNoNeverUsedClaims(terms);
     });
 });
@@ -70,10 +74,11 @@ describe('refund policy draft', () => {
 
     it('is a visible draft with the same rules as the terms', () => {
         expect(policy).toContain(LEGAL_DRAFT_NOTICE);
-        expect(policy).toContain('Refunds of card payments follow Cleeng\'s standard refund policy');
-        expect(policy).toContain('A ticket you have not played can be refunded through youtick');
-        expect(policy).toContain('A change of mind is not refunded');
-        expect(policy).toContain('Tickets that were never played are refunded, whichever way you paid. Tickets that were already played are not refunded');
+        expect(policy).toContain('Refunds of card payments follow our card payment provider\'s standard refund policy');
+        expect(policy).toContain('We pass the request to our card payment provider');
+        expect(policy).toContain('you can no longer cancel because you changed your mind');
+        expect(policy).toContain('Tickets that were never played are refunded. Tickets that were already played are not refunded');
+        expect(policy).not.toMatch(/cleeng|payment partner|USDC/i);
         expect(policy).toContain('It does not affect your statutory rights as a consumer');
         expect(policy).toContain('this right ends once you start playback');
         expectNoNeverUsedClaims(policy);

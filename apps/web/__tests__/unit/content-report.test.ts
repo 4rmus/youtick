@@ -125,7 +125,7 @@ describe('report page and navigation', () => {
     it('shows the e-mail address instead of the form until the site key is set', () => {
         expect(contentReportSiteKey(undefined)).toBeNull();
         expect(contentReportSiteKey('  ')).toBeNull();
-        expect(renderToStaticMarkup(React.createElement(ContentReportForm, { siteKey: null }))).toContain('The report form is not open yet');
+        expect(renderToStaticMarkup(React.createElement(ContentReportForm, { siteKey: null }))).toContain('The report form is not available at the moment');
         expect(renderToStaticMarkup(React.createElement(ContentReportForm, { siteKey: 'key' }))).toContain('<form');
     });
 

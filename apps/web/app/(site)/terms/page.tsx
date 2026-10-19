@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { PageShell } from '@/components/PageShell';
 import { LegalDraftNotice } from '@/components/legal/LegalDraftNotice';
 import { CANCELLATION_DAYS, COMPANY, TICKET_DEVICE_LIMIT } from '@/components/legal/legal-facts';
+import { FEATURE_FLAGS } from '@/lib/constants';
 
 export const metadata: Metadata = {
     title: 'Terms',
@@ -11,6 +12,9 @@ export const metadata: Metadata = {
 };
 
 const link = 'text-emerald-300 underline-offset-2 hover:underline';
+
+/** The V1 wallet pilot terms render only in the testnet builds that still run that pilot, never in the public launch build. */
+const showV1Pilot = FEATURE_FLAGS.publicTestnetVideoV1 || FEATURE_FLAGS.publicTestnetBeta;
 
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
     return <section id={id} className="space-y-3">
@@ -89,6 +93,13 @@ export default function TermsPage() {
                 <p>These terms are governed by the law of {COMPANY.jurisdiction}. If you live elsewhere in the United Kingdom, you may also bring proceedings in your local courts, and you keep any mandatory protection of the law of the country where you live.</p>
                 <p>Questions or complaints: <a className={link} href={`mailto:${COMPANY.contactEmail}`}>{COMPANY.contactEmail}</a>. Content reports: the <Link className={link} href="/report">content report page</Link> or <a className={link} href={`mailto:${COMPANY.reportsEmail}`}>{COMPANY.reportsEmail}</a>. Content restrictions and provider removal are separate actions and removal may not be immediate.</p>
             </Section>
+
+            {showV1Pilot && <Section id="v1-pilot" title="V1 wallet pilot on NEAR testnet">
+                <p>The earlier wallet-based pilot uses a connected NEAR testnet wallet and test tokens with no real value. It is not a real-money commercial launch. In that pilot youtick operates the publishing, ticket and viewing interface; NEAR records settlement and access rights; Livepeer processes and delivers media. The illustrative pilot fee model allocates 5% of a ticket to youtick and 95% to the creator balance, withdrawn to the creator&apos;s own NEAR wallet. This is not a promise of earnings or bank payout.</p>
+                <p>The pilot source-file limit is 5 GB per video; tickets start at 2 test USDC. The upload fee is separate from the ticket price. Your upload must publish within 24 hours of accepted payment; resuming does not extend that deadline. A 30-day device authorization is a device access check, not the duration of your ticket right.</p>
+                <p>Completed blockchain operations may be irreversible. The pilot flow does not automatically refund a processed upload or a cancelled job. Returned tokens for a rejected or duplicate transfer follow the protocol; they are not a commercial refund promise. Nothing in this notice excludes applicable statutory consumer rights.</p>
+                <p id="test-tokens">Use only test tokens on NEAR testnet. Free <a className="underline" href="https://docs.near.org/getting-started/faucet" target="_blank" rel="noreferrer">test NEAR</a> and <a className="underline" href="https://faucet.circle.com/" target="_blank" rel="noreferrer">test USDC</a> may be available from their respective faucets. If Near Testnet is offered by the Circle faucet, select USDC and that network for your connected testnet account. Availability and request limits are controlled by the providers. Do not send real-money assets for this pilot.</p>
+            </Section>}
 
             <Link href="/" className="inline-block text-emerald-300">Back home</Link>
         </PageShell>
