@@ -15,6 +15,8 @@ gas and small amounts for NEAR Auth users so that sign-in and the invite credit 
 | `POST /v1/uploads` | `{ access_token, args: { receiver_id, amount, msg }, nonce, max_block_height }` | An upload fee payment approved on the NEAR Auth screen (E5b). Same pattern as purchases: the relayer rebuilds the user's account calling USDC `ft_transfer_call` to `MARKET_V2_CONTRACT_ID` with a plain `create_paid_job` message (protocol `upload_msg`: no sponsor quote, no playback session), 100 TGas and 1 yocto, and requires those bytes to equal the token's `fatxn`. Before signing it checks what the Market would refund or reject: the exact fee, purchases not paused, no public beta or public upload policy (`quote_required`), and no job under this id (`job_exists` when this creator's identical job is already authorized, `job_conflict` otherwise). Returns `{ uploadId, state, txHash }` like purchases. The client reads the result from `get_media_job`. |
 | `POST /v1/upload-keys` | `{ access_token, args: { job_id, new_public_key, expires_at_ms }, nonce, max_block_height }` | `replace_upload_key` on Market V2 for a job this creator owns, when the per-job upload key was lost (E5b). Gas only: 100 TGas, no deposit. Refused unless the job exists, belongs to the creator and is still authorized (`job_not_found`, `job_conflict`, `job_published`). Same response shape and counters as uploads. |
 | `POST /v1/uploads/status` | `{ upload_id }` | Finishes or reads an upload or upload-key relay by its `uploadId`, without a token. `404 upload_not_found` for an unknown id or a purchase id. |
+| `POST /v1/devices` | `add_device_args`: `{ ticket_id, session_public_key, certificate_sha256, device_epoch, expires_at_ms, signature }` | Links or renews a playback device on a V2 ticket (decision O12). No token: the ticket key's `add_device` signature is the proof, and the relayer learns the ticket id, never the holder's account. The relayer sends Market V2 `add_device` from **its own account** (30 TGas, no deposit), the only Market method it calls directly. Answers `200 { deviceRequestId, state: "submitted", txHash, evicts_session_public_key? }` once the transaction succeeded (`evicts_session_public_key` when a fourth device replaces the oldest), `200 { state: "listed" }` with no transaction when the device is already linked for more than seven days, and `202 { state: "pending" }` while it settles. Off (`503 devices_disabled`) unless `DAILY_DEVICE_LIMIT` and `TICKET_DAILY_DEVICE_LIMIT` are set. |
+| `POST /v1/devices/status` | `{ device_request_id }` | Finishes or reads a device link by its `deviceRequestId`; `404 device_request_not_found` for an unknown or expired id. |
 | `POST /internal/invites` | `{ amount_usdc_micro }`, admin bearer token | Creates a code. The code is returned once; only its SHA-256 is stored. |
 | `GET /internal/invited-accounts/<account>` | admin bearer token | `{ invited }`, for the Bridge upload allowlist (E6). |
 
@@ -81,6 +83,30 @@ nothing is signed unless `RELAYER_MUTATIONS_ENABLED=true`.
     chain; a new approval has new bytes and the same nonce, so only one of them can execute. A
     relay is not sent when the message signatures expire within 30 seconds. A guard that rejects
     the token ends the purchase as `approval_rejected` instead of repeating the same answer.
+- **Device links.**
+  - Checked before any gas, the way `add_device` checks them: canonical fields, a 43-44 character
+    session key (the Bridge plays no other), a signature expiring between one minute and one hour
+    from now, a ticket that is `purchased`, `watched`, `watched_in_escrow` or `released`, a
+    publication that is not taken down, the ticket key's `add_device` signature for this network
+    and Market, the current `device_epoch`, and a storage runway of at least 26,000 bytes (the
+    Market asserts 25,000 after every call, renewals included). Errors: `device_invalid`,
+    `ticket_not_found`, `ticket_not_playable`, `publication_unavailable`, `device_epoch_stale`,
+    `signature_expired`, `storage_unavailable`.
+  - A device already linked for more than seven days is answered `listed` without a transaction,
+    also when its epoch has moved since (a retry after a link that evicted another device).
+  - Limits: `DAILY_DEVICE_LIMIT` in total and `TICKET_DAILY_DEVICE_LIMIT` per ticket and day,
+    charged once per link in the storage transaction that records it (`daily_limit_reached`,
+    `ticket_limit_reached`). A `listed` answer is not charged. The device variables are optional
+    on purpose: without them only the device routes are off.
+  - A link is recorded under `sha256("device|ticket_id|session_public_key|certificate_sha256|device_epoch|expires_at_ms")`,
+    without the signature (protocol rule 3), so repeated or concurrent requests send one
+    transaction. Recovery is `check`: a transaction the chain does not know is signed again only
+    while the ticket does not list the device as authorized since the request. A failed
+    transaction is never sent again; the pre-check runs once more to name the reason, else
+    `502 device_add_failed`. The alarm finishes links the client stopped asking about and deletes
+    records after a day.
+  - The relayer account must hold no Market role (Bridge, platform, payment operator, admin); the
+    call is pinned to `add_device` on `MARKET_V2_CONTRACT_ID`.
 - **Verification.** id_tokens are checked with RS256 against the issuer's JWKS: issuer,
   audience/`azp`, expiry and `sub` limits. ckd-gate verifies the token again on chain.
 - **RPC trust.** The browser must read the expected account from an RPC this relayer does not
@@ -94,6 +120,9 @@ nothing is signed unless `RELAYER_MUTATIONS_ENABLED=true`.
   grows.
 - A `STUCK` invite needs an admin endpoint or runbook to resolve (later gate).
 - Real NEAR Auth tokens, a testnet `ckd-gate`, and real USDC and MPC are EXTERNAL_NOT_RUN.
+- Device links have not run against the testnet Market (EXTERNAL_NOT_RUN): the gas of the
+  eviction case is unmeasured (30 TGas is an estimate), the release config does not set the two
+  device limits yet, and whether the deployed Market carries `add_device` is unverified.
 
 ## Checks
 

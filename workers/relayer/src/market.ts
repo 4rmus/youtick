@@ -69,8 +69,8 @@ function ed25519Key(value: string, code = 'purchase_invalid'): Uint8Array {
     return raw;
 }
 
-function signedLines(fields: string[]): Uint8Array {
-    if (fields.some((field) => !field || /[\r\n]/.test(field))) throw new Error('purchase_invalid');
+function signedLines(fields: string[], code = 'purchase_invalid'): Uint8Array {
+    if (fields.some((field) => !field || /[\r\n]/.test(field))) throw new Error(code);
     return new TextEncoder().encode(fields.join('\n'));
 }
 
@@ -85,11 +85,17 @@ async function verifyEd25519(signature: string, message: Uint8Array, key: Uint8A
     return crypto.subtle.verify('Ed25519', imported, bytes as BufferSource, message as BufferSource);
 }
 
-function expiry(value: string, nowMs: number): void {
-    if (!DECIMAL.test(value)) throw new Error('purchase_invalid');
+function expiry(value: string, nowMs: number, invalid = 'purchase_invalid'): void {
+    if (!DECIMAL.test(value)) throw new Error(invalid);
     const expires = Number(value);
     if (!Number.isSafeInteger(expires) || expires <= nowMs + EXPIRY_MARGIN_MS) throw new Error('signature_expired');
-    if (expires - nowMs > MAX_SIGNATURE_TTL_MS) throw new Error('purchase_invalid');
+    if (expires - nowMs > MAX_SIGNATURE_TTL_MS) throw new Error(invalid);
+}
+
+async function sha256Hex(value: string | Uint8Array): Promise<string> {
+    const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource));
+    return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function networkOf(contractId: string): string {
@@ -123,8 +129,7 @@ export async function checkPurchaseMessage(near: NearClient, input: {
     ed25519Key(purchase.device.session_public_key);
     expiry(purchase.device.expires_at_ms, input.nowMs);
     expiry(purchase.vat.expires_at_ms, input.nowMs);
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', ticketKey as BufferSource));
-    const ticketId = Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    const ticketId = await sha256Hex(ticketKey);
 
     const [publication, ticket, vatKey, governance, beta] = await Promise.all([
         near.view<{ publication_id?: unknown; price_usdc?: unknown; availability?: unknown } | null>(
@@ -301,4 +306,118 @@ export async function checkUploadKeyArgs(near: NearClient, input: {
     if (job.creator_id !== input.accountId) throw new Error('job_conflict');
     if (job.status !== 'Authorized') throw new Error('job_published');
     if (policy !== null) throw new Error('quote_required');
+}
+
+// --- Device links (add_device) -----------------------------------------------------------------
+// The ticket key signs `add_device`; the contract accepts it from any caller, so the relayer submits
+// it from its own account and the viewer needs no NEAR transaction. These checks mirror the Market
+// method (contracts/market-v2 `add_device`, `playable_ticket`) so that a call it would reject never
+// spends the relayer's gas or the shared limits.
+
+/** `add_device_args` in protocol order (protocol/youtick-market-v2 schema). */
+export const ADD_DEVICE_KEYS = ['ticket_id', 'session_public_key', 'certificate_sha256', 'device_epoch', 'expires_at_ms', 'signature'] as const;
+export type AddDeviceArgs = Record<(typeof ADD_DEVICE_KEYS)[number], string>;
+
+/** Market V2 `MAX_TICKET_DEVICES`: a fourth device replaces the oldest. */
+const MAX_TICKET_DEVICES = 3;
+/** A device listed for longer than this needs no transaction; the web renews within this window. */
+export const DEVICE_RENEW_WITHIN_MS = 7 * 86_400_000;
+/** `add_device` asserts a 25,000-byte storage runway after every call, renewals included; plus room for one device. */
+const DEVICE_MIN_RUNWAY_BYTES = 26_000n;
+/** The Bridge only plays keys of 43-44 base58 characters (workers/livepeer-bridge `playback-v3.ts`). */
+const SESSION_KEY = /^ed25519:[1-9A-HJ-NP-Za-km-z]{43,44}$/;
+const U32 = /^(0|[1-9][0-9]{0,9})$/;
+const PLAYABLE_STATUSES = new Set(['purchased', 'watched', 'watched_in_escrow', 'released']);
+
+interface TicketView {
+    ticket_id?: unknown;
+    ticket_public_key?: unknown;
+    publication_id?: unknown;
+    status?: unknown;
+    device_epoch?: unknown;
+    devices?: unknown;
+}
+
+interface DeviceView {
+    session_public_key: string;
+    authorized_at_ms: string;
+    expires_at_ms: string;
+}
+
+/** The six string arguments in protocol order, nothing else. */
+export function parseAddDeviceArgs(value: unknown): AddDeviceArgs {
+    if (!exactStrings(value, [...ADD_DEVICE_KEYS])) throw new Error('invalid_request');
+    return Object.fromEntries(ADD_DEVICE_KEYS.map((key) => [key, value[key]])) as AddDeviceArgs;
+}
+
+/**
+ * The record key of one device link. The signature is left out (protocol rule 3: no deduplication by
+ * signature bytes), so a second encoding of the same signature cannot start a second transaction.
+ */
+export function deviceRequestId(args: AddDeviceArgs): Promise<string> {
+    return sha256Hex(['device', args.ticket_id, args.session_public_key, args.certificate_sha256, args.device_epoch, args.expires_at_ms].join('|'));
+}
+
+/** The devices a ticket view lists, in the contract's order (oldest link or renewal first). */
+export function ticketDevices(ticket: unknown): DeviceView[] {
+    const devices = (ticket as TicketView | null)?.devices;
+    if (!Array.isArray(devices) || !devices.every((device) => device && typeof device === 'object'
+        && typeof device.session_public_key === 'string' && typeof device.expires_at_ms === 'string' && DECIMAL.test(device.expires_at_ms)
+        && typeof device.authorized_at_ms === 'string' && DECIMAL.test(device.authorized_at_ms))) {
+        throw new Error('rpc_unavailable');
+    }
+    return devices as DeviceView[];
+}
+
+/**
+ * Throws a client error code unless Market V2 would add or renew this device now: canonical fields,
+ * a signature expiring between one minute and one hour from now, a playable ticket whose publication
+ * is not taken down, the ticket key's `add_device` signature, the current device epoch and enough
+ * storage runway. `listed` means the device is already linked for more than seven days, so no
+ * transaction is needed; `evicts` is the device a fourth link would replace.
+ */
+export async function checkAddDeviceArgs(near: NearClient, input: {
+    marketContractId: string; args: AddDeviceArgs; nowMs: number;
+}): Promise<{ listed: boolean; evicts: string | null }> {
+    const { args, nowMs } = input;
+    if (!HEX64.test(args.ticket_id) || !HEX64.test(args.certificate_sha256) || !SESSION_KEY.test(args.session_public_key)
+        || !U32.test(args.device_epoch) || Number(args.device_epoch) > 0xffff_ffff || !BASE64_SIGNATURE.test(args.signature)) {
+        throw new Error('device_invalid');
+    }
+    ed25519Key(args.session_public_key, 'device_invalid');
+    expiry(args.expires_at_ms, nowMs, 'device_invalid');
+
+    const ticket = await near.view<TicketView | null>(input.marketContractId, 'get_ticket', { ticket_id: args.ticket_id });
+    if (ticket === null) throw new Error('ticket_not_found');
+    if (!ticket || typeof ticket !== 'object' || ticket.ticket_id !== args.ticket_id || typeof ticket.ticket_public_key !== 'string'
+        || typeof ticket.publication_id !== 'string' || !Number.isSafeInteger(ticket.device_epoch)) {
+        throw new Error('rpc_unavailable');
+    }
+    const devices = ticketDevices(ticket);
+    if (!PLAYABLE_STATUSES.has(ticket.status as string)) throw new Error('ticket_not_playable');
+    const ticketKey = ed25519Key(ticket.ticket_public_key, 'device_invalid');
+    if (await sha256Hex(ticketKey) !== args.ticket_id) throw new Error('device_invalid');
+    const publication = await near.view<{ publication_id?: unknown; availability?: unknown } | null>(
+        input.marketContractId, 'get_publication', { publication_id: ticket.publication_id });
+    if (!publication || publication.publication_id !== ticket.publication_id || publication.availability === 'TAKEDOWN') {
+        throw new Error('publication_unavailable');
+    }
+    const message = signedLines([
+        TICKET_SIGNATURE_DOMAIN, networkOf(input.marketContractId), input.marketContractId, 'add_device', args.ticket_id, args.expires_at_ms,
+        args.session_public_key, args.certificate_sha256, args.device_epoch,
+    ], 'device_invalid');
+    if (!await verifyEd25519(args.signature, message, ticketKey)) throw new Error('device_invalid');
+
+    // Checked before the epoch: a holder retrying a link that already landed (and evicted a device,
+    // which moves the epoch) gets "listed", not a request to sign again.
+    const active = devices.filter((device) => Number(device.expires_at_ms) > nowMs);
+    const own = active.find((device) => device.session_public_key === args.session_public_key);
+    if (own && Number(own.expires_at_ms) > nowMs + DEVICE_RENEW_WITHIN_MS) return { listed: true, evicts: null };
+    if (Number(args.device_epoch) !== ticket.device_epoch) throw new Error('device_epoch_stale');
+    const reserve = await near.view<{ reserve_runway_bytes?: unknown } | null>(input.marketContractId, 'get_storage_reserve_status', {});
+    if (typeof reserve?.reserve_runway_bytes !== 'string' || !DECIMAL.test(reserve.reserve_runway_bytes)) throw new Error('rpc_unavailable');
+    if (BigInt(reserve.reserve_runway_bytes) < DEVICE_MIN_RUNWAY_BYTES) throw new Error('storage_unavailable');
+    // A renewal removes the same key first and never evicts.
+    const others = active.filter((device) => device.session_public_key !== args.session_public_key);
+    return { listed: false, evicts: others.length >= MAX_TICKET_DEVICES ? others[0].session_public_key : null };
 }

@@ -3,12 +3,14 @@
 // - submits ckd-gate `request_key` (rule a) and returns the encrypted CKD response,
 // - pays invite credits (single-use codes, one per identity) and records invited creators,
 // - relays NEAR Auth ticket purchases signed through fast-auth (roadmap E7b),
-// - relays NEAR Auth upload fee payments and upload-key replacements for invited creators (roadmap E5b).
+// - relays NEAR Auth upload fee payments and upload-key replacements for invited creators (roadmap E5b),
+// - submits `add_device` signed by a ticket key, so a viewer links or renews a playback device with no
+//   NEAR transaction of their own (decision O12).
 // It never sees ticket keys or CKD secrets; the CKD response is encrypted to the browser's key.
 import { relayerConfig, type Env, type RelayerConfig } from './env';
 import { ckdGateNonce, createJwtVerifier, identityHash, type VerifiedIdentity } from './jwt';
 import { createNearClient, fastAuthAccount, fastAuthKey, type NearClient } from './near';
-import { checkPurchaseMessage, checkUploadKeyArgs, checkUploadMessage } from './market';
+import { checkAddDeviceArgs, checkPurchaseMessage, checkUploadKeyArgs, checkUploadMessage, deviceRequestId, parseAddDeviceArgs } from './market';
 import { MAX_DELEGATE_TTL_BLOCKS, NONCE_RANGE_MULTIPLIER, parsePurchaseFields, purchaseDelegate, sameBytes } from './purchase';
 import { parseUploadFields, parseUploadKeyFields, uploadDelegate, uploadKeyDelegate } from './upload';
 
@@ -26,6 +28,8 @@ const PURCHASE_REJECTIONS: Record<string, number> = {
     upload_invalid: 400, uploads_paused: 503, quote_required: 409, fee_mismatch: 409, upload_key_expired: 409, job_exists: 409,
     job_conflict: 409, job_not_found: 404, job_published: 409,
     approval_mismatch: 400, delegate_stale: 409, insufficient_balance: 409,
+    // Device links: refused before the relayer pays gas.
+    device_invalid: 400, ticket_not_found: 404, ticket_not_playable: 409, device_epoch_stale: 409, storage_unavailable: 503,
 };
 
 export interface RelayerDeps {
@@ -272,6 +276,22 @@ export async function handle(request: Request, env: Env, deps: RelayerDeps = {})
                 return json({ error: 'invalid_request' }, 400, cors);
             }
             return forward(env, '/purchase/status', { purchaseId: body.purchase_id }, cors);
+        }
+        if (url.pathname === '/v1/devices') {
+            // No token: the ticket key's `add_device` signature is the proof of ownership, checked here
+            // and again by the Market. The relayer learns the ticket id, never the holder's account.
+            if (!config.devices) return json({ error: 'devices_disabled' }, 503, cors);
+            const args = parseAddDeviceArgs(body);
+            const check = await checkAddDeviceArgs(near, { marketContractId: config.marketContractId, args, nowMs: (deps.now ?? Date.now)() });
+            if (check.listed) return json({ deviceRequestId: await deviceRequestId(args), state: 'listed', txHash: null }, 200, cors);
+            return forward(env, '/device', { args, evicts: check.evicts }, cors);
+        }
+        if (url.pathname === '/v1/devices/status') {
+            if (!config.devices) return json({ error: 'devices_disabled' }, 503, cors);
+            if (!exactKeys(body, ['device_request_id']) || typeof body.device_request_id !== 'string' || !/^[0-9a-f]{64}$/.test(body.device_request_id)) {
+                return json({ error: 'invalid_request' }, 400, cors);
+            }
+            return forward(env, '/device/status', { deviceRequestId: body.device_request_id }, cors);
         }
         if (url.pathname === '/v1/invites/redeem') {
             if (!exactKeys(body, ['id_token', 'code']) || typeof body.code !== 'string' || !/^yt_[A-Za-z0-9_-]{24}$/.test(body.code)) {
