@@ -3422,6 +3422,40 @@ fn protocol_golden_vectors_are_accepted_byte_for_byte() {
     );
     assert_eq!(governance_event(), vectors["events"]["device_revoked"]);
 
+    // Device links the relayer submits: the revoked session again at epoch 1, then the purchase
+    // session renews itself without evicting anything.
+    for name in ["link_at_epoch_1", "renewal"] {
+        let link = &vectors["device_link"][name];
+        let add = &link["add_device_args"];
+        market.add_device(
+            add["ticket_id"].as_str().unwrap().to_string(),
+            add["session_public_key"].as_str().unwrap().to_string(),
+            add["certificate_sha256"].as_str().unwrap().to_string(),
+            add["device_epoch"].as_str().unwrap().to_string(),
+            add["expires_at_ms"].as_str().unwrap().to_string(),
+            add["signature"].as_str().unwrap().to_string(),
+        );
+        assert_eq!(governance_event(), link["device_added"]);
+    }
+    let linked = market.get_ticket(ticket_id.to_string()).unwrap();
+    assert_eq!(linked.device_epoch, 1);
+    let sessions: Vec<_> = linked
+        .devices
+        .iter()
+        .map(|device| device.session_public_key.as_str())
+        .collect();
+    assert_eq!(
+        sessions,
+        [
+            vectors["device_link"]["link_at_epoch_1"]["add_device_args"]["session_public_key"]
+                .as_str()
+                .unwrap(),
+            vectors["purchase"]["msg"]["device"]["session_public_key"]
+                .as_str()
+                .unwrap(),
+        ]
+    );
+
     // Card ticket calls and events match the protocol vectors.
     let card = &vectors["card_ticket"];
     let mut operator = context("payments.testnet");

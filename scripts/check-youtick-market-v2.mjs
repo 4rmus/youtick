@@ -264,6 +264,13 @@ export function buildVectors() {
   const revokeDevice = signTicket(cryptoKey, ticket.public_key, ticket.ticket_id, "revoke_device",
     { session_public_key: secondSession, device_epoch: "0" });
   const refund = signTicket(cryptoKey, ticket.public_key, ticket.ticket_id, "refund_ticket", { refund_to: FIXTURE.buyer_id });
+  // Device links the relayer submits (decision O12), in order after `revoke_device` moved the epoch to 1:
+  // the second session is linked again at epoch 1, then the purchase session renews itself (same key,
+  // same epoch, no eviction).
+  const linkAgain = signTicket(cryptoKey, ticket.public_key, ticket.ticket_id, "add_device",
+    { session_public_key: secondSession, certificate_sha256: FIXTURE.certificate_sha256, device_epoch: "1" });
+  const renewal = signTicket(cryptoKey, ticket.public_key, ticket.ticket_id, "add_device",
+    { session_public_key: session, certificate_sha256: FIXTURE.certificate_sha256, device_epoch: "1" });
 
   const vatInput = {
     network: FIXTURE.network,
@@ -345,6 +352,7 @@ export function buildVectors() {
       mark_watched_args: { ticket_id: ticket.ticket_id },
       release_expired_args: { ticket_ids: [ticket.ticket_id] },
     },
+    device_link: buildDeviceLink({ ticket, signatures: [["link_at_epoch_1", linkAgain], ["renewal", renewal]], expires }),
     playback_request: {
       input: playbackInput,
       message: playbackCanonical,
@@ -354,6 +362,19 @@ export function buildVectors() {
     events: buildEvents({ ticket, cardTicket, split, paymentReferenceHmac, session, secondSession }),
     size_budget: sizeBudget(),
   };
+}
+
+function buildDeviceLink({ ticket, signatures, expires }) {
+  const deviceExpiry = `${BigInt(FIXTURE.issued_at_ms) + 2_592_000_000n}`;
+  return Object.fromEntries(signatures.map(([name, signed]) => [name, {
+    signature: signed,
+    add_device_args: { ticket_id: ticket.ticket_id, ...signed.fields, expires_at_ms: expires, signature: signed.signature },
+    // The block time of these vectors is `issued_at_ms`; every link or renewal lasts 30 days from it.
+    device_added: { standard: "youtick_market", version: "2.0.0", event: "device_added", data: [{
+      ticket_id: ticket.ticket_id, session_public_key: signed.fields.session_public_key, device_epoch: signed.fields.device_epoch,
+      expires_at_ms: deviceExpiry,
+    }] },
+  }]));
 }
 
 function buildUpload() {
@@ -550,6 +571,7 @@ function check(vectors) {
   validate(schema.$defs.void_card_ticket_args, vectors.card_ticket.void_card_ticket_args, "$.card_ticket.void_card_ticket_args");
   for (const [name, args] of Object.entries(vectors.calls)) validate(schema.$defs[name], args, `$.calls.${name}`);
   checkUpload(vectors.upload);
+  checkDeviceLink(vectors);
   for (const [name, event] of Object.entries(vectors.events)) {
     validate(schema.$defs.event, event, `$.events.${name}`);
     validate(schema.$defs[`event_${name}`], event.data[0], `$.events.${name}.data[0]`);
@@ -623,6 +645,30 @@ function check(vectors) {
     assert(item.prompt_bytes_estimate <= budget.prompt_limit_bytes * ratio,
       `${name} prompt estimate ${item.prompt_bytes_estimate} exceeds ${ratio * 100}% of ${budget.prompt_limit_bytes}`);
   }
+}
+
+function checkDeviceLink(vectors) {
+  const link = vectors.device_link;
+  assert(link?.link_at_epoch_1 && link.renewal, "missing device_link vectors");
+  for (const [name, vector] of Object.entries(link)) {
+    validate(schema.$defs.add_device_args, vector.add_device_args, `$.device_link.${name}.add_device_args`);
+    validate(schema.$defs.event, vector.device_added, `$.device_link.${name}.device_added`);
+    validate(schema.$defs.event_device_added, vector.device_added.data[0], `$.device_link.${name}.device_added.data[0]`);
+    const { signature, add_device_args: args } = vector;
+    assert(signature.action === "add_device" && args.signature === signature.signature, `${name} carries its add_device signature`);
+    assert(signature.message === ticketMessage({ network: vectors.fixture.network, contract_id: vectors.fixture.contract_id, action: "add_device",
+      ticket_id: args.ticket_id, expires_at_ms: args.expires_at_ms, fields: args }), `${name} message rebuilds from its arguments`);
+    assert(verify(null, Buffer.from(signature.message), publicKeyFromNear(signature.signer_public_key), Buffer.from(signature.signature, "base64")),
+      `${name} signature must verify`);
+    // The epoch after the revoke vector; a signature for epoch 0 must not pass for epoch 1.
+    assert(args.device_epoch === vectors.events.device_revoked.data[0].device_epoch, `${name} carries the epoch after the revoke`);
+    assert(!verify(null, Buffer.from(signature.message.replace(/\n1$/, "\n0")), publicKeyFromNear(signature.signer_public_key),
+      Buffer.from(signature.signature, "base64")), `${name} must bind the device epoch`);
+  }
+  assert(link.link_at_epoch_1.add_device_args.session_public_key === vectors.calls.revoke_device_args.session_public_key,
+    "link_at_epoch_1 links the revoked session again");
+  assert(link.renewal.add_device_args.session_public_key === vectors.purchase.msg.device.session_public_key,
+    "renewal renews the purchase session");
 }
 
 function checkUpload(upload) {

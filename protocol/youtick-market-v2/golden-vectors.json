@@ -209,6 +209,78 @@
       ]
     }
   },
+  "device_link": {
+    "link_at_epoch_1": {
+      "signature": {
+        "signer_public_key": "ed25519:zHUk7HeksDWkiWQyxcJEGW5dKCtVg1G1RZ1B3rMG5e7",
+        "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+        "action": "add_device",
+        "fields": {
+          "session_public_key": "ed25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3",
+          "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+          "device_epoch": "1"
+        },
+        "message": "youtick.market-v2.ticket-sig.v1\ntestnet\nmarket-v2.youtick.testnet\nadd_device\n09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3\n1791360600000\ned25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3\n5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88\n1",
+        "signature": "28qQj0tIv9NOyj+aHR5CJSH+T+8dDXAG6BySmB5YCnnEr2TG0ZudPU09qpz94YbLPvq1OkQwWx29F/fC6VlrDQ=="
+      },
+      "add_device_args": {
+        "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+        "session_public_key": "ed25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3",
+        "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+        "device_epoch": "1",
+        "expires_at_ms": "1791360600000",
+        "signature": "28qQj0tIv9NOyj+aHR5CJSH+T+8dDXAG6BySmB5YCnnEr2TG0ZudPU09qpz94YbLPvq1OkQwWx29F/fC6VlrDQ=="
+      },
+      "device_added": {
+        "standard": "youtick_market",
+        "version": "2.0.0",
+        "event": "device_added",
+        "data": [
+          {
+            "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+            "session_public_key": "ed25519:HThEz8tn3BGzcaKCWf1UY7f7i5sigQBLPiqewabeXxr3",
+            "device_epoch": "1",
+            "expires_at_ms": "1793952000000"
+          }
+        ]
+      }
+    },
+    "renewal": {
+      "signature": {
+        "signer_public_key": "ed25519:zHUk7HeksDWkiWQyxcJEGW5dKCtVg1G1RZ1B3rMG5e7",
+        "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+        "action": "add_device",
+        "fields": {
+          "session_public_key": "ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9",
+          "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+          "device_epoch": "1"
+        },
+        "message": "youtick.market-v2.ticket-sig.v1\ntestnet\nmarket-v2.youtick.testnet\nadd_device\n09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3\n1791360600000\ned25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9\n5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88\n1",
+        "signature": "Rj8tng79oeMISOW88yv0zImFUNfy3iFBYJw9iLoKX8l96O7iov9MG+Jygn8o/84JFXNF6M71OrCrsrWFTaJWCA=="
+      },
+      "add_device_args": {
+        "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+        "session_public_key": "ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9",
+        "certificate_sha256": "5e84431a684cf60e628e8612bb111ad53288a237c0523a9193922e3d600f1f88",
+        "device_epoch": "1",
+        "expires_at_ms": "1791360600000",
+        "signature": "Rj8tng79oeMISOW88yv0zImFUNfy3iFBYJw9iLoKX8l96O7iov9MG+Jygn8o/84JFXNF6M71OrCrsrWFTaJWCA=="
+      },
+      "device_added": {
+        "standard": "youtick_market",
+        "version": "2.0.0",
+        "event": "device_added",
+        "data": [
+          {
+            "ticket_id": "09d2a1c8be8d75c64be0e57fdff81b47038fa2a999c76832c4fd04ec5a7df9e3",
+            "session_public_key": "ed25519:2fApc9eqPFt4CZdCTqMV4e81HvvqoyaZzCFLXpr7CrE9",
+            "device_epoch": "1",
+            "expires_at_ms": "1793952000000"
+          }
+        ]
+      }
+    }
+  },
   "playback_request": {
     "input": {
       "network": "testnet",
