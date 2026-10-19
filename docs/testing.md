@@ -35,6 +35,14 @@ body delivery as well as headers. The proxy retains its existing 6,000ms budget.
 Transaction submission providers are unchanged. This is a per-contract-read
 deadline; a Discover fallback page can perform count and list reads sequentially.
 
+The V1 wallet connector (`@hot-labs/near-connect`) is created on visit only on
+the V1 pages (`/discover`, `/upload`, `/watch`, `/profile`). Creating it fetches
+the wallet list from GitHub (jsDelivr as fallback) and opens its own browser
+storage, so the public, V2 and missing pages create it only on the first
+Connect. `wallet-provider-pages.test.ts` covers that split, Connect after the
+restore and pinned Meteor registration, and client-side navigation;
+`legal-pages.test.ts` keeps the connector out of the public privacy notice.
+
 The suite must cover upload processing, purchase, entitlement, creator
 playback, stranger denial, sale suspension, takedown and disabled gates.
 

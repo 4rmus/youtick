@@ -125,6 +125,29 @@ describe('privacy notice draft', () => {
         expect(html).not.toContain('id="v1-pilot"');
         expect(privacy).not.toMatch(/pilot|testnet|invit/i);
     });
+
+    it('no longer lists the V1 wallet connector, which loads only on the V1 pages or on Connect', () => {
+        expect(privacy).not.toMatch(/wallet|GitHub|jsDelivr/i);
+    });
+
+    it('describes the wallet connector in the pilot section of V1 testnet builds', async () => {
+        vi.resetModules();
+        vi.doMock('@/lib/constants', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/lib/constants')>();
+            return { ...actual, FEATURE_FLAGS: { ...actual.FEATURE_FLAGS, publicTestnetVideoV1: true } };
+        });
+        try {
+            const [{ default: PilotPrivacyPage }, server, react] = await Promise.all([
+                import('@/app/(site)/privacy/page'), import('react-dom/server'), import('react'),
+            ]);
+            const pilot = server.renderToStaticMarkup(react.createElement(PilotPrivacyPage));
+            expect(pilot).toContain('id="v1-pilot"');
+            expect(pilot).toContain('the NEAR wallet connector fetches a list of supported wallets from GitHub, or from jsDelivr as a fallback');
+        } finally {
+            vi.doUnmock('@/lib/constants');
+            vi.resetModules();
+        }
+    });
 });
 
 describe('instant-access consent at checkout', () => {
