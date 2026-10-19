@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import PrivacyPage from '@/app/(site)/privacy/page';
 import RefundPolicyPage from '@/app/(site)/refund-policy/page';
 import TermsPage from '@/app/(site)/terms/page';
 import sitemap from '@/app/sitemap';
@@ -86,6 +87,43 @@ describe('refund policy draft', () => {
 
     it('is listed in the sitemap', async () => {
         expect((await sitemap()).map((entry) => entry.url)).toContain('https://youtick.net/refund-policy');
+    });
+});
+
+describe('privacy notice draft', () => {
+    const privacy = text(React.createElement(PrivacyPage));
+    const html = renderToStaticMarkup(React.createElement(PrivacyPage));
+
+    it('is a visible draft that names the controller and the ICO registration', () => {
+        expect(privacy).toContain(LEGAL_DRAFT_NOTICE);
+        expect(privacy).toContain('YOUTICK LTD operates youtick and is the data controller');
+        expect(privacy).toContain('registration reference ZC276359');
+    });
+
+    it('discloses that each sign-in is recorded publicly on NEAR and cannot be deleted', () => {
+        expect(privacy).toContain('Each sign-in is recorded on the NEAR blockchain.');
+        expect(privacy).toContain('your Google account identifier');
+        expect(privacy).toContain('cannot be changed or deleted');
+        expect(privacy).toContain('The token does not contain your name or email address');
+    });
+
+    it('describes card payments without naming the provider, and keeps the country out of our records', () => {
+        expect(privacy).toContain('you pay our card payment provider, which sells the ticket to you as reseller (merchant of record)');
+        expect(privacy).toContain('We never see your card number');
+        expect(privacy).toContain('We do not store your country');
+        expect(privacy).not.toMatch(/cleeng|payment partner|USDC/i);
+    });
+
+    it('has the sections that forms and pages link to, with the stated retention', () => {
+        for (const id of ['creator-applications', 'content-reports', 'opening-notices']) expect(html).toContain(`id="${id}"`);
+        expect(privacy).toContain('12 months after the last message about it');
+        expect(privacy).toContain('30 days after youtick opens');
+        expect(privacy).toContain('The legal basis is your consent');
+    });
+
+    it('keeps the earlier pilot, testnet and invitation wording out of the public build', () => {
+        expect(html).not.toContain('id="v1-pilot"');
+        expect(privacy).not.toMatch(/pilot|testnet|invit/i);
     });
 });
 
