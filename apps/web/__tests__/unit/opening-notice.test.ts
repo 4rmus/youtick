@@ -9,6 +9,7 @@ import { openingNoticeSiteKey } from '@/components/notify/site-key';
 import { contentSecurityPolicy, turnstileSources } from '@/lib/csp';
 import {
     handleOpeningNotice,
+    openingNoticeDeps,
     openingNoticeMail,
     parseOpeningNotice,
     type OpeningNoticeDeps,
@@ -139,6 +140,31 @@ describe('opening notice page', () => {
         expect(turnstileSources(undefined, undefined, 'key')).toEqual({ script: ' https://challenges.cloudflare.com', frame: 'https://challenges.cloudflare.com' });
         expect(turnstileSources(undefined, undefined, undefined)).toBeNull();
         expect(contentSecurityPolicy('n', null, turnstileSources(undefined, undefined, 'key'))).toContain('frame-src https://challenges.cloudflare.com');
-        expect(await readFile('app/api/opening-notices/route.ts', 'utf8')).toContain('OPENING_NOTICE_RATE_LIMITER');
+        expect(await readFile('app/api/opening-notices/route.ts', 'utf8')).toContain('openingNoticeDeps(env)');
+    });
+
+    it('sends mail only when the binding, both addresses and the rate limiter are configured', async () => {
+        const send = vi.fn(async () => undefined);
+        const limit = vi.fn(async () => ({ success: true }));
+        const complete = {
+            OPENING_NOTICE_EMAIL: { send },
+            OPENING_NOTICE_FROM: 'notices@youtick.net',
+            OPENING_NOTICE_TO: 'inbox@youtick.net',
+            OPENING_NOTICE_TURNSTILE_SECRET: ' secret ',
+            OPENING_NOTICE_RATE_LIMITER: { limit },
+        };
+        const configured = openingNoticeDeps(complete);
+        expect(configured.turnstileSecret).toBe('secret');
+        await configured.send!({ subject: 'Opening notice (en)', text: 'Email: a@example.com' });
+        expect(send).toHaveBeenCalledWith({ to: 'inbox@youtick.net', from: 'notices@youtick.net', subject: 'Opening notice (en)', text: 'Email: a@example.com' });
+        expect(await configured.limit('k')).toBe(true);
+
+        for (const missing of ['OPENING_NOTICE_EMAIL', 'OPENING_NOTICE_FROM', 'OPENING_NOTICE_TO', 'OPENING_NOTICE_RATE_LIMITER'] as const) {
+            expect(openingNoticeDeps({ ...complete, [missing]: undefined }).send, missing).toBeNull();
+        }
+        expect(openingNoticeDeps({ ...complete, OPENING_NOTICE_TO: '  ' }).send).toBeNull();
+        expect(openingNoticeDeps({ ...complete, OPENING_NOTICE_TURNSTILE_SECRET: '  ' }).turnstileSecret).toBeNull();
+        expect(await openingNoticeDeps({ ...complete, OPENING_NOTICE_RATE_LIMITER: { limit: async () => { throw new Error('down'); } } }).limit('k')).toBe(false);
+        expect(await openingNoticeDeps({}).limit('k')).toBe(false);
     });
 });

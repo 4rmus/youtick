@@ -52,13 +52,13 @@ export default function PrivacyPage() {
                 <p>You sign in with your Google account or a passkey through the NEAR Auth sign-in service. We receive a sign-in token that contains an identifier for your account at the sign-in provider (for a Google sign-in, your Google account identifier), a session identifier and the time. The token does not contain your name or email address.</p>
                 <p>From that identifier, youtick opens a NEAR account for you and keeps a record that links a one-way hash of your sign-in identity to that account, so that you can sign in again and find your tickets on any device.</p>
                 <p><strong className="text-white">Each sign-in is recorded on the NEAR blockchain.</strong> To create the keys that protect your tickets, every sign-in sends your sign-in token to a public NEAR contract. Anyone can read that record: it shows the sign-in provider&apos;s identifier for your account, the session identifier and the time, and it links them to your youtick account on NEAR. Records on a public blockchain cannot be changed or deleted.</p>
-                <p>Your signed-in session, the keys that open your tickets and the sign-in token are kept in your browser&apos;s memory only; reloading the page signs you out.</p>
+                <p>Your signed-in session, the keys that open your tickets and the sign-in token are kept in your browser&apos;s memory only; reloading the page signs you out of youtick. The sign-in service and Google may keep their own sign-in session in your browser until you sign out there.</p>
             </Section>
 
             <Section id="buying" title="4. Buying a ticket by card">
                 <p>When you pay by card, you pay our card payment provider, which sells the ticket to you as reseller (merchant of record). It collects your card details and any billing details on its own payment form, under its own terms and privacy notice. We never see your card number.</p>
-                <p>To open the order we send the provider an order number, the screening, the price and your country, which we work out from your network address. We do not send it your name or email address. We keep an order record with the order number, the provider&apos;s order number, the screening, the ticket identifier, the price, the status, the version of the immediate-access request you ticked and the times. We do not store your country. Our order records and the provider&apos;s records together can link a payment to a screening.</p>
-                <p>Your ticket is recorded on the NEAR blockchain so that its status can be checked: the ticket identifier, the screening, the price, the payment type, the status, the purchase and first-play times and the devices linked to it. The ticket record holds no name, email address or account.</p>
+                <p>To open the order we send the provider an order number, the screening, the price and your country, which we work out from your network address. We do not send it your name or email address. We keep an order record with the order number, the provider&apos;s order number and a keyed reference to it, the screening and its creator&apos;s account, the ticket identifier and its public key, your browser&apos;s playback key (its public part and certificate hash) with the ticket key&apos;s signature over it, the price, the status, the version of the immediate-access request you ticked and the times. We do not store your country. Our order records and the provider&apos;s records together can link a payment to a screening and to the playback key of the browser you used, and so to other tickets bought in that browser.</p>
+                <p>Your ticket is recorded on the NEAR blockchain so that its status can be checked: the ticket identifier, the screening, the price, the payment type, the status, the purchase and first-play times and the devices linked to it. The ticket record holds no name or email address and not your account; it holds the creator&apos;s account, the ticket&apos;s public key and a keyed reference to the card order.</p>
                 <p>We count how many people reach each checkout step, using fixed step names without any identifier. Nothing is counted when your browser signals Do Not Track or Global Privacy Control.</p>
             </Section>
 
@@ -68,7 +68,7 @@ export default function PrivacyPage() {
             </Section>
 
             <Section id="creators" title="6. Releasing your work">
-                <p>When you upload, your browser keeps the upload details (file name, size, a fingerprint of the file, title and price) until the upload finishes. The video goes directly from your browser to Livepeer for processing, storage and delivery; our services do not receive the video itself. Our upload service keeps a record of each upload job, and the publication (your NEAR account, the title, the price and the times) is recorded on the NEAR blockchain, where it is public. A first-frame cover image of a published video can be shown publicly. Keep the permissions needed to publish people&apos;s images, voices and other content.</p>
+                <p>When you upload, your browser keeps the upload details (file name, size, a fingerprint of the file, title and price) until the upload finishes or you close the tab. If an upload does not finish, your browser also keeps your NEAR account and the upload&apos;s identifier until you clear the site&apos;s data. Each upload approval records an approval token with the same sign-in identifier as in section 3 on the NEAR blockchain. The video goes directly from your browser to Livepeer for processing, storage and delivery; our services do not receive the video itself. Our upload service keeps a record of each upload job, and the publication (your NEAR account, the title, the price and the times) is recorded on the NEAR blockchain, where it is public. A first-frame cover image of a published video can be shown publicly. Keep the permissions needed to publish people&apos;s images, voices and other content.</p>
                 <p>Payments to creators and the details they need are handled under our agreement with each creator.</p>
             </Section>
 
@@ -84,7 +84,7 @@ export default function PrivacyPage() {
             </Section>
 
             <Section id="opening-notices" title="9. Opening notices">
-                <p>If you ask to be told when youtick opens, we receive your email address and the language of the page you used. We use them only to send you one email when youtick opens. The legal basis is your consent, which you can withdraw at any time by writing to <Contact />.</p>
+                <p>If you ask to be told when youtick opens, we receive your email address and the language of the page you used. We use them only to send you one email when youtick opens. If you ask by email instead, for example when the form is not available, we use and delete your message in the same way. The legal basis is your consent, which you can withdraw at any time by writing to <Contact />.</p>
                 <p>The request is sent as an email to youtick&apos;s inbox, hosted by Google Workspace; the web service does not keep a separate copy. Cloudflare delivers the email and runs the Turnstile check that protects the form, and receives your network address for that check and for rate limiting. These providers may process data outside the UK under their own transfer safeguards. We delete the request, and our copy of the opening email sent to you, {OPENING_NOTICE_RETENTION_DAYS_AFTER_OPENING} days after youtick opens. You can ask to see, correct or delete it earlier at <Contact />, and you can complain to the ICO.</p>
             </Section>
 
@@ -95,9 +95,9 @@ export default function PrivacyPage() {
             <Section id="browser-storage" title="11. What is kept in your browser">
                 <ul className="list-disc space-y-2 pl-5">
                     <li>IndexedDB keeps the playback key of this browser until you clear the site&apos;s data. Clearing it means the browser needs a new key before you can watch again.</li>
-                    <li>While a creator uploads, browser storage keeps the upload key and the upload details until the upload finishes or the tab is closed.</li>
+                    <li>While a creator uploads, browser storage keeps the upload key and the upload details until the upload finishes or the tab is closed; if an upload does not finish, localStorage keeps the creator&apos;s NEAR account and the upload&apos;s identifier until the site&apos;s data is cleared.</li>
                     <li>Your signed-in session, ticket keys and playback tokens are kept in memory only.</li>
-                    <li>The wallet connector described in section 2, the card payment provider&apos;s payment form and Turnstile may keep their own records in your browser.</li>
+                    <li>The wallet connector described in section 2, the sign-in service and Google, the card payment provider&apos;s payment form and Turnstile may keep their own records in your browser.</li>
                 </ul>
             </Section>
 

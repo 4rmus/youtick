@@ -7,7 +7,7 @@ import { CheckCircle2, Clapperboard, Loader2 } from 'lucide-react';
 import { ScreenState } from '@/components/ScreenState';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
+import { FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
 import { formatUsdc, readLivepeerUploadProgress } from '@/lib/livepeer-publication';
 import {
     LIVEPEER_SOURCE_ACCEPT,
@@ -16,6 +16,7 @@ import {
     clearLivepeerUploadDraft,
     createLivepeerJobId,
     fingerprintLivepeerSource,
+    forgetLivepeerUploadJob,
     heartbeatLivepeerUploadLease,
     livepeerUploadFeeUsdc,
     parseLivepeerPriceUsdc,
@@ -111,6 +112,7 @@ export function UploadForm() {
             if (state?.publication) {
                 clearLivepeerUploadDraft(accountId);
                 clearLivepeerJobSessionKey(accountId, activeJobId);
+                forgetLivepeerUploadJob(accountId, activeJobId);
                 setResumable(false);
                 setStep('published');
                 return;
@@ -257,7 +259,9 @@ export function UploadForm() {
         </p>
         {fee !== null && balance.data !== undefined && !enough && (
             <p className="text-sm text-amber-200">
-                Your balance does not cover the fee. On testnet, send test USDC to your account <code className="break-all">{session.accountId}</code>.
+                {NEAR_NETWORK === 'testnet'
+                    ? <>Your balance does not cover the fee. On testnet, send test USDC to your account <code className="break-all">{session.accountId}</code>.</>
+                    : 'Your balance does not cover the upload fee. Please write to contact@youtick.net.'}
             </p>
         )}
         {step === 'uploading' && <progress className="w-full" value={progress} max={100} aria-label="Upload progress" />}

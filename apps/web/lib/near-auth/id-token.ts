@@ -21,6 +21,12 @@ function base64UrlDecode(value: string): Uint8Array {
     return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
 }
 
+/** OpenID Connect profile and email claims; none of them may reach the public chain. */
+const PROFILE_CLAIMS = [
+    'email', 'email_verified', 'name', 'given_name', 'family_name', 'middle_name', 'nickname',
+    'preferred_username', 'picture', 'profile', 'phone_number', 'address', 'birthdate',
+] as const;
+
 export function checkIdToken(
     token: string,
     expected: { issuer: string; clientId: string; nonce: string; nowS: number },
@@ -59,6 +65,9 @@ export function checkIdToken(
     if (nbf !== undefined && (typeof nbf !== 'number' || !Number.isSafeInteger(nbf) || nbf < 0 || nbf > expected.nowS + 5)) {
         throw new Error('invalid_id_token');
     }
+    // Every sign-in publishes the raw token on chain (ckd-gate `request_key`), so a token that carries
+    // profile data is refused before it leaves the browser (privacy notice, "Signing in").
+    if (PROFILE_CLAIMS.some((name) => claims[name] !== undefined)) throw new Error('id_token_has_profile_claims');
     return { iss: expected.issuer, sub, exp, nonce: expected.nonce };
 }
 

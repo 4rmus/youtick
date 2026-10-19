@@ -61,7 +61,7 @@ export const notifyCopy = {
         errors: {
             invalid_request: 'Lütfen geçerli bir e-posta adresi gir.',
             consent_required: 'Sana yazabilmemiz için lütfen kutuyu işaretle.',
-            verification_failed: 'Güvenlik kontrolü geçmedi. Lütfen tekrar dene.',
+            verification_failed: 'Güvenlik kontrolü tamamlanamadı. Lütfen tekrar dene.',
             verification_pending: 'Lütfen güvenlik kontrolünün bitmesini bekle.',
             rate_limited: 'Çok fazla deneme yapıldı. Bir dakika bekleyip tekrar dene.',
             unavailable: `İstek gönderilemedi. Lütfen daha sonra tekrar dene veya ${OPENING_NOTICE_CONTACT} adresine yaz.`,

@@ -344,7 +344,7 @@ export const landingCopyLayers = {
                 description: 'Her eserin kendi gösterim sayfası ve kendi bileti var. Ona sanatçının paylaştığı bağlantıyla ulaşırsın; açılış programı burada da yer alacak.',
                 items: [
                     { title: 'Konser kayıtları', description: 'Tam konser kayıtları, canlı oturumlar ve turne kayıtları.' },
-                    { title: 'Bağımsız filmler', description: 'Kısa filmler, uzun metrajlar ve belgeseller, kendi izleyicisiyle buluşur.' },
+                    { title: 'Bağımsız filmler', description: 'Kısa filmler, uzun metrajlar ve belgeseller, kendi izleyicileriyle buluşur.' },
                     { title: 'Festival seçkileri', description: 'Seçki programları, gala gösterimi kayıtları ve yönetmen söyleşileri.' },
                     { title: 'Özel sürümler', description: 'Albüm filmleri, yorumlu sürümler ve sahne arkası görüntüleri.' },
                 ],
@@ -374,7 +374,7 @@ export const landingCopyLayers = {
             ticket: {
                 eyebrow: 'Bilet bilgileri',
                 title: 'Biletin ve hakların, sade bir dille.',
-                description: 'Biletinle neler yapabileceğin.',
+                description: 'Biletinle neler yapabileceğini burada bulabilirsin.',
                 cards: [
                     {
                         title: 'Biletin',
@@ -389,8 +389,8 @@ export const landingCopyLayers = {
                         title: 'Bize ulaş',
                         description: 'Biletin ya da bir gösterim hakkında sorun varsa bize yaz.',
                         items: [
-                            'Biletin ya da bir gösterimle ilgili soruların için contact@youtick.net adresine yaz.',
-                            'Bir eserle ilgili bildirim için İçerik bildir sayfasını kullan.',
+                            'Biletinle ya da bir gösterimle ilgili soruların için contact@youtick.net adresine yaz.',
+                            'Bir eserle ilgili bildirim için “İçerik bildir” sayfasını kullan.',
                         ],
                     },
                 ],
@@ -399,7 +399,7 @@ export const landingCopyLayers = {
             artists: {
                 eyebrow: 'Sanatçılar için',
                 title: 'Eserin, gösterim sayfan, hakların.',
-                description: 'youtick, eserlerinin kayıtlarını kendi izleyicisine biletle göstermek isteyen müzisyenler, yönetmenler ve sahne sanatçıları için.',
+                description: 'youtick, eserlerinin kayıtlarını kendi izleyicilerine biletle göstermek isteyen müzisyenler, yönetmenler ve sahne sanatçıları için.',
                 cards: [
                     {
                         title: 'Neden youtick',

@@ -81,6 +81,44 @@ export type OpeningNoticeDeps = {
     now?: () => Date;
 };
 
+// Cloudflare Email Service binding (`send_email`, structured API) and the bindings and vars the route reads.
+type EmailBinding = { send(message: { to: string; from: string; subject: string; text: string }): Promise<unknown> };
+type RateLimiter = { limit(input: { key: string }): Promise<{ success: boolean }> };
+
+export type OpeningNoticeEnv = {
+    OPENING_NOTICE_EMAIL?: EmailBinding;
+    OPENING_NOTICE_FROM?: string;
+    OPENING_NOTICE_TO?: string;
+    OPENING_NOTICE_TURNSTILE_SECRET?: string;
+    OPENING_NOTICE_RATE_LIMITER?: RateLimiter;
+};
+
+/**
+ * The route's dependencies from its Worker env. Mail is sent only when the binding, both addresses and
+ * the rate limiter are all present; otherwise `send` is null and the route answers 503.
+ */
+export function openingNoticeDeps(env: OpeningNoticeEnv): OpeningNoticeDeps {
+    const from = env.OPENING_NOTICE_FROM?.trim();
+    const to = env.OPENING_NOTICE_TO?.trim();
+    const binding = env.OPENING_NOTICE_EMAIL;
+    const limiter = env.OPENING_NOTICE_RATE_LIMITER;
+    return {
+        turnstileSecret: env.OPENING_NOTICE_TURNSTILE_SECRET?.trim() || null,
+        send: binding && from && to && limiter
+            ? async (mail) => { await binding.send({ to, from, subject: mail.subject, text: mail.text }); }
+            : null,
+        // Without the limiter binding `send` is null and the route answers 503 before this runs.
+        limit: async (key) => {
+            if (!limiter) return false;
+            try {
+                return (await limiter.limit({ key })).success;
+            } catch {
+                return false;
+            }
+        },
+    };
+}
+
 function isCrossOrigin(request: Request): boolean {
     if (request.headers.get('sec-fetch-site') === 'cross-site') return true;
     const origin = request.headers.get('origin');

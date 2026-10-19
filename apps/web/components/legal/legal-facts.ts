@@ -1,7 +1,7 @@
 // Facts the English legal pages (terms, refund policy, content reports) share, so they cannot drift.
 // Draft texts: corrected by counsel later (launch brief 2026-10-18, X4). No Turkish legal text here.
 
-export const LEGAL_DRAFT_DATE = '18 October 2026';
+export const LEGAL_DRAFT_DATE = '19 October 2026';
 
 /** The visible line on every draft legal page. */
 export const LEGAL_DRAFT_NOTICE = `Draft of ${LEGAL_DRAFT_DATE}, pending review by our legal counsel. It may change before ticket sales open.`;

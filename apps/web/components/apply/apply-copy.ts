@@ -110,7 +110,7 @@ export const applyCopy = {
         errors: {
             invalid_request: 'Lütfen alanları kontrol et: zorunlu alanların hepsi dolu olmalı ve bağlantı https:// ile başlamalı.',
             consent_required: 'Sana dönebilmemiz için lütfen kutuyu işaretle.',
-            verification_failed: 'Güvenlik kontrolü geçmedi. Lütfen tekrar dene.',
+            verification_failed: 'Güvenlik kontrolü tamamlanamadı. Lütfen tekrar dene.',
             verification_pending: 'Lütfen güvenlik kontrolünün bitmesini bekle.',
             rate_limited: 'Çok fazla deneme yapıldı. Bir dakika bekleyip tekrar dene.',
             unavailable: `Başvuru gönderilemedi. Lütfen daha sonra tekrar dene veya ${CREATOR_APPLICATION_CONTACT} adresine yaz.`,

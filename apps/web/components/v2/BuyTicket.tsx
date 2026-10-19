@@ -233,7 +233,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
             {state === 'buying' && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {state === 'buying' ? 'Waiting for your approval…' : `Buy for ${formatUsdc(item.price_usdc)} USDC`}
         </Button>
-        <p className="text-xs text-white/50">A ticket you have not played can be refunded. After playback starts, refunds are for technical problems (the video does not play or is not as described). Ask within 27 days of purchase. <Link className="underline" href="/refund-policy">Refund policy</Link></p>
+        <p className="text-xs text-white/50">A ticket you have not played can be refunded. After playback starts, refunds are for technical problems (the video does not play or is not as described). Ask from My tickets within 27 days of purchase.</p>
         {card}
         {state === 'error' && <p className="text-sm text-red-300" role="alert">{error}</p>}
     </Card>;
