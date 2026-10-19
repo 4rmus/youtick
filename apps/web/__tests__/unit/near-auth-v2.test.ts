@@ -197,6 +197,9 @@ describe('id_token checks before submission', () => {
             ['only.two', 'invalid_id_token'],
             [`${token(claimsFor('n-1'))}${'x'.repeat(MAX_ID_TOKEN_BYTES)}`, 'invalid_id_token'],
             ['a+b.c.d', 'invalid_id_token'],
+            [token(claimsFor('n-1', { email: 'someone@example.com' })), 'id_token_has_profile_claims'],
+            [token(claimsFor('n-1', { name: 'Some One' })), 'id_token_has_profile_claims'],
+            [token(claimsFor('n-1', { picture: 'https://example.com/p.png' })), 'id_token_has_profile_claims'],
         ];
         for (const [value, code] of cases) expect(() => checkIdToken(value, expected)).toThrow(code);
     });

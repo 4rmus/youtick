@@ -1,4 +1,4 @@
-// Creator invitation applications: validation, Turnstile check, rate limit and the mail to the youtick inbox.
+// Creator applications: validation, Turnstile check, rate limit and the mail to the youtick inbox.
 // Nothing is stored; the inbox is the only record (privacy notice, "Creator applications").
 
 export const CREATOR_WORK_TYPES = ['concert', 'film', 'festival', 'other'] as const;

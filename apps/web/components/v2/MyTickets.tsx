@@ -7,6 +7,7 @@ import { ScreenState } from '@/components/ScreenState';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { formatUsdc } from '@/lib/livepeer-publication';
+import { cardPriceLabel } from '@/lib/v2/card-checkout';
 import { loadDeviceKey, type DeviceKey } from '@/lib/v2/device-key';
 import { deviceIsListed, findOwnedTickets, playableStatus, refundRequestable, takenDownPublications, type TicketStatus } from '@/lib/v2/tickets';
 import { useNearAuthV2 } from './NearAuthV2Provider';
@@ -22,6 +23,11 @@ const STATUS_LABELS: Record<TicketStatus, string> = {
     released: 'Watch window closed, still playable',
     voided: 'Cancelled',
 };
+
+/** A card ticket shows the dollar price the buyer paid; a crypto ticket keeps its USDC amount. */
+function ticketPrice(rail: 'crypto' | 'card', grossUsdcMicro: string): string {
+    return (rail === 'card' ? cardPriceLabel(grossUsdcMicro) : null) ?? `${formatUsdc(grossUsdcMicro)} USDC`;
+}
 
 export function MyTickets() {
     const { config, session, view, pendingGates, unlockGate, signOut } = useNearAuthV2();
@@ -97,7 +103,7 @@ export function MyTickets() {
                     <div>
                         <p className="font-medium">{ticket.publication_id}</p>
                         <p className="text-sm text-white/60">
-                            {formatUsdc(ticket.gross_usdc_micro)} USDC · {new Date(Number(ticket.purchased_at_ms)).toLocaleDateString()}
+                            {ticketPrice(ticket.rail, ticket.gross_usdc_micro)} · {new Date(Number(ticket.purchased_at_ms)).toLocaleDateString()}
                         </p>
                     </div>
                     <span className="rounded border border-white/15 px-2 py-1 text-xs text-white/80">{STATUS_LABELS[ticket.status]}</span>
@@ -107,7 +113,7 @@ export function MyTickets() {
                         ticketId={ticket.ticket_id} device={device} firstPlay={ticket.status === 'purchased'} />
                     : <Button onClick={() => setOpen(ticket.ticket_id)}>Watch</Button>)}
                 {playable && !listed && device && <p className="text-sm text-white/60">
-                    This device is not linked to this ticket yet. Watching on a new device will be available soon.
+                    This device is not linked to this ticket. Watch on a device where you bought or watched it, or write to contact@youtick.net.
                 </p>}
                 {takenDown && <p className="text-sm text-amber-200">This video was removed and can no longer be watched.</p>}
                 {session.status === 'signed_in' && refundRequestable(ticket, tickets.dataUpdatedAt, takenDown) && <RefundRequest

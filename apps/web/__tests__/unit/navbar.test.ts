@@ -2,14 +2,14 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const navState = vi.hoisted(() => ({ publicTestnetVideoV1: false, menuOpen: false, connect: vi.fn(), signOut: vi.fn() }));
+const navState = vi.hoisted(() => ({ publicTestnetVideoV1: false, menuOpen: false, pathname: '/', accountId: 'creator.testnet' as string | null, connect: vi.fn(), signOut: vi.fn() }));
 vi.mock('react', async importOriginal => ({ ...await importOriginal<typeof import('react')>(), useState: () => [navState.menuOpen, vi.fn()] }));
 
-vi.mock('next/navigation', () => ({ usePathname: () => '/' }));
+vi.mock('next/navigation', () => ({ usePathname: () => navState.pathname }));
 vi.mock('@/lib/constants', () => ({ LAUNCH_STAGE: 'prova', FEATURE_FLAGS: { enablePaidMediaLivepeerV1: true, get publicTestnetVideoV1() { return navState.publicTestnetVideoV1; } } }));
 vi.mock('@/components/providers/WalletProvider', () => ({
     useWallet: () => ({
-        accountId: 'creator.testnet',
+        accountId: navState.accountId,
         connect: navState.connect,
         isReady: true,
         signOut: navState.signOut,
@@ -19,7 +19,10 @@ vi.mock('@/components/providers/WalletProvider', () => ({
 import { Navbar } from '@/components/Navbar';
 
 describe('Navbar', () => {
-    afterEach(() => { navState.publicTestnetVideoV1 = false; navState.menuOpen = false; vi.clearAllMocks(); });
+    afterEach(() => {
+        navState.publicTestnetVideoV1 = false; navState.menuOpen = false; navState.pathname = '/'; navState.accountId = 'creator.testnet';
+        vi.clearAllMocks();
+    });
 
     it.each([false, true])('separates account switch and disconnect with mobile menu=%s', mobile => {
         navState.publicTestnetVideoV1 = true;
@@ -50,5 +53,21 @@ describe('Navbar', () => {
         expect(html).toContain('href="/discover"');
         expect(html).toContain('href="/profile"');
         expect(html).toContain('creator.testnet');
+    });
+
+    it.each([
+        ['/privacy', 'en', '/notify', 'Notify me when it opens', '/#programme'],
+        ['/report', 'en', '/notify', 'Notify me when it opens', '/#box-office'],
+        ['/tr/notify', 'tr', '/tr/notify', 'Açılıştan haberdar ol', '/tr#programme'],
+    ])('gives the public page %s the landing navigation in %s', (pathname, _locale, notify, label, section) => {
+        navState.pathname = pathname;
+        navState.accountId = null;
+        const html = renderToStaticMarkup(React.createElement(Navbar));
+        expect(html).toContain(`href="${notify}"`);
+        expect(html).toContain(label);
+        expect(html).toContain(`href="${section}"`);
+        expect(html).not.toContain('href="/discover"');
+        expect(html).not.toContain('href="/upload"');
+        expect(html).not.toMatch(/invited creators|davetli/i);
     });
 });

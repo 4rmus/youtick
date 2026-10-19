@@ -20,10 +20,12 @@ export const PUBLIC_ROOT_PAGES: readonly string[] = [
     '/tr/refund-policy',
     '/report',
     '/tr/report',
+    '/notify',
+    '/tr/notify',
 ];
 
 /** Pages listed in the root-host sitemap: the public pages that exist today (a test checks each has a page file). */
-export const PUBLIC_ROOT_SITEMAP_PATHS: readonly string[] = ['/', '/tr', '/apply', '/tr/apply', '/privacy', '/terms', '/refund-policy', '/report'];
+export const PUBLIC_ROOT_SITEMAP_PATHS: readonly string[] = ['/', '/tr', '/apply', '/tr/apply', '/notify', '/tr/notify', '/privacy', '/terms', '/refund-policy', '/report'];
 
 /** Metadata files at the site root. */
 const PUBLIC_ROOT_FILES: readonly string[] = ['/robots.txt', '/sitemap.xml', '/favicon.ico', '/manifest.webmanifest'];
@@ -32,6 +34,7 @@ const PUBLIC_ROOT_FILES: readonly string[] = ['/robots.txt', '/sitemap.xml', '/f
 const PUBLIC_ROOT_API: Readonly<Record<string, readonly string[]>> = {
     '/api/creator-applications': ['POST'],
     '/api/content-reports': ['POST'],
+    '/api/opening-notices': ['POST'],
 };
 
 /** Next build output (hashed JS/CSS, next/font files) and the brand folder under public/. */
@@ -102,9 +105,9 @@ export function isPublicRootRequest(pathname: string, method: string): boolean {
 /** Body of the gate's 404: static HTML, no scripts, so it needs no nonce. */
 export const PUBLIC_ROOT_NOT_FOUND_HTML =
     '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex">' +
-    '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found | YouTick</title></head>' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found | youtick</title></head>' +
     '<body style="font-family:system-ui,sans-serif;margin:4rem auto;max-width:32rem;padding:0 1rem">' +
-    '<h1>Page not found</h1><p>This page is not available on youtick.net yet.</p><p><a href="/">Go to the home page</a></p>' +
+    '<h1>Page not found</h1><p>This page is not available on youtick.net.</p><p><a href="/">Go to the home page</a></p>' +
     '</body></html>';
 
 export const PUBLIC_ROOT_NOT_FOUND_HEADERS: Readonly<Record<string, string>> = {

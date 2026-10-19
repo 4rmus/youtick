@@ -7,7 +7,7 @@ import { CheckCircle2, Clapperboard, Loader2 } from 'lucide-react';
 import { ScreenState } from '@/components/ScreenState';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { FEATURE_FLAGS, NEAR_CONFIG } from '@/lib/constants';
+import { FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
 import { formatUsdc, readLivepeerUploadProgress } from '@/lib/livepeer-publication';
 import {
     LIVEPEER_SOURCE_ACCEPT,
@@ -16,6 +16,7 @@ import {
     clearLivepeerUploadDraft,
     createLivepeerJobId,
     fingerprintLivepeerSource,
+    forgetLivepeerUploadJob,
     heartbeatLivepeerUploadLease,
     livepeerUploadFeeUsdc,
     parseLivepeerPriceUsdc,
@@ -47,7 +48,7 @@ const ERRORS: Record<string, string> = {
     daily_limit_reached: 'Uploads are paused for today. Please try again tomorrow.',
     rate_limited: 'Too many attempts. Please wait a minute and try again.',
     uploads_paused: 'Uploads are paused right now. Please try again later.',
-    admission_closed: 'Your account is not enabled for uploads yet. Ask for an invite first.',
+    admission_closed: 'Your account is not open for uploads. Apply at youtick.net/apply or write to contact@youtick.net.',
     admission_denied: 'Uploads are busy right now. Please try again in a few minutes.',
     job_conflict: 'This upload id is already in use. Reload the page and start again.',
     upload_not_confirmed: 'The fee was returned, so no upload was created. Please try again.',
@@ -111,6 +112,7 @@ export function UploadForm() {
             if (state?.publication) {
                 clearLivepeerUploadDraft(accountId);
                 clearLivepeerJobSessionKey(accountId, activeJobId);
+                forgetLivepeerUploadJob(accountId, activeJobId);
                 setResumable(false);
                 setStep('published');
                 return;
@@ -257,7 +259,9 @@ export function UploadForm() {
         </p>
         {fee !== null && balance.data !== undefined && !enough && (
             <p className="text-sm text-amber-200">
-                Your balance does not cover the fee. On testnet, send test USDC to your account <code className="break-all">{session.accountId}</code>.
+                {NEAR_NETWORK === 'testnet'
+                    ? <>Your balance does not cover the fee. On testnet, send test USDC to your account <code className="break-all">{session.accountId}</code>.</>
+                    : 'Your balance does not cover the upload fee. Please write to contact@youtick.net.'}
             </p>
         )}
         {step === 'uploading' && <progress className="w-full" value={progress} max={100} aria-label="Upload progress" />}
