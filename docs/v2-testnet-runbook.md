@@ -115,11 +115,17 @@ What the workflow does:
 - **Modes:**
   - `closed`: every route answers 503.
   - `acceptance`: both Workers accept only `http://localhost:3000`.
-- **Public vars** (fixed in the script): the V2 accounts, the pinned gate and the shared NEAR Auth
-  testnet client.
-- **Smoke test:** a CORS preflight from the allowed origin, a refused foreign origin, and for the
-  payment service an unknown publication that must return 404 (this proves the RPC works and the
-  VAT key is registered).
+- **Public vars** (fixed in the script):
+  - the V2 accounts, the pinned gate and the shared NEAR Auth testnet client;
+  - the device-link limits (decision O12): `DAILY_DEVICE_LIMIT=1000` and
+    `TICKET_DAILY_DEVICE_LIMIT=6`. Without them the relayer's `/v1/devices` routes answer
+    `devices_disabled`.
+- **Smoke test:**
+  - a CORS preflight from the allowed origin, and a refused foreign origin;
+  - for the relayer, an unknown device-link id must return 404 `device_request_not_found`
+    (this proves the device routes are on; nothing is signed);
+  - for the payment service, an unknown publication must return 404 (this proves the RPC works
+    and the VAT key is registered).
 - **No rollback.** A failed smoke marks the receipt `FAILED` and leaves the new version live. Deploy
   `closed` to shut both Workers.
 

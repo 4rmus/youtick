@@ -69,6 +69,10 @@ export const COMPONENTS = Object.freeze({
             CKD_GATE_ACCOUNT_IDS: CKD_GATE,
             MARKET_V2_CONTRACT_ID: MARKET_V2,
             ALLOWED_ORIGINS: ACCEPTANCE_ORIGIN,
+            // Device links (`add_device`, decision O12): without both the device routes answer devices_disabled.
+            // Renewals are charged per ticket only; at most 30 TGas each.
+            DAILY_DEVICE_LIMIT: '1000',
+            TICKET_DAILY_DEVICE_LIMIT: '6',
         }),
         secrets: Object.freeze(['NEAR_RPC_URL', 'RELAYER_PRIVATE_KEY', 'RELAYER_ADMIN_TOKEN']),
         smokePath: '/v1/ckd',
@@ -410,6 +414,15 @@ export async function smoke(component, mode, fetchImpl, card = 'off') {
     const denied = await request(fetchImpl, url, { method: 'OPTIONS', headers: { Origin: DENIED_ORIGIN } });
     if (denied.status !== 403 || denied.body?.error !== 'origin_denied') fail(`${component}_smoke_denied_${denied.status}`);
     const result = { allowed_origin_status: allowed.status, denied_origin_status: denied.status };
+    if (component === 'relayer') {
+        // The device routes are on: an unknown link id is 404, not 503 devices_disabled. Nothing is signed.
+        const device = await request(fetchImpl, `https://${spec.domain}/v1/devices/status`, {
+            method: 'POST', headers: { Origin: ACCEPTANCE_ORIGIN, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_request_id: randomBytes(32).toString('hex') }),
+        });
+        if (device.status !== 404 || device.body?.error !== 'device_request_not_found') fail(`relayer_smoke_devices_${device.status}`);
+        result.unknown_device_request_status = device.status;
+    }
     if (component === 'payment-service') {
         const vat = await request(fetchImpl, url, {
             method: 'POST', headers: { Origin: ACCEPTANCE_ORIGIN, 'Content-Type': 'application/json' },

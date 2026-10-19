@@ -43,7 +43,10 @@ function jsonResponse(status, body, headers = {}) {
 }
 
 /** A chain and two deployed Workers; `workers` decides how each domain answers. */
-function fakeFetch({ vatOnChain = vatKey.public, relayerKeyOnChain = true, chainId = 'testnet', workers = 'acceptance', card = 'off', cardPermission = CARD_KEY_SCOPE } = {}) {
+function fakeFetch({
+    vatOnChain = vatKey.public, relayerKeyOnChain = true, chainId = 'testnet', workers = 'acceptance', card = 'off', cardPermission = CARD_KEY_SCOPE,
+    devices = 'on',
+} = {}) {
     const calls = [];
     const impl = async (url, init = {}) => {
         calls.push({ url, init });
@@ -75,6 +78,9 @@ function fakeFetch({ vatOnChain = vatKey.public, relayerKeyOnChain = true, chain
         const origin = init.headers?.Origin;
         if (origin !== ACCEPTANCE_ORIGIN) return jsonResponse(403, { error: 'origin_denied' });
         if (init.method === 'OPTIONS') return jsonResponse(204, undefined, { 'Access-Control-Allow-Origin': origin });
+        if (component === 'relayer' && new URL(url).pathname === '/v1/devices/status') {
+            return devices === 'on' ? jsonResponse(404, { error: 'device_request_not_found' }) : jsonResponse(503, { error: 'devices_disabled' });
+        }
         return jsonResponse(404, { error: 'publication_not_found' }, { 'Access-Control-Allow-Origin': origin });
     };
     return { impl, calls };
@@ -147,6 +153,8 @@ test('closed mode turns every Worker flag off and acceptance turns it on; public
     assert.equal(releaseVars('read-model', 'closed').READ_MODEL_INGESTION_ENABLED, 'false');
     assert.equal(COMPONENTS['read-model'].vars.READ_MODEL_WEB_ORIGIN, ACCEPTANCE_ORIGIN);
     assert.equal(COMPONENTS.relayer.vars.CKD_GATE_ACCOUNT_IDS, 'v2-ckd-gate-261007.youtick-dev-v3.testnet');
+    // Device links (O12) are on in both modes' config; `closed` still turns the whole relayer off.
+    assert.deepEqual([COMPONENTS.relayer.vars.DAILY_DEVICE_LIMIT, COMPONENTS.relayer.vars.TICKET_DAILY_DEVICE_LIMIT], ['1000', '6']);
     assert.throws(() => releaseVars('relayer', 'open'), /mode_invalid/);
     const args = wranglerArgs('relayer', '/r', SHA, 'acceptance');
     assert.deepEqual(args.slice(0, 9), ['deploy', '/r/relayer/index.js', '--no-bundle', '--config', '/r/relayer/wrangler.toml',
@@ -188,6 +196,7 @@ test('acceptance deploy: preflight, one deploy per Worker with its own secrets, 
         ['youtick-relayer-v2-testnet', 'VERIFIED', 'v-1'], ['youtick-payment-service-v2-testnet', 'VERIFIED', 'v-2'],
         ['youtick-market-read-model-v2-testnet', 'VERIFIED', 'v-3'],
     ]);
+    assert.equal(receipt.workers[0].smoke.unknown_device_request_status, 404);
     assert.equal(receipt.workers[1].smoke.unknown_publication_status, 404);
     assert.equal(receipt.workers[1].smoke.card_webhook_status, 503);
     assert.equal(receipt.card, 'off');
@@ -238,6 +247,16 @@ test('a failing smoke marks the receipt FAILED and stops before the next Worker'
     const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
     assert.equal(receipt.status, 'FAILED');
     assert.deepEqual(receipt.workers.map((w) => w.status), ['DEPLOYED']);
+    assert.equal(record.length, 1);
+});
+
+test('an acceptance relayer without the device routes fails its smoke', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'v2-release-test-'));
+    const record = [];
+    await assert.rejects(deployRelease({
+        sha: SHA, releaseDir: '/r', receiptPath: join(dir, 'r.json'), mode: 'acceptance', env: env(),
+        fetchImpl: fakeFetch({ devices: 'off' }).impl, sleep: async () => {}, makeRunner: fakeRunner(record),
+    }), /relayer_smoke_devices_503/);
     assert.equal(record.length, 1);
 });
 
