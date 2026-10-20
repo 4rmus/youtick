@@ -3,7 +3,7 @@ import { LandingPage } from '@/components/landing/LandingPage';
 
 export const metadata: Metadata = {
     title: 'Konserler, filmler ve performanslar için biletli gösterim',
-    description: 'youtick Şubat 2027’de açılıyor. Bir sanatçının konserini, filmini ya da performans kaydını kendi biletli gösterim sayfasında, dilediğin zaman izle. Sanatçılar şimdiden başvurabilir.',
+    description: 'youtick, konser, film ve performans kayıtlarını biletle izlediğin dijital bir gösterim salonu. Şubat 2027’de açılıyor. Sanatçılar şimdiden başvurabilir.',
     alternates: {
         canonical: '/tr',
         languages: { en: '/', tr: '/tr', 'x-default': '/' },

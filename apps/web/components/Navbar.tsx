@@ -11,9 +11,9 @@ import { getLandingCopy, getLandingCtas, landingHomeHref, landingNavSections, ty
 import { openingProgrammeMode } from '@/components/landing/opening-programme';
 import { FEATURE_FLAGS, LAUNCH_STAGE } from '@/lib/constants';
 
-/** Public pages that use the landing navigation: the landing, the application and opening-notice pages, and the legal pages. */
-const LANDING_NAV_PATHS = ['/', '/tr', '/apply', '/tr/apply', '/notify', '/tr/notify', '/privacy', '/terms', '/refund-policy', '/report'];
-const TURKISH_PATHS = ['/tr', '/tr/apply', '/tr/notify'];
+/** Public pages that use the landing navigation: the landing, the application, opening-notice and FAQ pages, and the legal pages. */
+const LANDING_NAV_PATHS = ['/', '/tr', '/apply', '/tr/apply', '/notify', '/tr/notify', '/faq', '/tr/faq', '/privacy', '/terms', '/refund-policy', '/report'];
+const TURKISH_PATHS = ['/tr', '/tr/apply', '/tr/notify', '/tr/faq'];
 
 const LINKS = [
     { href: '/discover', label: 'Discover' },

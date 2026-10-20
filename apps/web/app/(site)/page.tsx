@@ -3,7 +3,7 @@ import { LandingPage } from '@/components/landing/LandingPage';
 
 export const metadata: Metadata = {
     title: 'Ticketed screenings of concerts, films and performances',
-    description: 'youtick opens in February 2027. Buy a ticket to an artist’s concert, film or recorded performance and watch it in your own time. Artists can apply now.',
+    description: 'youtick is a ticketed screening room for recorded concerts, films and performances. Opening February 2027. Artists can apply now.',
     alternates: {
         canonical: '/',
         languages: { en: '/', tr: '/tr', 'x-default': '/' },
