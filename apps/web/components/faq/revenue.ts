@@ -1,6 +1,7 @@
-// The worked revenue example on the landing (owner decision O2, 2026-10-19). Approximate costs for
-// illustration only: VAT depends on the viewer's country and the card cost on the card used; the exact
-// rates are confirmed with each artist in writing before a work goes on sale. All amounts in cents.
+// The worked revenue example on the FAQ (owner decision O2, 2026-10-19; off the landing since the
+// short-copy rewrite of 2026-10-20). Approximate costs for illustration only: VAT depends on the
+// viewer's country and the card cost on the card used; the exact rates are confirmed with each artist
+// in writing before a work goes on sale. All amounts in cents.
 
 export const REVENUE_EXAMPLE_RATES = {
     /** VAT included in the ticket price. */
