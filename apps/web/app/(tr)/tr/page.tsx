@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { LandingPage } from '@/components/landing/LandingPage';
 
 export const metadata: Metadata = {
-    title: 'Konserler, filmler ve performanslar için biletli gösterim',
+    title: 'Bağımsız filmler, belgeseller ve konser kayıtları, biletle',
     description: 'youtick, konser, film ve performans kayıtlarını biletle izlediğin dijital bir gösterim salonu. Şubat 2027’de açılıyor. Sanatçılar şimdiden başvurabilir.',
     alternates: {
         canonical: '/tr',
@@ -14,7 +14,7 @@ export const metadata: Metadata = {
         locale: 'tr_TR',
         alternateLocale: ['en_US'],
         title: 'youtick — Biletli dijital gösterimler',
-        description: 'Şubat 2027’de açılıyor. Konserler, filmler ve performans kayıtları, biletle.',
+        description: 'Şubat 2027’de açılıyor. Bağımsız filmler, belgeseller ve konser kayıtları, biletle.',
         images: [{ url: '/hero-concert.webp', width: 1024, height: 1024, alt: 'Canlı izleyiciye bakan bir konser sahnesi' }],
     },
 };

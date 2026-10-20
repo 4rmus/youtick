@@ -17,8 +17,10 @@ export type LandingCopy = {
     };
     hero: {
         badge: string;
-        /** One sentence: what youtick is. */
+        /** One sentence: what is shown here, in the viewer's words. */
         title: string;
+        /** One line: one ticket, one work, no subscription. */
+        subtitle: string;
         imageAlt: string;
         /** The text link under the buttons while the opening programme is shown. */
         openingProgrammeLink: string;
@@ -31,10 +33,10 @@ export type LandingCopy = {
         workTypes: Record<OpeningWorkType, string>;
         screeningPage: string;
     };
-    /** Three sentences on how a screening works. */
-    about: { description: string };
-    artists: { title: string; items: readonly string[] };
-    viewers: { title: string; items: readonly string[] };
+    /** The viewer block: how a ticket works. */
+    ticket: { title: string; items: readonly string[] };
+    /** The artist block: the situation and the difference in `lead`, then what the artist does and what we take over. */
+    artists: { title: string; lead: string; items: readonly string[] };
     /** The line that links the full rules; `refund` is `null` on the Turkish page, whose refund wording waits for counsel. */
     rules: { label: string; terms: string; refund: string | null; faq: string };
     footer: {
@@ -47,20 +49,29 @@ export type LandingCopy = {
         support: string;
     };
     ctas: {
+        /** Hero, primary: the opening notice (viewers). */
         notify: string;
+        /** Hero, secondary: the artist application, in the artist's words. */
+        show: string;
+        /** The artist block button: the artist application. */
         apply: string;
     };
 };
 
 /**
- * Landing copy (short-copy rewrite, 2026-10-20; the earlier draft of 2026-10-19 was rejected as too long).
+ * Landing copy (two-audience rewrite, 2026-10-20; the analysis is in claudedocs/landing-konumlandirma-analizi-20261020.md).
  *
- * One sentence of what youtick is, three sentences of how it works, four lines for artists, three for
- * viewers, one line to the full rules. Ticket rights, refunds, playback and the worked revenue example
- * live on the FAQ, the terms and the refund policy. `shared` is the copy every launch stage renders; the
- * stage overrides stay available but empty. Public copy never names the card payment provider, a rehearsal,
- * beta, test or invitation phase, USDC or crypto, Livepeer or NEAR. The Turkish layer is the interim
- * version: no payment, price, refund, card or chain wording until the Turkish counsel opinion (K6, X4).
+ * The page speaks to both audiences, one block each, from that audience's own situation: viewers come
+ * back to the root page after seeing a work through an artist's link, artists come to check the site
+ * before applying. The hero gives the common ground (one ticket, one work, no subscription), the
+ * opening programme lists the works once there are any, "How a ticket works" answers the viewer and
+ * "For artists" answers the artist. Every line states a decision the reader makes or a job they are
+ * spared, never the mechanism behind it. Ticket rights, refund rules, the networks behind playback and
+ * the worked revenue example live on the FAQ, the terms and the refund policy. `shared` is the copy
+ * every launch stage renders; the stage overrides stay available but empty. Public copy never names the
+ * card payment provider, a rehearsal, beta, test or invitation phase, USDC or crypto, Livepeer or NEAR.
+ * The Turkish layer is the interim version: no payment, price, refund, card or chain wording and no
+ * purchase call until the Turkish counsel opinion (K6, X4); what cannot be said is left out, not paraphrased.
  */
 export const landingCopyLayers = {
     shared: {
@@ -68,8 +79,8 @@ export const landingCopyLayers = {
             languageName: 'Türkçe',
             nav: {
                 sections: [
+                    { hash: 'ticket', label: 'How a ticket works' },
                     { hash: 'artists', label: 'For artists' },
-                    { hash: 'viewers', label: 'For viewers' },
                 ],
                 openingProgramme: 'Opening programme',
                 openingArtists: 'Opening artists',
@@ -79,7 +90,8 @@ export const landingCopyLayers = {
             },
             hero: {
                 badge: 'Opening February 2027',
-                title: 'youtick is a ticketed screening room for recorded concerts, films and performances.',
+                title: 'Independent films, documentaries and concert recordings, by ticket.',
+                subtitle: 'One ticket, one work. Watch when you like. No subscription.',
                 imageAlt: 'A concert stage facing a live audience',
                 openingProgrammeLink: 'See the opening programme',
                 openingArtistsLink: 'See the opening artists',
@@ -88,7 +100,7 @@ export const landingCopyLayers = {
                 eyebrow: 'February 2027',
                 programme: {
                     title: 'Opening programme',
-                    description: 'The first works on youtick. Each has its own screening page.',
+                    description: 'youtick opens in February 2027 with these works.',
                 },
                 artists: {
                     title: 'Opening artists',
@@ -103,24 +115,22 @@ export const landingCopyLayers = {
                 },
                 screeningPage: 'Screening page',
             },
-            about: {
-                description: 'Each work has its own screening page and its own ticket. Artists send their audience to that page. With a ticket you watch the work as often as you like while it stays on youtick.',
+            ticket: {
+                title: 'How a ticket works',
+                items: [
+                    'Pay by credit or debit card on the work’s screening page. The price includes VAT where it applies.',
+                    'Watch when you like, on up to three devices at a time. The ticket stays valid while the work is on youtick.',
+                    'Cancel within 14 days if you have not pressed play. Technical problems are refunded.',
+                ],
             },
             artists: {
                 title: 'For artists',
+                lead: 'Made a film or recorded a concert? Release it here as a ticketed screening. No channel, no subscription, no shop to build.',
                 items: [
-                    'Upload a recording, set the ticket price and share one link.',
-                    'You keep the rights to your work.',
-                    'VAT, the card cost and a 5% youtick fee on the pre-VAT price are deducted from each ticket. The rest is paid to you monthly.',
-                    'Apply with a link to your work. A person reads every application and replies by email.',
-                ],
-            },
-            viewers: {
-                title: 'For viewers',
-                items: [
-                    'Pay by credit or debit card. The price shown includes VAT where it applies.',
-                    'Watch on up to three devices at a time, signed in to your account.',
-                    'There is no fixed showtime. Press play whenever you like.',
+                    'Upload the recording and set the ticket price.',
+                    'Share the screening page with your audience.',
+                    'We take the card payment, handle VAT and answer refund requests.',
+                    'Your share is paid monthly. From each ticket we deduct VAT, the card cost and a 5% youtick fee on the pre-VAT price.',
                 ],
             },
             rules: { label: 'Full rules', terms: 'Terms', refund: 'Refund policy', faq: 'FAQ' },
@@ -134,6 +144,7 @@ export const landingCopyLayers = {
             },
             ctas: {
                 notify: 'Notify me when it opens',
+                show: 'Show your work on youtick',
                 apply: 'Apply as an artist',
             },
         },
@@ -141,8 +152,8 @@ export const landingCopyLayers = {
             languageName: 'English',
             nav: {
                 sections: [
+                    { hash: 'ticket', label: 'Bilet nasıl işler' },
                     { hash: 'artists', label: 'Sanatçılar için' },
-                    { hash: 'viewers', label: 'İzleyiciler için' },
                 ],
                 openingProgramme: 'Açılış programı',
                 openingArtists: 'Açılış sanatçıları',
@@ -152,7 +163,8 @@ export const landingCopyLayers = {
             },
             hero: {
                 badge: 'Şubat 2027’de açılıyor',
-                title: 'youtick, konser, film ve performans kayıtlarını biletle izlediğin dijital bir gösterim salonu.',
+                title: 'Bağımsız filmler, belgeseller ve konser kayıtları, biletle.',
+                subtitle: 'Tek bilet, tek eser. Dilediğin zaman izle. Abonelik yok.',
                 imageAlt: 'Canlı izleyiciye bakan bir konser sahnesi',
                 openingProgrammeLink: 'Açılış programına göz at',
                 openingArtistsLink: 'Açılış sanatçılarına göz at',
@@ -161,7 +173,7 @@ export const landingCopyLayers = {
                 eyebrow: 'Şubat 2027',
                 programme: {
                     title: 'Açılış programı',
-                    description: 'youtick’teki ilk eserler. Her birinin kendi gösterim sayfası var.',
+                    description: 'youtick Şubat 2027’de bu eserlerle açılıyor.',
                 },
                 artists: {
                     title: 'Açılış sanatçıları',
@@ -176,24 +188,20 @@ export const landingCopyLayers = {
                 },
                 screeningPage: 'Gösterim sayfası',
             },
-            about: {
-                description: 'Her eserin kendi gösterim sayfası ve kendi bileti var. Sanatçı, izleyicisini bu sayfaya yönlendirir. Eser youtick’te kaldığı sürece biletinle istediğin kadar izlersin.',
+            ticket: {
+                title: 'Bilet nasıl işler',
+                items: [
+                    'Biletin, eserin gösterim sayfasında hesabına bağlanır.',
+                    'Dilediğin zaman, aynı anda üç cihaza kadar izlersin. Bilet, eser youtick’te kaldığı sürece geçerlidir.',
+                    'Bilet sana özeldir; başkasına devredilemez.',
+                ],
             },
             artists: {
                 title: 'Sanatçılar için',
+                lead: 'Film çektin ya da konser kaydettin mi? Burada biletli bir gösterim olarak yayınla. Kanal yok, abonelik yok, kurulacak mağaza yok.',
                 items: [
-                    'Kaydını yükler, gösterim sayfanın bağlantısını paylaşırsın.',
+                    'Kaydını yükle, gösterim sayfanı kitlenle paylaş.',
                     'Eserinin hakları sende kalır.',
-                    'Çalışma koşullarını eserin yayına girmeden önce yazılı olarak netleştiririz.',
-                    'Eserinin bağlantısıyla başvur. Her başvuruyu bir kişi okur ve e-postayla yanıt verir.',
-                ],
-            },
-            viewers: {
-                title: 'İzleyiciler için',
-                items: [
-                    'Bir biletle aynı anda en fazla üç cihazda izleyebilirsin.',
-                    'Sabit seans saati yok. Dilediğin zaman izlersin.',
-                    'Bilet sana özeldir, başkasına devredilemez.',
                 ],
             },
             rules: { label: 'Ayrıntılar', terms: 'Koşullar', refund: null, faq: 'Sık sorulan sorular' },
@@ -207,6 +215,7 @@ export const landingCopyLayers = {
             },
             ctas: {
                 notify: 'Açılıştan haberdar ol',
+                show: 'Eserini youtick’te göster',
                 apply: 'Sanatçı olarak başvur',
             },
         },
@@ -270,12 +279,12 @@ export type LandingCtas = {
     secondary: { label: string; href: string };
 };
 
-/** Viewer and artist calls to action: the opening notice and the artist application. */
+/** The hero calls to action: the opening notice for viewers, the application for artists. */
 export function getLandingCtas(locale: LandingLocale, stage: LaunchStage = 'prova'): LandingCtas {
     const copy = getLandingCopy(locale, stage).ctas;
     return {
         primary: { label: copy.notify, href: openingNoticeHref(locale) },
-        secondary: { label: copy.apply, href: creatorApplyHref(locale) },
+        secondary: { label: copy.show, href: creatorApplyHref(locale) },
     };
 }
 

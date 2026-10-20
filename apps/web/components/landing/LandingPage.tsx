@@ -5,6 +5,7 @@ import { BrandWordmark } from '@/components/BrandWordmark';
 import { Button } from '@/components/ui/button';
 import { LAUNCH_STAGE, type LaunchStage } from '@/lib/constants';
 import {
+    creatorApplyHref,
     faqHref,
     getLandingCopy,
     getLandingCtas,
@@ -100,19 +101,27 @@ function OpeningProgramme({ copy, entries, locale }: { copy: LandingCopy['openin
     );
 }
 
-/** A heading and a short list: the artists' and the viewers' block. */
-function Audience({ id, copy }: { id: string; copy: { title: string; items: readonly string[] } }) {
+/** One audience's block: a heading, an optional lead, a short list and an optional button. */
+function Audience({ id, title, lead, items, action }: { id: string; title: string; lead?: string; items: readonly string[]; action?: { label: string; href: string } }) {
     return (
-        <section id={id} className="rounded-2xl border border-white/10 bg-zinc-950 p-6 md:p-8">
-            <h2 className="mb-6 text-2xl font-black md:text-3xl">{copy.title}</h2>
-            <ul className="space-y-4">
-                {copy.items.map((item) => (
-                    <li key={item} className="flex gap-3 text-base leading-relaxed text-zinc-300">
-                        <CheckCircle2 aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-near-green" />
-                        <span>{item}</span>
-                    </li>
-                ))}
-            </ul>
+        <section id={id} className="border-t border-white/5 bg-black py-16">
+            <div className="container mx-auto max-w-4xl px-4">
+                <h2 className="mb-4 text-3xl font-black md:text-4xl">{title}</h2>
+                {lead && <p className="mb-8 max-w-3xl text-lg leading-relaxed text-zinc-300 md:text-xl">{lead}</p>}
+                <ul className={lead ? 'space-y-4' : 'mt-4 space-y-4'}>
+                    {items.map((item) => (
+                        <li key={item} className="flex gap-3 text-base leading-relaxed text-zinc-300 md:text-lg">
+                            <CheckCircle2 aria-hidden="true" className="mt-1.5 h-4 w-4 shrink-0 text-near-green" />
+                            <span>{item}</span>
+                        </li>
+                    ))}
+                </ul>
+                {action && (
+                    <Button asChild size="lg" className="mt-8 w-full rounded-full bg-white px-8 py-6 text-base font-bold text-black hover:bg-zinc-200 sm:w-auto">
+                        <Link href={action.href}>{action.label}<ArrowRight aria-hidden="true" /></Link>
+                    </Button>
+                )}
+            </div>
         </section>
     );
 }
@@ -147,6 +156,7 @@ export function LandingPage({ locale, stage = LAUNCH_STAGE, programme = OPENING_
                         <h1 className="max-w-5xl text-balance text-4xl font-black leading-[1.05] sm:text-5xl md:text-6xl lg:text-7xl">
                             {copy.hero.title}
                         </h1>
+                        <p className="mt-6 max-w-3xl text-xl font-semibold leading-relaxed text-zinc-200 md:text-2xl">{copy.hero.subtitle}</p>
                         <div className="mt-8"><ActionButtons ctas={ctas} /></div>
                         {heroLink && (
                             <Link href={`#${heroLink.hash}`} className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-zinc-200 underline-offset-4 hover:text-white hover:underline">
@@ -159,16 +169,14 @@ export function LandingPage({ locale, stage = LAUNCH_STAGE, programme = OPENING_
 
             <OpeningProgramme copy={copy.openingProgramme} entries={programme} locale={locale} />
 
-            <section id="about" className="bg-black py-20">
-                <div className="container mx-auto px-4">
-                    <p className="max-w-3xl text-xl font-semibold leading-relaxed text-zinc-200 md:text-2xl">{copy.about.description}</p>
-                </div>
-            </section>
-
-            <div className="container mx-auto grid gap-5 px-4 pb-20 lg:grid-cols-2">
-                <Audience id="artists" copy={copy.artists} />
-                <Audience id="viewers" copy={copy.viewers} />
-            </div>
+            <Audience id="ticket" title={copy.ticket.title} items={copy.ticket.items} />
+            <Audience
+                id="artists"
+                title={copy.artists.title}
+                lead={copy.artists.lead}
+                items={copy.artists.items}
+                action={{ label: copy.ctas.apply, href: creatorApplyHref(locale) }}
+            />
 
             <section className="border-t border-white/5 bg-black py-10">
                 <p className="container mx-auto flex flex-wrap items-center gap-x-5 gap-y-2 px-4 text-sm text-zinc-400">
