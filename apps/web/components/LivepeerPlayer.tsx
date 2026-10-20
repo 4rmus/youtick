@@ -71,6 +71,8 @@ function LivepeerPlayerSession({
         let disposed = false;
         let destroy: (() => void) | undefined;
         tokenRef.current = null;
+        // A new playback input clears the previous source before the asynchronous load below starts.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setSrc(null);
         setAccessToken(null);
         setError(null);

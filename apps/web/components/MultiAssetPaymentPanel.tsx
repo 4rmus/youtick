@@ -52,15 +52,20 @@ export function MultiAssetPaymentPanel({
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const readyCallback = React.useRef(onUsdcReady);
-    readyCallback.current = onUsdcReady;
     const checkoutRef = React.useRef<ActivePaymentCheckout | null>(null);
-    checkoutRef.current = checkout;
+    // Keep the latest callback and checkout for the async handlers; declared first, so it runs before the effects below.
+    React.useEffect(() => {
+        readyCallback.current = onUsdcReady;
+        checkoutRef.current = checkout;
+    });
     const purposeKey = purpose.type === 'ticket'
         ? `ticket:${purpose.publication_id}`
         : `upload:${purpose.expected_source_bytes}`;
 
     React.useEffect(() => {
         let disposed = false;
+        // Resets the quote state for a new account or purpose and restores a checkout kept in browser storage (an external store).
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setPreview(null);
         setPreflight(null);
         setError(null);

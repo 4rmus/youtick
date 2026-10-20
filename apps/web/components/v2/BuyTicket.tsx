@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, Loader2, Ticket } from 'lucide-react';
 import { ScreenState } from '@/components/ScreenState';
@@ -60,6 +60,19 @@ interface PublicationView {
     availability: string;
 }
 
+function subscribeBrowserLanguages(onChange: () => void): () => void {
+    window.addEventListener('languagechange', onChange);
+    return () => window.removeEventListener('languagechange', onChange);
+}
+
+function browserCryptoRail(): boolean {
+    return cryptoRailEnabled(navigator.languages?.length ? navigator.languages : [navigator.language]);
+}
+
+function serverCryptoRail(): null {
+    return null;
+}
+
 export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     const { config, session, view } = useNearAuthV2();
     const signedIn = session.status === 'signed_in';
@@ -70,11 +83,8 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     // Unticked by default; every purchase button stays disabled until the buyer ticks it.
     const [consented, setConsented] = useState(false);
     const reserved = useRef(new Set<number>());
-    // Read from the browser after mount, so the server render never guesses the language.
-    const [cryptoRail, setCryptoRail] = useState<boolean | null>(null);
-    useEffect(() => {
-        setCryptoRail(cryptoRailEnabled(navigator.languages?.length ? navigator.languages : [navigator.language]));
-    }, []);
+    // Read from the browser, never on the server: the server snapshot is null, so the server render never guesses the language.
+    const cryptoRail = useSyncExternalStore(subscribeBrowserLanguages, browserCryptoRail, serverCryptoRail);
     const valid = Boolean(publicationId && /^[A-Za-z0-9._:-]{1,128}$/.test(publicationId));
 
     useEffect(() => {
