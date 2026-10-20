@@ -3,7 +3,7 @@ import { headers } from 'next/headers';
 import { PUBLIC_ROOT_SITEMAP_PATHS, configuredPublicRootHosts, isPublicRootHost } from '@/lib/public-routes';
 
 const baseUrl = 'https://youtick.net';
-const ALL_PATHS = ['', '/tr', '/apply', '/tr/apply', '/notify', '/tr/notify', '/discover', '/upload', '/profile', '/privacy', '/terms', '/refund-policy', '/report'];
+const ALL_PATHS = ['', '/tr', '/apply', '/tr/apply', '/notify', '/tr/notify', '/faq', '/tr/faq', '/discover', '/upload', '/profile', '/privacy', '/terms', '/refund-policy', '/report'];
 
 /** Root hosts (PUBLIC_ROOT_HOSTS) list only the public pages; other hosts keep the full list. */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
