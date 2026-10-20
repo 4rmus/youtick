@@ -57,12 +57,14 @@ function publicOutput(locale: LandingLocale, stage: LaunchStage = 'prova'): stri
     return `${copyText(getLandingCopy(locale, stage)).join('\n')}\n${renderLandingText(locale, stage)}`;
 }
 
-// Short-copy rewrite (owner, 2026-10-20): the landing says what youtick is and how it works, nothing
-// that belongs to the terms, the refund policy or the FAQ. Ticket rights, refund rules, the networks
-// behind playback and the worked revenue example are not landing copy.
+// Two-audience rewrite (owner, 2026-10-20): the landing speaks to the viewer who comes back to the root
+// page and to the artist who checks the site before applying, one block each, in decisions rather than
+// mechanism. Ticket rights beyond the cancellation window, the refund rules, the networks behind playback,
+// the worked revenue example and the application process are not landing copy.
 const NOT_ON_THE_LANDING: readonly RegExp[] = [
-    /Livepeer/, /\bNEAR\b/, /\$\d/, /14 days/, /14 gün/, /statutory/, /licence/, /personal right/,
+    /Livepeer/, /\bNEAR\b/, /\$\d/, /statutory/, /licence/, /personal right/,
     /screen recording/i, /ekran kaydı/i, /refunds? (?:cover|go back)/i, /resold/, /devredilemez.*kopyalama/,
+    /own screening page/i, /kendi gösterim sayfası/i, /reads every application/i, /başvuruyu bir kişi okur/i,
 ];
 
 const ARTISTS: readonly OpeningProgrammeEntry[] = [{ artist: 'Example Artist' }];
@@ -88,16 +90,18 @@ describe('bilingual landing', () => {
         expect(getLandingCopy('tr').hero.badge).toBe('Şubat 2027’de açılıyor');
         expect(getLandingCtas('en')).toEqual({
             primary: { label: 'Notify me when it opens', href: '/notify' },
-            secondary: { label: 'Apply as an artist', href: '/apply' },
+            secondary: { label: 'Show your work on youtick', href: '/apply' },
         });
         expect(getLandingCtas('tr')).toEqual({
             primary: { label: 'Açılıştan haberdar ol', href: '/tr/notify' },
-            secondary: { label: 'Sanatçı olarak başvur', href: '/tr/apply' },
+            secondary: { label: 'Eserini youtick’te göster', href: '/tr/apply' },
         });
         for (const locale of LOCALES) {
             const html = renderToStaticMarkup(React.createElement(LandingPage, { locale, stage: 'prova', programme: [] }));
             const ids = Array.from(html.matchAll(/ id="([^"]+)"/g), (match) => match[1]);
-            expect(ids).toEqual(['about', 'artists', 'viewers']);
+            expect(ids).toEqual(['ticket', 'artists']);
+            // The artist block ends in the application button; the hero carries the artist's own words.
+            expect(html).toContain(getLandingCopy(locale).ctas.apply);
             expect(html).toContain(`href="${locale === 'tr' ? '/tr/notify' : '/notify'}"`);
             expect(html).toContain(`href="${locale === 'tr' ? '/tr/apply' : '/apply'}"`);
             expect(html).toContain(`href="${faqHref(locale)}"`);
@@ -109,20 +113,25 @@ describe('bilingual landing', () => {
         expect(renderToStaticMarkup(React.createElement(LandingPage, { locale: 'tr', stage: 'prova', programme: [] }))).not.toContain('refund-policy');
     });
 
-    it('stays short: one hero sentence, three sentences on how it works, four lines for artists, three for viewers', () => {
+    it('stays short: one hero sentence and one hero line, three ticket lines, an artist lead with at most four lines', () => {
         for (const locale of LOCALES) {
             const copy = getLandingCopy(locale);
             expect(copy.hero.title.match(/[.!?]/g)).toHaveLength(1);
-            expect(copy.about.description.match(/\. /g)).toHaveLength(2);
-            expect(copy.artists.items).toHaveLength(4);
-            expect(copy.viewers.items).toHaveLength(3);
-            expect(copy.nav.sections.map((section) => section.hash)).toEqual(['artists', 'viewers']);
+            expect(copy.hero.subtitle.match(/[.!?]/g)).toHaveLength(3);
+            expect(copy.ticket.items).toHaveLength(3);
+            expect(copy.artists.lead.match(/[.!?]/g)).toHaveLength(3);
+            expect(copy.artists.items.length).toBeLessThanOrEqual(4);
+            expect(copy.nav.sections.map((section) => section.hash)).toEqual(['ticket', 'artists']);
             const words = copyText(copy).join(' ').split(/\s+/).length;
             expect(words, `${locale}: ${words} words`).toBeLessThan(260);
-            for (const sentence of copyText({ hero: copy.hero.title, about: copy.about, artists: copy.artists.items, viewers: copy.viewers.items }).flatMap((text) => text.split(/(?<=\.)\s+/))) {
+            const prose = copyText({ hero: [copy.hero.title, copy.hero.subtitle], ticket: copy.ticket.items, artists: [copy.artists.lead, ...copy.artists.items] });
+            for (const sentence of prose.flatMap((text) => text.split(/(?<=[.?])\s+/))) {
                 expect(sentence.split(/\s+/).length, sentence).toBeLessThanOrEqual(18);
             }
         }
+        // The English artist block carries the fee; the interim Turkish block carries no payment line at all.
+        expect(getLandingCopy('en').artists.items).toHaveLength(4);
+        expect(getLandingCopy('tr').artists.items).toHaveLength(2);
     });
 
     it('publishes no rehearsal, provider, crypto or never-used wording at any stage', () => {
@@ -143,9 +152,10 @@ describe('bilingual landing', () => {
 
     it('states the card payment and the fee on the English page only', () => {
         const english = renderLandingText('en', 'prova');
-        expect(english).toContain('Pay by credit or debit card.');
+        expect(english).toContain('Pay by credit or debit card on the work’s screening page.');
         expect(english).toContain('a 5% youtick fee on the pre-VAT price');
-        expect(english).toContain('paid to you monthly');
+        expect(english).toContain('Your share is paid monthly.');
+        expect(english).toContain('Cancel within 14 days if you have not pressed play.');
         expect(english).not.toMatch(/card payment provider/);
         expect(renderLandingText('tr', 'prova')).not.toMatch(/%|VAT|KDV/);
     });
@@ -171,8 +181,8 @@ describe('bilingual landing', () => {
         expect(programme).toContain('Açılış programına göz at');
 
         const en = getLandingCopy('en');
-        expect(landingNavSections(en, 'hidden').map((section) => section.hash)).toEqual(['artists', 'viewers']);
-        expect(landingNavSections(en, 'programme').map((section) => section.hash)).toEqual(['opening-programme', 'artists', 'viewers']);
+        expect(landingNavSections(en, 'hidden').map((section) => section.hash)).toEqual(['ticket', 'artists']);
+        expect(landingNavSections(en, 'programme').map((section) => section.hash)).toEqual(['opening-programme', 'ticket', 'artists']);
         expect(landingNavSections(en, 'programme')[0]).toEqual({ hash: 'opening-programme', label: 'Opening programme' });
         expect(landingNavSections(en, 'artists')[0]).toEqual({ hash: 'opening-programme', label: 'Opening artists' });
         expect(heroProgrammeLink(en, 'hidden')).toBeNull();

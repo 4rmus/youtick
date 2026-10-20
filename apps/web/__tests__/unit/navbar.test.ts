@@ -57,8 +57,8 @@ describe('Navbar', () => {
 
     it.each([
         ['/privacy', 'en', '/notify', 'Notify me when it opens', '/#artists'],
-        ['/faq', 'en', '/notify', 'Notify me when it opens', '/#viewers'],
-        ['/tr/faq', 'tr', '/tr/notify', 'Açılıştan haberdar ol', '/tr#artists'],
+        ['/faq', 'en', '/notify', 'Notify me when it opens', '/#ticket'],
+        ['/tr/faq', 'tr', '/tr/notify', 'Açılıştan haberdar ol', '/tr#ticket'],
     ])('gives the public page %s the landing navigation in %s', (pathname, _locale, notify, label, section) => {
         navState.pathname = pathname;
         navState.accountId = null;
