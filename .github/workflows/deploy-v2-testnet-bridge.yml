@@ -2,6 +2,9 @@ name: V2 Testnet Bridge
 
 # Deploys the Livepeer Bridge on Market V2 to the separate V2 testnet environment.
 # Runbook: docs/v2-testnet-runbook.md (Bridge). The relayer and payment service deploy from deploy-v2-testnet.yml.
+# M1.5: the Bridge deploys to the media Cloudflare account (V2_MEDIA_CLOUDFLARE_*) and serves from its
+# workers.dev host (docs/v2-testnet-runbook.md, Media account). That token has no youtick.net zone authority,
+# so this workflow does not fingerprint the root origin; deploy-v2-testnet.yml still does.
 on:
   workflow_dispatch:
     inputs:
@@ -105,8 +108,8 @@ jobs:
         run: |
           node --input-type=module <<'JS'
           import { appendFileSync, readFileSync } from 'node:fs';
-          import { BRIDGE, FIXED_VARS, releaseVars } from './scripts/v2-testnet-bridge-release.mjs';
-          const packet = { worker: BRIDGE.worker, domain: BRIDGE.domain, flags: releaseVars(process.env.RELEASE_MODE), vars: FIXED_VARS };
+          import { BRIDGE, FIXED_VARS, bridgeHost, releaseVars } from './scripts/v2-testnet-bridge-release.mjs';
+          const packet = { worker: BRIDGE.worker, account: 'media', host: bridgeHost(), flags: releaseVars(process.env.RELEASE_MODE), vars: FIXED_VARS };
           const sums = readFileSync(`${process.env.RUNNER_TEMP}/release/SHA256SUMS`, 'utf8');
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `V2 testnet Bridge, ${process.env.RELEASE_MODE}, ${process.env.SHA} (no NEAR transaction in this workflow):\n\n` +
             '```json\n' + JSON.stringify(packet, null, 2) + '\n```\n\n```\n' + sums + '```\n');
@@ -131,7 +134,9 @@ jobs:
     timeout-minutes: 20
     environment:
       name: v2-testnet
-      url: https://bridge-v2-testnet.youtick.net/__health
+      # Must equal https://${bridgeHost()}/__health (scripts/ci-security.test.mjs checks it); the owner's
+      # subdomain commit updates this literal and MEDIA_ACCOUNT together.
+      url: https://youtick-livepeer-bridge-v2-testnet.<register-on-the-media-account>.workers.dev/__health
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -164,12 +169,10 @@ jobs:
           jq -e --arg sha "$SHA" --arg mode "$RELEASE_MODE" '.sha == $sha and .mode == $mode' manifest.json
       - run: npm ci --no-audit --no-fund --prefer-offline
         working-directory: workers/livepeer-bridge
-      - name: Fingerprint unrelated root origin
-        run: node scripts/release-smoke.mjs fingerprint https://youtick.net > "$RUNNER_TEMP/root-before.json"
       - name: Preflight keys on chain, deploy the Bridge and smoke it
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.V2_MEDIA_CLOUDFLARE_API_TOKEN }}
           NEAR_RPC_URL: ${{ secrets.V2_NEAR_RPC_URL }}
           LIVEPEER_API_KEY: ${{ secrets.V2_LIVEPEER_API_KEY }}
           LIVEPEER_WEBHOOK_SECRET: ${{ secrets.V2_LIVEPEER_WEBHOOK_SECRET }}
@@ -180,10 +183,6 @@ jobs:
           SHA: ${{ needs.prepare.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
         run: node scripts/v2-testnet-bridge-release.mjs deploy "$SHA" "$RUNNER_TEMP/release" "$RUNNER_TEMP/v2-testnet-bridge-receipt.json" "$RELEASE_MODE"
-      - name: Verify unrelated root origin
-        run: |
-          node scripts/release-smoke.mjs fingerprint https://youtick.net > "$RUNNER_TEMP/root-after.json"
-          node scripts/release-smoke.mjs compare "$RUNNER_TEMP/root-before.json" "$RUNNER_TEMP/root-after.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

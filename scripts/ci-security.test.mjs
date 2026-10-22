@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { BRIDGE, bridgeHost } from './v2-testnet-bridge-release.mjs';
+import { MEDIA_ACCOUNT } from './v2-testnet-release.mjs';
 
 const workflows = [
     'ci.yml',
@@ -12,6 +14,7 @@ const workflows = [
     'deploy-preview.yml',
     'deploy-public-testnet.yml',
     'deploy-v2-testnet.yml',
+    'deploy-v2-testnet-bridge.yml',
     'bootstrap-v2-testnet.yml',
     'bootstrap-public-testnet.yml',
     'preview-market-code-update.yml',
@@ -535,4 +538,49 @@ test('public-testnet pilot alerts are scheduled, closed by default, least-privil
     assert.doesNotMatch(script, /query: '\s*mutation|method: '(PUT|PATCH|DELETE)'/);
     assert.match(script, /query: 'query DlqBacklog\(/);
     assert.equal((script.match(/method: 'POST'/g) ?? []).length, 3);
+});
+
+/** The steps of a workflow job as `{ name, text }`, split on the six-space step indentation. */
+function workflowSteps(source) {
+    return source.split(/\n(?=      - )/).slice(1).map((text) => ({ name: /^      - (?:name: (.+)|uses: (\S+))/.exec(text)?.slice(1).find(Boolean), text }));
+}
+
+test('V2 testnet media account (M1.5): the Bridge and the read model use V2_MEDIA_CLOUDFLARE_*, nothing else does', async () => {
+    const [bridge, workers] = await Promise.all([
+        readFile(new URL('../.github/workflows/deploy-v2-testnet-bridge.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/deploy-v2-testnet.yml', import.meta.url), 'utf8'),
+    ]);
+    // The Bridge deploys only with the media pair; its token has no zone authority for the root fingerprint.
+    assert.match(bridge, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID \}\}/);
+    assert.match(bridge, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_API_TOKEN \}\}/);
+    assert.doesNotMatch(bridge, /V2_CLOUDFLARE_/);
+    assert.doesNotMatch(bridge, /release-smoke\.mjs/);
+    assert.match(bridge, /READ_MODEL_D1_ID: \$\{\{ vars\.V2_READ_MODEL_D1_ID \}\}/);
+    // environment.url is a literal; it must equal the host the release derives, sentinel included.
+    const derived = `https://${BRIDGE.worker}.${MEDIA_ACCOUNT.workersSubdomain}.workers.dev/__health`;
+    assert.equal(/\n    environment:\n      name: v2-testnet\n(?:      #.*\n)*      url: (\S+)\n/.exec(bridge)?.[1], derived);
+    if (!MEDIA_ACCOUNT.workersSubdomain.startsWith('<')) assert.equal(derived, `https://${bridgeHost()}/__health`);
+
+    // The Workers workflow: only the read-model D1 step and the release step see the media pair.
+    const steps = workflowSteps(workers);
+    assert.deepEqual(steps.filter((step) => step.text.includes('V2_MEDIA_')).map((step) => step.name), [
+        'Apply the V2 read-model D1 migrations', 'Preflight keys on chain, deploy the three Workers and smoke them',
+    ]);
+    const step = (name) => steps.find((entry) => entry.name === name).text;
+    const readModelD1 = step('Apply the V2 read-model D1 migrations');
+    assert.match(readModelD1, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID \}\}/);
+    assert.match(readModelD1, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_API_TOKEN \}\}/);
+    assert.doesNotMatch(readModelD1, /V2_CLOUDFLARE_/);
+    const payments = step('Apply the V2 payments D1 migrations (refund request inbox, card orders)');
+    assert.match(payments, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_CLOUDFLARE_ACCOUNT_ID \}\}/);
+    assert.doesNotMatch(payments, /V2_MEDIA_/);
+    const release = step('Preflight keys on chain, deploy the three Workers and smoke them');
+    assert.match(release, /\n          CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_CLOUDFLARE_ACCOUNT_ID \}\}/);
+    assert.match(release, /\n          CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_CLOUDFLARE_API_TOKEN \}\}/);
+    assert.match(release, /\n          MEDIA_CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID \}\}/);
+    assert.match(release, /\n          MEDIA_CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_API_TOKEN \}\}/);
+    // The relayer's custom domain stays the environment URL, and the root origin is still fingerprinted around the deploy.
+    assert.match(workers, /\n      url: https:\/\/relayer-v2-testnet\.youtick\.net\n/);
+    assert.deepEqual(steps.filter((entry) => /release-smoke\.mjs/.test(entry.text)).map((entry) => entry.name),
+        ['Fingerprint unrelated root origin', 'Verify unrelated root origin']);
 });
