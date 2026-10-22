@@ -3,8 +3,8 @@ name: V2 Testnet Bridge
 # Deploys the Livepeer Bridge on Market V2 to the separate V2 testnet environment.
 # Runbook: docs/v2-testnet-runbook.md (Bridge). The relayer and payment service deploy from deploy-v2-testnet.yml.
 # M1.5: the Bridge deploys to the media Cloudflare account (V2_MEDIA_CLOUDFLARE_*) and serves from its
-# workers.dev host (docs/v2-testnet-runbook.md, Media account). That token has no youtick.net zone authority,
-# so this workflow does not fingerprint the root origin; deploy-v2-testnet.yml still does.
+# workers.dev host (docs/v2-testnet-runbook.md, Media account). The Bridge is no longer in the youtick.net
+# zone and cannot affect the root origin, so this workflow does not fingerprint it; deploy-v2-testnet.yml still does.
 on:
   workflow_dispatch:
     inputs:
@@ -53,6 +53,8 @@ jobs:
       id-token: write
     outputs:
       sha: ${{ steps.authorize.outputs.sha }}
+      # The Bridge's workers.dev /__health, derived by bridgeHost() in the summary step.
+      health_url: ${{ steps.summary.outputs.health_url }}
     steps:
       - name: Authorize exact main source and CI before checkout
         id: authorize
@@ -102,6 +104,7 @@ jobs:
             '{schema:"youtick.v2-testnet-bridge-release.v1", sha:$sha, mode:$mode, ci_run_id:$run}' > "$RUNNER_TEMP/release/manifest.json"
           (cd "$RUNNER_TEMP/release" && find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
       - name: Summarize the exact packet for environment approval
+        id: summary
         env:
           SHA: ${{ steps.authorize.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
@@ -110,6 +113,7 @@ jobs:
           import { appendFileSync, readFileSync } from 'node:fs';
           import { BRIDGE, FIXED_VARS, bridgeHost, releaseVars } from './scripts/v2-testnet-bridge-release.mjs';
           const packet = { worker: BRIDGE.worker, account: 'media', host: bridgeHost(), flags: releaseVars(process.env.RELEASE_MODE), vars: FIXED_VARS };
+          appendFileSync(process.env.GITHUB_OUTPUT, `health_url=https://${bridgeHost()}/__health\n`);
           const sums = readFileSync(`${process.env.RUNNER_TEMP}/release/SHA256SUMS`, 'utf8');
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `V2 testnet Bridge, ${process.env.RELEASE_MODE}, ${process.env.SHA} (no NEAR transaction in this workflow):\n\n` +
             '```json\n' + JSON.stringify(packet, null, 2) + '\n```\n\n```\n' + sums + '```\n');
@@ -134,9 +138,7 @@ jobs:
     timeout-minutes: 20
     environment:
       name: v2-testnet
-      # Must equal https://${bridgeHost()}/__health (scripts/ci-security.test.mjs checks it); the owner's
-      # subdomain commit updates this literal and MEDIA_ACCOUNT together.
-      url: https://youtick-livepeer-bridge-v2-testnet.<register-on-the-media-account>.workers.dev/__health
+      url: ${{ needs.prepare.outputs.health_url }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

@@ -16,7 +16,7 @@ import { join, resolve } from 'node:path';
 import process from 'node:process';
 import {
     ACCEPTANCE_ORIGIN, DENIED_ORIGIN, MARKET_V2, MODES, PARENT, SMOKE_DELAYS_MS,
-    mediaAccount, nearPublicKey, request, retry, runProcess, validateRpcUrl, workersDevHost, wranglerRunner,
+    mediaAccount, mediaAccountId, nearPublicKey, request, retry, runProcess, validateRpcUrl, workersDevHost, wranglerRunner,
 } from './v2-testnet-release.mjs';
 
 export const BRIDGE = Object.freeze({
@@ -228,7 +228,8 @@ export function quotePublicKey(value) {
 export function releaseSecrets(env, expected = EXPECTED_KEYS) {
     if (!/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID ?? '') || !env.CLOUDFLARE_API_TOKEN?.trim()) fail('cloudflare_credentials_invalid');
     // The Bridge deploys only to the media account (M1.5); mediaAccount() also refuses an unregistered subdomain.
-    if (env.CLOUDFLARE_ACCOUNT_ID !== mediaAccount().accountId) fail('cloudflare_account_not_media');
+    mediaAccount();
+    if (env.CLOUDFLARE_ACCOUNT_ID !== mediaAccountId()) fail('cloudflare_account_not_media');
     const rpc = validateRpcUrl(env.NEAR_RPC_URL ?? '');
     const apiKey = env.LIVEPEER_API_KEY ?? '';
     if (apiKey.length < 16 || /\s/.test(apiKey)) fail('livepeer_api_key_invalid');
@@ -415,6 +416,8 @@ async function main(argv) {
     if (command === 'check' && args.length === 3) {
         // Prepare job: the exact deploy invocation, as a dry run with no Cloudflare credentials.
         const [releaseDir, sha, mode] = args;
+        // The Bridge's host needs the registered workers.dev subdomain; stop the prepare job here.
+        mediaAccount();
         const result = await runProcess(resolve(BRIDGE.dir, 'node_modules/.bin/wrangler'),
             [...wranglerArgs(resolve(releaseDir), sha, mode), '--dry-run'],
             { PATH: process.env.PATH, HOME: process.env.HOME, CI: 'true', WRANGLER_SEND_METRICS: 'false' });

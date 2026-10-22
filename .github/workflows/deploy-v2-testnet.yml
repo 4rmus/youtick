@@ -216,7 +216,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
-          # The read model only; the release checks them when it reaches that Worker.
+          # The read model only; the release checks them before its preflight and before any Worker deploys.
           MEDIA_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID }}
           MEDIA_CLOUDFLARE_API_TOKEN: ${{ secrets.V2_MEDIA_CLOUDFLARE_API_TOKEN }}
           NEAR_RPC_URL: ${{ secrets.V2_NEAR_RPC_URL }}

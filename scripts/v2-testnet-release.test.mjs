@@ -277,7 +277,7 @@ test('acceptance deploy: preflight, one deploy per Worker with its own secrets, 
     for (const r of record) await assert.rejects(readdir(r.tempRoot), /ENOENT/);
 });
 
-test('media credentials are checked only when the read model is reached, and fail there', async () => {
+test('a missing or wrong media pair stops the release before the preflight and any wrangler call', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'v2-release-test-'));
     for (const [overrides, error] of [
         [{ MEDIA_CLOUDFLARE_ACCOUNT_ID: undefined, MEDIA_CLOUDFLARE_API_TOKEN: undefined }, /media_credentials_missing/],
@@ -285,32 +285,36 @@ test('media credentials are checked only when the read model is reached, and fai
         [{ MEDIA_CLOUDFLARE_ACCOUNT_ID: 'c'.repeat(32) }, /cloudflare_account_not_media/],
         [{ MEDIA_CLOUDFLARE_ACCOUNT_ID: 'd'.repeat(32) }, /cloudflare_account_not_media/],
     ]) {
-        const receiptPath = join(dir, 'r.json');
+        const receiptPath = join(dir, `r-${Object.values(overrides).join('-')}.json`);
         const record = [];
+        const { impl, calls } = fakeFetch();
         await assert.rejects(deployRelease({
-            sha: SHA, releaseDir: '/r', receiptPath, mode: 'acceptance', env: env(overrides), fetchImpl: fakeFetch().impl,
+            sha: SHA, releaseDir: '/r', receiptPath, mode: 'acceptance', env: env(overrides), fetchImpl: impl,
             sleep: async () => {}, makeRunner: fakeRunner(record),
         }), error, JSON.stringify(overrides));
-        assert.deepEqual(record.map((r) => r.args[r.args.indexOf('--name') + 1]), ['youtick-relayer-v2-testnet', 'youtick-payment-service-v2-testnet']);
-        const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
-        assert.equal(receipt.status, 'FAILED');
-        assert.deepEqual(receipt.workers.map((w) => w.status), ['VERIFIED', 'VERIFIED']);
+        assert.equal(record.length, 0);
+        assert.equal(calls.length, 0);
+        await assert.rejects(readFile(receiptPath, 'utf8'), /ENOENT/);
     }
 });
 
-test('the sentinel subdomain stops the release at the read model, after the default-account Workers', async () => {
+test('the sentinel subdomain stops the release before the preflight and any wrangler call', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'v2-release-test-'));
     const record = [];
+    const { impl, calls } = fakeFetch({ workers: 'closed' });
     try {
         setMediaAccountOverride({ workersSubdomain: '<register-on-the-media-account>' });
         await assert.rejects(deployRelease({
-            sha: SHA, releaseDir: '/r', receiptPath: join(dir, 'r.json'), mode: 'closed', env: env(), fetchImpl: fakeFetch({ workers: 'closed' }).impl,
+            sha: SHA, releaseDir: '/r', receiptPath: join(dir, 'r.json'), mode: 'closed', env: env(), fetchImpl: impl,
             sleep: async () => {}, makeRunner: fakeRunner(record),
         }), /media_account_unconfigured/);
+        // The account id alone does not need the subdomain: the default-account guard still works.
+        assert.throws(() => releaseSecrets(env({ CLOUDFLARE_ACCOUNT_ID: MEDIA_ACCOUNT.accountId })), /cloudflare_default_account_is_media/);
     } finally {
         setMediaAccountOverride({ workersSubdomain: MEDIA_SUBDOMAIN });
     }
-    assert.equal(record.length, 2);
+    assert.equal(record.length, 0);
+    assert.equal(calls.length, 0);
 });
 
 test('closed deploy expects 503 from both Workers', async () => {

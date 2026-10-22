@@ -61,11 +61,18 @@ export function setMediaAccountOverride(fields) {
     mediaAccountOverride = fields ? Object.freeze({ ...MEDIA_ACCOUNT, ...fields }) : null;
 }
 
-/** The media account, checked: a 32-hex account id that is not all zeros and a registered workers.dev subdomain. */
+/** The media account id alone, checked: 32 hex digits, not all zeros. It does not need the subdomain. */
+export function mediaAccountId() {
+    const { accountId } = mediaAccountOverride ?? MEDIA_ACCOUNT;
+    if (!/^[a-f0-9]{32}$/.test(accountId ?? '') || /^0+$/.test(accountId)) fail('media_account_unconfigured');
+    return accountId;
+}
+
+/** The media account, checked: a valid account id and a registered workers.dev subdomain. */
 export function mediaAccount() {
     const account = mediaAccountOverride ?? MEDIA_ACCOUNT;
-    if (!/^[a-f0-9]{32}$/.test(account.accountId ?? '') || /^0+$/.test(account.accountId)
-        || !WORKERS_SUBDOMAIN.test(account.workersSubdomain ?? '')) fail('media_account_unconfigured');
+    mediaAccountId();
+    if (!WORKERS_SUBDOMAIN.test(account.workersSubdomain ?? '')) fail('media_account_unconfigured');
     return account;
 }
 
@@ -292,12 +299,12 @@ export function validateRpcUrl(value) {
 
 /**
  * Reads and checks the deploy job's environment; nothing here is echoed. The media account's credentials
- * are only read here: deployRelease checks them when it reaches a media component, so a release that
- * never gets there does not need them.
+ * are only read here; deployRelease checks them with mediaCredentials() before the preflight, because
+ * every release deploys the read model.
  */
 export function releaseSecrets(env, card = 'off') {
     if (!/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID ?? '') || !env.CLOUDFLARE_API_TOKEN?.trim()) fail('cloudflare_credentials_invalid');
-    if (env.CLOUDFLARE_ACCOUNT_ID === MEDIA_ACCOUNT.accountId) fail('cloudflare_default_account_is_media');
+    if (env.CLOUDFLARE_ACCOUNT_ID === mediaAccountId()) fail('cloudflare_default_account_is_media');
     if (!/^[A-Za-z0-9_-]{32,256}$/.test(env.RELAYER_ADMIN_TOKEN ?? '')) fail('relayer_admin_token_invalid');
     if (!/^[A-Za-z0-9_-]{32,256}$/.test(env.REFUND_ADMIN_TOKEN ?? '')) fail('refund_admin_token_invalid');
     if (env.REFUND_ADMIN_TOKEN === env.RELAYER_ADMIN_TOKEN) fail('admin_tokens_must_differ');
@@ -508,7 +515,7 @@ export async function retry(fn, delays, sleep) {
 // certificate of its own; how long its first deploy takes to answer is UNPROVEN (M1.5-G3 measures it).
 export const SMOKE_DELAYS_MS = [0, 5_000, 10_000, 15_000, 30_000, 30_000, 60_000];
 
-/** The media account's credentials, checked only when a media component is about to deploy. */
+/** The media account's credentials: a registered media account and a pair for exactly that account. */
 function mediaCredentials(secrets) {
     const { accountId } = mediaAccount();
     const media = secrets.mediaCloudflare;
@@ -525,6 +532,9 @@ export async function deployRelease({
     if (!MODES.includes(mode)) fail('mode_invalid');
     cardPath(mode, card);
     const secrets = releaseSecrets(env, card);
+    // Every release deploys the read model, so the media account and its pair are checked before the
+    // preflight and before any Worker deploys: a wrong pair never leaves a half-done release.
+    const credentials = { default: secrets.cloudflare, media: mediaCredentials(secrets) };
     await preflight(secrets, fetchImpl);
     const receipt = { schema: 'youtick.v2-testnet-workers-receipt.v1', sha, mode, card, status: 'IN_PROGRESS', workers: [] };
     const save = () => writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o644 });
@@ -533,7 +543,7 @@ export async function deployRelease({
     const runners = new Map();
     const runnerFor = async (account) => {
         if (!runners.has(account)) {
-            const cloudflare = account === 'media' ? mediaCredentials(secrets) : secrets.cloudflare;
+            const cloudflare = credentials[account] ?? fail('component_account_unknown');
             const root = join(tempRoot, account);
             await mkdir(root, { mode: 0o700 });
             runners.set(account, makeRunner ? makeRunner(cloudflare, root) : wranglerRunner(
@@ -596,6 +606,8 @@ async function main(argv) {
         // Prepare job: the exact deploy invocation, as a dry run with no Cloudflare credentials.
         const [releaseDir, sha, mode, card = 'off'] = args;
         cardPath(mode, card);
+        // The read model's host needs the registered workers.dev subdomain; stop the prepare job here.
+        mediaAccount();
         const binary = resolve('workers/relayer/node_modules/.bin/wrangler');
         for (const component of Object.keys(COMPONENTS)) {
             const result = await runProcess(binary, [...wranglerArgs(component, resolve(releaseDir), sha, mode, card), '--dry-run'], {

@@ -550,16 +550,30 @@ test('V2 testnet media account (M1.5): the Bridge and the read model use V2_MEDI
         readFile(new URL('../.github/workflows/deploy-v2-testnet-bridge.yml', import.meta.url), 'utf8'),
         readFile(new URL('../.github/workflows/deploy-v2-testnet.yml', import.meta.url), 'utf8'),
     ]);
-    // The Bridge deploys only with the media pair; its token has no zone authority for the root fingerprint.
-    assert.match(bridge, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID \}\}/);
-    assert.match(bridge, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_API_TOKEN \}\}/);
+    // The Bridge deploys only with the media pair, in its deploy step. It is no longer in the youtick.net
+    // zone and cannot affect the root origin, so the Bridge workflow does not fingerprint it.
+    const bridgeSteps = workflowSteps(bridge);
+    assert.deepEqual(bridgeSteps.filter((entry) => entry.text.includes('V2_MEDIA_')).map((entry) => entry.name),
+        ['Preflight keys on chain, deploy the Bridge and smoke it']);
+    const bridgeDeploy = bridgeSteps.find((entry) => entry.name === 'Preflight keys on chain, deploy the Bridge and smoke it').text;
+    assert.match(bridgeDeploy, /\n          CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID \}\}\n/);
+    assert.match(bridgeDeploy, /\n          CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_API_TOKEN \}\}\n/);
     assert.doesNotMatch(bridge, /V2_CLOUDFLARE_/);
     assert.doesNotMatch(bridge, /release-smoke\.mjs/);
     assert.match(bridge, /READ_MODEL_D1_ID: \$\{\{ vars\.V2_READ_MODEL_D1_ID \}\}/);
-    // environment.url is a literal; it must equal the host the release derives, sentinel included.
-    const derived = `https://${BRIDGE.worker}.${MEDIA_ACCOUNT.workersSubdomain}.workers.dev/__health`;
-    assert.equal(/\n    environment:\n      name: v2-testnet\n(?:      #.*\n)*      url: (\S+)\n/.exec(bridge)?.[1], derived);
-    if (!MEDIA_ACCOUNT.workersSubdomain.startsWith('<')) assert.equal(derived, `https://${bridgeHost()}/__health`);
+    // environment.url comes from the prepare job, which derives it with bridgeHost(): no literal host.
+    assert.match(bridge, /\n    environment:\n      name: v2-testnet\n      url: \$\{\{ needs\.prepare\.outputs\.health_url \}\}\n/);
+    assert.match(bridge, /\n      health_url: \$\{\{ steps\.summary\.outputs\.health_url \}\}\n/);
+    const summary = bridgeSteps.find((entry) => entry.name === 'Summarize the exact packet for environment approval').text;
+    assert.match(summary, /\n        id: summary\n/);
+    assert.ok(summary.includes('appendFileSync(process.env.GITHUB_OUTPUT, `health_url=https://${bridgeHost()}/__health\\n`);'));
+    assert.doesNotMatch(bridge, /[a-z0-9>-]\.workers\.dev/);
+    // The committed subdomain is either the exact sentinel or a valid one that bridgeHost() resolves.
+    if (MEDIA_ACCOUNT.workersSubdomain === '<register-on-the-media-account>') {
+        assert.throws(() => bridgeHost(), /media_account_unconfigured/);
+    } else {
+        assert.equal(bridgeHost(), `${BRIDGE.worker}.${MEDIA_ACCOUNT.workersSubdomain}.workers.dev`);
+    }
 
     // The Workers workflow: only the read-model D1 step and the release step see the media pair.
     const steps = workflowSteps(workers);
