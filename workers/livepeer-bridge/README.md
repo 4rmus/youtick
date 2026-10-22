@@ -336,6 +336,7 @@ fixture-driven branch, not a guess presented as fact.
 |---|---|---|
 | Which `Upload-Metadata` keys land in `meta` (U1) | routing accepts plain `jobid`/`jobId`/`job_id` + `generation`, a JSON `meta` value, or the `youtick-<job>-g<n>` name; all present shapes must agree | M0-P4 |
 | Echo of `maxDurationSeconds` after creation (U1) | post-create GET must echo the cap, else the UID is deleted | M0-P3/P4 |
+| Whether `totalStorageMinutes` already includes reservations booked at URL creation (U9, U25) | headroom adds our open reservations on top (a deliberate double count); drop the `open / 60` term if it does | M0-P3 |
 | Body and status of storage exhaustion (U9) | 413 only; every 429 is transient; the fixture body is invented | M0-P3 |
 | Whether `expiry` shortens the upload URL or drops the reservation (U25) | `expiry` = min(creation + 6 h, absolute deadline); reservations counted up to 24 h; drop the field if it does not help | M0-P3 |
 | `EXT-X-ENDLIST` on every variant at readiness (U4, U21) | required (constant; spike and dashboard 2026-10-22 both had it) | M0-P1/P7 |

@@ -3547,6 +3547,8 @@ function planAdmission(
         }
         // Storage headroom, serialized with the budget: Stream's reported usage plus our open
         // reservations plus this cap must fit min(configured capacity, Stream's reported limit).
+        // Deliberately conservative: if M0-P3 (U9/U25) shows totalStorageMinutes already includes
+        // the reservations Stream books at URL creation, the open / 60 term is dropped.
         if (candidate.storageMinutesUsed !== undefined) {
             const configured = positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY);
             const capacity = Math.min(configured ?? 0, candidate.storageMinutesLimit ?? Number.POSITIVE_INFINITY);
@@ -7840,8 +7842,9 @@ async function verifyReadyProviderAsset(
             : Math.min(Date.now() + continueAfterMs, job.absoluteDeadlineAtMs ?? Number.MAX_SAFE_INTEGER);
         await state.storage.transaction(async (transaction) => {
             const current = await transaction.get<JobRecord>(JOB_KEY);
-            if (!current || canonicalJson({ ...current, providerVerification: undefined })
-                !== canonicalJson({ ...job, providerVerification: undefined })
+            // streamProgress is observability a concurrent Stream webhook may update mid-verification.
+            if (!current || canonicalJson({ ...current, providerVerification: undefined, streamProgress: undefined })
+                !== canonicalJson({ ...job, providerVerification: undefined, streamProgress: undefined })
                 || current.state !== 'ONCHAIN_PUBLISHED' && publicBetaDeadlineExpired(current)) {
                 throw new Error('provider_verification_incomplete');
             }

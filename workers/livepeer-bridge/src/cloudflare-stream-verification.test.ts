@@ -124,6 +124,28 @@ describe('Stream readiness (option A)', () => {
         expect(signed).toHaveLength(0);
     });
 
+    it('does not fail an in-flight ready verification when an inprogress webhook records progress between its reads', async () => {
+        const run = await runtime({ job: { state: 'PROCESSING' } });
+        const original = run.backend.fetch;
+        let injected = false;
+        vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+            if (!injected && new URL(String(input)).hostname === DELIVERY_HOST) {
+                injected = true;
+                const progress = await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-inprogress.json', {
+                    status: { state: 'inprogress', pctComplete: '97.000000', errorReasonCode: '' },
+                })));
+                expect(progress.status).toBe(202);
+                expect(run.job()).toMatchObject({ streamProgress: { pctComplete: 97 } });
+            }
+            return original(input, init);
+        });
+        const response = await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')));
+        expect(response.status).toBe(200);
+        expect(injected).toBe(true);
+        expect(run.job().state).toBe('ONCHAIN_PUBLISHED');
+        expect(run.finalizeCalls()).toHaveLength(1);
+    });
+
     it('verifies the dashboard-recorded ladder without an audio group', async () => {
         const run = await runtime({ backend: { ladder: 'dashboard' } });
         expect((await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')))).status).toBe(200);
