@@ -120,6 +120,8 @@ export async function verifyStreamReadyAsset(
     return {
         ...verified,
         sourceBytesEvidence: { ...verified.sourceBytesEvidence, readyAtMs: verified.readyAtMs },
+        ...(video && Number.isFinite(video.durationSeconds) && video.durationSeconds >= 0
+            ? { durationSeconds: video.durationSeconds } : {}),
     };
 }
 

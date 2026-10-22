@@ -197,6 +197,8 @@ export type VerifiedAsset = {
     readyAtMs: string;
     // Present only for 'tus-offset' adapters at readiness; the job record persists it (M2).
     sourceBytesEvidence?: SourceBytesEvidence;
+    // Media duration in seconds when the adapter reports one (Stream storage accounting).
+    durationSeconds?: number;
 };
 
 export type MediaProviderCapabilities = {
