@@ -273,9 +273,13 @@ Off unless `MARKET_PROTOCOL=v2` and `LIVEPEER_PLAYBACK_V3_ENABLED=true` (with th
 - **Profile id.** A V2 Bridge accepts only `paid-media-v1` on new upload intents and
   finalizations, and plays stored publications under either `paid-media-v1` or
   `paid-media-livepeer-v1`. A job stored under `paid-media-livepeer-v1` is never finalized on
-  V2: it becomes `ONCHAIN_PUBLISHED` if its publication is already final on chain, otherwise
-  `UPLOAD_EXPIRED`. Sponsored upload quotes and relays are closed on V2 (the compact upload
-  format carries the V1 profile id). V1 keeps `paid-media-livepeer-v1` throughout.
+  V2: one holding a publication becomes `ONCHAIN_PUBLISHED` if that publication is already final
+  on chain, otherwise `UPLOAD_EXPIRED`; an unpublished one becomes `UPLOAD_EXPIRED` (an
+  `AUTHORIZED` job only when an alarm fires). `CREATE_PENDING` and `CREATE_AMBIGUOUS` jobs are
+  left untouched, since `JOB_STATE_TRANSITIONS` has no `UPLOAD_EXPIRED` edge from them: no retry
+  loop and no finalize, and their admission reservation expires on its own. Sponsored upload
+  quotes and relays are closed on V2 (the compact upload format carries the V1 profile id). V1
+  keeps `paid-media-livepeer-v1` throughout.
 - **Tokens.** Each token lives at most 180 seconds, and never longer than the device's
   remaining validity.
 - **Escrow release.** With `MARKET_V2_RELEASE_ENABLED=true`, the `scheduled` handler releases

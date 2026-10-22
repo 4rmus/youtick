@@ -199,6 +199,7 @@ credentials. A dry run does not deploy.
 The local fault regressions prove bounded NEAR read fallback/circuit behavior
 and one-attempt Livepeer create degradation. They do not constitute provider,
 staging or distributed-isolate chaos evidence.
+
 The Market V2 names of gate MC (`paid-media-v1`, `finalize_publication`,
 `suspend_sales`) are covered with `MARKET_PROTOCOL=v2` next to the unchanged V1
 cases: `finalize.test.ts` (signed method names, jobs and operator records stored

@@ -1970,6 +1970,11 @@ export class LivepeerControl {
             }
             return json({ accepted: true, ignored: true }, 202);
         }
+        if (isLegacyProfileJobOnMarketV2(this.env, existing) && existing.publication
+            && ['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY'].includes(existing.state)) {
+            // Settled from final chain state only: no provider re-verification, no finalization.
+            return settleLegacyProfileJob(this.state, this.env, existing);
+        }
 
         const dedupKey = `webhook:${event.digest}`;
         const seen = await this.state.storage.transaction(async (transaction) => {

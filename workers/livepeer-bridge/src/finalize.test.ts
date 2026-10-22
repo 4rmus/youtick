@@ -1570,6 +1570,48 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             expect(testState.values.get('job:v1')).not.toHaveProperty('finalizeRetry');
         });
 
+        it.each([
+            // [job state, publication final on chain, resulting state]
+            ['READY_VERIFIED', false, 'UPLOAD_EXPIRED'],
+            ['READY_VERIFIED', true, 'ONCHAIN_PUBLISHED'],
+            ['FINALIZE_QUEUED', false, 'UPLOAD_EXPIRED'],
+            ['FINALIZE_RETRY', true, 'ONCHAIN_PUBLISHED'],
+        ] as const)('settles a %s job on a fresh ready webhook without a provider read (on chain: %s)', async (
+            jobState,
+            onChain,
+            resultState,
+        ) => {
+            const testState = createState();
+            const job = { ...(await publishedJob(LEGACY_PROFILE_ID)), state: jobState };
+            testState.values.set('job:v1', job);
+            const rpc = operatorRpc({
+                publicationFor: () => onChain ? {
+                    publication_id: job.publication.job_id,
+                    ...job.publication,
+                    published_availability: job.publication.availability,
+                    availability: job.publication.availability,
+                } : null,
+            });
+            const providerReads: string[] = [];
+            vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+                if (String(input) === RPC_URL) return rpc(input, init);
+                providerReads.push(String(input));
+                throw new Error('provider_must_not_be_read');
+            }));
+            const paths: string[] = [];
+
+            const response = await new LivepeerControl(testState.state, legacyEnv(paths))
+                .fetch(internalWebhookRequest(webhook('asset.ready', Date.now() + 1)));
+
+            expect(response.status).toBe(onChain ? 200 : 202);
+            expect(providerReads).toEqual([]);
+            expect(paths).toEqual(['/internal/admission/mark']);
+            expect(testState.values.get('job:v1')).toMatchObject({ state: resultState });
+            expect([...testState.values.keys()].some((key) => key.startsWith('webhook:'))).toBe(false);
+            expect(rpc.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).params.method_name))
+                .toEqual(['get_publication']);
+        });
+
         it.each(['AUTHORIZED', 'LEASED', 'UPLOAD_READY', 'UPLOADING', 'PROCESSING'])(
             'expires an unpublished %s job from the alarm without provider reads',
             async (jobState) => {

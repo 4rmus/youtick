@@ -445,11 +445,13 @@ upgrade: `migrate` only clears the pending record (sandbox test
 **Precondition (satisfied by gate M2-G0 once it is merged):** the Bridge renames its outbox
 methods and profile checks. A Bridge built before M2-G0 calls `finalize_livepeer_publication` and
 `suspend_livepeer_sales` and checks `paid-media-livepeer-v1`; against the upgraded Market every
-finalize and suspension would fail. The cutover therefore still needs a V2 Bridge deployed from a
-commit that contains M2-G0 (owner decision 2026-10-22: on the media Cloudflare account, with
-fresh Durable Object state, before the cutover). The pre-MC publications keep playing because the
-M2-G0 Bridge accepts both profile ids on stored publications (the contract never rewrites a
-stored `profile_id`).
+finalize and suspension would fail. The commit deployed in step 7 must therefore contain M2-G0.
+The Bridge instance is the media-account one (owner decision 2026-10-22, after milestone M1.5,
+gate M1.5-G3, with fresh Durable Object state); it moves to that account before the cutover on a
+pre-MC commit, and only step 7 deploys the M2-G0 commit to it. An M2-G0 Bridge started before
+step 5 fails its preflight with `operator_key_not_on_chain` and, at runtime, with
+`runtime_not_configured`. The pre-MC publications keep playing because the M2-G0 Bridge accepts
+both profile ids on stored publications (the contract never rewrites a stored `profile_id`).
 
 Bridge lockstep as implemented in M2-G0 (`workers/livepeer-bridge/src/index.ts`, keyed on
 `isMarketV2(env)`; V1 keeps every V1 name; LOCAL_TEST only, no provider or testnet run):
@@ -465,10 +467,15 @@ Bridge lockstep as implemented in M2-G0 (`workers/livepeer-bridge/src/index.ts`,
 - Sponsored and compact quotes: the V2 Bridge fails closed (`runtime_not_configured`); it never
   quotes or relays a compact upload, so no compact vector with the new id ships in this gate.
 - Durable Object state under the old id (defensive; the media-account Bridge starts empty): an
-  unpublished job (`AUTHORIZED` … `PROCESSING`) becomes `UPLOAD_EXPIRED`; a job holding a
-  publication (`READY_VERIFIED`, `FINALIZE_QUEUED`, `FINALIZE_RETRY`) is never forwarded for
-  finalization and becomes `ONCHAIN_PUBLISHED` if that publication is final on chain, otherwise
-  `UPLOAD_EXPIRED`; `ONCHAIN_PUBLISHED` jobs stay and keep reconciling. A confirmed
+  unpublished job (`AUTHORIZED`, `LEASED`, `PROVIDER_CREATE_PENDING`, `UPLOAD_READY`,
+  `UPLOADING`, `PROCESSING`) becomes `UPLOAD_EXPIRED` on its next alarm or provider event; an
+  `AUTHORIZED` job has no provider asset, so it is expired only when an alarm fires. A job
+  holding a publication (`READY_VERIFIED`, `FINALIZE_QUEUED`, `FINALIZE_RETRY`) is never
+  forwarded for finalization and never re-verified with the provider: it becomes
+  `ONCHAIN_PUBLISHED` if that publication is final on chain, otherwise `UPLOAD_EXPIRED`.
+  `CREATE_PENDING` and `CREATE_AMBIGUOUS` jobs are left untouched (`JOB_STATE_TRANSITIONS` has no
+  `UPLOAD_EXPIRED` edge from them): no retry loop and no finalize; their admission reservation
+  expires on its own. `ONCHAIN_PUBLISHED` jobs stay and keep reconciling. A confirmed
   `suspend_livepeer_sales` / `finalize_livepeer_publication` operator record is reported as done;
   an unconfirmed suspension is re-signed as `suspend_sales`; an unconfirmed legacy finalization
   returns `outbox_conflict`.
@@ -494,7 +501,7 @@ live-data writes need the owner):
 | # | Step | Approval |
 |---|---|---|
 | 1 | Pick the merged `main` commit that holds MC and M2-G0. From its CI run take the V2 runtime artifact, check `SHA256SUMS` and `gh attestation verify` (`ci.yml@refs/heads/main`), and note the `youtick_market_v2.wasm` sha256. Also confirm that the rollback WASM is still retrievable: the E8.0 artifact of CI run 38746374767 (`647f2bb`), `youtick_market_v2.wasm` sha256 `f64a5d37f86a71c4cab6e6fd394b8127a387c23bddea91c7f185d9d010161c3d`, downloaded and hash-checked. Do not start if it has expired | none (read-only) |
-| 2 | First require an empty operator outbox: `GET https://bridge-v2-testnet.youtick.net/v1/operations/operator-outbox-status` with the Bridge operator bearer token (the `operator-outbox-status.yml` workflow targets Preview only) must show `invalidRecords: 0` and `confirmedRecords` equal to `totalRecords`, so no record is `PENDING`, `RESERVED`, `SIGNED` or `BROADCAST`. An in-flight `finalize_livepeer_publication` would be replayed against a contract that no longer exports it; wait until it confirms. Then guardian `freeze_bridge`; check `bridge_frozen: true`. Every Bridge method (`finalize_*`, `suspend_*`, `mark_watched`, `release_expired`) now fails, so no first play settles during the window | NEAR transaction (owner-signed) |
+| 2 | First require an empty operator outbox on the Bridge instance currently serving V2 testnet (after milestone M1.5 that is the media-account host; today `https://bridge-v2-testnet.youtick.net`): `GET /v1/operations/operator-outbox-status` with the Bridge operator bearer token (the `operator-outbox-status.yml` workflow targets Preview only) must show `confirmedRecords == totalRecords` (this implies `invalidRecords: 0`), so no record is `PENDING`, `RESERVED`, `SIGNED` or `BROADCAST`. An in-flight `mark_watched` also blocks and is merely conservative: a non-confirmed `mark_watched` / `release_expired` record counts as invalid there, and confirmed ones are deleted. The endpoint covers only the operator Durable Object, not the per-job Durable Objects holding `FINALIZE_QUEUED` / `FINALIZE_RETRY` jobs or their `outbox:<job>:suspend-sales` records, so also confirm that no upload is in flight (`/v1/operations/admission-status`). Then guardian `freeze_bridge`; check `bridge_frozen: true`. Every Bridge method (`finalize_*`, `suspend_*`, `mark_watched`, `release_expired`) now fails, so no first play settles during the window | NEAR transaction (owner-signed) |
 | 3 | Admin `propose_code_upgrade { code_sha256 }` with the step 1 hash; testnet timelock 0 | NEAR transaction (owner-signed) |
 | 4 | `execute_code_upgrade` with the raw WASM as input (as in E8.0, signed by `youtick-dev-v3.testnet` if the admin lacks NEAR). Check: code hash equals step 1, `get_pending_code_upgrade` is `null`, `get_governance_state` unchanged apart from the freeze, `get_publications_count` unchanged, `get_publication` of `lp-bcc8f530…` still `ACTIVE` | NEAR transaction (owner-signed) |
 | 5 | On `v2-bridge-261007…`, signed with its management full-access key, one transaction with `DeleteKey ed25519:BDyHUFs1wbkaQJQ2Tq4AcyJWHanaC8j4spLQRwAKiYed` then `AddKey` of the same public key as `FunctionCall` to `v2-market-261007…` with `finalize_publication`, `suspend_sales`, `mark_watched`, `release_expired` and allowance 0.5 NEAR. Re-adding the same public key keeps `V2_BRIDGE_NEAR_OPERATOR_PRIVATE_KEY` unchanged (no secret write); the key's nonce restarts, and the Bridge reads it from chain | NEAR transaction (owner-signed) |
