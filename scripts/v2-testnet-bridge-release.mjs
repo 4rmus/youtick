@@ -25,7 +25,7 @@ export const BRIDGE = Object.freeze({
 const BRIDGE_ACCOUNT = `v2-bridge-261007.${PARENT}`;
 // Function-call key of the Bridge account from v2-testnet-bootstrap-policy.json (bridge_operator.keys[1]).
 const OPERATOR_PUBLIC_KEY = 'ed25519:BDyHUFs1wbkaQJQ2Tq4AcyJWHanaC8j4spLQRwAKiYed';
-export const OPERATOR_METHODS = Object.freeze(['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired']);
+export const OPERATOR_METHODS = Object.freeze(['finalize_publication', 'suspend_sales', 'mark_watched', 'release_expired']);
 // Market V2 quote key as bootstrapped (v2-testnet-bootstrap-policy.json market.quote_public_key_base64).
 const QUOTE_PUBLIC_KEY_BASE64 = 'YYvahur/L80hl0moUnEBLkHjv1jNjzIgXQFMs/jkSf4=';
 const QUOTE_KEY_VERSION = '1';

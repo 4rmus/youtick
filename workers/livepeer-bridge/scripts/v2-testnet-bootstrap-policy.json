@@ -76,7 +76,7 @@
           "permission": {
             "FunctionCall": {
               "receiver_id": "v2-market-261007.youtick-dev-v3.testnet",
-              "method_names": ["finalize_livepeer_publication", "suspend_livepeer_sales", "mark_watched", "release_expired"],
+              "method_names": ["finalize_publication", "suspend_sales", "mark_watched", "release_expired"],
               "allowance": "500000000000000000000000"
             }
           }

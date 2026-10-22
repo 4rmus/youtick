@@ -13,7 +13,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { actions, PublicKey, KeyPairSigner, createTransaction, encodeTransaction, decodeSignedTransaction, baseEncode, baseDecode } from 'near-api-js';
 
 export const ROLES = ['market_v2', 'ckd_gate', 'relayer', 'bridge_operator', 'payment_operator', 'tax'];
-export const BRIDGE_METHODS = ['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired'];
+export const BRIDGE_METHODS = ['finalize_publication', 'suspend_sales', 'mark_watched', 'release_expired'];
 /** Accounts the parent registers with USDC in the last transaction: they hold or pay USDC. */
 export const USDC_ROLES = ['market_v2', 'relayer', 'tax'];
 /** Market V2 accepts only this token on testnet (`TESTNET_USDC` in contracts/market-v2/src/lib.rs). */

@@ -20,6 +20,13 @@ Publication and purchase flow:
 - `suspend_livepeer_sales`, `takedown_livepeer_publication`,
   `get_takedown`
 
+These names are the V1 Market (`contracts/nft-ticket`). The V2 Market
+(`contracts/market-v2`) uses provider-neutral names since gate MC
+(2026-10-22): `finalize_publication`, `suspend_sales`,
+`takedown_publication`, the `PublicationSubmission` argument type and profile
+id `paid-media-v1`. Arguments and behaviour are unchanged; see
+`contracts/market-v2/README.md`.
+
 Global purchase control:
 
 - guardian-only `pause_new_purchases`

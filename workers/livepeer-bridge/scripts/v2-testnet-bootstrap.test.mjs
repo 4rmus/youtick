@@ -201,6 +201,7 @@ test('policy rules: keyless gate, exact Bridge methods, distinct keys, budget, p
         const cases = [
             [(p) => { p.accounts[1].keys = [{ public_key: key(), permission: 'FullAccess' }]; }, /ckd_gate_must_be_keyless/],
             [(p) => { p.accounts[3].keys[1].permission.FunctionCall.method_names = [...BRIDGE_METHODS, 'refund_unwatched']; }, /operator_permission/],
+            [(p) => { p.accounts[3].keys[1].permission.FunctionCall.method_names = ['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired']; }, /operator_permission/],
             [(p) => { p.market.vat_public_key = p.accounts[0].keys[0].public_key; }, /distinct_keys/],
             [(p) => { p.max_parent_debit_yocto = '1'; }, /budget/],
             [(p) => { p.ckd_gate.client_id = 'other client'; }, /ckd_gate_config/],

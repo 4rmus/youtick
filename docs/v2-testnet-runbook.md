@@ -22,7 +22,7 @@ All accounts are direct children of the parent (`youtick-dev-v3.testnet`, the V1
 | `market_v2` | owner full-access key | Market V2, `new` (purchases open, Bridge active) |
 | `ckd_gate` | **none, ever** | ckd-gate, initialized for the shared NEAR Auth testnet client |
 | `relayer` | full-access key (becomes `RELAYER_PRIVATE_KEY`) | — |
-| `bridge_operator` | management full-access key, and a function-call key for Market V2 `finalize_livepeer_publication`, `suspend_livepeer_sales`, `mark_watched`, `release_expired` (becomes the Bridge V2 `NEAR_OPERATOR_PRIVATE_KEY`) | — |
+| `bridge_operator` | management full-access key, and a function-call key for Market V2 `finalize_livepeer_publication`, `suspend_livepeer_sales`, `mark_watched`, `release_expired` (becomes the Bridge V2 `NEAR_OPERATOR_PRIVATE_KEY`; the first two become `finalize_publication`, `suspend_sales` at the [MC cutover](#mc-cutover-provider-neutral-market-v2-names)) | — |
 | `payment_operator` | full-access key (bootstrap; signs `refund_ticket` from the owner's machine), and a function-call key for Market V2 `issue_card_ticket`, `void_card_ticket` (`ed25519:CcjcZpiL…`, added 2026-10-15 after gate E8.0; becomes the payment service `PAYMENT_OPERATOR_PRIVATE_KEY`) | — |
 | `tax` | full-access key | — |
 
@@ -184,7 +184,10 @@ What differs from the Workers release:
     operator finalization and `/v3/playback-tokens` for `http://localhost:3000`.
 - **Checks before Wrangler runs:** the JWT private key matches the committed public key; the
   operator key is the Bridge account's function-call key on chain for Market V2 with exactly
-  `finalize_livepeer_publication`, `suspend_livepeer_sales`, `mark_watched` and `release_expired`;
+  `finalize_publication`, `suspend_sales`, `mark_watched` and `release_expired` (since gate MC;
+  before the [MC cutover](#mc-cutover-provider-neutral-market-v2-names) the key on chain still
+  lists `finalize_livepeer_publication` and `suspend_livepeer_sales`, so a Bridge release from a
+  post-MC commit stops with `operator_key_not_on_chain` until step 5 below);
   the quote key derives to the Market V2 quote key and `get_quote_key_version` is 1.
 - **Smoke test:** `/__health` must come from the new version and name Market V2. In `acceptance`
   it must report uploads, control plane, playback and operator mutations ready and everything
@@ -428,6 +431,57 @@ Owner-signed; command sheet kept outside the repository. The card path stays off
 
 Not yet shown: an `issue_card_ticket` or `void_card_ticket` call on the new code, and the payment
 service reading a real `reserve_exhausted` RPC failure.
+
+## MC cutover: provider-neutral Market V2 names
+
+Status: `PREPARED / NOT_RUN` (2026-10-22). Owner decision OD6 renames the Market V2 surface (gate
+MC): profile id `paid-media-livepeer-v1` → `paid-media-v1`; `finalize_livepeer_publication` →
+`finalize_publication`; `suspend_livepeer_sales` → `suspend_sales`; `takedown_livepeer_publication`
+→ `takedown_publication`; `LivepeerPublicationSubmission` → `PublicationSubmission`. Storage
+prefixes, the Borsh layout and `MARKET_STATE_VERSION` (3) are unchanged, so this is a same-layout
+upgrade: `migrate` only clears the pending record (sandbox test
+`self_upgrade_reverts_a_failed_migrate_then_deploys_the_proposed_code`, LOCAL_TEST).
+
+**Do not start before** the Bridge commit that renames its outbox methods and profile checks
+(milestone M2, gate M2-G0) is merged. The Bridge deployed today calls
+`finalize_livepeer_publication` and `suspend_livepeer_sales` and checks `paid-media-livepeer-v1`;
+against the upgraded Market every finalize and suspension would fail. M2-G0 must also keep
+accepting `paid-media-livepeer-v1` on publications that are already stored, or the testnet
+publications finalized before the cutover stop playing (the contract never rewrites a stored
+`profile_id`).
+
+The bootstrap is single-use and is never re-run. Its policy file now lists the new method names
+as the template for a fresh environment; the 2026-10-08 run used the file as merged in #303
+(`9592674`, sha256 `1607887c0af91217abc09ac8c0aa809d11da4fdca9504ddb6f44537646db4a96`).
+
+Order, each step with its approval class (project rules: NEAR transactions, deploys and
+live-data writes need the owner):
+
+| # | Step | Approval |
+|---|---|---|
+| 1 | Pick the merged `main` commit that holds MC and M2-G0. From its CI run take the V2 runtime artifact, check `SHA256SUMS` and `gh attestation verify` (`ci.yml@refs/heads/main`), and note the `youtick_market_v2.wasm` sha256 | none (read-only) |
+| 2 | Guardian `freeze_bridge`; check `bridge_frozen: true`. Every Bridge method (`finalize_*`, `suspend_*`, `mark_watched`, `release_expired`) now fails, so no first play settles during the window | NEAR transaction (owner-signed) |
+| 3 | Admin `propose_code_upgrade { code_sha256 }` with the step 1 hash; testnet timelock 0 | NEAR transaction (owner-signed) |
+| 4 | `execute_code_upgrade` with the raw WASM as input (as in E8.0, signed by `youtick-dev-v3.testnet` if the admin lacks NEAR). Check: code hash equals step 1, `get_pending_code_upgrade` is `null`, `get_governance_state` unchanged apart from the freeze, `get_publications_count` unchanged, `get_publication` of `lp-bcc8f530…` still `ACTIVE` | NEAR transaction (owner-signed) |
+| 5 | On `v2-bridge-261007…`, signed with its management full-access key, one transaction with `DeleteKey ed25519:BDyHUFs1wbkaQJQ2Tq4AcyJWHanaC8j4spLQRwAKiYed` then `AddKey` of the same public key as `FunctionCall` to `v2-market-261007…` with `finalize_publication`, `suspend_sales`, `mark_watched`, `release_expired` and allowance 0.5 NEAR. Re-adding the same public key keeps `V2_BRIDGE_NEAR_OPERATOR_PRIVATE_KEY` unchanged (no secret write); the key's nonce restarts, and the Bridge reads it from chain | NEAR transaction (owner-signed) |
+| 6 | *V2 Testnet Workers* on the step 1 commit (same `mode` and `card_path` as before). It applies D1 migration `0011_operator_outbox_neutral_methods.sql` to `youtick-market-read-model-v2-testnet` and deploys the relayer that sends and checks `paid-media-v1`. `0011` rebuilds `operator_outbox_archives` with every row kept and accepts both the old and the new method names; the V2 Bridge does not write that table (`OPERATOR_OUTBOX_ARCHIVE_ENABLED=false`) | deploy + D1 write (environment approval) |
+| 7 | *V2 Testnet Bridge* on the step 1 commit in `acceptance`. The preflight now requires the step 5 key | deploy (environment approval) |
+| 8 | Admin `request_bridge_unfreeze` + `unfreeze_bridge`; check `bridge_frozen: false` | NEAR transactions (owner-signed) |
+| 9 | Acceptance: a new upload from the local web at the step 1 commit (job `profile_id` `paid-media-v1`), Bridge `finalize_publication`, purchase, first play (`mark_watched`); and playback of `lp-bcc8f530…` (stored V1 id) | testnet NEAR transactions and Livepeer writes (owner) |
+
+Effects to expect:
+- A job still `Authorized` under `paid-media-livepeer-v1` cannot be finalized. Its creator can
+  `restart_paid_job` it with `paid-media-v1` (new generation), or the job is abandoned (owner
+  accepted for testnet content).
+- Between steps 4 and 6 the deployed relayer still sends `paid-media-livepeer-v1`; the Market
+  rejects it and the USDC transfer is returned. Keep the window short or run step 6 right after
+  step 4.
+- Rollback: the same steps 2-4 with the previous WASM (E8.0, sha256 `f64a5d37…1c3d`) and step 5
+  with the old method names, then the previous Workers and Bridge commits. `0011` stays; it
+  accepts both names.
+
+Evidence today: LOCAL_TEST only (contract unit, integration and sandbox tests; protocol vectors;
+relayer, web, read-model and release-script tests). No step above has run.
 
 ## Card path on testnet (E8.3)
 
