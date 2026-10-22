@@ -197,3 +197,14 @@ Stream token and requires `notificationUrl` to be
 `https://<bridge workers.dev host>/v1/stream-webhooks`. It compares the secret
 only if the response carries one (undocumented, M0-P4); otherwise the receipt
 records `secret: not_returned` and the post-deploy webhook canary is the proof.
+
+The relayer guards the same boundary for NEAR Auth uploads (gate M2-G7):
+`UPLOAD_PROFILE_HASH_ALLOWLIST` in `workers/relayer` is an optional
+comma-separated list of lowercase SHA-256 hex digests. When set, the relayer
+refuses (`profile_not_allowed`, before any signature or fee) an upload whose
+`profile_config_sha256` is not listed; Market V2 itself accepts any 64-hex
+digest. Unset or empty keeps that behaviour; a malformed list turns the
+relayer off (`relayer_disabled`). The V2 testnet release
+(`scripts/v2-testnet-release.mjs`) ships it empty until the Stream descriptor
+hash is committed there, and the relayer deploy that fills it goes out with the
+Bridge's Stream flag.

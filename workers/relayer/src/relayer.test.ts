@@ -791,6 +791,34 @@ describe('NEAR Auth uploads', () => {
         expect(chain.sent).toEqual([]);
     });
 
+    it('refuses a profile hash outside UPLOAD_PROFILE_HASH_ALLOWLIST before signing, and allows a listed one (M2-G7)', async () => {
+        const STREAM_HASH = 'a'.repeat(64);
+        const { call, chain } = setup({ UPLOAD_PROFILE_HASH_ALLOWLIST: ` ${STREAM_HASH} , ${'b'.repeat(64)}` });
+        // The pinned profile id with an unlisted (legacy) hash: the contract would accept it, the Bridge would not.
+        expect(await call('/v1/uploads', (await upload('buyer-p1')).body)).toEqual({ status: 400, body: { error: 'profile_not_allowed' } });
+        expect(chain.sent).toEqual([]);
+        const listed = await upload('buyer-p1', { msg: uploadMessage({ profile_config_sha256: STREAM_HASH }) });
+        expect(await call('/v1/uploads', listed.body)).toMatchObject({ status: 200, body: { state: 'submitted' } });
+        // A malformed message is still upload_invalid, whatever the allowlist says.
+        expect(await call('/v1/uploads', (await upload('buyer-p2', { msg: uploadMessage({ profile_config_sha256: 'A'.repeat(64) }) })).body))
+            .toEqual({ status: 400, body: { error: 'upload_invalid' } });
+    });
+
+    it('keeps today\'s profile hash rule when UPLOAD_PROFILE_HASH_ALLOWLIST is unset or empty (M2-G7)', async () => {
+        for (const value of [undefined, '', ' , ']) {
+            const { call } = setup({ UPLOAD_PROFILE_HASH_ALLOWLIST: value });
+            const any = await upload('buyer-p3', { msg: uploadMessage({ profile_config_sha256: 'c'.repeat(64) }) });
+            expect((await call('/v1/uploads', any.body)).status).toBe(200);
+        }
+    });
+
+    it('turns the relayer off for a malformed UPLOAD_PROFILE_HASH_ALLOWLIST instead of allowing every hash (M2-G7)', async () => {
+        for (const value of ['a'.repeat(63), 'A'.repeat(64), `${'a'.repeat(64)};${'b'.repeat(64)}`, `${'a'.repeat(64)},nope`]) {
+            const { call } = setup({ UPLOAD_PROFILE_HASH_ALLOWLIST: value });
+            expect(await call('/v1/uploads', (await upload('buyer-p4')).body)).toEqual({ status: 503, body: { error: 'relayer_disabled' } });
+        }
+    });
+
     it('limits uploads per identity and per day, apart from purchases', async () => {
         const { call, chain } = setup();
         expect((await call('/v1/uploads', (await upload('buyer-u4', { msg: uploadMessage({ job_id: 'job-a' }) })).body)).status).toBe(200);

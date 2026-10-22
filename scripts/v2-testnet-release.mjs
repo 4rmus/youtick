@@ -119,6 +119,11 @@ export const COMPONENTS = Object.freeze({
             // Renewals are charged per ticket only; at most 30 TGas each.
             DAILY_DEVICE_LIMIT: '1000',
             TICKET_DAILY_DEVICE_LIMIT: '6',
+            // Gate M2-G7: the profile hashes an upload may name, comma-separated 64 hex. Empty = any hash (the
+            // relayer's behaviour before M2-G7). Fill it with the `hash` of protocol/paid-media-v1/stream-profile.json
+            // (`node scripts/check-paid-media-v1.mjs` prints it) in one commit, deployed with the Bridge's Stream
+            // flag (docs/v2-testnet-runbook.md, Stream cutover inputs).
+            UPLOAD_PROFILE_HASH_ALLOWLIST: '',
         }),
         secrets: Object.freeze(['NEAR_RPC_URL', 'RELAYER_PRIVATE_KEY', 'RELAYER_ADMIN_TOKEN']),
         smokePath: '/v1/ckd',
@@ -227,9 +232,18 @@ export function cardPath(mode, card = 'off') {
     return card;
 }
 
+/** The relayer's UPLOAD_PROFILE_HASH_ALLOWLIST: empty, or distinct comma-separated lowercase SHA-256 hex digests. */
+export function uploadProfileHashAllowlist(value) {
+    if (value === '') return value;
+    const hashes = value.split(',');
+    if (!hashes.every((hash) => /^[0-9a-f]{64}$/.test(hash)) || new Set(hashes).size !== hashes.length) fail('upload_profile_hash_allowlist_invalid');
+    return value;
+}
+
 export function releaseVars(component, mode, card = 'off') {
     const spec = COMPONENTS[component] ?? fail('component_unknown');
     if (!MODES.includes(mode)) fail('mode_invalid');
+    if (component === 'relayer') uploadProfileHashAllowlist(spec.vars.UPLOAD_PROFILE_HASH_ALLOWLIST);
     const flags = Object.fromEntries(spec.flags.map((flag) => [flag, mode === 'acceptance' ? 'true' : 'false']));
     if (component !== 'payment-service') return { ...spec.vars, ...flags };
     // The card path is its own switch: an acceptance release without it keeps every card route at 503.
