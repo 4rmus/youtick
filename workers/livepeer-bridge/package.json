@@ -12,6 +12,7 @@
         "canary:provider": "node --env-file-if-exists=.dev.vars scripts/provider-canary.mjs",
         "check": "tsc --noEmit -p tsconfig.json",
         "dev": "wrangler dev",
+        "probe:stream": "node scripts/stream-probe.mjs",
         "deploy": "wrangler deploy",
         "test": "vitest",
         "test:playback-v2-abuse": "PLAYBACK_V2_ABUSE_TEST=1 vitest --run src/playback-v2.test.ts -t '100k unauthorized'",
