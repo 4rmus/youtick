@@ -241,6 +241,11 @@ export function bridgeVars({ streamEnabled = false } = {}) {
     const signingPublicKey = constant(stream.signingPublicKey, STREAM_SENTINELS.signingKey, rsaPublicKeyValid, 'signing_public_key');
     // A key id without its public half (or the reverse) is a half-finished commit.
     if (Boolean(signingKeyId) !== Boolean(signingPublicKey)) fail('stream_signing_key_incomplete');
+    const maxDuration = positiveInteger(stream.maxDurationSeconds, STREAM_MAX_DURATION_LIMIT, 'stream_max_duration_invalid');
+    const capacity = positiveInteger(stream.storageMinutesCapacity, 10_000_000, 'stream_storage_capacity_invalid');
+    const budget = positiveInteger(stream.reservationSecondsBudget, 10_000_000, 'stream_reservation_budget_invalid');
+    // One upload at the cap must fit both the reservation budget and the prepaid storage.
+    if (Number(budget) < Number(maxDuration) || Number(capacity) * 60 < Number(maxDuration)) fail('stream_limits_inconsistent');
     return Object.freeze({
         ...FIXED_VARS,
         MEDIA_PROVIDER_STREAM_ENABLED: streamEnabled ? 'true' : 'false',
@@ -248,9 +253,9 @@ export function bridgeVars({ streamEnabled = false } = {}) {
         STREAM_CUSTOMER_CODE: customerCode,
         STREAM_SIGNING_KEY_ID: signingKeyId,
         STREAM_SIGNING_PUBLIC_KEY: signingPublicKey,
-        STREAM_MAX_DURATION_SECONDS: positiveInteger(stream.maxDurationSeconds, STREAM_MAX_DURATION_LIMIT, 'stream_max_duration_invalid'),
-        STREAM_STORAGE_MINUTES_CAPACITY: positiveInteger(stream.storageMinutesCapacity, 10_000_000, 'stream_storage_capacity_invalid'),
-        STREAM_RESERVATION_SECONDS_BUDGET: positiveInteger(stream.reservationSecondsBudget, 10_000_000, 'stream_reservation_budget_invalid'),
+        STREAM_MAX_DURATION_SECONDS: maxDuration,
+        STREAM_STORAGE_MINUTES_CAPACITY: capacity,
+        STREAM_RESERVATION_SECONDS_BUDGET: budget,
         STREAM_STUCK_TIMEOUT_MS: positiveInteger(stream.stuckTimeoutMs, 86_400_000, 'stream_stuck_timeout_invalid'),
     });
 }
@@ -490,9 +495,21 @@ export async function preflight(secrets, fetchImpl, policy = DEFAULT_OPERATOR_KE
  * The media account's Stream webhook must point at this Bridge: GET /accounts/{id}/stream/webhook with the
  * Stream token. The secret is compared only if the response carries one; whether GET returns it is not
  * documented (M0-P4 UNPROVEN). Without it the post-deploy webhook canary is the only proof that Stream
- * signs with STREAM_WEBHOOK_SECRET, and the receipt says so.
+ * signs with STREAM_WEBHOOK_SECRET, and the receipt says so. A returned value that differs fails hard;
+ * because Stream may return a masked or stale value (also M0-P4), the owner can set
+ * STREAM_WEBHOOK_SECRET_PREFLIGHT=skip (repository variable V2_STREAM_WEBHOOK_SECRET_PREFLIGHT): the
+ * URL binding is still required and the receipt records `secret-not-compared`.
  */
-export async function preflightStreamWebhook(stream, fetchImpl) {
+export const WEBHOOK_SECRET_PREFLIGHT_MODES = Object.freeze(['compare', 'skip']);
+
+export function webhookSecretPreflight(value) {
+    const mode = value || 'compare';
+    if (!WEBHOOK_SECRET_PREFLIGHT_MODES.includes(mode)) fail('stream_webhook_secret_preflight_invalid');
+    return mode;
+}
+
+export async function preflightStreamWebhook(stream, fetchImpl, { secretPreflight = 'compare' } = {}) {
+    webhookSecretPreflight(secretPreflight);
     let body;
     try {
         const response = await fetchImpl(`https://api.cloudflare.com/client/v4/accounts/${stream.accountId}/stream/webhook`, {
@@ -508,8 +525,12 @@ export async function preflightStreamWebhook(stream, fetchImpl) {
     const result = body?.success === true ? body.result : null;
     if (!result || typeof result !== 'object') fail('stream_webhook_unreadable');
     if (result.notificationUrl !== streamWebhookUrl()) fail('stream_webhook_binding_mismatch');
+    if (secretPreflight === 'skip') {
+        return { binding: 'matched', secret: 'secret-not-compared', proof: 'post-deploy webhook canary (stream-canary webhook)' };
+    }
     if (typeof result.secret === 'string' && result.secret !== '') {
-        if (!sameSecret(result.secret, stream.webhookSecret)) fail('stream_webhook_secret_mismatch');
+        // Either the GitHub secret is not the one Stream signs with, or GET returns a masked value (M0-P4).
+        if (!sameSecret(result.secret, stream.webhookSecret)) fail('stream_webhook_secret_mismatch_or_masked');
         return { binding: 'matched', secret: 'matched' };
     }
     return { binding: 'matched', secret: 'not_returned', proof: 'post-deploy webhook canary (stream-canary webhook)' };
@@ -551,16 +572,21 @@ export async function smoke(mode, versionId, fetchImpl, { streamEnabled = false 
     if (health.body?.compactUpload?.market !== MARKET_V2 || health.body?.compactUpload?.network !== 'testnet') fail('smoke_market');
     // A configured Stream adapter on a release that turned it off means the flag did not land.
     if (!streamEnabled && health.body.streamConfigured === true) fail('smoke_stream_flag');
+    if (streamEnabled) {
+        // In both modes: the adapter is configured and its health block echoes the deployed limits.
+        const vars = bridgeVars({ streamEnabled });
+        const block = health.body.stream;
+        if (health.body.streamConfigured !== true) fail('smoke_health_streamConfigured');
+        if (!block || typeof block !== 'object' || Array.isArray(block)) fail('smoke_health_stream');
+        if (block.reservationBudgetSeconds !== Number(vars.STREAM_RESERVATION_SECONDS_BUDGET)) fail('smoke_health_stream_reservation_budget');
+        if (block.storageMinutesCapacity !== Number(vars.STREAM_STORAGE_MINUTES_CAPACITY)) fail('smoke_health_stream_storage_capacity');
+    }
     if (mode === 'closed') {
         if (health.body.stage !== 'DISABLED') fail('smoke_closed');
         return { health_status: health.status, stage: health.body.stage, stream_configured: health.body.streamConfigured ?? null };
     }
     for (const [field, expected] of Object.entries(ACCEPTANCE_HEALTH)) {
         if (health.body[field] !== expected) fail(`smoke_health_${field}`);
-    }
-    if (streamEnabled) {
-        if (health.body.streamConfigured !== true) fail('smoke_health_streamConfigured');
-        if (!health.body.stream || typeof health.body.stream !== 'object' || Array.isArray(health.body.stream)) fail('smoke_health_stream');
     }
     const url = `${base}/v3/playback-tokens`;
     const allowed = await request(fetchImpl, url, { method: 'OPTIONS', headers: { Origin: ACCEPTANCE_ORIGIN } });
@@ -580,15 +606,16 @@ export async function smoke(mode, versionId, fetchImpl, { streamEnabled = false 
 export async function deployRelease({
     sha, releaseDir, receiptPath, mode, env = process.env, fetchImpl = fetch,
     sleep = (ms) => new Promise((done) => setTimeout(done, ms)), makeRunner, expected = EXPECTED_KEYS,
-    operatorKeySet = DEFAULT_OPERATOR_KEY_SET, streamEnabled = false,
+    operatorKeySet = DEFAULT_OPERATOR_KEY_SET, streamEnabled = false, secretPreflight = 'compare',
 }) {
     if (!/^[a-f0-9]{40}$/.test(sha ?? '')) fail('sha_invalid');
     if (!MODES.includes(mode)) fail('mode_invalid');
     operatorKeySetPolicy(operatorKeySet);
     releaseStream(mode, streamEnabled);
+    webhookSecretPreflight(secretPreflight);
     const secrets = releaseSecrets(env, expected, { streamEnabled });
     const keySet = await preflight(secrets, fetchImpl, operatorKeySet);
-    const streamWebhook = streamEnabled ? await preflightStreamWebhook(secrets.stream, fetchImpl) : null;
+    const streamWebhook = streamEnabled ? await preflightStreamWebhook(secrets.stream, fetchImpl, { secretPreflight }) : null;
     const receipt = {
         schema: 'youtick.v2-testnet-bridge-receipt.v1', sha, mode, status: 'IN_PROGRESS',
         worker: BRIDGE.worker, host: bridgeHost(), operatorKeySetPolicy: operatorKeySet, operatorKeySet: keySet,
@@ -655,7 +682,10 @@ async function main(argv) {
         const [sha, releaseDir, receiptPath, mode] = args;
         const operatorKeySet = process.env.OPERATOR_KEY_SET || DEFAULT_OPERATOR_KEY_SET;
         const streamEnabled = streamFlag(process.env.MEDIA_PROVIDER_STREAM_ENABLED || 'false');
-        const receipt = await deployRelease({ sha, releaseDir: resolve(releaseDir), receiptPath, mode, operatorKeySet, streamEnabled });
+        const secretPreflight = webhookSecretPreflight(process.env.STREAM_WEBHOOK_SECRET_PREFLIGHT);
+        const receipt = await deployRelease({
+            sha, releaseDir: resolve(releaseDir), receiptPath, mode, operatorKeySet, streamEnabled, secretPreflight,
+        });
         const summary = {
             status: receipt.status, worker: receipt.worker, version_id: receipt.version_id,
             operatorKeySetPolicy: receipt.operatorKeySetPolicy, operatorKeySet: receipt.operatorKeySet,

@@ -9,7 +9,7 @@ import {
     BASE_SECRETS, BRIDGE, CREATOR_ALLOWLIST, DEFAULT_OPERATOR_KEY_SET, FIXED_VARS, FLAGS, NEAR_AUTH_CREATOR_ALLOWLIST, OPERATOR_KEY_METHOD_SETS,
     OPERATOR_METHODS, OPTIONAL_STREAM_SECRETS, RATE_LIMIT_NAMESPACE, READ_MODEL_D1_NAME, RELEASE_CRON, RETIRED_SECRETS, SECRETS, STREAM,
     STREAM_SECRETS, STREAM_SENTINELS, WALLET_CREATOR_ALLOWLIST,
-    bridgeHost, bridgeVars, deployRelease, preflightStreamWebhook, quotePublicKey, releaseSecrets, releaseStream, releaseVars, rsaKeyMatches,
+    bridgeHost, bridgeVars, deployRelease, preflightStreamWebhook, webhookSecretPreflight, quotePublicKey, releaseSecrets, releaseStream, releaseVars, rsaKeyMatches,
     sanitizeBridgeConfig, setStreamOverride, streamFlag, streamSigningKeyFormat, streamWebhookUrl, wranglerArgs,
 } from './v2-testnet-bridge-release.mjs';
 import { ACCEPTANCE_ORIGIN, MARKET_V2, MEDIA_ACCOUNT, base58Encode, setMediaAccountOverride } from './v2-testnet-release.mjs';
@@ -90,7 +90,7 @@ const HEALTHY = {
     newUploadReady: true, controlPlaneReady: true, playbackReady: true, operatorMutationEnabled: true,
     playbackV2Ready: false, webhookQueueReady: false, sponsoredUploadQuoteReady: false,
     uploadJobArchiveReady: false, operatorOutboxArchiveReady: false,
-    streamConfigured: true, stream: { openReservedSeconds: 0, reservationBudgetSeconds: 7200 },
+    streamConfigured: true, stream: { openReservedSeconds: 0, reservationBudgetSeconds: 7200, storageMinutesCapacity: 1000 },
 };
 const STREAM_WEBHOOK_API = `https://api.cloudflare.com/client/v4/accounts/${MEDIA_ACCOUNT.accountId}/stream/webhook`;
 
@@ -270,6 +270,9 @@ test('Stream constants: sentinels are empty with the flag off and refused with i
         [{ storageMinutesCapacity: '' }, /stream_storage_capacity_invalid/],
         [{ reservationSecondsBudget: '-1' }, /stream_reservation_budget_invalid/],
         [{ stuckTimeoutMs: '1.5' }, /stream_stuck_timeout_invalid/],
+        // One upload at the cap must fit the reservation budget and the prepaid storage.
+        [{ reservationSecondsBudget: '7199' }, /stream_limits_inconsistent/],
+        [{ storageMinutesCapacity: '119' }, /stream_limits_inconsistent/],
     ]) {
         for (const streamEnabled of [false, true]) {
             withStream(fields, () => assert.throws(() => bridgeVars({ streamEnabled }), pattern, JSON.stringify(fields)));
@@ -402,7 +405,7 @@ test('Stream webhook preflight: the media account webhook names this Bridge; the
     await preflightStreamWebhook(stream, impl);
     assert.deepEqual(calls.map((call) => [call.url, call.init.headers.Authorization]), [[STREAM_WEBHOOK_API, `Bearer ${STREAM_TOKEN}`]]);
     for (const [options, pattern] of [
-        [{ webhook: { secret: 'another-stream-secret-value' } }, /stream_webhook_secret_mismatch/],
+        [{ webhook: { secret: 'another-stream-secret-value' } }, /stream_webhook_secret_mismatch_or_masked/],
         [{ webhook: { notificationUrl: `https://${BRIDGE_HOST}/v1/livepeer-webhooks` } }, /stream_webhook_binding_mismatch/],
         [{ webhook: { notificationUrl: 'https://bridge-v2-testnet.youtick.net/v1/stream-webhooks' } }, /stream_webhook_binding_mismatch/],
         [{ webhook: { notificationUrl: undefined } }, /stream_webhook_binding_mismatch/],
@@ -412,6 +415,15 @@ test('Stream webhook preflight: the media account webhook names this Bridge; the
         await assert.rejects(preflightStreamWebhook(stream, fakeFetch(options).impl), pattern, JSON.stringify(options));
     }
     await assert.rejects(preflightStreamWebhook({ ...stream, apiToken: 'wrong-token-value-0123456789abcdef' }, fakeFetch().impl), /stream_webhook_unreadable_403/);
+    // The documented override: the binding is still required, the (possibly masked) secret is not compared.
+    assert.deepEqual(await preflightStreamWebhook(stream, fakeFetch({ webhook: { secret: '****' } }).impl, { secretPreflight: 'skip' }),
+        { binding: 'matched', secret: 'secret-not-compared', proof: 'post-deploy webhook canary (stream-canary webhook)' });
+    await assert.rejects(preflightStreamWebhook(stream, fakeFetch({ webhook: { notificationUrl: 'https://x.invalid/' } }).impl, { secretPreflight: 'skip' }),
+        /stream_webhook_binding_mismatch/);
+    assert.equal(webhookSecretPreflight(undefined), 'compare');
+    assert.equal(webhookSecretPreflight(''), 'compare');
+    assert.equal(webhookSecretPreflight('skip'), 'skip');
+    assert.throws(() => webhookSecretPreflight('off'), /stream_webhook_secret_preflight_invalid/);
     await assert.rejects(preflightStreamWebhook(stream, async () => {
         throw new TypeError('fetch failed');
     }), /stream_webhook_unreadable$/);
@@ -475,6 +487,11 @@ test('acceptance deploy on Stream: preflight, webhook check, one deploy with the
     await assert.rejects(readdir(record[0].tempRoot), /ENOENT/);
     const matched = await acceptance({ receiptPath, fetchImpl: fakeFetch({ webhook: { secret: WEBHOOK_SECRET } }).impl, makeRunner: fakeRunner([]) });
     assert.deepEqual(matched.streamWebhook, { binding: 'matched', secret: 'matched' });
+    const skipped = await acceptance({
+        receiptPath, secretPreflight: 'skip', fetchImpl: fakeFetch({ webhook: { secret: 'masked' } }).impl, makeRunner: fakeRunner([]),
+    });
+    assert.equal(skipped.streamWebhook.secret, 'secret-not-compared');
+    assert.equal(JSON.parse(await readFile(receiptPath, 'utf8')).streamWebhook.secret, 'secret-not-compared');
 });
 
 test('acceptance without Stream is refused before any call; the Stream preflight refuses before wrangler', async () => {
@@ -517,6 +534,17 @@ test('closed deploy without Stream: base secrets only, no Stream API call, DISAB
         receiptPath: join(dir, 'r.json'), mode: 'closed', streamEnabled: true, fetchImpl: fakeFetch({ bridge: { stage: 'DISABLED' } }).impl, makeRunner: fakeRunner(on),
     });
     assert.equal(closedOn.streamWebhook.binding, 'matched');
+    assert.equal(closedOn.smoke.stream_configured, true);
+    // Closed with Stream on still requires a configured adapter whose health block echoes the deployed limits.
+    for (const [bridge, pattern] of [
+        [{ stage: 'DISABLED', streamConfigured: false }, /smoke_health_streamConfigured/],
+        [{ stage: 'DISABLED', stream: { reservationBudgetSeconds: 3600, storageMinutesCapacity: 1000 } }, /smoke_health_stream_reservation_budget/],
+        [{ stage: 'DISABLED', stream: { reservationBudgetSeconds: 7200, storageMinutesCapacity: '1000' } }, /smoke_health_stream_storage_capacity/],
+    ]) {
+        await assert.rejects(deploy({
+            receiptPath: join(dir, 'r.json'), mode: 'closed', streamEnabled: true, fetchImpl: fakeFetch({ bridge }).impl, makeRunner: fakeRunner([]),
+        }), pattern);
+    }
     assert.deepEqual(Object.keys(on[0].secrets).sort(), [...BASE_SECRETS, ...STREAM_SECRETS].sort());
 });
 

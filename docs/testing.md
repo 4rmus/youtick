@@ -240,6 +240,15 @@ the Bridge log), `canary:stream:ladder` (master and variant playlists against
 Each live run needs `STREAM_CANARY_MUTATIONS=true` plus `STREAM_ACCOUNT_ID` and
 `STREAM_API_TOKEN` in the shell, writes a scrubbed `youtick.stream-canary.v1`
 receipt under `--out` (outside the repository) and deletes what it created.
+`--signing-key-file` (playback, ladder) is a 0600 JSON file `{"id","pem"}`
+outside the repository holding a separate canary key, never the Bridge's; `--uid`
+and `--other-uid` are ready videos of the media account. The runbook step
+"Canary signing key and video ids" (docs/v2-testnet-runbook.md, Stream cutover
+inputs) mints the key with `jq '{id: .result.id, pem: .result.pem}'` and lists
+ready uids. The webhook canary's upload carries no `meta.jobId`: it passes only
+if the Bridge advances `stream.lastWebhookAtMs` in `/__health` for any validly
+signed delivery, routable or not; a reachable health URL without that value
+fails the run.
 The Studio canaries above stay for V1.
 
 The V2 Bridge release tooling (`scripts/v2-testnet-bridge-release.mjs`, Stream

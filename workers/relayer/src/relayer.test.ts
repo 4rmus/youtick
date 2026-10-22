@@ -812,10 +812,14 @@ describe('NEAR Auth uploads', () => {
         }
     });
 
-    it('turns the relayer off for a malformed UPLOAD_PROFILE_HASH_ALLOWLIST instead of allowing every hash (M2-G7)', async () => {
+    it('closes uploads, and only uploads, for a malformed UPLOAD_PROFILE_HASH_ALLOWLIST instead of allowing every hash (M2-G7)', async () => {
         for (const value of ['a'.repeat(63), 'A'.repeat(64), `${'a'.repeat(64)};${'b'.repeat(64)}`, `${'a'.repeat(64)},nope`]) {
-            const { call } = setup({ UPLOAD_PROFILE_HASH_ALLOWLIST: value });
-            expect(await call('/v1/uploads', (await upload('buyer-p4')).body)).toEqual({ status: 503, body: { error: 'relayer_disabled' } });
+            const { call, chain } = setup({ UPLOAD_PROFILE_HASH_ALLOWLIST: value });
+            expect(await call('/v1/uploads', (await upload('buyer-p4')).body)).toEqual({ status: 503, body: { error: 'uploads_misconfigured' } });
+            expect(chain.sent).toEqual([]);
+            // The rest of the relayer still answers (not relayer_disabled).
+            expect((await call('/v1/uploads/status', { upload_id: 'd'.repeat(64) })).body).not.toEqual({ error: 'relayer_disabled' });
+            expect((await call('/v1/uploads/status', { upload_id: 'd'.repeat(64) })).status).not.toBe(503);
         }
     });
 

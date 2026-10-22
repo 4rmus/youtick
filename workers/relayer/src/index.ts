@@ -28,7 +28,7 @@ const PURCHASE_REJECTIONS: Record<string, number> = {
     upload_invalid: 400, uploads_paused: 503, quote_required: 409, fee_mismatch: 409, upload_key_expired: 409, job_exists: 409,
     job_conflict: 409, job_not_found: 404, job_published: 409,
     // A profile hash outside UPLOAD_PROFILE_HASH_ALLOWLIST (M2-G7): no Bridge would accept the upload.
-    profile_not_allowed: 400,
+    profile_not_allowed: 400, uploads_misconfigured: 503,
     approval_mismatch: 400, delegate_stale: 409, insufficient_balance: 409,
     // Device links: refused before the relayer pays gas.
     device_invalid: 400, ticket_not_found: 404, ticket_not_playable: 409, device_epoch_stale: 409, storage_unavailable: 503,

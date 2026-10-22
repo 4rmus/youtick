@@ -320,10 +320,14 @@ async function cmdWebhook(ctx) {
     const lastWebhook = async () => {
         const response = await ctx.fetchImpl(healthUrl.toString(), { signal: AbortSignal.timeout(15_000) });
         const body = await response.json().catch(() => null);
-        const value = Number(body?.stream?.lastWebhookAtMs);
-        return response.status === 200 && Number.isFinite(value) ? value : null;
+        const value = body?.stream?.lastWebhookAtMs;
+        return response.status === 200 && Number.isSafeInteger(value) && value >= 0 ? value : null;
     };
+    // Contract with the Bridge: /__health stream.lastWebhookAtMs is a number and advances on every
+    // validly signed Stream delivery, routable or not (this canary's video has no meta.jobId). A
+    // reachable health URL without it fails here, before anything is uploaded.
     const before = healthUrl ? await lastWebhook() : null;
+    if (healthUrl && !check(ctx, 'bridge_health_reports_lastWebhookAtMs', before !== null)) return;
     const created = await createVideo(ctx, { name: `youtick-canary-webhook-${ctx.now()}`, length: NON_VIDEO_BYTES });
     if (!check(ctx, 'create_201_with_uid', created.status === 201 && created.uid, { status: created.status })) return;
     if (!check(ctx, 'upload_url_host_pinned', created.uploadHostPinned)) return;
@@ -339,7 +343,7 @@ async function cmdWebhook(ctx) {
     receipt.provider_error = { reason_code: reason, elapsed_ms: errored.elapsedMs };
     check(ctx, 'provider_reports_ERR_NON_VIDEO', !errored.timedOut && reason === 'ERR_NON_VIDEO', receipt.provider_error);
     if (healthUrl) {
-        const delivered = await poll(ctx, lastWebhook, (value) => value !== null && (before === null || value > before),
+        const delivered = await poll(ctx, lastWebhook, (value) => value !== null && value > before,
             { timeoutMs: ctx.timeoutMs, intervalMs: 10_000 });
         receipt.bridge = { health_read: 'stream.lastWebhookAtMs', advanced: !delivered.timedOut, elapsed_ms: delivered.elapsedMs };
         check(ctx, 'bridge_accepted_signed_delivery', !delivered.timedOut, receipt.bridge);
@@ -517,6 +521,12 @@ export const USAGE = `Usage: npm run canary:stream:<subcommand> -- --out <dir> [
 Owner-run Cloudflare Stream canaries for the V2 Bridge (M4-G2). Every live run
 needs ${MUTATION_GATE}=true plus STREAM_ACCOUNT_ID and STREAM_API_TOKEN in this
 shell's environment (never read from files). --dry-run and --help need none.
+
+Webhook contract: the webhook canary's video carries no meta.jobId, so the
+Bridge must advance /__health stream.lastWebhookAtMs (a number) for every validly
+signed Stream delivery, routable or not. With --bridge-health-url, a health
+response without that number fails the run before anything is uploaded; without
+it the run ends OPERATOR_CHECK (read the Bridge log).
 
 Subcommands:
 ${Object.entries(COMMANDS).map(([name, command]) => `  ${name.padEnd(12)} ${command.summary}`).join('\n')}

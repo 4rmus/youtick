@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -55,13 +55,15 @@ test('every drift from the descriptor shape is refused', () => {
         [fixture({ maxDurationSecondsCap: 0 }), /maxDurationSecondsCap/],
         [fixture({ maxDurationSecondsCap: 36001 }), /maxDurationSecondsCap/],
         [fixture({ maxDurationSecondsCap: '7200' }), /maxDurationSecondsCap/],
+        // OD3 pins the cap itself, not only a range.
+        [fixture({ maxDurationSecondsCap: 3600 }), /must be 7200/],
         [fixture({ profiles: STREAM_LADDER.slice(1) }), /5 renditions/],
         [fixture({ profiles: [...STREAM_LADDER].reverse() }), /ascending ladder/],
         [fixture({ profiles: STREAM_LADDER.map((rung, index) => (index === 2 ? { ...rung, width: 854 } : rung)) }), /ascending ladder/],
         [fixture({ profiles: STREAM_LADDER.map((rung, index) => (index === 0 ? { ...rung, name: '240' } : rung)) }), /height followed by p/],
         [fixture({ profiles: STREAM_LADDER.map((rung, index) => (index === 0 ? { ...rung, bitrate: 1 } : rung)) }), /exactly name, width, height/],
         [withHash({ ...base.stream, hash: base.stream.hash.toUpperCase() }), /64 lowercase hex/],
-        [withHash({ ...base.stream, maxDurationSecondsCap: 3600 }), /hash drift/],
+        [withHash({ ...base.stream, hash: 'a'.repeat(64) }), /hash drift/],
     ];
     for (const [document, pattern] of cases) assert.throws(() => checkStreamProfile(document), pattern, JSON.stringify(document).slice(0, 120));
     // A Stream hash may never collide with a V1 Studio profile hash.
@@ -75,9 +77,17 @@ test('the CLI checks a path argument and fails with a message on drift', async (
     assert.match(execFileSync(process.execPath, [CHECKER, good], { encoding: 'utf8' }), /^paid-media-v1 stream profile OK \([0-9a-f]{64}\)\n$/);
     const bad = join(dir, 'drift.json');
     const drift = fixture();
-    drift.stream.maxDurationSecondsCap = 60;
+    drift.stream.hash = 'a'.repeat(64);
     await writeFile(bad, JSON.stringify(drift));
     assert.throws(() => execFileSync(process.execPath, [CHECKER, bad], { encoding: 'utf8', stdio: 'pipe' }), /hash drift/);
+    // A missing descriptor is one line and exit 1, not a stack trace.
+    const missing = spawnSync(process.execPath, [CHECKER, join(dir, 'absent.json')], { encoding: 'utf8' });
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /^stream descriptor missing: \S+absent\.json\n$/);
+    // Invoked through a symlink, the checker still runs (the main guard compares real paths).
+    const link = join(dir, 'checker-link.mjs');
+    await symlink(CHECKER, link);
+    assert.match(execFileSync(process.execPath, [link, good], { encoding: 'utf8' }), /^paid-media-v1 stream profile OK/);
 });
 
 test('the committed descriptor, once it lands, passes the checker', { skip: !existsSync(STREAM_PROFILE_PATH) && 'protocol/paid-media-v1/stream-profile.json is written by the Bridge gate of M2' }, () => {

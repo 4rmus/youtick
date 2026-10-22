@@ -7,8 +7,8 @@
 //
 //   node scripts/check-paid-media-v1.mjs [path-to-stream-profile.json]
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,8 +25,9 @@ export const STREAM_LADDER = Object.freeze([
   Object.freeze({ name: "720p", width: 1280, height: 720 }),
   Object.freeze({ name: "1080p", width: 1920, height: 1080 }),
 ]);
-// Cloudflare Stream accepts maxDurationSeconds 1..36000 at upload creation.
-const MAX_DURATION_SECONDS_LIMIT = 36000;
+// Owner decision OD3: a 2-hour cap. Cloudflare Stream itself accepts 1..36000; a different cap is an
+// owner decision that changes the descriptor hash and the release constant STREAM_MAX_DURATION_SECONDS.
+export const MAX_DURATION_SECONDS_CAP = 7200;
 
 /** The canonical JSON the hash covers; identical to `sortedJson` in check-paid-media-livepeer-v1.mjs. */
 export const sortedJson = (value) => JSON.stringify(value, (_key, entry) =>
@@ -61,9 +62,8 @@ export function checkStreamProfile(document, { v1Hashes = [] } = {}) {
   assert(sameKeys(entry.policy, ["requireSignedURLs", "tokenPlacement"])
     && entry.policy.requireSignedURLs === true && entry.policy.tokenPlacement === "path",
   "stream.policy must be exactly {requireSignedURLs: true, tokenPlacement: \"path\"}");
-  assert(Number.isSafeInteger(entry.maxDurationSecondsCap) && entry.maxDurationSecondsCap >= 1
-    && entry.maxDurationSecondsCap <= MAX_DURATION_SECONDS_LIMIT,
-  `stream.maxDurationSecondsCap must be an integer from 1 to ${MAX_DURATION_SECONDS_LIMIT}`);
+  assert(entry.maxDurationSecondsCap === MAX_DURATION_SECONDS_CAP,
+    `stream.maxDurationSecondsCap must be ${MAX_DURATION_SECONDS_CAP} (owner decision OD3)`);
   assert(Array.isArray(entry.profiles) && entry.profiles.length === STREAM_LADDER.length,
     `stream.profiles must list ${STREAM_LADDER.length} renditions`);
   entry.profiles.forEach((profile, index) => {
@@ -90,8 +90,29 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function isMain() {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) {
   const path = process.argv[2] ? resolve(process.argv[2]) : STREAM_PROFILE_PATH;
-  const hash = checkStreamProfile(JSON.parse(readFileSync(path, "utf8")), { v1Hashes: v1ProfileHashes() });
-  console.log(`paid-media-v1 stream profile OK (${hash})`);
+  let text;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    // The descriptor is committed by the Bridge gate of M2 in the same push as this checker's CI step.
+    console.error(`stream descriptor missing: ${relative(root, path) || path}`);
+    process.exit(1);
+  }
+  try {
+    const hash = checkStreamProfile(JSON.parse(text), { v1Hashes: v1ProfileHashes() });
+    console.log(`paid-media-v1 stream profile OK (${hash})`);
+  } catch (error) {
+    console.error(`paid-media-v1 stream profile: ${error.message}`);
+    process.exit(1);
+  }
 }

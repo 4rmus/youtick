@@ -172,6 +172,9 @@ What differs from the Workers release:
     `NEAR_OPERATOR_ACCOUNT_ID=v2-bridge-261007…`;
   - Livepeer project `youtick-paid-media-canary`, API token name `youtick-v2-testnet-bridge`, and
     the public half of the V2 signing key;
+
+    > Superseded (2026-10-22, OD19): the V2 release writes these Studio values empty and the Stream
+    constants instead; see "Stream cutover inputs (M2)".
   - creator allowlist `ticks.testnet`, `soteri.testnet`, `utick.testnet` (wallet test accounts) plus
     the NEAR Auth creators in `NEAR_AUTH_CREATOR_ALLOWLIST` (one so far; see "NEAR Auth creators"
     below), a 20 USD monthly budget and a 2 USD reservation per job.
@@ -182,8 +185,9 @@ What differs from the Workers release:
   - `closed`: the Bridge reports `DISABLED`.
   - `acceptance`: uploads (USDC or NEAR with a signed quote) for the allowlisted creators, webhooks,
     operator finalization and `/v3/playback-tokens` for `http://localhost:3000`.
-- **Checks before Wrangler runs:** the JWT private key matches the committed public key; the
-  operator key is the Bridge account's function-call key on chain for Market V2 with exactly
+- **Checks before Wrangler runs:** the JWT private key matches the committed public key
+  (Superseded (2026-10-22, OD19): no Studio JWT key on V2; with `stream_enabled=true` the Stream
+  RS256 key must derive `STREAM_SIGNING_PUBLIC_KEY` instead); the operator key is the Bridge account's function-call key on chain for Market V2 with exactly
   `finalize_publication`, `suspend_sales`, `mark_watched` and `release_expired` (since gate MC;
   before the [MC cutover](#mc-cutover-provider-neutral-market-v2-names) the key on chain still
   lists `finalize_livepeer_publication` and `suspend_livepeer_sales`, so a Bridge release from a
@@ -208,6 +212,10 @@ Done on 2026-10-12:
   `workers/livepeer-bridge/scripts/v2-testnet-quote-key.mjs`, which refuses a key that does not
   match the Market V2 quote key.
 
+> Superseded (2026-10-22, OD19): the V2 Bridge workflow no longer maps `V2_LIVEPEER_API_KEY`,
+`V2_LIVEPEER_JWT_PRIVATE_KEY` or `V2_LIVEPEER_WEBHOOK_SECRET`; it maps `V2_STREAM_*` instead.
+`V2_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN` stays (it is the Bridge operator token).
+
 To deploy, start *V2 Testnet Bridge* on `main` with the current commit, its CI run, a mode and
 `confirmation` `DEPLOY_V2_TESTNET_BRIDGE_<mode>`, then approve the environment. To change the
 allowlist or the signing key, change the script and deploy again.
@@ -226,6 +234,11 @@ allowlist or the signing key, change the script and deploy again.
 
   The release preflight now reads the webhook with the Bridge's API key and refuses to deploy
   when `sharedSecret` differs from `LIVEPEER_WEBHOOK_SECRET` (`webhook_secret_mismatch`).
+
+  > Superseded (2026-10-22, OD19): the V2 release no longer reads the Studio webhook or needs
+  `V2_LIVEPEER_WEBHOOK_SECRET`/`V2_LIVEPEER_API_KEY`; it checks the Stream webhook
+  (`stream_webhook_*`, "Stream cutover inputs (M2)"). The two bullets above stay as history and
+  for V1.
 - Livepeer's dashboard *Resend* sends the stored delivery **without** a `Livepeer-Signature`
   header, so the Bridge always answers 403 to it; it proves nothing about the secret. To make
   Livepeer sign a fresh event for an asset, update the asset without changing it
@@ -653,7 +666,9 @@ What the release tooling does now:
 - **Bridge.** The deployed config sets `workers_dev = true`, and there is no `--domain`.
   `CLOUDFLARE_ACCOUNT_ID` must be the media account. The smoke test calls the workers.dev host.
   The Livepeer webhook URL must be exactly `https://<bridge host>/v1/livepeer-webhooks`, or the
-  release stops with `webhook_binding_mismatch`. The Bridge workflow no longer fingerprints
+  release stops with `webhook_binding_mismatch`. (Superseded (2026-10-22, OD19): the V2 release checks
+  the Stream webhook `https://<bridge host>/v1/stream-webhooks` instead, failing
+  `stream_webhook_binding_mismatch`.) The Bridge workflow no longer fingerprints
   `https://youtick.net`: the Bridge is no longer in the `youtick.net` zone, so it cannot affect
   the root origin. *V2 Testnet Workers* still fingerprints it.
 - **Environment URL.** The prepare job derives the Bridge's environment URL with `bridgeHost()`
@@ -695,6 +710,10 @@ What the release tooling does now:
 
 ### Cutover order (M1.5-G3)
 
+> Superseded (2026-10-22, OD19): the Studio steps below (the webhook repoint in step 3 and the Studio-era Bridge
+deploys in step 4) no longer apply to the V2 Bridge; the first media-account Bridge deploy is the M2
+build together with the MC cutover ("Stream cutover inputs (M2)"). Steps 1, 2, 4.1 and 5 stand.
+
 Order matters. The old Bridge's release compares the Studio webhook URL with
 `bridge-v2-testnet.youtick.net`. Once the webhook is repointed, an old-Bridge deploy fails with
 `webhook_binding_mismatch`. So shut the old Bridge and drain its outbox first. Then repoint the
@@ -714,12 +733,18 @@ webhook, and only then deploy into the media account.
    Use the dashboard or the API. Keep the events and the signing secret. Then read the webhook
    back and check two things: `url` is the new one, and `sharedSecret` still equals
    `V2_LIVEPEER_WEBHOOK_SECRET`. From now on the old Bridge receives no deliveries.
+   > Superseded (2026-10-22, OD19): the repoint was done on 2026-10-22, but the V2 release no longer
+   compares the Studio webhook or its `sharedSecret`; the Studio V2 webhook is retired with the
+   Stream-only Bridge.
 4. **Deploy into the media account:**
    1. Run *V2 Testnet Workers*. The read-model D1 migrations `0001`–`0011` apply to the new, empty
       database, and the read model rescans Market V2 from block `272905000`
       (`READ_MODEL_START_BLOCK_HEIGHT`).
-   2. Run *V2 Testnet Bridge* `closed`.
-   3. Run *V2 Testnet Bridge* `acceptance` only after the read model has caught up. Its
+   2. Run *V2 Testnet Bridge* `closed`. (Superseded (2026-10-22, OD19): cancelled: the first
+      media-account Bridge deploy is the M2 build.)
+   3. (Superseded (2026-10-22, OD19): cancelled: the first media-account Bridge deploy is the M2 build;
+      the read-model catch-up condition still applies to its `acceptance` run.) Run *V2 Testnet
+      Bridge* `acceptance` only after the read model has caught up. Its
       `/__health` must show ingestion current. `acceptance` turns on `MARKET_V2_RELEASE_ENABLED`,
       and the 30-day `release_expired` scan reads the read model's `market_v2_tickets`. The first
       release is possible on 2026-11-12. What the scan does against an incomplete read model is
@@ -799,9 +824,9 @@ only webhook slot and deletes it at cleanup, which would remove the Bridge's web
    umask 077; KEYS=$(mktemp)
    curl --fail -sS -X POST "https://api.cloudflare.com/client/v4/accounts/$STREAM_ACCOUNT_ID/stream/keys" \
      -H "Authorization: Bearer $STREAM_API_TOKEN" -o "$KEYS"
-   jq -r .result.id "$KEYS"                                     # STREAM_SIGNING_KEY_ID (step 5)
+   jq -r .result.id "$KEYS"                                     # STREAM_SIGNING_KEY_ID (step 6)
    jq -r .result.pem "$KEYS" | base64 -d | head -1              # format line only
-   jq -r .result.pem "$KEYS" | base64 -d | openssl pkey -pubout | base64 | tr -d '\n'; echo   # STREAM_SIGNING_PUBLIC_KEY (step 5)
+   jq -r .result.pem "$KEYS" | base64 -d | openssl pkey -pubout | base64 | tr -d '\n'; echo   # STREAM_SIGNING_PUBLIC_KEY (step 6)
    ```
 
    If the format line is `-----BEGIN PRIVATE KEY-----` (PKCS8):
@@ -824,11 +849,30 @@ only webhook slot and deletes it at cleanup, which would remove the Bridge's web
    issues a new secret: rotation is PUT, `gh secret set`, then a Bridge deploy, with a gap in
    between (a two-secret overlap does not help on Stream unless M0-P4 shows the old secret
    surviving). `V2_STREAM_WEBHOOK_SECRET_PREVIOUS` is optional and normally unset.
-4. **Customer code.** The `<code>` of `customer-<code>.cloudflarestream.com`, from any video of
-   the media account (the M0-P1 upload; keep one with `--keep` or read it before cleanup):
+4. **Customer code.** Already recorded: `7v4my51gigdqb5jn` (host
+   `customer-7v4my51gigdqb5jn.cloudflarestream.com`, dashboard read of 2026-10-22,
+   `claudedocs/stream-m0-pano-kanitlari-2026-10-22.md`); commit it in `STREAM.customerCode`
+   (step 6). To read it again from any video of the media account:
    `curl --fail -sS "https://api.cloudflare.com/client/v4/accounts/$STREAM_ACCOUNT_ID/stream?limit=1" -H "Authorization: Bearer $STREAM_API_TOKEN" | jq -r '.result[0].playback.hls' | sed -E 's#^https://customer-([a-z0-9]+)\.cloudflarestream\.com/.*#\1#'`.
-   It is a public value (the web build carries it too). Then `unset STREAM_API_TOKEN`.
-5. **One-line commits** on the milestone branch (or the next PR), each a public value:
+   It is a public value (the web build carries it too).
+5. **Canary signing key and video ids** (for the M4-G2 canaries `playback` and `ladder`). Mint a
+   separate canary key, never the Bridge's, and keep `{id, pem}` in a 0600 file outside the
+   repository (the canaries refuse a key file inside it):
+
+   ```bash
+   umask 077; CANARY_KEY=~/.youtick-stream-canary/key.json; mkdir -p "$(dirname "$CANARY_KEY")"
+   curl --fail -sS -X POST "https://api.cloudflare.com/client/v4/accounts/$STREAM_ACCOUNT_ID/stream/keys" \
+     -H "Authorization: Bearer $STREAM_API_TOKEN" | jq '{id: .result.id, pem: .result.pem}' > "$CANARY_KEY"
+   jq -r .id "$CANARY_KEY"   # the canary key id, to delete it later
+   ```
+
+   `--uid` is a ready video of the media account (for example the first acceptance upload, or a
+   sample uploaded for M0 with `--keep`); `--other-uid` is a second ready one (optional, a random
+   uid is used otherwise). List ready videos with
+   `curl --fail -sS "https://api.cloudflare.com/client/v4/accounts/$STREAM_ACCOUNT_ID/stream?limit=20" -H "Authorization: Bearer $STREAM_API_TOKEN" | jq -r '.result[] | select(.readyToStream) | .uid'`.
+   After the canaries, delete the key (`DELETE /stream/keys/<id>`) and the file. Then
+   `unset STREAM_API_TOKEN`.
+6. **One-line commits** on the milestone branch (or the next PR), each a public value:
    - `scripts/v2-testnet-bridge-release.mjs`, `STREAM.customerCode`: the step 4 code (replaces
      `<record-after-first-upload>`).
    - same file, `STREAM.signingKeyId` and `STREAM.signingPublicKey` together: the step 2 id and
@@ -836,34 +880,54 @@ only webhook slot and deletes it at cleanup, which would remove the Bridge's web
      `stream_signing_key_incomplete`).
    - `scripts/v2-testnet-release.mjs`, relayer `UPLOAD_PROFILE_HASH_ALLOWLIST`: the `hash` of
      `protocol/paid-media-v1/stream-profile.json` (`node scripts/check-paid-media-v1.mjs` prints
-     it). Empty keeps today's behaviour (any 64-hex hash).
-6. **Check the inputs** without deploying: *V2 Testnet Bridge* `closed` with
-   `stream_enabled=true`. Its prepare job fails on any remaining sentinel; its deploy job checks
-   every `V2_STREAM_*` secret, that the PEM derives the committed public key, and that the
-   account webhook names `/v1/stream-webhooks` on the workers.dev host. When Stream's
-   `GET /stream/webhook` does not return the secret (M0-P4), the receipt says
-   `secret: not_returned` and the webhook canary below is the only proof.
+     it). Empty keeps today's behaviour (any 64-hex hash). Once this allowlist is live (MC cutover
+   step 6), an upload from a web build that does not send the Stream descriptor hash is refused by
+   the relayer with `profile_not_allowed` before any fee is paid.
+7. **Check the constants** offline: start *V2 Testnet Bridge* with `stream_enabled=true`; its
+   prepare job fails on any remaining sentinel (`stream_*_unconfigured`). Reject the environment
+   approval to stop there. The secret, key and webhook checks run only in the deploy job, and a
+   deploy job that passes them **deploys a Worker version** (in `closed` mode a `DISABLED` one):
+   it is not a dry check. Run it as MC cutover step 7 below, after steps 2–5 (outbox drained,
+   Bridge frozen, contract upgraded, operator key swapped to the `neutral` set): before step 5 a
+   run pinned to `operator_key_set=neutral` stops with `operator_key_set_mismatch_legacy`. When
+   Stream's `GET /stream/webhook` does not return the secret (M0-P4), the receipt says
+   `secret: not_returned` and the webhook canary below is the only proof. If it returns a value that
+   differs (`stream_webhook_secret_mismatch_or_masked`; a masked readback is possible, M0-P4),
+   either rotate (step 3) or set the repository variable `V2_STREAM_WEBHOOK_SECRET_PREFLIGHT=skip`
+   for that run: the URL check stays, the receipt records `secret-not-compared`, and the webhook
+   canary must pass before uploads open.
 
 ### Deploy order on the cutover
 
 The MC cutover table above stays, with these changes:
 
-- Step 6 (*V2 Testnet Workers*) runs on the commit that carries the step 5 allowlist, so the
-  relayer accepts only the Stream descriptor hash from then on.
+- Step 6 (*V2 Testnet Workers*) runs on the commit that carries the relayer allowlist (step 6 of
+  "Owner steps" in this section), so the relayer accepts only the Stream descriptor hash from then
+  on.
 - Step 7 becomes two *V2 Testnet Bridge* runs on the same commit, both with
-  `operator_key_set=neutral` and `stream_enabled=true`: first `closed` (all Stream checks,
-  `DISABLED` stage), then `acceptance` (smoke requires `streamConfigured: true` and the `stream`
+  `operator_key_set=neutral` and `stream_enabled=true`: first `closed` (all Stream checks; it
+  deploys a `DISABLED` version whose smoke requires `streamConfigured: true`), then `acceptance` (smoke requires `streamConfigured: true` and the `stream`
   block in `/__health`). `acceptance` with `stream_enabled=false` is refused
   (`acceptance_requires_stream`).
 - After step 8 (unfreeze), the M4-G2 Stream canaries with `STREAM_CANARY_MUTATIONS=true`
   (`docs/testing.md`, Livepeer Bridge): `canary:stream:webhook` with
   `--bridge-health-url https://youtick-livepeer-bridge-v2-testnet.kocoinci.workers.dev/__health`
-  first, then provider, reservation, playback, ladder and keys.
+  first, then provider, reservation, playback, ladder and keys. The webhook canary's video
+  carries no `meta.jobId`, so it passes only if the Bridge advances `stream.lastWebhookAtMs` for
+  every validly signed delivery, routable or not; a reachable `/__health` without that field
+  fails the canary.
 
 Effects to expect: publications made through Studio before the cutover no longer play through
 the new Bridge (it has no Studio configuration); the old Bridge keeps serving them until it is
 switched off (OD13). With `stream_enabled=false` the Bridge writes the Stream constants as empty
 and deploys no Stream secret.
+
+Merge note: CI's Protocol job runs `node scripts/check-paid-media-v1.mjs`, which fails with
+`stream descriptor missing: protocol/paid-media-v1/stream-profile.json` until the Bridge gate's
+descriptor commit is on the same branch; both M2 branches land in one push.
+
+The Studio-era canaries (`network-endpoint-canary`, `browser-canary-server`/`-client`,
+`provider-canary`, `playback-canary`, `tus-resume-canary`) stay for V1 and are not deleted.
 
 Evidence today: LOCAL_TEST only (release-script, workflow-shape and canary tests with mocks). No
 step above has run.

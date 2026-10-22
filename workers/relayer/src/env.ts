@@ -34,7 +34,8 @@ export interface Env {
     /**
      * Comma-separated SHA-256 hex digests (lowercase) of the media profiles an upload may name in
      * `profile_config_sha256` (gate M2-G7). Unset or empty: any 64-hex digest, as before. A set but
-     * malformed list turns the relayer off rather than allowing every digest.
+     * malformed list refuses every upload (`uploads_misconfigured`) rather than allowing every digest;
+     * the other routes keep working.
      */
     UPLOAD_PROFILE_HASH_ALLOWLIST?: string;
     INVITE_AMOUNTS_USDC_MICRO?: string;
@@ -82,8 +83,11 @@ export interface RelayerConfig {
     identityDailyUploadLimit: string;
     /** Null unless both device limits are set and well-formed: the device routes are then off. */
     devices: { dailyLimit: string; ticketDailyLimit: string } | null;
-    /** Null when `UPLOAD_PROFILE_HASH_ALLOWLIST` is unset or empty: no profile hash restriction. */
-    uploadProfileHashAllowlist: string[] | null;
+    /**
+     * Null when `UPLOAD_PROFILE_HASH_ALLOWLIST` is unset or empty (no profile hash restriction);
+     * `'invalid'` when it is set but malformed (uploads refused).
+     */
+    uploadProfileHashAllowlist: string[] | null | 'invalid';
     inviteAmountsMicro: string[];
     inviteTtlMs: number;
     allowedOrigins: string[];
@@ -113,7 +117,6 @@ export function relayerConfig(env: Env): RelayerConfig | null {
         || !inviteAmountsMicro.length || !inviteAmountsMicro.every((amount) => POSITIVE.test(amount))
         || !allowedOrigins.every((origin) => /^https:\/\/[a-z0-9.-]+(:[0-9]+)?$/.test(origin) || /^http:\/\/localhost:[0-9]+$/.test(origin))
         || !numbers.every((value) => POSITIVE.test(value ?? ''))
-        || !profileHashes.every((hash) => HEX64.test(hash))
         || !/^[A-Za-z0-9_-]{32,256}$/.test(env.RELAYER_ADMIN_TOKEN ?? '')) return null;
     let publicKey: string;
     try {
@@ -135,7 +138,9 @@ export function relayerConfig(env: Env): RelayerConfig | null {
         // Kept out of `numbers`: a release without these values must not switch the whole relayer off.
         devices: POSITIVE.test(env.DAILY_DEVICE_LIMIT ?? '') && POSITIVE.test(env.TICKET_DAILY_DEVICE_LIMIT ?? '')
             ? { dailyLimit: env.DAILY_DEVICE_LIMIT!, ticketDailyLimit: env.TICKET_DAILY_DEVICE_LIMIT! } : null,
-        uploadProfileHashAllowlist: profileHashes.length > 0 ? [...new Set(profileHashes)] : null,
+        // Kept out of the checks above: a malformed allowlist closes uploads, not the whole relayer.
+        uploadProfileHashAllowlist: !profileHashes.every((hash) => HEX64.test(hash)) ? 'invalid'
+            : profileHashes.length > 0 ? [...new Set(profileHashes)] : null,
         inviteTtlMs: Number(env.INVITE_TTL_DAYS) * 86_400_000, allowedOrigins,
     };
 }

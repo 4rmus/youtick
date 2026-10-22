@@ -588,6 +588,13 @@ test('V2 testnet Bridge is Stream-only (OD19): V2_STREAM_* secrets, no Studio tr
     assert.match(bridge, /\[\[ "\$STREAM_ENABLED" =~ \^\(true\|false\)\$ \]\]/);
     assert.equal((bridge.match(/MEDIA_PROVIDER_STREAM_ENABLED: \$\{\{ inputs\.stream_enabled \}\}/g) ?? []).length, 3);
     assert.match(deploy, /\n          MEDIA_PROVIDER_STREAM_ENABLED: \$\{\{ inputs\.stream_enabled \}\}\n/);
+    // The prepare job (no environment) never sees a Stream secret.
+    const prepare = bridge.slice(bridge.indexOf('\n  prepare:\n'), bridge.indexOf('\n  deploy:\n'));
+    assert.ok(prepare.length > 0);
+    assert.doesNotMatch(prepare, /V2_STREAM_|secrets\.V2_/);
+    // The documented secret-preflight override is a repository variable, never a secret, and only in the deploy step.
+    assert.match(deploy, /\n          STREAM_WEBHOOK_SECRET_PREFLIGHT: \$\{\{ vars\.V2_STREAM_WEBHOOK_SECRET_PREFLIGHT \}\}\n/);
+    assert.equal((bridge.match(/STREAM_WEBHOOK_SECRET_PREFLIGHT:/g) ?? []).length, 1);
     const summary = steps.find((entry) => entry.name === 'Summarize the exact packet for environment approval').text;
     assert.ok(summary.includes('vars: bridgeVars({ streamEnabled })'));
     assert.doesNotMatch(summary, /FIXED_VARS/);

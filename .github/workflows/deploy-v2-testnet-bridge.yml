@@ -217,6 +217,8 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
           MEDIA_PROVIDER_STREAM_ENABLED: ${{ inputs.stream_enabled }}
+          # Empty (compare) unless the owner sets the repository variable to skip (M0-P4: GET may mask the secret).
+          STREAM_WEBHOOK_SECRET_PREFLIGHT: ${{ vars.V2_STREAM_WEBHOOK_SECRET_PREFLIGHT }}
         run: node scripts/v2-testnet-bridge-release.mjs deploy "$SHA" "$RUNNER_TEMP/release" "$RUNNER_TEMP/v2-testnet-bridge-receipt.json" "$RELEASE_MODE"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
