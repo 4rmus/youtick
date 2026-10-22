@@ -5,7 +5,7 @@
     "title": "Public testnet video",
     "price_usdc": "2000000",
     "expected_source_bytes": "5000000000",
-    "profile_id": "paid-media-livepeer-v1",
+    "profile_id": "paid-media-v1",
     "profile_config_sha256": "28ba12452dd2cc55e64baf73a3dbf665784eeb8fd87892163818513165bbd3b2",
     "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
     "upload_key_expires_at_ms": "1785675700000"

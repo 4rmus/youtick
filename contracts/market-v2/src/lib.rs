@@ -10,7 +10,7 @@ use near_sdk::{
 
 const TESTNET_USDC: &str = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
 const MAINNET_USDC: &str = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
-const PROFILE: &str = "paid-media-livepeer-v1";
+const PROFILE: &str = "paid-media-v1";
 const PAID_SOURCE_MAX_BYTES: u128 = 20_000_000_000;
 // V2 ticket economics and message formats: protocol/youtick-market-v2.
 const MIN_TICKET_PRICE_USDC: u128 = 5_000_000;
@@ -97,6 +97,8 @@ impl near_sdk::IntoStorageKey for StorageKey {
     }
 }
 
+// The `livepeer-v1:` prefixes are frozen storage keys inherited from V1, not
+// a provider binding; renaming them would orphan live testnet state.
 impl StorageKey {
     const MEDIA_JOBS: Self = Self(b"livepeer-v1:jobs");
     const PUBLICATIONS: Self = Self(b"livepeer-v1:publications");
@@ -172,7 +174,7 @@ pub struct Publication {
 
 #[near(serializers = [json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LivepeerPublicationSubmission {
+pub struct PublicationSubmission {
     pub job_id: String,
     pub generation: u64,
     pub creator_id: AccountId,
@@ -753,7 +755,7 @@ impl Contract {
 
     pub fn request_bridge_unfreeze(&mut self) -> U64 {
         self.assert_admin();
-        require!(self.bridge_frozen, "Livepeer bridge is not frozen");
+        require!(self.bridge_frozen, "Bridge is not frozen");
         if let Some(requested_at_ms) = read_raw::<u64>(BRIDGE_UNFREEZE_REQUEST_KEY) {
             return U64(requested_at_ms);
         }
@@ -1461,10 +1463,7 @@ impl Contract {
         job
     }
 
-    pub fn finalize_livepeer_publication(
-        &mut self,
-        submission: LivepeerPublicationSubmission,
-    ) -> Publication {
+    pub fn finalize_publication(&mut self, submission: PublicationSubmission) -> Publication {
         self.assert_bridge();
         require!(
             submission.availability == PublicationAvailability::Active,
@@ -1601,7 +1600,7 @@ impl Contract {
         publication
     }
 
-    pub fn suspend_livepeer_sales(&mut self, publication_id: String) -> Publication {
+    pub fn suspend_sales(&mut self, publication_id: String) -> Publication {
         self.assert_bridge();
         let mut publication = self
             .publications
@@ -1636,7 +1635,7 @@ impl Contract {
         publication
     }
 
-    pub fn takedown_livepeer_publication(
+    pub fn takedown_publication(
         &mut self,
         publication_id: String,
         reason_code: String,
@@ -2076,7 +2075,7 @@ impl Contract {
             env::signer_account_pk().curve_type() == near_sdk::CurveType::ED25519,
             "Invalid authorizing key"
         );
-        require!(!self.bridge_frozen, "Livepeer bridge is frozen");
+        require!(!self.bridge_frozen, "Bridge is frozen");
         assert_playback_session(&playback_session);
         let publication = self
             .publications
@@ -3259,9 +3258,9 @@ impl Contract {
     fn assert_bridge(&self) {
         require!(
             env::predecessor_account_id() == self.active_bridge_account_id,
-            "Only the configured Livepeer bridge can call this method"
+            "Only the configured bridge can call this method"
         );
-        require!(!self.bridge_frozen, "Livepeer bridge is frozen");
+        require!(!self.bridge_frozen, "Bridge is frozen");
     }
 
     fn assert_admin(&self) {
@@ -3447,10 +3446,7 @@ impl Contract {
     }
 }
 
-fn publication_matches(
-    publication: &Publication,
-    submission: &LivepeerPublicationSubmission,
-) -> bool {
+fn publication_matches(publication: &Publication, submission: &PublicationSubmission) -> bool {
     publication.generation == submission.generation
         && publication.creator_id == submission.creator_id
         && publication.expected_source_bytes == submission.expected_source_bytes

@@ -41,7 +41,32 @@ The byte formats it accepts are defined in `protocol/youtick-market-v2`.
   buyer account. Upload, publication and governance events are unchanged from V1.
 
 Upload, publication, takedown, roles, timelocks, guardian controls, withdrawals and the hash-first
-self-upgrade path are unchanged from V1.
+self-upgrade path are unchanged from V1, apart from the provider-neutral names below.
+
+## Provider-neutral names (gate MC, owner decision 2026-10-22)
+
+The V2 ABI names no media provider. V1 (`contracts/nft-ticket`, `protocol/paid-media-livepeer-v1`)
+keeps its names.
+
+| V1 name | V2 name |
+|---|---|
+| profile id `paid-media-livepeer-v1` | `paid-media-v1` |
+| `finalize_livepeer_publication(submission)` | `finalize_publication(submission)` |
+| `suspend_livepeer_sales(publication_id)` | `suspend_sales(publication_id)` |
+| `takedown_livepeer_publication(...)` | `takedown_publication(...)` |
+| `LivepeerPublicationSubmission` | `PublicationSubmission` |
+| "Livepeer bridge is (not) frozen" | "Bridge is (not) frozen" |
+
+- Arguments, return values, events and checks are unchanged. `create_paid_job`, `restart_paid_job`
+  and `finalize_publication` accept only `paid-media-v1`. An unpublished job stored under the V1
+  id cannot be finalized as it is; its creator can `restart_paid_job` it under `paid-media-v1`
+  (new generation) like any retry. Published records keep their stored V1 id; nothing re-checks it.
+- The `livepeer-v1:*` storage prefixes, the Borsh layout and `MARKET_STATE_VERSION` (3) are
+  unchanged, so a same-layout code upgrade (`migrate`) keeps the existing testnet state.
+- The compact `yt:u1:` wire keeps its three profile hash IDs; it now binds `paid-media-v1` into
+  the sponsored quote's `request_sha256`, so V1-signed compact messages are not accepted.
+- On V2 testnet the Bridge function-call key must list the new method names. The cutover order
+  is in `docs/v2-testnet-runbook.md` ("MC cutover").
 
 ## Settlement (gate E3b, refund rule 2026-10-14)
 
