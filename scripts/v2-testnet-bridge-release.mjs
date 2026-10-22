@@ -7,6 +7,8 @@
 // The Worker bytes come from `wrangler deploy --dry-run --outdir` in the prepare job; this script never bundles.
 // Uploads open only for the named creators; the webhook Queue, D1 archives, sponsored uploads, multi-asset
 // payments and the 30-day release_expired job stay off (W3 owns the read model and release).
+// M1.5: the Bridge deploys to the media Cloudflare account and serves from its workers.dev host
+// (docs/v2-testnet-runbook.md, Media account).
 import { createPrivateKey, createPublicKey } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,14 +16,18 @@ import { join, resolve } from 'node:path';
 import process from 'node:process';
 import {
     ACCEPTANCE_ORIGIN, DENIED_ORIGIN, MARKET_V2, MODES, PARENT, SMOKE_DELAYS_MS,
-    nearPublicKey, request, retry, runProcess, validateRpcUrl, wranglerRunner,
+    mediaAccount, nearPublicKey, request, retry, runProcess, validateRpcUrl, workersDevHost, wranglerRunner,
 } from './v2-testnet-release.mjs';
 
 export const BRIDGE = Object.freeze({
     dir: 'workers/livepeer-bridge',
     worker: 'youtick-livepeer-bridge-v2-testnet',
-    domain: 'bridge-v2-testnet.youtick.net',
 });
+
+/** The Bridge's workers.dev host in the media account; fails media_account_unconfigured until it is registered. */
+export function bridgeHost() {
+    return workersDevHost(BRIDGE.worker);
+}
 const BRIDGE_ACCOUNT = `v2-bridge-261007.${PARENT}`;
 // Function-call key of the Bridge account from v2-testnet-bootstrap-policy.json (bridge_operator.keys[1]).
 const OPERATOR_PUBLIC_KEY = 'ed25519:BDyHUFs1wbkaQJQ2Tq4AcyJWHanaC8j4spLQRwAKiYed';
@@ -35,7 +41,11 @@ const LIVEPEER_PROJECT_ID = '53baeeda-930d-45be-bda6-a41090e6d25e';
 // Livepeer dashboard, so the release reads it through the API and refuses a Bridge secret that
 // differs: on 2026-10-13 a mismatch made the Bridge answer every delivery with 403.
 export const LIVEPEER_WEBHOOK_ID = 'f7a3992a-4f19-4716-8f86-2af1df7a016e';
-export const LIVEPEER_WEBHOOK_URL = `https://${BRIDGE.domain}/v1/livepeer-webhooks`;
+// A function, not a constant, so importing this module never needs the media host (OD17: the owner points
+// the webhook at this URL before the first media deploy, and the release compares it exactly).
+export function livepeerWebhookUrl() {
+    return `https://${bridgeHost()}/v1/livepeer-webhooks`;
+}
 // Public half of the V2 signing key youtick-v2-testnet-bridge (Livepeer Studio, 2026-10-12).
 export const JWT_PUBLIC_KEY = 'LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFVloycGFyMkxFSnZ3Nll4N2M2VVlFMkdjOHBkZAp1bkRVdmRiTHpzMGsrUkNKamZQUHpIYXBiTGxyNFhOblZrTzFBdmZ4N1BjMFk3WHBnRWZzZVlxWEJ3PT0KLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==';
 /** The public halves every deploy secret must match; tests pass their own. */
@@ -119,10 +129,10 @@ function fail(message) {
 }
 
 /**
- * The deployed config is the repository wrangler.toml with: the bundled `index.js` as entry, no workers.dev
- * or preview URLs, no Queue binding, the V2 read-model D1 binding and the release cron in place of the V1
- * ones, its own rate-limit namespace, NEAR_RPC_URL moved to secrets and every FIXED_VARS value written
- * into [vars]. Any placeholder left after that is refused.
+ * The deployed config is the repository wrangler.toml with: the bundled `index.js` as entry, the media
+ * account's workers.dev host and no preview URLs, no Queue binding, the V2 read-model D1 binding and the
+ * release cron in place of the V1 ones, its own rate-limit namespace, NEAR_RPC_URL moved to secrets and
+ * every FIXED_VARS value written into [vars]. Any placeholder left after that is refused.
  */
 export function sanitizeBridgeConfig(source, { d1Id } = {}) {
     let section = '';
@@ -145,7 +155,7 @@ export function sanitizeBridgeConfig(source, { d1Id } = {}) {
         }
         if (DROPPED_SECTIONS.has(section)) continue;
         if (!section && /^main\s*=/.test(line)) {
-            out.push('main = "index.js"', 'workers_dev = false', 'preview_urls = false');
+            out.push('main = "index.js"', 'workers_dev = true', 'preview_urls = false');
             mainSeen = true;
             continue;
         }
@@ -217,6 +227,8 @@ export function quotePublicKey(value) {
 /** Reads and checks the deploy job's environment; nothing here is echoed. */
 export function releaseSecrets(env, expected = EXPECTED_KEYS) {
     if (!/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID ?? '') || !env.CLOUDFLARE_API_TOKEN?.trim()) fail('cloudflare_credentials_invalid');
+    // The Bridge deploys only to the media account (M1.5); mediaAccount() also refuses an unregistered subdomain.
+    if (env.CLOUDFLARE_ACCOUNT_ID !== mediaAccount().accountId) fail('cloudflare_account_not_media');
     const rpc = validateRpcUrl(env.NEAR_RPC_URL ?? '');
     const apiKey = env.LIVEPEER_API_KEY ?? '';
     if (apiKey.length < 16 || /\s/.test(apiKey)) fail('livepeer_api_key_invalid');
@@ -283,7 +295,7 @@ export async function preflightWebhookSecret(worker, fetchImpl) {
         if (error instanceof Error && error.message.startsWith('v2_testnet_bridge_release_')) throw error;
         fail('webhook_unreadable');
     }
-    if (webhook?.id !== LIVEPEER_WEBHOOK_ID || webhook.url !== LIVEPEER_WEBHOOK_URL || webhook.projectId !== LIVEPEER_PROJECT_ID) {
+    if (webhook?.id !== LIVEPEER_WEBHOOK_ID || webhook.url !== livepeerWebhookUrl() || webhook.projectId !== LIVEPEER_PROJECT_ID) {
         fail('webhook_binding_mismatch');
     }
     if (typeof webhook.sharedSecret !== 'string' || webhook.sharedSecret !== worker.LIVEPEER_WEBHOOK_SECRET) fail('webhook_secret_mismatch');
@@ -292,7 +304,7 @@ export async function preflightWebhookSecret(worker, fetchImpl) {
 export function wranglerArgs(releaseDir, sha, mode) {
     return [
         'deploy', join(releaseDir, 'index.js'), '--no-bundle', '--config', join(releaseDir, 'wrangler.toml'),
-        '--name', BRIDGE.worker, '--domain', BRIDGE.domain,
+        '--name', BRIDGE.worker,
         ...Object.entries(releaseVars(mode)).flatMap(([key, value]) => ['--var', `${key}:${value}`]),
         '--tag', sha, '--message', `YouTick v2-testnet bridge ${mode} ${sha}`,
     ];
@@ -318,7 +330,7 @@ const ACCEPTANCE_HEALTH = Object.freeze({
  * body, not 503) and the CORS preflight admits only the acceptance origin.
  */
 export async function smoke(mode, versionId, fetchImpl) {
-    const base = `https://${BRIDGE.domain}`;
+    const base = `https://${bridgeHost()}`;
     const health = await request(fetchImpl, `${base}/__health`, { method: 'GET' });
     if (health.status !== 200 || health.body?.versionId !== versionId) fail(`smoke_version_${health.status}`);
     if (health.body?.compactUpload?.market !== MARKET_V2 || health.body?.compactUpload?.network !== 'testnet') fail('smoke_market');
@@ -354,7 +366,7 @@ export async function deployRelease({
     await preflight(secrets, fetchImpl);
     const receipt = {
         schema: 'youtick.v2-testnet-bridge-receipt.v1', sha, mode, status: 'IN_PROGRESS',
-        worker: BRIDGE.worker, domain: BRIDGE.domain,
+        worker: BRIDGE.worker, host: bridgeHost(),
     };
     const save = () => writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o644 });
     const tempRoot = await mkdtemp(join(tmpdir(), 'youtick-v2-testnet-bridge-release-'));

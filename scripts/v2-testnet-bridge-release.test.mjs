@@ -7,12 +7,17 @@ import test from 'node:test';
 import {
     BRIDGE, CREATOR_ALLOWLIST, FIXED_VARS, FLAGS, JWT_PUBLIC_KEY, NEAR_AUTH_CREATOR_ALLOWLIST, OPERATOR_METHODS, RATE_LIMIT_NAMESPACE,
     READ_MODEL_D1_NAME, RELEASE_CRON, SECRETS, WALLET_CREATOR_ALLOWLIST,
-    deployRelease, jwtKeyMatches, quotePublicKey, releaseSecrets, releaseVars, sanitizeBridgeConfig, wranglerArgs,
+    bridgeHost, deployRelease, jwtKeyMatches, livepeerWebhookUrl, quotePublicKey, releaseSecrets, releaseVars, sanitizeBridgeConfig, wranglerArgs,
 } from './v2-testnet-bridge-release.mjs';
-import { ACCEPTANCE_ORIGIN, MARKET_V2, base58Encode } from './v2-testnet-release.mjs';
+import { ACCEPTANCE_ORIGIN, MARKET_V2, MEDIA_ACCOUNT, base58Encode, setMediaAccountOverride } from './v2-testnet-release.mjs';
 
 const SHA = 'b'.repeat(40);
 const D1_ID = '0123abcd-4567-89ef-0123-456789abcdef';
+// The committed MEDIA_ACCOUNT carries the unregistered-subdomain sentinel until the owner's M1.5-G2 commit;
+// these tests stand in a registered subdomain and check the sentinel on its own.
+const MEDIA_SUBDOMAIN = 'youtick-media-test';
+const BRIDGE_HOST = `youtick-livepeer-bridge-v2-testnet.${MEDIA_SUBDOMAIN}.workers.dev`;
+setMediaAccountOverride({ workersSubdomain: MEDIA_SUBDOMAIN });
 
 function nearKeyPair() {
     const { privateKey, publicKey } = generateKeyPairSync('ed25519');
@@ -46,7 +51,7 @@ const expected = { operator: operator.public, jwt: jwt.public, quote: quote.publ
 
 function env(overrides = {}) {
     return {
-        CLOUDFLARE_ACCOUNT_ID: 'c'.repeat(32), CLOUDFLARE_API_TOKEN: 'cf-token',
+        CLOUDFLARE_ACCOUNT_ID: MEDIA_ACCOUNT.accountId, CLOUDFLARE_API_TOKEN: 'cf-token',
         NEAR_RPC_URL: 'https://rpc.testnet.example-provider.net/key',
         LIVEPEER_API_KEY: 'livepeer-api-key-value', LIVEPEER_WEBHOOK_SECRET: 'webhook-secret-value',
         LIVEPEER_JWT_PRIVATE_KEY: jwt.private, LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN: 'T'.repeat(64),
@@ -81,14 +86,16 @@ function fakeFetch({ methods = OPERATOR_METHODS, receiver = MARKET_V2, quoteVers
             }
             return jsonResponse(200, { result: { result: [...Buffer.from(JSON.stringify(quoteVersion))] } });
         }
-        const { pathname } = new URL(url);
+        const { hostname, pathname } = new URL(url);
         if (url.startsWith('https://livepeer.studio/api/webhook/')) {
             if (init.headers?.Authorization !== 'Bearer livepeer-api-key-value') return jsonResponse(401, { errors: ['unauthorized'] });
             return jsonResponse(webhook.status ?? 200, {
-                id: 'f7a3992a-4f19-4716-8f86-2af1df7a016e', url: 'https://bridge-v2-testnet.youtick.net/v1/livepeer-webhooks',
+                id: 'f7a3992a-4f19-4716-8f86-2af1df7a016e', url: livepeerWebhookUrl(),
                 projectId: '53baeeda-930d-45be-bda6-a41090e6d25e', sharedSecret: 'webhook-secret-value', ...webhook,
             });
         }
+        // The Bridge answers only on its workers.dev host in the media account.
+        if (hostname !== BRIDGE_HOST) throw new TypeError(`fetch failed: unknown host ${hostname}`);
         if (pathname === '/__health') return jsonResponse(200, { versionId: 'v-1', ...HEALTHY, ...bridge });
         const origin = init.headers?.Origin;
         if (origin !== ACCEPTANCE_ORIGIN) return jsonResponse(403, { error: 'origin_denied' });
@@ -111,7 +118,10 @@ const deploy = (options) => deployRelease({ sha: SHA, releaseDir: '/r', sleep: a
 test('the repository Bridge config sanitizes to Market V2 vars with no Queue, D1 or shared rate-limit namespace', async () => {
     const source = await readFile(new URL(`../${BRIDGE.dir}/wrangler.toml`, import.meta.url), 'utf8');
     const config = sanitizeBridgeConfig(source, { d1Id: D1_ID });
-    assert.match(config, /^main = "index\.js"\nworkers_dev = false\npreview_urls = false$/m);
+    // M1.5: the Bridge serves from the media account's workers.dev host, never from a route or preview URL.
+    assert.match(config, /^main = "index\.js"\nworkers_dev = true\npreview_urls = false$/m);
+    assert.equal(config.match(/^workers_dev\s*=/gm).length, 1);
+    assert.doesNotMatch(config, /^routes?\s*=/m);
     assert.doesNotMatch(config, /^NEAR_RPC_URL\s*=/m);
     assert.doesNotMatch(config, /<replace|queues|50b1e14f|read-model-v1-testnet/);
     // W3: the V2 read-model database and the release cron, nothing from the V1 testnet.
@@ -140,6 +150,7 @@ test('the repository Bridge config sanitizes to Market V2 vars with no Queue, D1
     assert.throws(() => sanitizeBridgeConfig('main = "x"\n[vars]\nNEW_ID = "<replace-me>"\n[[ratelimits]]\nnamespace_id = "1"\n'), /config_placeholder_NEW_ID/);
     assert.throws(() => sanitizeBridgeConfig('main = "x"\n[vars]\nLIVEPEER_API_KEY = "k"\n[[ratelimits]]\nnamespace_id = "1"\n'), /config_secret_in_vars/);
     assert.throws(() => sanitizeBridgeConfig('main = "x"\nroute = "y"\n'), /config_routing_unexpected/);
+    assert.throws(() => sanitizeBridgeConfig('main = "x"\nworkers_dev = false\n'), /config_routing_unexpected/);
     assert.throws(() => sanitizeBridgeConfig('main = "x"\n[vars]\n'), /config_rate_limit_missing/);
     assert.throws(() => sanitizeBridgeConfig('main = "x"\n[[ratelimits]]\nnamespace_id = "1"\n'), /config_vars_missing/);
     // [vars] as the last section still receives every fixed value.
@@ -170,8 +181,9 @@ test('closed turns every Bridge flag off and acceptance turns them on; only flag
     }
     assert.throws(() => releaseVars('open'), /mode_invalid/);
     const args = wranglerArgs('/r', SHA, 'acceptance');
-    assert.deepEqual(args.slice(0, 9), ['deploy', '/r/index.js', '--no-bundle', '--config', '/r/wrangler.toml',
-        '--name', 'youtick-livepeer-bridge-v2-testnet', '--domain', 'bridge-v2-testnet.youtick.net']);
+    assert.deepEqual(args.slice(0, 8), ['deploy', '/r/index.js', '--no-bundle', '--config', '/r/wrangler.toml',
+        '--name', 'youtick-livepeer-bridge-v2-testnet', '--var']);
+    assert.ok(!args.includes('--domain'));
     assert.ok(args.includes('LIVEPEER_BRIDGE_ENABLED:true'));
     assert.ok(!args.some((arg) => SECRETS.some((name) => arg.startsWith(`${name}:`))));
 });
@@ -190,6 +202,8 @@ test('secrets: every value is checked against its expected public half before an
     assert.deepEqual(Object.keys(releaseSecrets(env(), expected).worker).sort(), [...SECRETS].sort());
     for (const [overrides, error] of [
         [{ CLOUDFLARE_ACCOUNT_ID: 'x' }, /cloudflare_credentials_invalid/],
+        // The Bridge deploys only into the media account, never the default V2 account.
+        [{ CLOUDFLARE_ACCOUNT_ID: 'c'.repeat(32) }, /cloudflare_account_not_media/],
         [{ NEAR_RPC_URL: 'https://rpc.testnet.near.org' }, /near_rpc_url_invalid/],
         [{ LIVEPEER_API_KEY: 'short' }, /livepeer_api_key_invalid/],
         [{ LIVEPEER_WEBHOOK_SECRET: '15-bytes-secret' }, /livepeer_webhook_secret_invalid/],
@@ -202,6 +216,35 @@ test('secrets: every value is checked against its expected public half before an
     }
 });
 
+test('media account: the Bridge host and webhook URL derive from the registered workers.dev subdomain', () => {
+    assert.equal(BRIDGE.domain, undefined);
+    assert.equal(bridgeHost(), BRIDGE_HOST);
+    assert.equal(livepeerWebhookUrl(), `https://${BRIDGE_HOST}/v1/livepeer-webhooks`);
+    try {
+        setMediaAccountOverride({ workersSubdomain: '<register-on-the-media-account>' });
+        assert.throws(() => bridgeHost(), /media_account_unconfigured/);
+        assert.throws(() => livepeerWebhookUrl(), /media_account_unconfigured/);
+        assert.throws(() => releaseSecrets(env(), expected), /media_account_unconfigured/);
+    } finally {
+        setMediaAccountOverride({ workersSubdomain: MEDIA_SUBDOMAIN });
+    }
+});
+
+test('the sentinel subdomain stops a Bridge deploy before preflight and wrangler', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'v2-bridge-release-test-'));
+    const record = [];
+    const { impl, calls } = fakeFetch();
+    try {
+        setMediaAccountOverride({ workersSubdomain: '<register-on-the-media-account>' });
+        await assert.rejects(deploy({ receiptPath: join(dir, 'r.json'), mode: 'closed', fetchImpl: impl, makeRunner: fakeRunner(record) }),
+            /media_account_unconfigured/);
+    } finally {
+        setMediaAccountOverride({ workersSubdomain: MEDIA_SUBDOMAIN });
+    }
+    assert.equal(record.length, 0);
+    assert.equal(calls.length, 0);
+});
+
 test('acceptance deploy: preflight, one deploy with all seven secrets, smoke and a PASS receipt', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'v2-bridge-release-test-'));
     const receiptPath = join(dir, 'receipt.json');
@@ -209,6 +252,7 @@ test('acceptance deploy: preflight, one deploy with all seven secrets, smoke and
     const receipt = await deploy({ receiptPath, mode: 'acceptance', fetchImpl: fakeFetch().impl, makeRunner: fakeRunner(record) });
     assert.equal(receipt.status, 'PASS');
     assert.equal(receipt.version_id, 'v-1');
+    assert.equal(receipt.host, BRIDGE_HOST);
     assert.deepEqual(receipt.smoke, {
         health_status: 200, stage: 'ENABLED', allowed_origin_status: 204, denied_origin_status: 403, empty_v3_status: 400,
     });
@@ -234,6 +278,8 @@ test('preflight refuses a Bridge webhook secret that Livepeer does not sign with
         [{ sharedSecret: 'another-secret-value' }, /webhook_secret_mismatch/],
         [{ sharedSecret: undefined }, /webhook_secret_mismatch/],
         [{ url: 'https://bridge-preview.youtick.net/v1/livepeer-webhooks' }, /webhook_binding_mismatch/],
+        // OD17: the webhook must already point at the media workers.dev host, not the old custom domain.
+        [{ url: 'https://bridge-v2-testnet.youtick.net/v1/livepeer-webhooks' }, /webhook_binding_mismatch/],
         [{ status: 404 }, /webhook_unreadable_404/],
     ]) {
         const dir = await mkdtemp(join(tmpdir(), 'v2-bridge-'));
