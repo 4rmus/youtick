@@ -11,7 +11,6 @@ import profiles from '../../../../protocol/paid-media-livepeer-v1/profiles.json'
 import { hasTitleContent } from '../../../../protocol/paid-media-livepeer-v1/title';
 import { requestDelegateApproval, type OidcEnvironment, type PopupLike } from '../near-auth/oidc';
 import {
-    PROFILE_ID,
     livepeerUploadFeeUsdc,
     loadLivepeerJobSessionKey,
     persistLivepeerJobSessionKey,
@@ -27,6 +26,11 @@ import {
 import type { V2Config } from './config';
 import type { ViewContract } from './tickets';
 
+/**
+ * Market V2 profile id (protocol/youtick-market-v2 `upload_msg`); must match
+ * workers/relayer/src/upload.ts `UPLOAD_PROFILE_ID`. The V1 path keeps its own id.
+ */
+export const PROFILE_ID = 'paid-media-v1';
 /** Must match workers/relayer/src/upload.ts: the relayer rebuilds these exact bytes. */
 export const UPLOAD_GAS = 100_000_000_000_000n;
 export const UPLOAD_DEPOSIT = 1n;

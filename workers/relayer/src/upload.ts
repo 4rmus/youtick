@@ -14,7 +14,7 @@ export const UPLOAD_DEPOSIT = 1n;
 export const UPLOAD_KEY_GAS = 100_000_000_000_000n;
 export const UPLOAD_KEY_DEPOSIT = 0n;
 export const UPLOAD_ACTION = 'create_paid_job';
-export const UPLOAD_PROFILE_ID = 'paid-media-livepeer-v1';
+export const UPLOAD_PROFILE_ID = 'paid-media-v1';
 
 export interface UploadArgs {
     receiver_id: string;

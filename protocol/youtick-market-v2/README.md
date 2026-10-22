@@ -152,7 +152,7 @@ steps need that signature; every other upload step is signed by the per-job uplo
   "title": "…",
   "price_usdc": "…",
   "expected_source_bytes": "…",
-  "profile_id": "paid-media-livepeer-v1",
+  "profile_id": "paid-media-v1",
   "profile_config_sha256": "…",
   "upload_public_key": "ed25519:…",
   "upload_key_expires_at_ms": "…"
@@ -165,6 +165,9 @@ steps need that signature; every other upload step is signed by the per-job uplo
 - The arguments are `{ receiver_id, amount, msg }` with no `memo`. There is no sponsor quote and
   no `playback_session`: the relayer sponsors gas, and Market V2 has no public beta or public
   upload policy, so the contract charges the plain fee. The creator is `sender_id`.
+- `profile_id` is the provider-neutral `paid-media-v1` (owner decision 2026-10-22; V1 uses
+  `paid-media-livepeer-v1`, which Market V2 rejects). `profile_config_sha256` is any 64-hex
+  value; the Bridge, not the contract, decides which profile hashes it serves.
 - Gas 100 Tgas, deposit 1 yoctoNEAR.
 
 **Replacing a lost upload key.** `replace_upload_key { job_id, new_public_key, expires_at_ms }`

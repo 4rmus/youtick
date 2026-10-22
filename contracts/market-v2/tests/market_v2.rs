@@ -3352,6 +3352,35 @@ fn testnet_code_upgrade_has_no_delay() {
 }
 
 #[test]
+fn protocol_upload_vector_creates_a_job_under_the_neutral_profile() {
+    let vectors: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../protocol/youtick-market-v2/golden-vectors.json"
+    ))
+    .unwrap();
+    let upload = &vectors["upload"];
+    assert_eq!(upload["msg"]["profile_id"], PROFILE);
+    let args = &upload["ft_transfer_call_args"];
+    let mut contract = contract();
+    testing_env!(context(TESTNET_USDC).build());
+    assert!(matches!(
+        contract.ft_on_transfer(
+            account(upload["creator_id"].as_str().unwrap()),
+            U128(args["amount"].as_str().unwrap().parse().unwrap()),
+            args["msg"].as_str().unwrap().to_string(),
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+    let job = contract
+        .get_media_job(upload["msg"]["job_id"].as_str().unwrap().to_string())
+        .unwrap();
+    assert_eq!(job.profile_id, PROFILE);
+    assert_eq!(
+        job.profile_config_sha256,
+        upload["msg"]["profile_config_sha256"].as_str().unwrap()
+    );
+}
+
+#[test]
 fn protocol_golden_vectors_are_accepted_byte_for_byte() {
     let vectors: serde_json::Value = serde_json::from_str(include_str!(
         "../../../protocol/youtick-market-v2/golden-vectors.json"

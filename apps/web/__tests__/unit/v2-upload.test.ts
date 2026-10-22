@@ -37,7 +37,7 @@ vi.mock('@/lib/livepeer-upload', async (importOriginal) => {
 
 import { fingerprintLivepeerSource, loadLivepeerJobSessionKey, persistLivepeerJobSessionKey, writeLivepeerUploadDraft } from '@/lib/livepeer-upload';
 import {
-    authorizeV2PaidJob, buildUploadMessage, prepareV2UploadResume, UPLOAD_GAS, UPLOAD_KEY_DEPOSIT, UploadError, uploadDelegateBytes,
+    authorizeV2PaidJob, buildUploadMessage, prepareV2UploadResume, PROFILE_ID, UPLOAD_GAS, UPLOAD_KEY_DEPOSIT, UploadError, uploadDelegateBytes,
     uploadKeyDelegateBytes,
 } from '@/lib/v2/upload';
 import { KeyPair } from 'near-api-js';
@@ -61,6 +61,10 @@ describe('upload delegates against the protocol vectors', () => {
             profileConfigSha256: upload.msg.profile_config_sha256, uploadPublicKey: upload.msg.upload_public_key, uploadKeyExpiresAtMs: upload.msg.upload_key_expires_at_ms,
         });
         expect(msg).toBe(upload.ft_transfer_call_args.msg);
+        // Market V2 uses the provider-neutral profile id, not V1's paid-media-livepeer-v1.
+        expect(PROFILE_ID).toBe('paid-media-v1');
+        expect(JSON.parse(msg).profile_id).toBe(PROFILE_ID);
+        expect(upload.msg.profile_id).toBe(PROFILE_ID);
         const vector = upload.delegate;
         const bytes = uploadDelegateBytes({
             senderId: vector.sender_id, publicKey: vector.public_key, usdcContractId: vector.receiver_id, args: vector.args,
