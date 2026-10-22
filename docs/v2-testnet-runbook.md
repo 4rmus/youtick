@@ -442,28 +442,36 @@ prefixes, the Borsh layout and `MARKET_STATE_VERSION` (3) are unchanged, so this
 upgrade: `migrate` only clears the pending record (sandbox test
 `self_upgrade_reverts_a_failed_migrate_then_deploys_the_proposed_code`, LOCAL_TEST).
 
-**Do not start before** the Bridge commit that renames its outbox methods and profile checks
-(milestone M2, gate M2-G0) is merged. The Bridge deployed today calls
-`finalize_livepeer_publication` and `suspend_livepeer_sales` and checks `paid-media-livepeer-v1`;
-against the upgraded Market every finalize and suspension would fail. M2-G0 must also keep
-accepting `paid-media-livepeer-v1` on publications that are already stored, or the testnet
-publications finalized before the cutover stop playing (the contract never rewrites a stored
-`profile_id`).
+**Precondition (satisfied by gate M2-G0 once it is merged):** the Bridge renames its outbox
+methods and profile checks. A Bridge built before M2-G0 calls `finalize_livepeer_publication` and
+`suspend_livepeer_sales` and checks `paid-media-livepeer-v1`; against the upgraded Market every
+finalize and suspension would fail. The cutover therefore still needs a V2 Bridge deployed from a
+commit that contains M2-G0 (owner decision 2026-10-22: on the media Cloudflare account, with
+fresh Durable Object state, before the cutover). The pre-MC publications keep playing because the
+M2-G0 Bridge accepts both profile ids on stored publications (the contract never rewrites a
+stored `profile_id`).
 
-Minimum Bridge lockstep set for M2-G0 (reviewer list, 2026-10-22; line numbers of
-`workers/livepeer-bridge/src/index.ts` at `bf4fb3a`), each switched on `isMarketV2(env)` so V1
-keeps its names:
-- Profile literals: :125, :243, :351, :435, :3978 and :5929 accept only `paid-media-v1` on V2;
-  :6694 (playback of a stored publication) accepts both ids on V2; :7609 (finalize submission)
-  only the new id.
-- Method names: the `OutboxMethod` type (:417), `OUTBOX_METHODS` (:661-664), the suspension
-  record (:3660, :3676), the call sites (:7663, :7683) and `operator-outbox-archive.ts:7`.
-- Sponsored and compact quote hashing (:4686, `unpackCompactUpload`) if V2 still signs quotes:
-  the quote's `request_sha256` now binds `paid-media-v1`, and a JS-generated compact vector with
-  the new id belongs in `protocol/youtick-market-v2`.
-- Durable Object jobs stored under the old id (an `Authorized` job, or an outbox record for
-  `finalize_livepeer_publication` / `suspend_livepeer_sales`) get a terminal state, not a retry
-  loop against a contract that no longer accepts them.
+Bridge lockstep as implemented in M2-G0 (`workers/livepeer-bridge/src/index.ts`, keyed on
+`isMarketV2(env)`; V1 keeps every V1 name; LOCAL_TEST only, no provider or testnet run):
+- Profile id: new upload intents and `/internal/finalize` submissions accept only
+  `marketProfileId(env)` (`paid-media-v1` on V2). `/v2/playback-tokens` accepts both ids on V2;
+  `/v3/playback-tokens` never checked the profile id. The public-testnet policy reads, the V1
+  sponsored request parser, the control-envelope domain `youtick.paid-media-livepeer-v1.control`
+  and the JSON-RPC ids keep the V1 strings.
+- Method names: `finalizeMethod(env)` / `suspendMethod(env)` sign `finalize_publication` /
+  `suspend_sales` on V2; the operator key check requires exactly `finalize_publication`,
+  `suspend_sales`, `mark_watched`, `release_expired`. Stored records of either generation stay
+  valid for `operator-outbox-status` and the archive (`operator-outbox-archive.ts`, D1 `0011`).
+- Sponsored and compact quotes: the V2 Bridge fails closed (`runtime_not_configured`); it never
+  quotes or relays a compact upload, so no compact vector with the new id ships in this gate.
+- Durable Object state under the old id (defensive; the media-account Bridge starts empty): an
+  unpublished job (`AUTHORIZED` … `PROCESSING`) becomes `UPLOAD_EXPIRED`; a job holding a
+  publication (`READY_VERIFIED`, `FINALIZE_QUEUED`, `FINALIZE_RETRY`) is never forwarded for
+  finalization and becomes `ONCHAIN_PUBLISHED` if that publication is final on chain, otherwise
+  `UPLOAD_EXPIRED`; `ONCHAIN_PUBLISHED` jobs stay and keep reconciling. A confirmed
+  `suspend_livepeer_sales` / `finalize_livepeer_publication` operator record is reported as done;
+  an unconfirmed suspension is re-signed as `suspend_sales`; an unconfirmed legacy finalization
+  returns `outbox_conflict`.
 
 **Do not deploy post-MC `main` to V2 testnet before the cutover.** A *V2 Testnet Workers* run
 would ship a relayer that sends `paid-media-v1` to the old contract (every upload refused and
