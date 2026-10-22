@@ -48,7 +48,7 @@ const D1_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // until then every path that needs a media host fails with media_account_unconfigured.
 export const MEDIA_ACCOUNT = Object.freeze({
     accountId: '6caaaf27c430b5da0ce18f68f35c1dcb',
-    workersSubdomain: '<register-on-the-media-account>',
+    workersSubdomain: 'kocoinci',
 });
 const WORKERS_SUBDOMAIN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 let mediaAccountOverride = null;

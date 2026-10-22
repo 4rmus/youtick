@@ -622,7 +622,7 @@ D1 `youtick-market-read-model-v2-testnet` moves to the media account. D1
 
 What the release tooling does now:
 - **Media account constant.** `MEDIA_ACCOUNT` in `scripts/v2-testnet-release.mjs` holds the account
-  id and the workers.dev subdomain. The subdomain is the sentinel `<register-on-the-media-account>`
+  id and the workers.dev subdomain. The subdomain is `kocoinci` (registered on the media account, read from the dashboard on 2026-10-22; until then it was the sentinel `<register-on-the-media-account>`)
   until the owner registers one. Every path that needs a media host stops with
   `media_account_unconfigured`. In both workflows that is the `check` command in the prepare
   job's build step, with the summary step as a second guard. So before M1.5-G2, neither workflow
