@@ -1,0 +1,8 @@
+{
+  "status": 200,
+  "headers": {
+    "upload-offset": "0",
+    "upload-length": "<LENGTH>",
+    "tus-resumable": "1.0.0"
+  }
+}

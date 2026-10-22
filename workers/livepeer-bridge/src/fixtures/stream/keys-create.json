@@ -1,0 +1,11 @@
+{
+  "result": {
+    "id": "<KEY_ID>",
+    "pem": "<PEM_BASE64>",
+    "jwk": "<JWK_BASE64>",
+    "created": "2026-10-21T13:50:00.000000Z"
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

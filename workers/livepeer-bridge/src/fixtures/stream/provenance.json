@@ -1,0 +1,15 @@
+{
+  "schema": "youtick.stream-fixtures.v1",
+  "note": "Redacted shapes for LOCAL_TEST. Placeholders <UID>, <ACCOUNT_ID>, <CUSTOMER_CODE>, <P>, <S>, <TIME>, <SIG>, <KEY_ID>, <PEM_BASE64>, <JWK_BASE64>, <JOB_ID>, <GENERATION>, <LENGTH>, <HEIGHT> are substituted by the test loader; no real id, token, key or account value is stored.",
+  "recorded": {
+    "create-201.json": "spike 9.1: 201, Location on upload.cloudflarestream.com, stream-media-id 32 hex. The Location path and query are not recorded (UNPROVEN); only the host is pinned.",
+    "head-*.json": "spike 9.1 (offset 67108864 / length 138202879) and size-binding 8 F3b (offset 15466496 > length 10400529).",
+    "video-*.json": "spike 9.2 and size-binding 8 field set (uid, meta, requireSignedURLs, status.state/pctComplete/errorReasonCode, readyToStream, duration, input, size, playback.hls/dash, thumbnail, preview, uploadExpiry). pctComplete as a decimal string and readyToStreamAt follow the API schema, not a recorded body (UNPROVEN until M0-P1/P4).",
+    "webhook-*.json": "spike 9.2: header time=<unix s>,sig1=<hex64>, user-agent, body = video object; ready at pctComplete 33 (8 F-list), inprogress webhook exists (8), ERR_DURATION_EXCEED_CONSTRAINT while GET stays inprogress 0 (8 F4), ERR_NON_VIDEO (9.2).",
+    "master*.m3u8, variant*.m3u8, audio.m3u8": "spike 9.2/9.3: EXT-X-MEDIA audio group, 5 rungs 426x240..1920x1080, avc1 codecs, EXT-X-MAP init.mp4, seg_N.mp4 with p and s query parameters, target duration 5. Variant URI names and the manifest shape at the ready webhook are UNPROVEN (M0-P1/P7).",
+    "storage-usage.json": "size-binding 8 F5 field totalStorageMinutes; the other field names follow the probe mock (UNPROVEN until M0-P3).",
+    "storage-exhausted-413.json": "docs: 429/413 at upload-URL creation when over limits; error code and body UNPROVEN (M0-P3).",
+    "keys-create.json": "docs 4: POST /stream/keys returns id, base64 pem and jwk; pem encoding (PKCS1 vs PKCS8) UNPROVEN (M0-P8).",
+    "meta-variants.json": "routing-key candidates; which one Stream produces is UNPROVEN (M0-P4)."
+  }
+}

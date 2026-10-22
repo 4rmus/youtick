@@ -1,0 +1,47 @@
+{
+  "result": {
+    "uid": "<UID>",
+    "creator": null,
+    "thumbnail": "https://customer-<CUSTOMER_CODE>.cloudflarestream.com/<UID>/thumbnails/thumbnail.jpg",
+    "thumbnailTimestampPct": 0,
+    "readyToStream": false,
+    "readyToStreamAt": null,
+    "status": {
+      "state": "pendingupload",
+      "pctComplete": "0.000000",
+      "errorReasonCode": "",
+      "errorReasonText": ""
+    },
+    "meta": {
+      "name": "youtick-<JOB_ID>-g<GENERATION>",
+      "jobid": "<JOB_ID>",
+      "generation": "<GENERATION>"
+    },
+    "created": "2026-10-21T13:55:00.000000Z",
+    "modified": "2026-10-21T13:58:12.000000Z",
+    "scheduledDeletion": null,
+    "size": "<LENGTH>",
+    "preview": "https://customer-<CUSTOMER_CODE>.cloudflarestream.com/<UID>/watch",
+    "allowedOrigins": [],
+    "requireSignedURLs": true,
+    "uploaded": null,
+    "uploadExpiry": "2026-10-22T13:55:00Z",
+    "maxSizeBytes": null,
+    "maxDurationSeconds": 7200,
+    "duration": -1,
+    "input": {
+      "width": -1,
+      "height": -1
+    },
+    "playback": {
+      "hls": "https://customer-<CUSTOMER_CODE>.cloudflarestream.com/<UID>/manifest/video.m3u8",
+      "dash": "https://customer-<CUSTOMER_CODE>.cloudflarestream.com/<UID>/manifest/video.mpd"
+    },
+    "watermark": null,
+    "clippedFrom": null,
+    "publicDetails": null
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

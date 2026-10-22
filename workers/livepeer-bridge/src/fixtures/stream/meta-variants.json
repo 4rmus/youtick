@@ -1,0 +1,26 @@
+{
+  "plain": {
+    "name": "youtick-<JOB_ID>-g<GENERATION>",
+    "jobid": "<JOB_ID>",
+    "generation": "<GENERATION>"
+  },
+  "json": {
+    "name": "youtick-<JOB_ID>-g<GENERATION>",
+    "meta": "{\"jobId\":\"<JOB_ID>\",\"generation\":<GENERATION>}"
+  },
+  "object": {
+    "name": "youtick-<JOB_ID>-g<GENERATION>",
+    "meta": {
+      "jobId": "<JOB_ID>",
+      "generation": "<GENERATION>"
+    }
+  },
+  "nameOnly": {
+    "name": "youtick-<JOB_ID>-g<GENERATION>"
+  },
+  "conflict": {
+    "name": "youtick-<JOB_ID>-g<GENERATION>",
+    "jobid": "other-job",
+    "generation": "<GENERATION>"
+  }
+}

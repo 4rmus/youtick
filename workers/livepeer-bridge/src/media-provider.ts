@@ -1,6 +1,8 @@
 // Provider-neutral seam between the Bridge control plane and a media provider adapter.
 // Adapters own every provider host, header, URL shape, signature scheme and profile catalog;
 // index.ts and the neutral verification core only see the types below.
+import studioProfiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
+import streamProfiles from '../../../protocol/paid-media-v1/stream-profile.json';
 
 export type MediaProviderKind = 'studio';
 
@@ -11,6 +13,50 @@ export const MEDIA_PROVIDER_HEADER = 'X-YouTick-Provider';
 
 export function mediaProviderKind(value: unknown): MediaProviderKind | null {
     return MEDIA_PROVIDER_KINDS.find((kind) => kind === value) ?? null;
+}
+
+// Profile catalogs. The frozen V1 profiles.json selects the Studio adapter; the paid-media-v1
+// Stream descriptor selects the Stream adapter. A hash belongs to exactly one catalog, so each
+// adapter refuses the other's hashes.
+export type MediaProfileFamily = 'studio' | 'stream';
+
+const STREAM_DESCRIPTOR = streamProfiles.stream;
+/** The Stream descriptor hash (protocol/paid-media-v1/stream-profile.json). */
+export const STREAM_PROFILE_HASH: string = STREAM_DESCRIPTOR.hash;
+/** Largest maxDurationSeconds the descriptor lets the Bridge book for one upload. */
+export const STREAM_PROFILE_MAX_DURATION_SECONDS: number = STREAM_DESCRIPTOR.maxDurationSecondsCap;
+
+export function mediaProfileFamily(profileConfigSha256: unknown): MediaProfileFamily | null {
+    if (typeof profileConfigSha256 !== 'string') return null;
+    if (Object.values(studioProfiles).some((entry) => entry.hash === profileConfigSha256)) return 'studio';
+    if (profileConfigSha256 === STREAM_DESCRIPTOR.hash) return 'stream';
+    return null;
+}
+
+export function supportsMediaProfile(profileConfigSha256: unknown): boolean {
+    return mediaProfileFamily(profileConfigSha256) !== null;
+}
+
+/** Rendition dimensions the Bridge requires for a hash from either catalog. */
+export function describeMediaProfile(profileConfigSha256: unknown): MediaProfileDescription {
+    const family = mediaProfileFamily(profileConfigSha256);
+    if (family === 'stream') {
+        return { renditions: STREAM_DESCRIPTOR.profiles.map(({ width, height }) => ({ width, height })) };
+    }
+    if (family === 'studio') {
+        const entry = Object.values(studioProfiles).find((candidate) => candidate.hash === profileConfigSha256)!;
+        return { renditions: entry.profiles.map(({ width, height }) => ({ width, height })) };
+    }
+    throw new Error('unsupported_profile');
+}
+
+export function streamSupportsProfile(profileConfigSha256: unknown): boolean {
+    return mediaProfileFamily(profileConfigSha256) === 'stream';
+}
+
+export function streamDescribeProfile(profileConfigSha256: unknown): MediaProfileDescription {
+    if (!streamSupportsProfile(profileConfigSha256)) throw new Error('unsupported_profile');
+    return describeMediaProfile(profileConfigSha256);
 }
 
 export type MediaSourceType = 'mp4' | 'mov' | 'avi' | 'webm' | 'wmv' | 'mkv' | 'flv';
