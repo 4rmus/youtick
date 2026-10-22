@@ -251,10 +251,15 @@ export function uploadExpiresAtMs(msg: string): number {
  * Throws a client error code unless Market V2 would create this paid job now: well-formed fields,
  * the exact fee, purchases not paused, no public beta or public upload policy (those need the
  * quoted V1 path), and no existing job under this id other than this creator's identical one.
+ * With `profileHashAllowlist` (gate M2-G7) the profile hash must also be listed: the contract
+ * accepts any 64-hex hash, so without it a fee could be paid for a profile no Bridge serves.
  */
 export async function checkUploadMessage(near: NearClient, input: {
     marketContractId: string; accountId: string; amount: string; msg: string; nowMs: number;
+    profileHashAllowlist?: readonly string[] | null | 'invalid';
 }): Promise<{ jobId: string }> {
+    // A malformed UPLOAD_PROFILE_HASH_ALLOWLIST fails closed for uploads only.
+    if (input.profileHashAllowlist === 'invalid') throw new Error('uploads_misconfigured');
     const upload = parseUploadMessage(input.msg);
     if (!IDENTIFIER.test(upload.job_id) || upload.title.trim() === '' || new TextEncoder().encode(upload.title).length > MAX_TITLE_BYTES
         || /[\p{Cc}]/u.test(upload.title) || !DECIMAL.test(upload.price_usdc) || BigInt(upload.price_usdc) < MIN_TICKET_PRICE_USDC
@@ -262,6 +267,9 @@ export async function checkUploadMessage(near: NearClient, input: {
         || BigInt(upload.expected_source_bytes) > MAX_SOURCE_BYTES || upload.profile_id !== UPLOAD_PROFILE_ID
         || !HEX64.test(upload.profile_config_sha256)) {
         throw new Error('upload_invalid');
+    }
+    if (Array.isArray(input.profileHashAllowlist) && !input.profileHashAllowlist.includes(upload.profile_config_sha256)) {
+        throw new Error('profile_not_allowed');
     }
     ed25519Key(upload.upload_public_key, 'upload_invalid');
     futureMs(upload.upload_key_expires_at_ms, input.nowMs, 'upload_key_expired');

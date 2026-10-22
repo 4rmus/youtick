@@ -91,7 +91,13 @@ async function jwtKeys(): Promise<{ privatePem: string; publicKey: string }> {
 
 let version = 0;
 
-async function setup(input: { status: string; availability?: string; markWatched?: Response; flags?: Partial<Env> }) {
+async function setup(input: {
+    status: string;
+    availability?: string;
+    markWatched?: Response;
+    flags?: Partial<Env>;
+    profileId?: string;
+}) {
     const keys = await jwtKeys();
     const device = KeyPair.fromRandom('ed25519');
     const operator = KeyPair.fromRandom('ed25519');
@@ -133,7 +139,10 @@ async function setup(input: { status: string; availability?: string; markWatched
                 ticket_id: TICKET_ID, publication_id: 'job-001', status: input.status,
                 devices: [{ session_public_key: session, expires_at_ms: String(Date.now() + 86_400_000) }],
             }
-            : { publication_id: 'job-001', availability: input.availability ?? 'ACTIVE', playback_id: PLAYBACK_ID };
+            : {
+                publication_id: 'job-001', availability: input.availability ?? 'ACTIVE', playback_id: PLAYBACK_ID,
+                ...(input.profileId === undefined ? {} : { profile_id: input.profileId }),
+            };
         return Response.json({ result: { block_hash: BLOCK_HASH, result: Array.from(new TextEncoder().encode(JSON.stringify(value))) } });
     }));
     const request = {
@@ -229,6 +238,16 @@ describe('/v3/playback-tokens', () => {
           }
         `);
         vi.restoreAllMocks();
+    });
+
+    it.each(['paid-media-livepeer-v1', 'paid-media-v1'])('plays a publication with profile id %s', async (profileId) => {
+        // Ticket playback is decided by ticket, device and availability; the profile id never gates it.
+        for (const status of ['purchased', 'watched']) {
+            const ticket = await setup({ status, profileId });
+            const response = await ticket.call();
+            expect(response.status).toBe(200);
+            expect((await response.json() as Record<string, unknown>).playback_id).toBe(PLAYBACK_ID);
+        }
     });
 
     it('stays disabled without the V2 protocol and the v3 flag', async () => {

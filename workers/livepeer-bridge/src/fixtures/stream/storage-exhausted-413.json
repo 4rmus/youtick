@@ -1,0 +1,11 @@
+{
+  "result": null,
+  "success": false,
+  "errors": [
+    {
+      "code": 10011,
+      "message": "storage capacity exceeded"
+    }
+  ],
+  "messages": []
+}

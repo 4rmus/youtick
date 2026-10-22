@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +8,7 @@ import test from 'node:test';
 import {
     ACCEPTANCE_ORIGIN, CLEENG_SANDBOX_PUBLISHER_ID, COMPONENTS, MEDIA_ACCOUNT, PAYMENT_OPERATOR, READ_MODEL_D1_NAME, READ_MODEL_START_BLOCK_HEIGHT,
     base58Decode, base58Encode, componentHost, deployRelease, mediaAccount, nearPublicKey, paymentsD1Id, readModelD1Id, releaseSecrets,
-    releaseVars, sanitizeWranglerConfig, setMediaAccountOverride, validateRpcUrl, workersDevHost, wranglerArgs,
+    releaseVars, sanitizeWranglerConfig, setMediaAccountOverride, uploadProfileHashAllowlist, validateRpcUrl, workersDevHost, wranglerArgs,
 } from './v2-testnet-release.mjs';
 
 const SHA = 'a'.repeat(40);
@@ -426,4 +427,24 @@ test('card deploy: the operator key must be the function-call key, and the webho
         sha: SHA, releaseDir: '/r', receiptPath: join(dir, 'r3.json'), mode: 'closed', card: 'sandbox', env: env(CARD_SECRETS),
         fetchImpl: fakeFetch().impl, sleep: async () => {}, makeRunner: fakeRunner([]),
     }), /card_path_requires_acceptance/);
+});
+
+test('relayer profile hash allowlist (M2-G7): empty until the Stream descriptor hash is committed, then that hash', () => {
+    const value = COMPONENTS.relayer.vars.UPLOAD_PROFILE_HASH_ALLOWLIST;
+    assert.equal(typeof value, 'string');
+    assert.equal(uploadProfileHashAllowlist(value), value);
+    assert.equal(releaseVars('relayer', 'acceptance').UPLOAD_PROFILE_HASH_ALLOWLIST, value);
+    assert.ok(wranglerArgs('relayer', '/r', SHA, 'acceptance').includes(`UPLOAD_PROFILE_HASH_ALLOWLIST:${value}`));
+    // Only the relayer carries it; the payment service and the read model are unchanged.
+    for (const component of ['payment-service', 'read-model']) assert.equal(releaseVars(component, 'acceptance').UPLOAD_PROFILE_HASH_ALLOWLIST, undefined, component);
+    assert.equal(uploadProfileHashAllowlist(''), '');
+    assert.equal(uploadProfileHashAllowlist(`${'a'.repeat(64)},${'b'.repeat(64)}`), `${'a'.repeat(64)},${'b'.repeat(64)}`);
+    for (const bad of ['a'.repeat(63), 'A'.repeat(64), ` ${'a'.repeat(64)}`, `${'a'.repeat(64)},`, `${'a'.repeat(64)},${'a'.repeat(64)}`]) {
+        assert.throws(() => uploadProfileHashAllowlist(bad), /upload_profile_hash_allowlist_invalid/, bad);
+    }
+    // Once filled, the list must name the committed Stream descriptor.
+    const descriptor = new URL('../protocol/paid-media-v1/stream-profile.json', import.meta.url);
+    if (value !== '' && existsSync(descriptor)) {
+        assert.ok(value.split(',').includes(JSON.parse(readFileSync(descriptor, 'utf8')).stream.hash));
+    }
 });

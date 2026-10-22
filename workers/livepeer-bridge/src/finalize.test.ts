@@ -1,4 +1,4 @@
-import { KeyPair } from 'near-api-js';
+import { KeyPair, SignedTransaction } from 'near-api-js';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import handler, { LivepeerControl, type Env, resetPublicUploadPolicyCache } from './index';
 
@@ -160,7 +160,11 @@ async function thumbnailPlaybackEnv(): Promise<Partial<Env>> {
     };
 }
 
-function jobRecord() {
+const LEGACY_PROFILE_ID = 'paid-media-livepeer-v1';
+const NEUTRAL_PROFILE_ID = 'paid-media-v1';
+type ProfileId = typeof LEGACY_PROFILE_ID | typeof NEUTRAL_PROFILE_ID;
+
+function jobRecord(profileId: ProfileId = LEGACY_PROFILE_ID) {
     return {
         schema: 'youtick.livepeer-control-job.v1',
         state: 'UPLOAD_READY',
@@ -171,7 +175,7 @@ function jobRecord() {
         creator: 'creator.testnet',
         expectedSourceBytes: EXPECTED_BYTES,
         sourceType: 'mp4' as const,
-        profileId: 'paid-media-livepeer-v1',
+        profileId,
         profileConfigSha256: '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77',
         createdAtMs: Date.now(),
         apiTokenName: TOKEN_NAME,
@@ -222,8 +226,8 @@ function providerPlayback(overrides?: Record<string, unknown>) {
     };
 }
 
-async function publishedJob() {
-    const job = jobRecord();
+async function publishedJob(profileId: ProfileId = LEGACY_PROFILE_ID) {
+    const job = jobRecord(profileId);
     const publicationValue = {
         job_id: job.jobId,
         generation: job.generation,
@@ -312,13 +316,13 @@ async function signedWebhookRequest(
     });
 }
 
-function publication(jobId = 'job-001') {
+function publication(jobId = 'job-001', profileId: ProfileId = LEGACY_PROFILE_ID) {
     return {
         job_id: jobId,
         generation: 1,
         creator_id: 'creator.testnet',
         expected_source_bytes: EXPECTED_BYTES,
-        profile_id: 'paid-media-livepeer-v1',
+        profile_id: profileId,
         profile_config_sha256: '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77',
         asset_id_hash: 'b'.repeat(64),
         playback_id: `${PLAYBACK_ID}-${jobId}`,
@@ -603,12 +607,18 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         }));
         expect(mismatched.status).toBe(202);
         expect(await mismatched.json()).toEqual(ignored);
-        // Without the header the record's unknown provider fails closed with a coded error.
+        // Without the header the Stream adapter parses the Studio body and refuses it (M2: 'stream' is registered).
+        const streamParsed = await control.fetch(internalWebhookRequest());
+        expect(await streamParsed.json()).toEqual({ error: 'invalid_webhook' });
+        expect(testState.values.get('job:v1')).toEqual(otherProvider);
+        // A record written by a newer build (unknown provider) fails closed with a coded error.
+        const futureProvider = { ...jobRecord(), provider: 'future-adapter' };
+        testState.values.set('job:v1', futureProvider);
         const unknownProvider = await control.fetch(internalWebhookRequest());
         expect(await unknownProvider.json()).toEqual({ error: 'runtime_not_configured' });
 
         expect(providerFetch).not.toHaveBeenCalled();
-        expect(testState.values.get('job:v1')).toEqual(otherProvider);
+        expect(testState.values.get('job:v1')).toEqual(futureProvider);
     });
 
     it('never lets an inbound X-YouTick-Provider header reach or steer the job object', async () => {
@@ -1467,7 +1477,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         vi.spyOn(Date, 'now').mockReturnValue(now);
         const testState = createState();
         testState.values.set('job:v1', {
-            ...(await publishedJob()),
+            ...(await publishedJob(NEUTRAL_PROFILE_ID)),
             state: 'FINALIZE_RETRY',
             finalizeRetry: { attempts: 1, lastHttpStatus: 503, nextAttemptAtMs: now },
         });
@@ -1492,6 +1502,240 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
 
         expect(finalized).toHaveLength(allowed ? 1 : 0);
         expect(await health.json()).toMatchObject({ operatorMutationEnabled: scoped });
+    });
+
+    describe('jobs stored with the pre-MC profile id on Market V2', () => {
+        function legacyEnv(paths: string[]) {
+            const operatorFetch = vi.fn(async (request: Request) => {
+                paths.push(new URL(request.url).pathname);
+                return Response.json({ accepted: true, finalized: true });
+            });
+            return createEnv({
+                MARKET_PROTOCOL: 'v2',
+                LIVEPEER_OPERATOR_JOB_ID: '',
+                LIVEPEER_CONTROL: {
+                    idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                    get: vi.fn(() => ({ fetch: operatorFetch })),
+                } as unknown as DurableObjectNamespace,
+            });
+        }
+
+        it.each(['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY'])(
+            'expires a %s job without forwarding a finalization',
+            async (jobState) => {
+                const now = 1_785_600_000_000;
+                vi.spyOn(Date, 'now').mockReturnValue(now);
+                const testState = createState();
+                testState.values.set('job:v1', {
+                    ...(await publishedJob(LEGACY_PROFILE_ID)),
+                    state: jobState,
+                    ...(jobState === 'FINALIZE_RETRY'
+                        ? { finalizeRetry: { attempts: 1, lastHttpStatus: 503, nextAttemptAtMs: now } } : {}),
+                });
+                const rpc = operatorRpc({ publicationFor: () => null });
+                vi.stubGlobal('fetch', rpc);
+                const paths: string[] = [];
+                const control = new LivepeerControl(testState.state, legacyEnv(paths));
+
+                await control.alarm();
+                await control.alarm();
+
+                expect(paths).not.toContain('/internal/finalize');
+                expect(paths).toEqual(['/internal/admission/mark']);
+                expect(testState.values.get('job:v1')).toMatchObject({
+                    state: 'UPLOAD_EXPIRED',
+                    profileId: LEGACY_PROFILE_ID,
+                    terminalAtMs: now,
+                    terminalArchive: { status: 'PENDING', attempts: 0 },
+                });
+                // Only final publication reads; nothing is signed or broadcast.
+                expect(rpc.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).params.method_name))
+                    .toEqual(['get_publication']);
+            },
+        );
+
+        it('never reaches FINALIZE_RETRY from a ready webhook', async () => {
+            const testState = createState();
+            testState.values.set('job:v1', { ...jobRecord(LEGACY_PROFILE_ID), state: 'PROCESSING' });
+            const provider = vi.fn(async () => {
+                throw new Error('provider_must_not_be_read');
+            });
+            vi.stubGlobal('fetch', provider);
+            const paths: string[] = [];
+
+            const response = await new LivepeerControl(testState.state, legacyEnv(paths)).fetch(internalWebhookRequest());
+
+            expect(response.status).toBe(202);
+            expect(await response.json()).toEqual({ accepted: true, expired: true });
+            expect(provider).not.toHaveBeenCalled();
+            expect(paths).toEqual(['/internal/admission/mark']);
+            expect(testState.values.get('job:v1')).toMatchObject({
+                state: 'UPLOAD_EXPIRED',
+                terminalArchive: { status: 'PENDING' },
+            });
+            expect(testState.values.get('job:v1')).not.toHaveProperty('finalizeRetry');
+        });
+
+        it.each([
+            // [job state, publication final on chain, resulting state]
+            ['READY_VERIFIED', false, 'UPLOAD_EXPIRED'],
+            ['READY_VERIFIED', true, 'ONCHAIN_PUBLISHED'],
+            ['FINALIZE_QUEUED', false, 'UPLOAD_EXPIRED'],
+            ['FINALIZE_RETRY', true, 'ONCHAIN_PUBLISHED'],
+        ] as const)('settles a %s job on a fresh ready webhook without a provider read (on chain: %s)', async (
+            jobState,
+            onChain,
+            resultState,
+        ) => {
+            const testState = createState();
+            const job = { ...(await publishedJob(LEGACY_PROFILE_ID)), state: jobState };
+            testState.values.set('job:v1', job);
+            const rpc = operatorRpc({
+                publicationFor: () => onChain ? {
+                    publication_id: job.publication.job_id,
+                    ...job.publication,
+                    published_availability: job.publication.availability,
+                    availability: job.publication.availability,
+                } : null,
+            });
+            const providerReads: string[] = [];
+            vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+                if (String(input) === RPC_URL) return rpc(input, init);
+                providerReads.push(String(input));
+                throw new Error('provider_must_not_be_read');
+            }));
+            const paths: string[] = [];
+
+            const response = await new LivepeerControl(testState.state, legacyEnv(paths))
+                .fetch(internalWebhookRequest(webhook('asset.ready', Date.now() + 1)));
+
+            expect(response.status).toBe(onChain ? 200 : 202);
+            expect(providerReads).toEqual([]);
+            expect(paths).toEqual(['/internal/admission/mark']);
+            expect(testState.values.get('job:v1')).toMatchObject({ state: resultState });
+            expect([...testState.values.keys()].some((key) => key.startsWith('webhook:'))).toBe(false);
+            expect(rpc.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).params.method_name))
+                .toEqual(['get_publication']);
+        });
+
+        it.each(['AUTHORIZED', 'LEASED', 'UPLOAD_READY', 'UPLOADING', 'PROCESSING'])(
+            'expires an unpublished %s job from the alarm without provider reads',
+            async (jobState) => {
+                const testState = createState();
+                testState.values.set('job:v1', { ...jobRecord(LEGACY_PROFILE_ID), state: jobState });
+                const provider = vi.fn(async () => {
+                    throw new Error('provider_must_not_be_read');
+                });
+                vi.stubGlobal('fetch', provider);
+                const paths: string[] = [];
+
+                await new LivepeerControl(testState.state, legacyEnv(paths)).alarm();
+
+                expect(provider).not.toHaveBeenCalled();
+                expect(paths).toEqual(['/internal/admission/mark']);
+                expect(testState.values.get('job:v1')).toMatchObject({
+                    state: 'UPLOAD_EXPIRED',
+                    terminalArchive: { status: 'PENDING' },
+                });
+            },
+        );
+
+        it('leaves a CREATE_AMBIGUOUS job untouched', async () => {
+            const testState = createState();
+            const job = { ...jobRecord(LEGACY_PROFILE_ID), state: 'CREATE_AMBIGUOUS' };
+            testState.values.set('job:v1', job);
+            const response = await new LivepeerControl(testState.state, legacyEnv([])).fetch(internalWebhookRequest(
+                webhook('asset.updated'),
+            ));
+
+            expect(response.status).toBe(202);
+            expect(testState.values.get('job:v1')).toEqual(job);
+        });
+
+        it('adopts a publication that is already final on chain', async () => {
+            const now = 1_785_600_000_000;
+            vi.spyOn(Date, 'now').mockReturnValue(now);
+            const testState = createState();
+            const job = {
+                ...(await publishedJob(LEGACY_PROFILE_ID)),
+                state: 'FINALIZE_RETRY',
+                finalizeRetry: { attempts: 2, lastHttpStatus: 503, nextAttemptAtMs: now },
+            };
+            testState.values.set('job:v1', job);
+            vi.stubGlobal('fetch', operatorRpc({
+                publicationFor: () => ({
+                    publication_id: job.publication.job_id,
+                    ...job.publication,
+                    published_availability: job.publication.availability,
+                    availability: job.publication.availability,
+                }),
+            }));
+            const paths: string[] = [];
+
+            await new LivepeerControl(testState.state, legacyEnv(paths)).alarm();
+
+            expect(paths).toEqual(['/internal/admission/mark']);
+            expect(testState.values.get('job:v1')).toMatchObject({
+                state: 'ONCHAIN_PUBLISHED',
+                profileId: LEGACY_PROFILE_ID,
+                publication: job.publication,
+            });
+            expect(testState.values.get('job:v1')).not.toHaveProperty('finalizeRetry');
+            expect(testState.values.get('job:v1')).not.toHaveProperty('terminalArchive');
+        });
+
+        it('expires a job whose publication id is taken by a different final publication', async () => {
+            const testState = createState();
+            const job = { ...(await publishedJob(LEGACY_PROFILE_ID)), state: 'READY_VERIFIED' };
+            testState.values.set('job:v1', job);
+            vi.stubGlobal('fetch', operatorRpc({
+                publicationFor: () => ({
+                    publication_id: job.publication.job_id,
+                    ...job.publication,
+                    profile_id: NEUTRAL_PROFILE_ID,
+                    published_availability: 'ACTIVE',
+                    availability: 'ACTIVE',
+                }),
+            }));
+            const paths: string[] = [];
+
+            await new LivepeerControl(testState.state, legacyEnv(paths)).alarm();
+
+            expect(paths).toEqual(['/internal/admission/mark']);
+            expect(testState.values.get('job:v1')).toMatchObject({ state: 'UPLOAD_EXPIRED' });
+        });
+
+        it('keeps the job and reads again later while NEAR is unavailable', async () => {
+            const now = 1_785_600_000_000;
+            vi.spyOn(Date, 'now').mockReturnValue(now);
+            const testState = createState();
+            const job = { ...(await publishedJob(LEGACY_PROFILE_ID)), state: 'FINALIZE_QUEUED' };
+            testState.values.set('job:v1', job);
+            vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+            const paths: string[] = [];
+
+            await new LivepeerControl(testState.state, legacyEnv(paths)).alarm();
+
+            expect(paths).toEqual([]);
+            expect(testState.values.get('job:v1')).toEqual(job);
+            expect(testState.alarms.at(-1)).toBe(now + 60_000);
+        });
+
+        it('still finalizes the same job on a V1 Bridge', async () => {
+            const now = 1_785_600_000_000;
+            vi.spyOn(Date, 'now').mockReturnValue(now);
+            const testState = createState();
+            testState.values.set('job:v1', { ...(await publishedJob(LEGACY_PROFILE_ID)), state: 'READY_VERIFIED' });
+            const paths: string[] = [];
+            const env = legacyEnv(paths);
+            env.MARKET_PROTOCOL = undefined;
+            env.LIVEPEER_OPERATOR_JOB_ID = 'job-001';
+
+            await new LivepeerControl(testState.state, env).alarm();
+
+            expect(paths).toContain('/internal/finalize');
+            expect(testState.values.get('job:v1')).toMatchObject({ state: 'ONCHAIN_PUBLISHED' });
+        });
     });
 
     it('persists FINALIZE_RETRY on a failed outbox call and resumes the same publication', async () => {
@@ -1616,11 +1860,22 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(testState.values.has('job:v1')).toBe(true);
     });
 
-    it('blocks immediately and enqueues one sales suspension only after repeated drift', async () => {
+    it.each([
+        // [case, env overrides, stored profile id, queued method]
+        ['V1', {}, LEGACY_PROFILE_ID, 'suspend_livepeer_sales'],
+        ['Market V2', { MARKET_PROTOCOL: 'v2' }, NEUTRAL_PROFILE_ID, 'suspend_sales'],
+        // A publication finalized before the MC rename stays published and keeps reconciling.
+        ['Market V2 with a pre-MC publication', { MARKET_PROTOCOL: 'v2' }, LEGACY_PROFILE_ID, 'suspend_sales'],
+    ] as const)('blocks immediately and enqueues one sales suspension only after repeated drift (%s)', async (
+        _case,
+        overrides,
+        profileId,
+        method,
+    ) => {
         let now = 1_785_600_000_000;
         vi.spyOn(Date, 'now').mockImplementation(() => now);
         const testState = createState();
-        const job = await publishedJob();
+        const job = await publishedJob(profileId);
         testState.values.set('job:v1', job);
         testState.values.set('reconcile:v1', {
             schema: 'youtick.livepeer-reconcile.v1',
@@ -1629,7 +1884,7 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
             nextReconcileAtMs: now,
             lastGoodAtMs: now - 1,
         });
-        const control = new LivepeerControl(testState.state, createEnv());
+        const control = new LivepeerControl(testState.state, createEnv(overrides));
         vi.stubGlobal('fetch', reconcileFetch(job.publication, providerAsset({
             playbackPolicy: { type: 'public' },
         })));
@@ -1659,10 +1914,11 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         });
         expect(testState.values.get('outbox:job-001:suspend-sales')).toMatchObject({
             state: 'PENDING',
-            method: 'suspend_livepeer_sales',
+            method,
             jobId: 'job-001',
             generation: 1,
         });
+        expect(testState.values.get('job:v1')).toMatchObject({ state: 'ONCHAIN_PUBLISHED', profileId });
         expect([...testState.values.keys()].filter((key) => key.endsWith(':suspend-sales'))).toHaveLength(1);
     });
 
@@ -2384,6 +2640,189 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
 
         expect(response.status).toBe(409);
         expect(await response.json()).toEqual({ error: 'outbox_conflict' });
+    });
+
+    describe('Market V2 operator outbox names', () => {
+        const V2_KEY_METHODS = ['finalize_publication', 'suspend_sales', 'mark_watched', 'release_expired'];
+        const v2Env = () => createEnv({ MARKET_PROTOCOL: 'v2', LIVEPEER_OPERATOR_JOB_ID: '' });
+        const signedCall = (signedTx: string) => {
+            const call = SignedTransaction.decode(Buffer.from(signedTx, 'base64')).transaction.actions[0].functionCall!;
+            return {
+                methodName: call.methodName,
+                args: JSON.parse(new TextDecoder().decode(Uint8Array.from(call.args as ArrayLike<number>))),
+            };
+        };
+
+        it('signs finalize_publication with the neutral profile id', async () => {
+            const testState = createState();
+            const value = publication('job-001', NEUTRAL_PROFILE_ID);
+            const sent: string[] = [];
+            vi.stubGlobal('fetch', operatorRpc({
+                methodNames: V2_KEY_METHODS,
+                onSend: (signedTx) => sent.push(signedTx),
+                publicationFor: () => sent.length ? contractPublication(value) : null,
+            }));
+
+            const response = await new LivepeerControl(testState.state, v2Env()).fetch(await finalizeRequest(value));
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toMatchObject({ finalized: true });
+            expect(sent).toHaveLength(1);
+            expect(signedCall(sent[0])).toEqual({ methodName: 'finalize_publication', args: { submission: value } });
+            expect(testState.values.get('outbox:job-001:1:finalize')).toMatchObject({
+                state: 'CONFIRMED',
+                method: 'finalize_publication',
+            });
+        });
+
+        it('signs suspend_sales', async () => {
+            const testState = createState();
+            let suspended = false;
+            const sent: string[] = [];
+            vi.stubGlobal('fetch', operatorRpc({
+                methodNames: V2_KEY_METHODS,
+                onSend: (signedTx) => {
+                    sent.push(signedTx);
+                    suspended = true;
+                },
+                publicationFor: () => ({
+                    ...contractPublication(publication('job-001', NEUTRAL_PROFILE_ID)),
+                    availability: suspended ? 'SALES_SUSPENDED' : 'ACTIVE',
+                }),
+            }));
+
+            const response = await new LivepeerControl(testState.state, v2Env()).fetch(await suspendSalesRequest());
+
+            expect(response.status).toBe(200);
+            expect(sent).toHaveLength(1);
+            expect(signedCall(sent[0])).toEqual({ methodName: 'suspend_sales', args: { publication_id: 'job-001' } });
+            expect(testState.values.get('outbox:job-001:suspend-sales')).toMatchObject({
+                state: 'CONFIRMED',
+                method: 'suspend_sales',
+            });
+        });
+
+        it.each([
+            ['Market V2 refuses the pre-MC id', { MARKET_PROTOCOL: 'v2', LIVEPEER_OPERATOR_JOB_ID: '' }, LEGACY_PROFILE_ID],
+            ['V1 refuses the neutral id', {}, NEUTRAL_PROFILE_ID],
+        ] as const)('%s before any RPC', async (_case, overrides, profileId) => {
+            const testState = createState();
+            const rpc = operatorRpc({ methodNames: V2_KEY_METHODS });
+            vi.stubGlobal('fetch', rpc);
+
+            const response = await new LivepeerControl(testState.state, createEnv(overrides))
+                .fetch(await finalizeRequest(publication('job-001', profileId)));
+
+            expect(response.status).toBe(400);
+            expect(await response.json()).toEqual({ error: 'invalid_finalize_request' });
+            expect(rpc).not.toHaveBeenCalled();
+            expect(testState.values.size).toBe(0);
+        });
+
+        it('refuses a key that still carries the V1 method names', async () => {
+            const testState = createState();
+            vi.stubGlobal('fetch', operatorRpc({ publicationFor: () => null }));
+
+            const response = await new LivepeerControl(testState.state, v2Env())
+                .fetch(await finalizeRequest(publication('job-001', NEUTRAL_PROFILE_ID)));
+
+            expect(response.status).toBe(503);
+            expect(await response.json()).toEqual({ error: 'runtime_not_configured' });
+        });
+
+        it('reports a confirmed pre-MC record as done without another transaction', async () => {
+            const testState = createState();
+            const request = await suspendSalesRequest();
+            const input = await request.clone().json() as { idempotencyKey: string; payloadSha256: string };
+            const stored = {
+                schema: 'youtick.livepeer-operator-outbox.v1',
+                state: 'CONFIRMED',
+                method: 'suspend_livepeer_sales',
+                idempotencyKey: input.idempotencyKey,
+                payloadSha256: input.payloadSha256,
+                createdAtMs: 1_785_600_000_000,
+                txHash: 'legacy-tx-hash',
+                confirmedAtMs: 1_785_600_001_000,
+                archive: { status: 'COMMITTED', attempts: 1, createdAtMs: 1_785_600_001_000, nextAttemptAtMs: 1_785_600_001_000 },
+            };
+            testState.values.set(`outbox:${input.idempotencyKey}`, stored);
+            const rpc = operatorRpc({ methodNames: V2_KEY_METHODS });
+            vi.stubGlobal('fetch', rpc);
+
+            const response = await new LivepeerControl(testState.state, v2Env()).fetch(request);
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({ accepted: true, suspended: true, tx_hash: 'legacy-tx-hash' });
+            expect(rpc).not.toHaveBeenCalled();
+            expect(testState.values.get(`outbox:${input.idempotencyKey}`)).toEqual(stored);
+        });
+
+        it('re-signs an unconfirmed pre-MC suspension under suspend_sales', async () => {
+            const testState = createState();
+            const request = await suspendSalesRequest();
+            const input = await request.clone().json() as { idempotencyKey: string; payloadSha256: string };
+            testState.values.set(`outbox:${input.idempotencyKey}`, {
+                schema: 'youtick.livepeer-operator-outbox.v1',
+                state: 'BROADCAST',
+                method: 'suspend_livepeer_sales',
+                idempotencyKey: input.idempotencyKey,
+                payloadSha256: input.payloadSha256,
+                createdAtMs: 1_785_600_000_000,
+                nonce: '5',
+                blockHash: BLOCK_HASH,
+                signedTxBase64: 'bGVnYWN5',
+                txHash: 'legacy-tx-hash',
+            });
+            let suspended = false;
+            const sent: string[] = [];
+            vi.stubGlobal('fetch', operatorRpc({
+                methodNames: V2_KEY_METHODS,
+                onSend: (signedTx) => {
+                    sent.push(signedTx);
+                    suspended = true;
+                },
+                publicationFor: () => ({
+                    ...contractPublication(publication()),
+                    availability: suspended ? 'SALES_SUSPENDED' : 'ACTIVE',
+                }),
+            }));
+
+            const response = await new LivepeerControl(testState.state, v2Env()).fetch(request);
+
+            expect(response.status).toBe(200);
+            expect(sent).toHaveLength(1);
+            expect(sent[0]).not.toBe('bGVnYWN5');
+            expect(signedCall(sent[0]).methodName).toBe('suspend_sales');
+            expect(testState.values.get(`outbox:${input.idempotencyKey}`)).toMatchObject({
+                state: 'CONFIRMED',
+                method: 'suspend_sales',
+            });
+            expect(testState.values.get(`outbox:${input.idempotencyKey}`)).not.toMatchObject({ txHash: 'legacy-tx-hash' });
+        });
+
+        it('refuses to resume an unconfirmed pre-MC finalization', async () => {
+            const testState = createState();
+            const request = await finalizeRequest(publication('job-001', NEUTRAL_PROFILE_ID));
+            const input = await request.clone().json() as { idempotencyKey: string; payloadSha256: string };
+            const stored = {
+                schema: 'youtick.livepeer-operator-outbox.v1',
+                state: 'PENDING',
+                method: 'finalize_livepeer_publication',
+                idempotencyKey: input.idempotencyKey,
+                payloadSha256: input.payloadSha256,
+                createdAtMs: 1_785_600_000_000,
+            };
+            testState.values.set(`outbox:${input.idempotencyKey}`, stored);
+            const rpc = operatorRpc({ methodNames: V2_KEY_METHODS });
+            vi.stubGlobal('fetch', rpc);
+
+            const response = await new LivepeerControl(testState.state, v2Env()).fetch(request);
+
+            expect(response.status).toBe(409);
+            expect(await response.json()).toEqual({ error: 'outbox_conflict' });
+            expect(rpc).not.toHaveBeenCalled();
+            expect(testState.values.get(`outbox:${input.idempotencyKey}`)).toEqual(stored);
+        });
     });
 
     it('archives a bounded confirmed operator record with a 90 day cleanup boundary', async () => {

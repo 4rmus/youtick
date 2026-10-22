@@ -27,6 +27,8 @@ const PURCHASE_REJECTIONS: Record<string, number> = {
     // Uploads (E5b): `job_exists` means this creator's identical job is already authorized.
     upload_invalid: 400, uploads_paused: 503, quote_required: 409, fee_mismatch: 409, upload_key_expired: 409, job_exists: 409,
     job_conflict: 409, job_not_found: 404, job_published: 409,
+    // A profile hash outside UPLOAD_PROFILE_HASH_ALLOWLIST (M2-G7): no Bridge would accept the upload.
+    profile_not_allowed: 400, uploads_misconfigured: 503,
     approval_mismatch: 400, delegate_stale: 409, insufficient_balance: 409,
     // Device links: refused before the relayer pays gas.
     device_invalid: 400, ticket_not_found: 404, ticket_not_playable: 409, device_epoch_stale: 409, storage_unavailable: 503,
@@ -241,7 +243,7 @@ export async function handle(request: Request, env: Env, deps: RelayerDeps = {})
             await requireUsdcBalance(approved.key.accountId, fields.args.amount);
             await checkUploadMessage(near, {
                 marketContractId: config.marketContractId, accountId: approved.key.accountId, amount: fields.args.amount, msg: fields.args.msg,
-                nowMs: (deps.now ?? Date.now)(),
+                nowMs: (deps.now ?? Date.now)(), profileHashAllowlist: config.uploadProfileHashAllowlist,
             });
             return forward(env, '/upload', {
                 identityHash: approved.identityHash, accountId: approved.key.accountId, userPublicKey: approved.key.publicKey,

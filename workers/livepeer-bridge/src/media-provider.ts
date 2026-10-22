@@ -1,16 +1,64 @@
 // Provider-neutral seam between the Bridge control plane and a media provider adapter.
 // Adapters own every provider host, header, URL shape, signature scheme and profile catalog;
 // index.ts and the neutral verification core only see the types below.
+import studioProfiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
+import streamProfiles from '../../../protocol/paid-media-v1/stream-profile.json';
 
-export type MediaProviderKind = 'studio';
+export type MediaProviderKind = 'studio' | 'stream';
 
-export const MEDIA_PROVIDER_KINDS: readonly MediaProviderKind[] = ['studio'];
+export const MEDIA_PROVIDER_KINDS: readonly MediaProviderKind[] = ['studio', 'stream'];
 
 /** Internal header the ingress adds when it forwards a verified webhook body to a job object. */
 export const MEDIA_PROVIDER_HEADER = 'X-YouTick-Provider';
+/** Internal header carrying the signed webhook time (ms) when the signature holds it outside the body. */
+export const MEDIA_WEBHOOK_TIME_HEADER = 'X-YouTick-Webhook-Time';
 
 export function mediaProviderKind(value: unknown): MediaProviderKind | null {
     return MEDIA_PROVIDER_KINDS.find((kind) => kind === value) ?? null;
+}
+
+// Profile catalogs. The frozen V1 profiles.json selects the Studio adapter; the paid-media-v1
+// Stream descriptor selects the Stream adapter. A hash belongs to exactly one catalog, so each
+// adapter refuses the other's hashes.
+export type MediaProfileFamily = 'studio' | 'stream';
+
+const STREAM_DESCRIPTOR = streamProfiles.stream;
+/** The Stream descriptor hash (protocol/paid-media-v1/stream-profile.json). */
+export const STREAM_PROFILE_HASH: string = STREAM_DESCRIPTOR.hash;
+/** Largest maxDurationSeconds the descriptor lets the Bridge book for one upload. */
+export const STREAM_PROFILE_MAX_DURATION_SECONDS: number = STREAM_DESCRIPTOR.maxDurationSecondsCap;
+
+export function mediaProfileFamily(profileConfigSha256: unknown): MediaProfileFamily | null {
+    if (typeof profileConfigSha256 !== 'string') return null;
+    if (Object.values(studioProfiles).some((entry) => entry.hash === profileConfigSha256)) return 'studio';
+    if (profileConfigSha256 === STREAM_DESCRIPTOR.hash) return 'stream';
+    return null;
+}
+
+export function supportsMediaProfile(profileConfigSha256: unknown): boolean {
+    return mediaProfileFamily(profileConfigSha256) !== null;
+}
+
+/** Rendition dimensions the Bridge requires for a hash from either catalog. */
+export function describeMediaProfile(profileConfigSha256: unknown): MediaProfileDescription {
+    const family = mediaProfileFamily(profileConfigSha256);
+    if (family === 'stream') {
+        return { renditions: STREAM_DESCRIPTOR.profiles.map(({ width, height }) => ({ width, height })) };
+    }
+    if (family === 'studio') {
+        const entry = Object.values(studioProfiles).find((candidate) => candidate.hash === profileConfigSha256)!;
+        return { renditions: entry.profiles.map(({ width, height }) => ({ width, height })) };
+    }
+    throw new Error('unsupported_profile');
+}
+
+export function streamSupportsProfile(profileConfigSha256: unknown): boolean {
+    return mediaProfileFamily(profileConfigSha256) === 'stream';
+}
+
+export function streamDescribeProfile(profileConfigSha256: unknown): MediaProfileDescription {
+    if (!streamSupportsProfile(profileConfigSha256)) throw new Error('unsupported_profile');
+    return describeMediaProfile(profileConfigSha256);
 }
 
 export type MediaSourceType = 'mp4' | 'mov' | 'avi' | 'webm' | 'wmv' | 'mkv' | 'flv';
@@ -31,6 +79,8 @@ export type CreateUploadInput = {
     expectedSourceBytes: string;
     profileConfigSha256: string;
     sourceType: MediaSourceType;
+    // Stream: the tus `expiry` metadata, min(creation + 6 h, absolute deadline). Studio ignores it.
+    uploadExpiresAtMs?: number;
 };
 
 export type CreateUploadResult = {
@@ -61,7 +111,21 @@ export type ProviderAsset = {
     sizeBytes?: number;
     downloadUrl?: string;
     sha256?: string | null;
+    // Stream-only lifecycle fields read from the same video object; Studio leaves this undefined.
+    stream?: {
+        state: StreamVideoState;
+        pctComplete: number;
+        readyToStream: boolean;
+        errorReasonCode: string;
+        durationSeconds: number;
+        route: WebhookRoute | null;
+        createdAtMs: number;
+    };
 };
+
+/** Cloudflare Stream `status.state` values (docs 2). */
+export type StreamVideoState = 'pendingupload' | 'downloading' | 'queued' | 'inprogress' | 'ready' | 'error'
+    | 'live-inprogress' | '';
 
 export type ProviderPlaybackSource = {
     kind: 'hls' | 'mp4' | 'vtt' | 'unknown';
@@ -92,6 +156,8 @@ export type VerifyReadyAssetInput = {
     tusEndpoint?: string;
     mode: VerificationMode;
     storedEvidence?: SourceBytesEvidence;
+    // When the upload URL was created; 'tus-offset' adapters refuse a HEAD past the URL's life.
+    uploadCreatedAtMs?: number;
 };
 
 export type VerificationMode = 'ready' | 'published';
@@ -105,6 +171,8 @@ export type SourceBytesEvidence = {
     offsetBytes: string;
     lengthBytes: string;
     observedAtMs: number;
+    // The ready_at_ms the publication was built with; published re-verification returns it as is.
+    readyAtMs?: string;
 };
 
 export type ProviderVerificationCheckpoint = {
@@ -116,6 +184,8 @@ export type ProviderVerificationCheckpoint = {
 export type ProviderVerificationResult = VerifiedAsset | {
     pending: true;
     checkpoint: ProviderVerificationCheckpoint;
+    // When to look again; absent means the core's immediate continuation (1 s).
+    retryAfterMs?: number;
 };
 
 export type VerifiedAsset = {
@@ -127,6 +197,8 @@ export type VerifiedAsset = {
     readyAtMs: string;
     // Present only for 'tus-offset' adapters at readiness; the job record persists it (M2).
     sourceBytesEvidence?: SourceBytesEvidence;
+    // Media duration in seconds when the adapter reports one (Stream storage accounting).
+    durationSeconds?: number;
 };
 
 export type MediaProviderCapabilities = {
@@ -148,6 +220,9 @@ export type SignedPlayback = {
 
 export type WebhookRoute = { jobId: string; generation: number };
 
+/** What the ingress learned while authenticating a body (for example the signed time). */
+export type WebhookParseContext = { timestampMs?: number };
+
 /**
  * One provider webhook (or a synthesized reconcile observation) in provider-neutral form.
  * 'processing' is any non-terminal progress update; `phase` carries the provider-reported phase,
@@ -163,6 +238,8 @@ export type NormalizedWebhookEvent = {
     phase: string;
     timestampMs: number;
     failureCode?: string;
+    // Stream: the reported state and pctComplete, so the job can tell progress from a stall.
+    streamProgress?: { state: string; pctComplete: number };
     digest: string;
 };
 
@@ -206,7 +283,7 @@ export interface MediaProvider {
     /** Authenticates an ingress webhook; null means authentic but not a media lifecycle event. */
     verifyWebhook(rawBody: Uint8Array, headers: Headers, nowMs: number): Promise<NormalizedWebhookEvent | null>;
     /** Normalizes a body the ingress already authenticated (job object and Queue paths). */
-    parseWebhook(rawBody: Uint8Array): Promise<NormalizedWebhookEvent | null>;
+    parseWebhook(rawBody: Uint8Array, context?: WebhookParseContext): Promise<NormalizedWebhookEvent | null>;
     identityMatches(asset: ProviderAsset, expected: ProviderIdentityExpectation): boolean;
     hostAllowlist(): HostAllowlist;
     supportsProfile(profileConfigSha256: unknown): boolean;

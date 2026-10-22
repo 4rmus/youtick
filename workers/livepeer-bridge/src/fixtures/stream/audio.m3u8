@@ -1,0 +1,12 @@
+#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-TARGETDURATION:5
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-MAP:URI="../../<UID>/video/audio/init.mp4?p=<P>&s=<S>"
+#EXTINF:4.000,
+../../<UID>/video/audio/seg_1.mp4?p=<P>&s=<S>
+#EXTINF:4.000,
+../../<UID>/video/audio/seg_2.mp4?p=<P>&s=<S>
+#EXTINF:4.000,
+../../<UID>/video/audio/seg_45.mp4?p=<P>&s=<S>
+#EXT-X-ENDLIST

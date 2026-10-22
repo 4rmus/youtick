@@ -31,9 +31,19 @@ import { canonicalPlaybackV3Message, decideTicketPlayback, parsePlaybackV3Body }
 import {
     MEDIA_PROVIDER_HEADER,
     MEDIA_SOURCE_FORMATS,
+    MEDIA_WEBHOOK_TIME_HEADER,
+    STREAM_PROFILE_MAX_DURATION_SECONDS,
+    mediaProfileFamily,
     mediaProviderKind,
+    streamSupportsProfile,
 } from './media-provider';
 import { LivepeerProvider, livepeerSupportsProfile } from './livepeer-provider';
+import {
+    CloudflareStreamProvider,
+    STREAM_TUS_URL_LIFETIME_MS,
+    STREAM_UPLOAD_EXPIRY_MS,
+    decodeStreamKeyText,
+} from './cloudflare-stream-provider';
 import { dependencyFetch } from './dependency-fetch';
 import {
     MAX_PUBLICATION_COVER_BYTES,
@@ -129,17 +139,34 @@ export interface Env {
     OPERATOR_OUTBOX_ARCHIVE_ENABLED?: string;
     MARKET_READ_MODEL?: D1Database;
     PUBLIC_BETA_RATE_LIMITER?: RateLimit;
+    // Cloudflare Stream adapter (M2). New intents select it only with the flag on and the
+    // paid-media-v1 Stream descriptor hash; with the flag on, Market V2 is Stream-only (OD19).
+    MEDIA_PROVIDER_STREAM_ENABLED?: string;
+    STREAM_ACCOUNT_ID?: string;
+    STREAM_API_TOKEN?: string;
+    STREAM_CUSTOMER_CODE?: string;
+    STREAM_SIGNING_KEY_ID?: string;
+    STREAM_SIGNING_PUBLIC_KEY?: string;
+    STREAM_SIGNING_KEY_PEM?: string;
+    STREAM_WEBHOOK_SECRET?: string;
+    STREAM_WEBHOOK_SECRET_PREVIOUS?: string;
+    STREAM_MAX_DURATION_SECONDS?: string;
+    STREAM_STORAGE_MINUTES_CAPACITY?: string;
+    STREAM_RESERVATION_SECONDS_BUDGET?: string;
+    STREAM_STUCK_TIMEOUT_MS?: string;
 }
 
 type JsonObject = Record<string, unknown>;
 type LivepeerSourceType = MediaSourceType;
+// V1 deployments keep the Livepeer-named profile; Market V2 (gate MC) uses the provider-neutral id.
+type MediaProfileId = 'paid-media-livepeer-v1' | 'paid-media-v1';
 type UploadIntentBody = {
     job_id: string;
     generation: number;
     expected_source_bytes: string;
     source_fingerprint_sha256: string;
     source_type: LivepeerSourceType;
-    profile_id: 'paid-media-livepeer-v1';
+    profile_id: MediaProfileId;
     profile_config_sha256: string;
     recovery?: 'reconcile' | 'resume';
 };
@@ -257,7 +284,7 @@ type SponsoredPaidJobRequest = {
     title: string;
     price_usdc: string;
     expected_source_bytes: string;
-    profile_id: 'paid-media-livepeer-v1';
+    profile_id: MediaProfileId;
     profile_config_sha256: string;
     upload_public_key: string;
     upload_key_expires_at_ms: string;
@@ -365,7 +392,7 @@ type JobRecord = {
     expectedSourceBytes: string;
     sourceFingerprintSha256?: string;
     sourceType: LivepeerSourceType;
-    profileId: 'paid-media-livepeer-v1';
+    profileId: MediaProfileId;
     profileConfigSha256: string;
     createdAtMs: number;
     stateChangedAtMs?: number;
@@ -384,6 +411,8 @@ type JobRecord = {
     providerVerification?: ProviderVerificationCheckpoint;
     // Persisted byte proof for adapters whose sourceBytesProof capability is 'tus-offset'.
     sourceBytesEvidence?: SourceBytesEvidence;
+    // Stream: last reported state/pctComplete and when either last changed (stuck detection).
+    streamProgress?: { state: string; pctComplete: number; changedAtMs: number };
     finalizeRetry?: {
         attempts: number;
         lastHttpStatus: number;
@@ -436,7 +465,9 @@ type ReconcileRecord = {
     salesSuspensionQueuedAtMs?: number;
 };
 type FinalJob = { job: OnChainJob; blockHash: string };
-type OutboxMethod = 'finalize_livepeer_publication' | 'suspend_livepeer_sales' | 'mark_watched' | 'release_expired';
+type LegacyOutboxMethod = 'finalize_livepeer_publication' | 'suspend_livepeer_sales';
+type NeutralOutboxMethod = 'finalize_publication' | 'suspend_sales';
+type OutboxMethod = LegacyOutboxMethod | NeutralOutboxMethod | 'mark_watched' | 'release_expired';
 type OutboxInput = {
     idempotencyKey: string;
     method: OutboxMethod;
@@ -454,7 +485,7 @@ type FinalizePublication = {
     generation: number;
     creator_id: string;
     expected_source_bytes: string;
-    profile_id: 'paid-media-livepeer-v1';
+    profile_id: MediaProfileId;
     profile_config_sha256: string;
     asset_id_hash: string;
     playback_id: string;
@@ -535,12 +566,32 @@ type AdmissionRecord = {
         lastObservedAtMs: number;
     };
     closure?: { code: string; observedAtMs: number };
+    // Cloudflare Stream bookkeeping (optional; the schema literal is unchanged).
+    stream?: StreamAdmissionState;
+};
+type StreamReservation = { seconds: number; createdAtMs: number; expiresAtMs: number };
+type StreamAdmissionState = {
+    // Sum of `reservations`: maxDurationSeconds Stream booked at upload creation and still holds.
+    openReservedSeconds: number;
+    reservations: Record<string, StreamReservation>;
+    // Durations of videos that reached READY_VERIFIED (never decremented: a conservative bound).
+    verifiedStorageSeconds: number;
+    storageMinutesUsed?: number;
+    storageObservedAtMs?: number;
+    lastWebhookAtMs?: number;
+    // Stuck terminations in the last 24 h (bounded list) and the latest one.
+    stuckAtMs?: number[];
+    lastStuckAtMs?: number;
 };
 type AdmissionCandidate = {
     jobId: string;
     generation: number;
     creator: string;
     expectedSourceBytes: string;
+    // Stream intents: the maxDurationSeconds the upload will book against prepaid storage.
+    reservedSeconds?: number;
+    storageMinutesUsed?: number;
+    storageMinutesLimit?: number;
 };
 type AdmissionLease = {
     leaseId: string;
@@ -573,6 +624,9 @@ type LivepeerWebhookQueueMessage = {
     generation: number;
     enqueued_at_ms: string;
     raw_body_base64: string;
+    // Optional, Stream only (Studio messages are unchanged): the adapter and the signed time.
+    provider?: 'stream';
+    signed_time_ms?: string;
 };
 
 const PUBLIC_CONTROL_REQUESTS_IMPLEMENTED = true;
@@ -627,6 +681,14 @@ const LIFECYCLE_DELETE_BATCH = 128;
 const PLAYBACK_MIN_TTL_SECONDS = 120;
 const PLAYBACK_MAX_TTL_SECONDS = 300;
 const PLAYBACK_V2_TTL_SECONDS = 180;
+const STREAM_DEFAULT_STUCK_TIMEOUT_MS = 15 * 60 * 1000;
+const STREAM_MIN_READY_PENDING_MS = 60 * 60 * 1000;
+// Stuck jobs counted in /__health: terminations in the last 24 hours (a gauge, not a lifetime total).
+const STREAM_STUCK_WINDOW_MS = 24 * 60 * 60 * 1000;
+const STREAM_STUCK_HISTORY = 32;
+// Bounded Stream poll: every 5 minutes while the creator uploads, every minute while processing.
+const STREAM_UPLOAD_POLL_MS = 5 * 60 * 1000;
+const STREAM_PROCESSING_POLL_MS = 60 * 1000;
 const DEVICE_CERTIFICATE_MAX_LIFETIME_MS = 8 * 60 * 60 * 1000;
 const MARKET_DEVICE_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 const PLAYBACK_CACHE_MAX_RECORDS = 1024;
@@ -678,15 +740,26 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
 const PLAYBACK_ID_PATTERN = /^[A-Za-z0-9_-]{6,128}$/;
-const OUTBOX_METHODS = new Set<OutboxMethod>([
+// V1 (Preview, public testnet) keeps the Livepeer-named methods; Market V2 (gate MC) renamed them.
+const V1_OUTBOX_METHODS = new Set<OutboxMethod>([
     'finalize_livepeer_publication',
     'suspend_livepeer_sales',
 ]);
-const MARKET_V2_OUTBOX_METHODS = new Set<OutboxMethod>([...OUTBOX_METHODS, 'mark_watched', 'release_expired']);
+const NEUTRAL_OUTBOX_METHODS = new Set<OutboxMethod>(['finalize_publication', 'suspend_sales']);
+// Env-less record validity: records of either generation stay valid in storage and status reads.
+const OUTBOX_METHODS = new Set<OutboxMethod>([...V1_OUTBOX_METHODS, ...NEUTRAL_OUTBOX_METHODS]);
+const MARKET_V2_OUTBOX_METHODS = new Set<OutboxMethod>([...NEUTRAL_OUTBOX_METHODS, 'mark_watched', 'release_expired']);
+// A stored record written under a V1 method name maps to its Market V2 name.
+const LEGACY_METHOD_ALIASES = new Map<OutboxMethod, OutboxMethod>([
+    ['finalize_livepeer_publication', 'finalize_publication'],
+    ['suspend_livepeer_sales', 'suspend_sales'],
+]);
 // Per-ticket settlements: the chain is the durable record, so confirmed records are deleted and
 // never archived (the operator object's record budget must not grow with tickets).
 const EPHEMERAL_OUTBOX_METHODS = new Set<OutboxMethod>(['mark_watched', 'release_expired']);
 const TICKET_ID_PATTERN = /^[0-9a-f]{64}$/;
+const LEGACY_PROFILE_ID = 'paid-media-livepeer-v1' satisfies MediaProfileId;
+const NEUTRAL_PROFILE_ID = 'paid-media-v1' satisfies MediaProfileId;
 
 function isMarketV2(env: Env): boolean {
     return env.MARKET_PROTOCOL === 'v2';
@@ -694,7 +767,25 @@ function isMarketV2(env: Env): boolean {
 
 // The on-chain operator key must allow exactly these methods; V1 deployments are unchanged.
 function operatorOutboxMethods(env: Env): Set<OutboxMethod> {
-    return isMarketV2(env) ? MARKET_V2_OUTBOX_METHODS : OUTBOX_METHODS;
+    return isMarketV2(env) ? MARKET_V2_OUTBOX_METHODS : V1_OUTBOX_METHODS;
+}
+
+function finalizeMethod(env: Env): OutboxMethod {
+    return isMarketV2(env) ? 'finalize_publication' : 'finalize_livepeer_publication';
+}
+
+function suspendMethod(env: Env): OutboxMethod {
+    return isMarketV2(env) ? 'suspend_sales' : 'suspend_livepeer_sales';
+}
+
+// The only profile id a new upload or finalization may carry on this deployment.
+function marketProfileId(env: Env): MediaProfileId {
+    return isMarketV2(env) ? NEUTRAL_PROFILE_ID : LEGACY_PROFILE_ID;
+}
+
+// Playback also honours publications finalized on the V2 testnet before the MC rename.
+function playbackProfileIdAccepted(env: Env, profileId: unknown): boolean {
+    return profileId === marketProfileId(env) || (isMarketV2(env) && profileId === LEGACY_PROFILE_ID);
 }
 const playbackAuthorizationCache = new Map<string, { value: unknown; expiresAtMs: number }>();
 let edgeColdStartPending = true;
@@ -777,6 +868,8 @@ const SAFE_ERROR_CODES = new Set([
     'publication_cover_image_size',
     'publication_cover_image_invalid',
     'provider_state_invalid',
+    'provider_tus_state_invalid',
+    'provider_tus_url_expired',
     'provider_unavailable',
     'provider_mutations_disabled',
     'rate_source_invalid',
@@ -878,7 +971,10 @@ const bridgeWorker = {
                 operatorOutboxArchiveReady: validOperatorArchiveConfig(env),
                 publicBetaRateLimitReady: (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))
                     && Boolean(env.PUBLIC_BETA_RATE_LIMITER),
-                mediaProvider: { kind: mediaProvider(env).id },
+                mediaProvider: { kind: studioActive(env) ? mediaProvider(env).id : 'stream' },
+                // Never true with the flag off: empty STREAM_* values then mean "not configured".
+                streamConfigured: streamEnabled(env) && validStreamConfig(env),
+                ...(streamEnabled(env) ? { stream: await streamHealthBlock(env) } : {}),
             });
         }
 
@@ -909,7 +1005,7 @@ const bridgeWorker = {
             if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
                 return json({ error: 'control_plane_disabled' }, 503);
             }
-            if (!validApiKey(env.LIVEPEER_API_KEY) || !validPlaybackConfig(env)) {
+            if (!(validApiKey(env.LIVEPEER_API_KEY) || validStreamConfig(env)) || !validPlaybackConfig(env)) {
                 return json({ error: 'runtime_not_configured' }, 503);
             }
             return publicationCover(request, env, coverRoute.jobId, coverRoute.generation);
@@ -927,10 +1023,20 @@ const bridgeWorker = {
             if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
                 return json({ error: 'control_plane_disabled' }, 503);
             }
-            if (!env.LIVEPEER_CONTROL || !validWebhookConfig(env)) {
+            if (!env.LIVEPEER_CONTROL || !validWebhookConfig(env) || !validStudioWebhookSecrets(env)) {
                 return json({ error: 'runtime_not_configured' }, 503);
             }
             return forwardLivepeerWebhook(request, env);
+        }
+
+        if (request.method === 'POST' && url.pathname === '/v1/stream-webhooks') {
+            if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
+                return json({ error: 'control_plane_disabled' }, 503);
+            }
+            if (!env.LIVEPEER_CONTROL || !validStreamWebhookConfig(env)) {
+                return json({ error: 'runtime_not_configured' }, 503);
+            }
+            return forwardProviderWebhook(request, env, 'stream');
         }
 
         if (request.method === 'POST' && url.pathname === '/v1/operations/admission-reopen') {
@@ -1158,6 +1264,11 @@ export default {
         context.waitUntil(runScheduledRelease(env).then(() => undefined, (error) => {
             console.error(formatLog('market_v2_release_failed', { code: safeErrorCode(error) }));
         }));
+        if (streamEnabled(env)) {
+            context.waitUntil(logStreamStorageHeadroom(env).then(() => undefined, (error) => {
+                console.error(formatLog('stream_storage_headroom_failed', { code: safeErrorCode(error) }));
+            }));
+        }
     },
 
     async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
@@ -1201,7 +1312,11 @@ export default {
                     'https://object/internal/livepeer-webhook',
                     {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...(input.provider ? { [MEDIA_PROVIDER_HEADER]: input.provider } : {}),
+                            ...(input.signed_time_ms ? { [MEDIA_WEBHOOK_TIME_HEADER]: input.signed_time_ms } : {}),
+                        },
                         body: rawBody,
                     },
                 ));
@@ -1271,6 +1386,7 @@ export class LivepeerControl {
             await scheduleReconcile(this.state, Date.now() + RECONCILE_HEALTHY_INTERVAL_MS);
             return;
         }
+        if (await expireLegacyProfileJob(this.state, this.env, job)) return;
         if (!job.publication) {
             if (job.providerVerification && ['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(job.state)) {
                 const event = await synthesizedProviderEvent({
@@ -1368,6 +1484,12 @@ export class LivepeerControl {
             }
             if (request.method === 'POST' && url.pathname === '/internal/admission/mark') {
                 return await markAdmission(this.state, await readJsonObject(request));
+            }
+            if (request.method === 'POST' && url.pathname === '/internal/admission/stream-signal') {
+                return await recordStreamSignal(this.state, await readJsonObject(request));
+            }
+            if (request.method === 'GET' && url.pathname === '/internal/admission/stream-status') {
+                return await readStreamAdmissionStatus(this.state, this.env);
             }
             if (request.method === 'POST' && url.pathname === '/internal/admission/heartbeat') {
                 return await heartbeatAdmission(this.state, await readJsonObject(request));
@@ -1483,8 +1605,16 @@ export class LivepeerControl {
             if (!['UPLOAD_READY', 'UPLOADING'].includes(record.state) || !record.tusEndpoint) {
                 throw new Error('provider_recovery_not_ready');
             }
-            const source = await mediaProvider(this.env, record).readTusOffset(record.tusEndpoint).catch((error) => {
+            if (jobProviderKind(record) === 'stream'
+                && Date.now() >= (record.providerCreate?.completedAtMs ?? record.createdAtMs) + STREAM_TUS_URL_LIFETIME_MS) {
+                const ended = await terminateStreamJob(this.state, this.env, record, 'UPLOAD_EXPIRED', 'provider_tus_url_expired');
+                return json({ job_id: ended.jobId, generation: ended.generation, state: ended.state });
+            }
+            const source = await mediaProvider(this.env, record).readTusOffset(record.tusEndpoint).catch(async (error) => {
                 if (error instanceof Error && error.message === 'provider_tus_state_invalid') throw new Error('provider_recovery_not_ready');
+                if (error instanceof Error && error.message === 'provider_tus_url_expired' && jobProviderKind(record) === 'stream') {
+                    await terminateStreamJob(this.state, this.env, record, 'UPLOAD_EXPIRED', 'provider_tus_url_expired');
+                }
                 throw error;
             });
             if (source.lengthBytes !== record.expectedSourceBytes) throw new Error('provider_identity_mismatch');
@@ -1520,7 +1650,8 @@ export class LivepeerControl {
         }
 
         if (record.state === 'AUTHORIZED') {
-            const lease = await requestAdmission(this.env, record);
+            const lease = await requestAdmission(this.env, record, jobProviderKind(record) === 'stream'
+                ? await readStreamStorage(this.env, record) : undefined);
             const leased = {
                 ...transitionJob(record, 'LEASED'),
                 leaseId: lease.leaseId,
@@ -1563,7 +1694,13 @@ export class LivepeerControl {
 
         let provider: CreateUploadResult;
         try {
-            provider = await mediaProvider(this.env, pending).createUpload(pending);
+            provider = await mediaProvider(this.env, pending).createUpload({
+                ...pending,
+                uploadExpiresAtMs: Math.min(
+                    Date.now() + STREAM_UPLOAD_EXPIRY_MS,
+                    pending.absoluteDeadlineAtMs ?? Number.MAX_SAFE_INTEGER,
+                ),
+            });
         } catch (error) {
             const providerError = safeErrorCode(error);
             const errorCode = providerError === 'provider_admission_closed'
@@ -1604,6 +1741,11 @@ export class LivepeerControl {
                 completedAtMs: Date.now(),
             },
         };
+        if (publicBetaDeadlineExpired(ready) && jobProviderKind(ready) === 'stream') {
+            await this.state.storage.put(JOB_KEY, ready);
+            await terminateStreamJob(this.state, this.env, ready, 'UPLOAD_EXPIRED', 'job_expired');
+            throw new Error('admission_denied');
+        }
         if (publicBetaDeadlineExpired(ready)) {
             const expired = transitionJob(ready, 'UPLOAD_EXPIRED');
             await this.state.storage.put(JOB_KEY, expired);
@@ -1613,10 +1755,15 @@ export class LivepeerControl {
         await this.state.storage.put(JOB_KEY, ready);
         logJobStateTransition(pending.state, ready.state);
         await updateAdmission(this.env, ready, 'UPLOAD_READY');
+        if (jobProviderKind(ready) === 'stream') await scheduleAlarmNoLaterThan(this.state, Date.now() + STREAM_UPLOAD_POLL_MS);
         return uploadIntentResponse(ready, true);
     }
 
     private async reconcileUpload(record: JobRecord): Promise<void> {
+        if (jobProviderKind(record) === 'stream') {
+            await this.pollStreamUpload(record);
+            return;
+        }
         if ((!isPublicBetaPacket(this.env) && !isPublicTestnetEnvironment(this.env))
             || !record.absoluteDeadlineAtMs
             || !record.assetId
@@ -1673,6 +1820,102 @@ export class LivepeerControl {
         }
     }
 
+    /**
+     * Bounded Stream poll (the V2 Bridge has no other poll): one GET per alarm for a job still
+     * uploading or processing, so a lost webhook cannot strand a job whose fee is spent. Stops at
+     * a terminal state; a pre-ready job ends at the tus URL's 24 h life.
+     */
+    private async pollStreamUpload(record: JobRecord): Promise<void> {
+        if (!['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(record.state) || !record.assetId) return;
+        const now = Date.now();
+        const createdAtMs = record.providerCreate?.completedAtMs ?? record.createdAtMs;
+        if (now >= createdAtMs + STREAM_TUS_URL_LIFETIME_MS) {
+            await terminateStreamJob(this.state, this.env, record, 'UPLOAD_EXPIRED', 'provider_tus_url_expired');
+            return;
+        }
+        const provider = mediaProvider(this.env, record) as CloudflareStreamProvider;
+        const nextPollAtMs = now + (record.state === 'PROCESSING' ? STREAM_PROCESSING_POLL_MS : STREAM_UPLOAD_POLL_MS);
+        let video: Awaited<ReturnType<CloudflareStreamProvider['readVideo']>>;
+        try {
+            video = await provider.readVideo(record.assetId);
+        } catch (error) {
+            const code = safeErrorCode(error);
+            if (code === 'provider_asset_missing') {
+                await terminateStreamJob(this.state, this.env, record, 'PROVIDER_FAILED', code);
+                return;
+            }
+            await scheduleReconcile(this.state, Math.min(nextPollAtMs, createdAtMs + STREAM_TUS_URL_LIFETIME_MS));
+            return;
+        }
+        if (video.uid !== record.assetId || !video.route
+            || video.route.jobId !== record.jobId || video.route.generation !== record.generation) {
+            await terminateStreamJob(this.state, this.env, record, 'PROVIDER_FAILED', 'provider_identity_mismatch');
+            return;
+        }
+        if (video.state === 'error') {
+            await terminateStreamJob(this.state, this.env, record, 'PROVIDER_FAILED', video.errorReasonCode || 'ERR_UNKNOWN');
+            return;
+        }
+        if (video.state === 'ready' && video.readyToStream) {
+            await this.handleProviderEvent(await synthesizedProviderEvent({
+                provider: 'stream', event: 'processing', assetId: record.assetId, phase: 'ready', nowMs: now,
+            }, sha256Hex), record);
+            const after = await this.state.storage.get<JobRecord>(JOB_KEY);
+            if (after && ['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(after.state) && !after.providerVerification) {
+                await scheduleReconcile(this.state, nextPollAtMs);
+            }
+            return;
+        }
+        const progress = { state: video.state, pctComplete: Number.isFinite(video.pctComplete) ? video.pctComplete : 0 };
+        const tracked = trackStreamProgress(record, progress, now);
+        if (['queued', 'inprogress', 'downloading'].includes(video.state)) {
+            if (record.state !== 'PROCESSING') {
+                const processing = transitionJob(tracked, 'PROCESSING');
+                await this.state.storage.put(JOB_KEY, processing);
+                logJobStateTransition(record.state, processing.state, record);
+                await scheduleReconcile(this.state, now + STREAM_PROCESSING_POLL_MS);
+                return;
+            }
+            if (tracked !== record) await this.state.storage.put(JOB_KEY, tracked);
+            const stuckTimeoutMs = streamStuckTimeoutMs(this.env) ?? STREAM_DEFAULT_STUCK_TIMEOUT_MS;
+            const lastProgressAtMs = tracked.streamProgress?.changedAtMs ?? tracked.stateChangedAtMs ?? now;
+            if (now - lastProgressAtMs > stuckTimeoutMs) {
+                // One authoritative read before a destructive decision: fail only if nothing moved.
+                let confirm: Awaited<ReturnType<CloudflareStreamProvider['readVideo']>> | null = null;
+                try {
+                    confirm = await provider.readVideo(record.assetId);
+                } catch {
+                    confirm = null;
+                }
+                const unchanged = confirm !== null
+                    && confirm.state === progress.state
+                    && (Number.isFinite(confirm.pctComplete) ? confirm.pctComplete : 0) === progress.pctComplete;
+                if (unchanged) {
+                    console.warn(formatLog('provider_job_stuck', { state: video.state, stuckTimeoutMs }));
+                    await terminateStreamJob(this.state, this.env, tracked, 'PROVIDER_FAILED', 'provider_job_stuck', { reason: 'stuck' });
+                    return;
+                }
+                if (confirm) {
+                    const moved = trackStreamProgress(tracked, {
+                        state: confirm.state,
+                        pctComplete: Number.isFinite(confirm.pctComplete) ? confirm.pctComplete : 0,
+                    }, Date.now());
+                    if (moved !== tracked) await this.state.storage.put(JOB_KEY, moved);
+                }
+                await scheduleReconcile(this.state, Date.now() + STREAM_PROCESSING_POLL_MS);
+                return;
+            }
+        } else if (tracked !== record) {
+            await this.state.storage.put(JOB_KEY, tracked);
+        }
+        if (video.state === 'pendingupload' && record.leaseExpiresAtMs !== undefined && record.leaseExpiresAtMs <= now) {
+            // No heartbeat renewed the lease and nothing arrived: release the reservation now.
+            await terminateStreamJob(this.state, this.env, record, 'UPLOAD_EXPIRED', 'lease_expired');
+            return;
+        }
+        await scheduleReconcile(this.state, Math.min(nextPollAtMs, createdAtMs + STREAM_TUS_URL_LIFETIME_MS));
+    }
+
     private async heartbeatUploadLease(request: Request): Promise<Response> {
         const input = await parseUploadHeartbeatRequest(request, this.env);
         await verifyControlSignature(request, input.envelope);
@@ -1716,6 +1959,10 @@ export class LivepeerControl {
             lease = await heartbeatAdmissionLease(this.env, record);
         } catch (error) {
             if (safeErrorCode(error) === 'admission_denied') {
+                if (jobProviderKind(record) === 'stream') {
+                    await terminateStreamJob(this.state, this.env, record, 'UPLOAD_EXPIRED', 'lease_expired');
+                    throw error;
+                }
                 const expired = transitionJob(record, 'UPLOAD_EXPIRED');
                 await this.state.storage.put(JOB_KEY, expired);
                 logJobStateTransition(record.state, expired.state);
@@ -1814,6 +2061,10 @@ export class LivepeerControl {
         await scheduleAlarmNoLaterThan(this.state, Number(input.envelope.expires_at_ms));
 
         const authorization = await readPlaybackAuthorization(this.env, input);
+        // The V1 session-grant path is Studio-only: a Stream publication never gets a /v1 token.
+        if (mediaProfileFamily(authorization.profileConfigSha256) === 'stream' || jobProviderKind(job) === 'stream') {
+            throw new Error('playback_denied');
+        }
         const nowMs = Date.now();
         const remainingSeconds = Math.floor((authorization.grantExpiresAtMs - nowMs) / 1000);
         if (remainingSeconds < 1) throw new Error('playback_denied');
@@ -1871,7 +2122,11 @@ export class LivepeerControl {
         const existing = await this.state.storage.get<JobRecord>(JOB_KEY);
         const kind = mediaProviderKind(request.headers.get(MEDIA_PROVIDER_HEADER))
             ?? (existing ? jobProviderKind(existing) : 'studio');
-        const event = await mediaProvider(this.env, { provider: kind }).parseWebhook(rawBody);
+        const signedTime = request.headers.get(MEDIA_WEBHOOK_TIME_HEADER);
+        const event = await mediaProvider(this.env, { provider: kind }).parseWebhook(
+            rawBody,
+            signedTime && /^[1-9][0-9]{0,15}$/.test(signedTime) ? { timestampMs: Number(signedTime) } : undefined,
+        );
         return this.handleProviderEvent(event, existing);
     }
 
@@ -1885,9 +2140,15 @@ export class LivepeerControl {
         if (!existing || event.assetId !== existing.assetId || event.provider !== jobProviderKind(existing)) {
             return json({ accepted: true, ignored: true }, 202);
         }
+        const legacyExpired = await expireLegacyProfileJob(this.state, this.env, existing);
+        if (legacyExpired) return legacyExpired;
         if (publicBetaDeadlineExpired(existing)
             && !['UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'CANCELLED', 'ONCHAIN_PUBLISHED']
                 .includes(existing.state)) {
+            if (jobProviderKind(existing) === 'stream') {
+                await terminateStreamJob(this.state, this.env, existing, 'UPLOAD_EXPIRED', 'job_expired');
+                return json({ accepted: true, expired: true }, 202);
+            }
             const expired = transitionJob(existing, 'UPLOAD_EXPIRED');
             await this.state.storage.put(JOB_KEY, expired);
             await scheduleTerminalArchive(this.state, this.env, expired);
@@ -1918,6 +2179,11 @@ export class LivepeerControl {
                 'FINALIZE_RETRY',
                 'PROVIDER_FAILED',
             ].includes(existing.state)) {
+                if (jobProviderKind(existing) === 'stream') {
+                    // The signed error webhook is terminal even while GET still reports inprogress.
+                    await terminateStreamJob(this.state, this.env, existing, 'PROVIDER_FAILED', event.failureCode ?? 'ERR_UNKNOWN');
+                    return json({ accepted: true, provider_failed: true });
+                }
                 const failed = transitionJob(existing, 'PROVIDER_FAILED');
                 await this.state.storage.put(JOB_KEY, failed);
                 logJobStateTransition(existing.state, failed.state, existing);
@@ -1925,16 +2191,28 @@ export class LivepeerControl {
                 await updateAdmission(this.env, failed, 'PROVIDER_FAILED');
                 return json({ accepted: true, provider_failed: true });
             }
+            const tracked = trackStreamProgress(existing, event.streamProgress, Date.now());
             if (['UPLOAD_READY', 'UPLOADING'].includes(existing.state)
                 && isProcessingEvent(event)) {
-                const processing = transitionJob(existing, 'PROCESSING');
+                const processing = transitionJob(tracked, 'PROCESSING');
                 await this.state.storage.put(JOB_KEY, processing);
                 logJobStateTransition(existing.state, processing.state, existing);
                 return json({ accepted: true, processing: true });
             }
+            if (tracked !== existing) await this.state.storage.put(JOB_KEY, tracked);
             return json({ accepted: true, ignored: true }, 202);
         }
+        if (isLegacyProfileJobOnMarketV2(this.env, existing) && existing.publication
+            && ['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY'].includes(existing.state)) {
+            // Settled from final chain state only: no provider re-verification, no finalization.
+            return settleLegacyProfileJob(this.state, this.env, existing);
+        }
 
+        if (jobProviderKind(existing) === 'stream' && existing.publication
+            && ['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY'].includes(existing.state)) {
+            // The byte proof is stored and the upload URL is gone: never re-verify; the alarm finalizes.
+            return json({ accepted: true, duplicate: true, processing: true }, 202);
+        }
         const dedupKey = `webhook:${event.digest}`;
         const seen = await this.state.storage.transaction(async (transaction) => {
             const duplicate = await transaction.get(dedupKey);
@@ -1972,7 +2250,8 @@ export class LivepeerControl {
                 await this.state.storage.put(JOB_KEY, record);
                 await persistUploadVerificationResult(this.state);
                 logJobStateTransition(existing.state, record.state, existing);
-                await updateAdmission(this.env, record, 'READY_VERIFIED');
+                await updateAdmission(this.env, record, 'READY_VERIFIED',
+                    verified.durationSeconds !== undefined ? { durationSeconds: verified.durationSeconds } : undefined);
                 await this.state.storage.put(dedupKey, {
                     state: 'VERIFIED',
                     event: event.providerEvent,
@@ -1982,7 +2261,15 @@ export class LivepeerControl {
                 });
             } catch (error) {
                 await this.state.storage.delete(dedupKey);
-                await persistUploadVerificationResult(this.state, safeErrorCode(error));
+                const code = safeErrorCode(error);
+                await persistUploadVerificationResult(this.state, code);
+                if (jobProviderKind(record) === 'stream'
+                    && (code === 'provider_tus_state_invalid' || code === 'provider_tus_url_expired')) {
+                    // Option A failed (overflow, short or foreign upload) or the URL died: never finalize.
+                    await terminateStreamJob(this.state, this.env, record,
+                        code === 'provider_tus_url_expired' ? 'UPLOAD_EXPIRED' : 'PROVIDER_FAILED', code);
+                    return json({ accepted: true, provider_failed: code === 'provider_tus_state_invalid', code }, 202);
+                }
                 throw error;
             }
         } else {
@@ -2002,7 +2289,7 @@ export class LivepeerControl {
     }
 
     private async finalizePublication(request: Request): Promise<Response> {
-        const input = await parseFinalizeInput(await readJsonObject(request));
+        const input = await parseFinalizeInput(await readJsonObject(request), this.env);
         return processFinalizeOutbox(this.state, this.env, input);
     }
 
@@ -2099,6 +2386,204 @@ export class LivepeerControl {
             throw new Error('provider_delete_ambiguous');
         }
     }
+}
+
+/** Records a Stream state/pctComplete observation; returns the same object when nothing changed. */
+function trackStreamProgress(
+    job: JobRecord,
+    progress: { state: string; pctComplete: number } | undefined,
+    now: number,
+): JobRecord {
+    if (jobProviderKind(job) !== 'stream' || !progress) return job;
+    const previous = job.streamProgress;
+    if (previous && previous.state === progress.state && previous.pctComplete === progress.pctComplete) return job;
+    return { ...job, streamProgress: { state: progress.state, pctComplete: progress.pctComplete, changedAtMs: now } };
+}
+
+/**
+ * Ends a Stream job (failure, expiry or cancellation) and deletes its UID exactly once, so the
+ * reservation Stream booked at creation is released; gated by the provider-mutation flag.
+ */
+async function terminateStreamJob(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+    toState: 'PROVIDER_FAILED' | 'UPLOAD_EXPIRED' | 'CANCELLED',
+    code: string,
+    extra?: { reason: 'stuck' },
+): Promise<JobRecord> {
+    const current = await state.storage.get<JobRecord>(JOB_KEY) ?? job;
+    let record = current;
+    if (!['PROVIDER_FAILED', 'UPLOAD_EXPIRED', 'CANCELLED'].includes(current.state)) {
+        record = transitionJob(current, toState);
+        await state.storage.put(JOB_KEY, record);
+        logJobStateTransition(current.state, record.state, current);
+    }
+    console.warn(formatLog(toState === 'PROVIDER_FAILED' ? 'stream_upload_failed' : 'stream_upload_ended', {
+        toState: record.state,
+        code: /^[A-Za-z0-9_]{1,64}$/.test(code) ? code : 'unknown',
+    }));
+    record = await deleteStreamUpload(state, env, record);
+    await scheduleTerminalArchive(state, env, record);
+    await updateAdmission(env, record, record.state as 'PROVIDER_FAILED' | 'UPLOAD_EXPIRED' | 'CANCELLED', extra);
+    return record;
+}
+
+const STREAM_SIGNAL_KEY = 'admission:stream-signal:v1';
+type StreamSignalRecord = { lastWebhookAtMs?: number; storageMinutesUsed?: number; storageObservedAtMs?: number };
+
+/** Best-effort observability signal into the admission object (never blocks the caller). */
+async function signalStreamAdmission(
+    env: Env,
+    signal: { lastWebhookAtMs?: number; storageMinutesUsed?: number },
+): Promise<void> {
+    if (!env.LIVEPEER_CONTROL || !env.NEAR_NETWORK || !env.MARKET_CONTRACT_ID) return;
+    try {
+        const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+            admissionObjectName(env.NEAR_NETWORK, env.MARKET_CONTRACT_ID),
+        ));
+        await object.fetch(new Request('https://object/internal/admission/stream-signal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(signal),
+        }));
+    } catch {
+        // Health freshness only; the webhook and cron outcomes do not depend on it.
+    }
+}
+
+async function recordStreamSignal(state: DurableObjectState, input: JsonObject): Promise<Response> {
+    const keys = ['lastWebhookAtMs', 'storageMinutesUsed'].filter((key) => input[key] !== undefined);
+    requireExactKeys(input, keys, 'invalid_outbox');
+    if (keys.length === 0
+        || (input.lastWebhookAtMs !== undefined && !Number.isSafeInteger(input.lastWebhookAtMs))
+        || (input.storageMinutesUsed !== undefined
+            && (typeof input.storageMinutesUsed !== 'number' || !Number.isFinite(input.storageMinutesUsed)
+                || input.storageMinutesUsed < 0))) {
+        throw new Error('invalid_outbox');
+    }
+    await state.storage.transaction(async (transaction) => {
+        const previous = await transaction.get<StreamSignalRecord>(STREAM_SIGNAL_KEY);
+        if (!previous) await assertDurableObjectRecordCapacity(transaction, [STREAM_SIGNAL_KEY], 'admission');
+        await transaction.put(STREAM_SIGNAL_KEY, {
+            ...previous,
+            ...(input.lastWebhookAtMs !== undefined ? { lastWebhookAtMs: input.lastWebhookAtMs as number } : {}),
+            ...(input.storageMinutesUsed !== undefined
+                ? { storageMinutesUsed: input.storageMinutesUsed as number, storageObservedAtMs: Date.now() } : {}),
+        } satisfies StreamSignalRecord);
+    });
+    return json({ accepted: true });
+}
+
+/** The public Stream block: only these six numbers, from the admission object (no quotas beyond them). */
+async function streamHealthBlock(env: Env): Promise<StreamHealthBlock> {
+    const configured: StreamHealthBlock = {
+        openReservedSeconds: null,
+        reservationBudgetSeconds: positiveIntegerVar(env.STREAM_RESERVATION_SECONDS_BUDGET),
+        storageMinutesUsed: null,
+        storageMinutesCapacity: positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY),
+        lastWebhookAtMs: null,
+        stuckProcessingJobs: null,
+        lastStuckAtMs: null,
+    };
+    if (!streamEnabled(env) || !env.LIVEPEER_CONTROL || !env.NEAR_NETWORK || !env.MARKET_CONTRACT_ID) return configured;
+    try {
+        const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+            admissionObjectName(env.NEAR_NETWORK, env.MARKET_CONTRACT_ID),
+        ));
+        const response = await object.fetch(new Request('https://object/internal/admission/stream-status'));
+        if (!response.ok) return configured;
+        const value = await response.json() as Record<string, unknown>;
+        const number = (key: keyof StreamHealthBlock) => typeof value[key] === 'number' && Number.isFinite(value[key])
+            ? value[key] as number : null;
+        return {
+            openReservedSeconds: number('openReservedSeconds'),
+            reservationBudgetSeconds: configured.reservationBudgetSeconds,
+            storageMinutesUsed: number('storageMinutesUsed'),
+            storageMinutesCapacity: configured.storageMinutesCapacity,
+            lastWebhookAtMs: number('lastWebhookAtMs'),
+            stuckProcessingJobs: number('stuckProcessingJobs'),
+            lastStuckAtMs: number('lastStuckAtMs'),
+        };
+    } catch {
+        return configured;
+    }
+}
+
+type StreamHealthBlock = {
+    openReservedSeconds: number | null;
+    reservationBudgetSeconds: number | null;
+    storageMinutesUsed: number | null;
+    storageMinutesCapacity: number | null;
+    lastWebhookAtMs: number | null;
+    stuckProcessingJobs: number | null;
+    lastStuckAtMs: number | null;
+};
+
+async function readStreamAdmissionStatus(state: DurableObjectState, env: Env): Promise<Response> {
+    const [record, signal] = await Promise.all([
+        state.storage.get<AdmissionRecord>(ADMISSION_KEY),
+        state.storage.get<StreamSignalRecord>(STREAM_SIGNAL_KEY),
+    ]);
+    const now = Date.now();
+    const intentObservedAtMs = record?.stream?.storageObservedAtMs ?? -1;
+    const signalObservedAtMs = signal?.storageObservedAtMs ?? -1;
+    const storageMinutesUsed = signalObservedAtMs >= intentObservedAtMs
+        ? signal?.storageMinutesUsed ?? record?.stream?.storageMinutesUsed
+        : record?.stream?.storageMinutesUsed ?? signal?.storageMinutesUsed;
+    return json({
+        openReservedSeconds: Object.values(liveStreamReservations(record?.stream, now))
+            .reduce((sum, entry) => sum + entry.seconds, 0),
+        reservationBudgetSeconds: positiveIntegerVar(env.STREAM_RESERVATION_SECONDS_BUDGET),
+        storageMinutesUsed: storageMinutesUsed ?? null,
+        storageMinutesCapacity: positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY),
+        lastWebhookAtMs: signal?.lastWebhookAtMs ?? null,
+        stuckProcessingJobs: (record?.stream?.stuckAtMs ?? []).filter((at) => at > now - STREAM_STUCK_WINDOW_MS).length,
+        lastStuckAtMs: record?.stream?.lastStuckAtMs ?? null,
+    } satisfies StreamHealthBlock);
+}
+
+/** Cron: log the prepaid storage headroom every run and keep the health block fresh. */
+async function logStreamStorageHeadroom(env: Env): Promise<void> {
+    if (!validStreamConfig(env)) return;
+    const usage = await streamProvider(env).readStorageUsage();
+    const capacity = positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY)!;
+    const cap = streamMaxDurationSeconds(env)!;
+    console.info(formatLog('stream_storage_headroom', {
+        totalStorageMinutes: usage.totalStorageMinutes,
+        capacityMinutes: capacity,
+        headroomMinutes: capacity - usage.totalStorageMinutes,
+        uploadsThatFit: Math.max(0, Math.floor((capacity - usage.totalStorageMinutes) / (cap / 60))),
+    }));
+    await signalStreamAdmission(env, { storageMinutesUsed: usage.totalStorageMinutes });
+}
+
+/** Reads Stream's prepaid storage for a new lease; the admission object makes the decision. */
+async function readStreamStorage(
+    env: Env,
+    job: JobRecord,
+): Promise<{ storageMinutesUsed: number; storageMinutesLimit: number | null }> {
+    const usage = await (mediaProvider(env, job) as CloudflareStreamProvider).readStorageUsage();
+    return { storageMinutesUsed: usage.totalStorageMinutes, storageMinutesLimit: usage.totalStorageMinutesLimit };
+}
+
+async function deleteStreamUpload(state: DurableObjectState, env: Env, job: JobRecord): Promise<JobRecord> {
+    if (jobProviderKind(job) !== 'stream' || !job.assetId || job.providerDelete
+        || env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED !== 'true') return job;
+    let outcome: NonNullable<JobRecord['providerDelete']>['outcome'];
+    try {
+        outcome = await mediaProvider(env, job).deleteAsset(job.assetId) === 'deleted' ? 'DELETED' : 'MISSING';
+    } catch {
+        outcome = 'AMBIGUOUS';
+    }
+    const record: JobRecord = {
+        ...job,
+        providerDelete: { assetIdSha256: await sha256Hex(job.assetId), outcome, attemptedAtMs: Date.now() },
+    };
+    await state.storage.put(JOB_KEY, record);
+    console.info(formatLog('stream_upload_deleted', { outcome }));
+    if (outcome === 'AMBIGUOUS') await closeAdmissionAfterAmbiguousDelete(env, record);
+    return record;
 }
 
 async function purgeExpiredWebhookDedup(state: DurableObjectState): Promise<void> {
@@ -2497,11 +2982,10 @@ async function advanceFinalization(
     job: JobRecord,
 ): Promise<Response> {
     if (publicBetaDeadlineExpired(job)) {
-        const expired = transitionJob(job, 'UPLOAD_EXPIRED');
-        await state.storage.put(JOB_KEY, expired);
-        await scheduleTerminalArchive(state, env, expired);
-        await updateAdmission(env, expired, 'UPLOAD_EXPIRED');
-        return json({ accepted: true, expired: true }, 202);
+        return expireJob(state, env, job);
+    }
+    if (isLegacyProfileJobOnMarketV2(env, job)) {
+        return settleLegacyProfileJob(state, env, job);
     }
     if (!operatorJobAllowed(env, job.jobId, job.creator) || job.generation !== 1) {
         return json({ accepted: true, ignored: true }, 202);
@@ -2541,8 +3025,84 @@ async function advanceFinalization(
     return response;
 }
 
-async function requestAdmission(env: Env, job: JobRecord): Promise<AdmissionLease> {
+async function expireJob(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+): Promise<Response> {
+    if (jobProviderKind(job) === 'stream') {
+        await terminateStreamJob(state, env, job, 'UPLOAD_EXPIRED', 'job_expired');
+        return json({ accepted: true, expired: true }, 202);
+    }
+    const expired = transitionJob(job, 'UPLOAD_EXPIRED');
+    await state.storage.put(JOB_KEY, expired);
+    await scheduleTerminalArchive(state, env, expired);
+    await updateAdmission(env, expired, 'UPLOAD_EXPIRED');
+    return json({ accepted: true, expired: true }, 202);
+}
+
+// A job stored with the V1 profile id before the MC rename can never finalize on Market V2
+// (assert_profile requires the neutral id and job.profile_id == submission.profile_id).
+function isLegacyProfileJobOnMarketV2(env: Env, job: JobRecord): boolean {
+    return isMarketV2(env) && job.profileId === LEGACY_PROFILE_ID;
+}
+
+// States from which UPLOAD_EXPIRED is a legal transition before a publication exists.
+const LEGACY_PROFILE_EXPIRABLE_STATES = new Set<JobState>([
+    'AUTHORIZED', 'LEASED', 'PROVIDER_CREATE_PENDING', 'UPLOAD_READY', 'UPLOADING', 'PROCESSING',
+]);
+
+async function expireLegacyProfileJob(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+): Promise<Response | null> {
+    if (!isLegacyProfileJobOnMarketV2(env, job) || !LEGACY_PROFILE_EXPIRABLE_STATES.has(job.state)) return null;
+    console.warn(formatLog('legacy_profile_job_expired', { fromState: job.state, generation: job.generation }));
+    logJobStateTransition(job.state, 'UPLOAD_EXPIRED', job);
+    return expireJob(state, env, job);
+}
+
+// Never forwards a finalization: a publication already final on chain is adopted, anything else expires.
+async function settleLegacyProfileJob(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+): Promise<Response> {
+    let published = false;
+    if (job.publication) {
+        try {
+            published = await finalPublicationMatches(env, job.publication);
+        } catch (error) {
+            if (safeErrorCode(error) !== 'near_finalize_mismatch') {
+                // NEAR is unavailable: keep the job and read again later; nothing is signed.
+                await scheduleReconcile(state, Date.now() + RECONCILE_BACKOFF_MS[0]);
+                return json({ accepted: true, pending: true }, 202);
+            }
+        }
+    }
+    if (!published) {
+        console.warn(formatLog('legacy_profile_job_expired', { fromState: job.state, generation: job.generation }));
+        logJobStateTransition(job.state, 'UPLOAD_EXPIRED', job);
+        return expireJob(state, env, job);
+    }
+    const { finalizeRetry: _retry, ...withoutRetry } = job;
+    const record = transitionJob(withoutRetry, 'ONCHAIN_PUBLISHED');
+    await state.storage.put(JOB_KEY, record);
+    logJobStateTransition(job.state, record.state, job);
+    await updateAdmission(env, record, 'ONCHAIN_PUBLISHED');
+    await ensureReconcileScheduled(state);
+    return json({ accepted: true, finalized: true });
+}
+
+async function requestAdmission(
+    env: Env,
+    job: JobRecord,
+    stream?: { storageMinutesUsed?: number; storageMinutesLimit?: number | null },
+): Promise<AdmissionLease> {
     if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
+    const reservedSeconds = jobProviderKind(job) === 'stream' ? streamMaxDurationSeconds(env) : null;
+    if (jobProviderKind(job) === 'stream' && reservedSeconds === null) throw new Error('runtime_not_configured');
     const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
         admissionObjectName(job.network, job.contractId),
     ));
@@ -2554,11 +3114,15 @@ async function requestAdmission(env: Env, job: JobRecord): Promise<AdmissionLeas
             generation: job.generation,
             creator: job.creator,
             expectedSourceBytes: job.expectedSourceBytes,
+            ...(reservedSeconds !== null ? { reservedSeconds } : {}),
+            ...(stream?.storageMinutesUsed !== undefined ? { storageMinutesUsed: stream.storageMinutesUsed } : {}),
+            ...(typeof stream?.storageMinutesLimit === 'number' ? { storageMinutesLimit: stream.storageMinutesLimit } : {}),
         }),
     }));
     if (!response.ok) {
         const result = await response.json() as { error?: unknown };
-        throw new Error(result.error === 'admission_denied' ? 'admission_denied' : 'admission_closed');
+        throw new Error(result.error === 'admission_denied' || result.error === 'provider_admission_closed'
+            ? result.error : 'admission_closed');
     }
     const result = await response.json() as Record<string, unknown>;
     if (typeof result.lease_id !== 'string'
@@ -2624,6 +3188,7 @@ async function updateAdmission(
     state: AdmissionJobState | 'UPLOAD_EXPIRED' | 'PROVIDER_FAILED'
         | 'ONCHAIN_PUBLISHED' | 'AUTO_CLOSED' | 'CANCELLED'
         | 'PROVIDER_UNAVAILABLE',
+    extra?: { durationSeconds?: number; reason?: 'stuck' },
 ): Promise<void> {
     if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
     const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
@@ -2631,7 +3196,14 @@ async function updateAdmission(
     ));
     const response = await object.fetch(new Request('https://object/internal/admission/mark', {
         method: 'POST',
-        body: JSON.stringify({ jobId: job.jobId, generation: job.generation, state }),
+        body: JSON.stringify({
+            jobId: job.jobId,
+            generation: job.generation,
+            state,
+            ...(extra?.durationSeconds !== undefined && Number.isFinite(extra.durationSeconds) && extra.durationSeconds >= 0
+                ? { durationSeconds: extra.durationSeconds } : {}),
+            ...(extra?.reason ? { reason: extra.reason } : {}),
+        }),
     }));
     if (!response.ok) throw new Error('admission_closed');
 }
@@ -2749,6 +3321,17 @@ async function reserveAdmission(
                 utcMonth: plan.monthly.utcMonth,
                 reservedBudgetUsdMicros: String(reservedBudgetUsdMicros),
             },
+            ...(candidate.reservedSeconds !== undefined ? {
+                stream: withStreamReservations(plan.record.stream, {
+                    ...liveStreamReservations(plan.record.stream, now),
+                    [plan.reservationKey]: {
+                        seconds: candidate.reservedSeconds,
+                        createdAtMs: now,
+                        expiresAtMs: now + STREAM_TUS_URL_LIFETIME_MS,
+                    },
+                }, candidate.storageMinutesUsed !== undefined
+                    ? { storageMinutesUsed: candidate.storageMinutesUsed, storageObservedAtMs: now } : {}),
+            } : {}),
         };
         await transaction.put(ADMISSION_KEY, next);
         return { record: next, created: true, budgetExceeded: false };
@@ -2805,7 +3388,15 @@ async function resumeAdmission(state: DurableObjectState, env: Env, input: JsonO
 }
 
 function parseAdmissionCandidate(input: JsonObject, code: string): AdmissionCandidate {
-    requireExactKeys(input, ['jobId', 'generation', 'creator', 'expectedSourceBytes'], code);
+    const optional = ['reservedSeconds', 'storageMinutesUsed', 'storageMinutesLimit'].filter((key) => input[key] !== undefined);
+    requireExactKeys(input, ['jobId', 'generation', 'creator', 'expectedSourceBytes', ...optional], code);
+    const minutes = (value: unknown) => value === undefined
+        || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+    if ((input.reservedSeconds !== undefined
+        && (!Number.isSafeInteger(input.reservedSeconds) || (input.reservedSeconds as number) < 1))
+        || !minutes(input.storageMinutesUsed) || !minutes(input.storageMinutesLimit)) {
+        throw new Error(code);
+    }
     if (typeof input.jobId !== 'string'
         || !JOB_ID_PATTERN.test(input.jobId)
         || !Number.isSafeInteger(input.generation)
@@ -2821,10 +3412,33 @@ function parseAdmissionCandidate(input: JsonObject, code: string): AdmissionCand
         generation: input.generation as number,
         creator: input.creator,
         expectedSourceBytes: input.expectedSourceBytes,
+        ...(input.reservedSeconds !== undefined ? { reservedSeconds: input.reservedSeconds as number } : {}),
+        ...(input.storageMinutesUsed !== undefined ? { storageMinutesUsed: input.storageMinutesUsed as number } : {}),
+        ...(input.storageMinutesLimit !== undefined ? { storageMinutesLimit: input.storageMinutesLimit as number } : {}),
     };
 }
 
-type AdmissionDenialReason = 'active_upload' | 'daily_limit' | 'capacity' | 'source_too_large';
+/** Stream reservations Stream may still hold: dropped at release or 24 h after creation at the latest. */
+function liveStreamReservations(stream: StreamAdmissionState | undefined, now: number): Record<string, StreamReservation> {
+    return Object.fromEntries(Object.entries(stream?.reservations ?? {}).filter(([, entry]) => entry.expiresAtMs > now));
+}
+
+function withStreamReservations(
+    stream: StreamAdmissionState | undefined,
+    reservations: Record<string, StreamReservation>,
+    patch: Partial<StreamAdmissionState> = {},
+): StreamAdmissionState {
+    return {
+        verifiedStorageSeconds: stream?.verifiedStorageSeconds ?? 0,
+        ...stream,
+        ...patch,
+        reservations,
+        openReservedSeconds: Object.values(reservations).reduce((sum, entry) => sum + entry.seconds, 0),
+    };
+}
+
+type AdmissionDenialReason = 'active_upload' | 'daily_limit' | 'capacity' | 'source_too_large'
+    | 'reservation_budget';
 
 // Still reported as `admission_denied`; the reason and retry time are shown only to the
 // creator asking for their own preflight. Capacity carries no time to avoid exposing others.
@@ -2899,6 +3513,7 @@ function planAdmission(
             reservations: record.reservations,
             daily: record.daily,
             monthly: record.monthly,
+            ...(record.stream ? { stream: record.stream } : {}),
         };
     }
     const daily = record.daily.utcDay === utcDay
@@ -2917,6 +3532,37 @@ function planAdmission(
     }
     if (active.length >= (isPublicTestnetEnvironment(env) ? 10 : ADMISSION_GLOBAL_CONCURRENCY)) {
         throw new AdmissionDeniedError('capacity');
+    }
+    if (candidate.reservedSeconds !== undefined) {
+        // Open Stream reservations plus this upload's cap must fit the reservation budget.
+        const budget = positiveIntegerVar(env.STREAM_RESERVATION_SECONDS_BUDGET);
+        const open = Object.entries(liveStreamReservations(record.stream, now))
+            .filter(([key]) => key !== reservationKey)
+            .reduce((sum, [, entry]) => sum + entry.seconds, 0);
+        if (budget === null || open + candidate.reservedSeconds > budget) {
+            console.warn(formatLog('stream_reservation_denied', {
+                openReservedSeconds: open, reservedSeconds: candidate.reservedSeconds, budgetSeconds: budget,
+            }));
+            throw new AdmissionDeniedError('reservation_budget');
+        }
+        // Storage headroom, serialized with the budget: Stream's reported usage plus our open
+        // reservations plus this cap must fit min(configured capacity, Stream's reported limit).
+        // Deliberately conservative: if M0-P3 (U9/U25) shows totalStorageMinutes already includes
+        // the reservations Stream books at URL creation, the open / 60 term is dropped.
+        if (candidate.storageMinutesUsed !== undefined) {
+            const configured = positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY);
+            const capacity = Math.min(configured ?? 0, candidate.storageMinutesLimit ?? Number.POSITIVE_INFINITY);
+            if (candidate.storageMinutesUsed + open / 60 + candidate.reservedSeconds / 60 > capacity) {
+                console.warn(formatLog('provider_admission_closed', {
+                    reason: 'stream_storage_headroom',
+                    totalStorageMinutes: candidate.storageMinutesUsed,
+                    openReservedMinutes: open / 60,
+                    reservedMinutes: candidate.reservedSeconds / 60,
+                    capacityMinutes: capacity,
+                }));
+                throw new Error('provider_admission_closed');
+            }
+        }
     }
     if (monthlyBudgetUsdMicros !== null
         && BigInt(monthly.reservedBudgetUsdMicros) + jobReservationUsdMicros > monthlyBudgetUsdMicros) {
@@ -2965,7 +3611,13 @@ function leaseDeadline(reservation: AdmissionReservation): number {
 }
 
 async function markAdmission(state: DurableObjectState, input: JsonObject): Promise<Response> {
-    requireExactKeys(input, ['jobId', 'generation', 'state'], 'invalid_outbox');
+    const optional = ['durationSeconds', 'reason'].filter((key) => input[key] !== undefined);
+    requireExactKeys(input, ['jobId', 'generation', 'state', ...optional], 'invalid_outbox');
+    if ((input.durationSeconds !== undefined
+        && (typeof input.durationSeconds !== 'number' || !Number.isFinite(input.durationSeconds) || input.durationSeconds < 0))
+        || (input.reason !== undefined && input.reason !== 'stuck')) {
+        throw new Error('invalid_outbox');
+    }
     if (typeof input.jobId !== 'string'
         || !JOB_ID_PATTERN.test(input.jobId)
         || !Number.isSafeInteger(input.generation)
@@ -2975,8 +3627,10 @@ async function markAdmission(state: DurableObjectState, input: JsonObject): Prom
     }
     const reservationKey = `${input.jobId}:${input.generation}`;
     await state.storage.transaction(async (transaction) => {
-        const record = await transaction.get<AdmissionRecord>(ADMISSION_KEY);
-        if (!record) throw new Error('admission_closed');
+        const stored = await transaction.get<AdmissionRecord>(ADMISSION_KEY);
+        if (!stored) throw new Error('admission_closed');
+        const record = releaseStreamReservation(stored, reservationKey, String(input.state), input);
+        if (record !== stored) await transaction.put(ADMISSION_KEY, record);
         if (input.state === 'AUTO_CLOSED') {
             if (record.status === 'AUTO_CLOSED') return;
             await transaction.put(ADMISSION_KEY, {
@@ -3046,6 +3700,38 @@ async function markAdmission(state: DurableObjectState, input: JsonObject): Prom
     });
     await maintainAdmissionLifecycle(state);
     return json({ accepted: true });
+}
+
+// A Stream reservation is released at a terminal state or READY_VERIFIED (Stream then counts the
+// real duration instead of the cap). READY_VERIFIED adds the duration once (only while the
+// reservation is still held) as an informational counter; it never closes admission.
+function releaseStreamReservation(
+    record: AdmissionRecord,
+    reservationKey: string,
+    nextState: string,
+    input: JsonObject,
+): AdmissionRecord {
+    const stuck = input.reason === 'stuck';
+    const held = record.stream?.reservations[reservationKey];
+    if (!record.stream || (!held && !stuck)
+        || !['READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED', 'CANCELLED'].includes(nextState)) {
+        return record;
+    }
+    const now = Date.now();
+    const reservations = liveStreamReservations(record.stream, now);
+    delete reservations[reservationKey];
+    const duration = nextState === 'READY_VERIFIED' && held && typeof input.durationSeconds === 'number'
+        ? Math.ceil(input.durationSeconds) : 0;
+    const stuckAtMs = [...(record.stream.stuckAtMs ?? []), ...(stuck ? [now] : [])]
+        .filter((at) => at > now - STREAM_STUCK_WINDOW_MS)
+        .slice(-STREAM_STUCK_HISTORY);
+    // verifiedStorageSeconds is informational only: the live storage-usage read at intent decides.
+    const stream = withStreamReservations(record.stream, reservations, {
+        verifiedStorageSeconds: record.stream.verifiedStorageSeconds + duration,
+        stuckAtMs,
+        ...(stuck ? { lastStuckAtMs: now } : {}),
+    });
+    return { ...record, stream };
 }
 
 async function heartbeatAdmission(state: DurableObjectState, input: JsonObject): Promise<Response> {
@@ -3166,6 +3852,14 @@ async function reopenAdmission(state: DurableObjectState, input: JsonObject): Pr
             reservations,
             daily: record.daily,
             monthly: record.monthly,
+            // An operator reopen restarts the informational counter from Stream's last reported usage.
+            ...(record.stream ? {
+                stream: {
+                    ...record.stream,
+                    verifiedStorageSeconds: record.stream.storageMinutesUsed !== undefined
+                        ? Math.round(record.stream.storageMinutesUsed * 60) : 0,
+                },
+            } : {}),
         } satisfies AdmissionRecord);
         await transaction.put(auditKey, {
             schema: 'youtick.livepeer-admission-reopen.v1',
@@ -3356,7 +4050,7 @@ function publicUploadJobDeadline(job: OnChainJob, requireUnexpired = true): numb
         || typeof job.created_at_ms !== 'number' || !Number.isSafeInteger(job.created_at_ms) || job.created_at_ms <= 0
         || typeof job.expected_source_bytes !== 'string' || !/^[1-9][0-9]*$/.test(job.expected_source_bytes)
         || BigInt(job.expected_source_bytes) > 5_000_000_000n
-        || job.profile_id !== 'paid-media-livepeer-v1' || !supportedMediaProfile(job.profile_config_sha256)) {
+        || job.profile_id !== 'paid-media-livepeer-v1' || !livepeerSupportsProfile(job.profile_config_sha256)) {
         throw new Error('on_chain_job_mismatch');
     }
     const deadline = job.created_at_ms + PUBLIC_TESTNET_BETA_JOB_TTL_MS;
@@ -3606,7 +4300,7 @@ async function persistDriftReconcile(
         && operatorJobAllowed(env, job.jobId, job.creator)
         && job.generation === 1
     ) {
-        await enqueueSalesSuspension(state, job, code);
+        await enqueueSalesSuspension(state, env, job, code);
         salesSuspensionQueuedAtMs = now;
     }
     if (confirmed) await tryProcessSalesSuspension(state, env, job);
@@ -3662,13 +4356,15 @@ async function persistHealthyReconcile(state: DurableObjectState): Promise<void>
 
 async function enqueueSalesSuspension(
     state: DurableObjectState,
+    env: Env,
     job: JobRecord,
     driftCode: string,
 ): Promise<void> {
     const idempotencyKey = `${job.jobId}:suspend-sales`;
     const key = `outbox:${idempotencyKey}`;
+    const method = suspendMethod(env);
     const payloadSha256 = await sha256Hex(canonicalJson({
-        method: 'suspend_livepeer_sales',
+        method,
         publication_id: job.jobId,
         drift_code: driftCode,
     }));
@@ -3684,7 +4380,7 @@ async function enqueueSalesSuspension(
             schema: 'youtick.livepeer-control-outbox.v1',
             state: 'PENDING',
             idempotencyKey,
-            method: 'suspend_livepeer_sales',
+            method,
             jobId: job.jobId,
             generation: job.generation,
             payloadSha256,
@@ -3782,6 +4478,9 @@ export async function forwardUploadPreflight(request: Request, env: Env): Promis
                 generation: input.generation,
                 creator: input.creator_id,
                 expectedSourceBytes: input.expected_source_bytes,
+                // Stream-only Market V2: the preflight also answers the reservation budget.
+                ...(!studioActive(env) && streamMaxDurationSeconds(env) !== null
+                    ? { reservedSeconds: streamMaxDurationSeconds(env) } : {}),
             }),
         })), corsOrigin);
     } catch (error) {
@@ -5382,17 +6081,31 @@ async function requireOperatorAuthorization(request: Request, env: Env): Promise
     }
 }
 
-export async function forwardLivepeerWebhook(request: Request, env: Env): Promise<Response> {
+export function forwardLivepeerWebhook(request: Request, env: Env): Promise<Response> {
+    return forwardProviderWebhook(request, env, 'studio');
+}
+
+/**
+ * One ingress pipeline per adapter route: the adapter authenticates and routes the raw body
+ * before any Queue send or job-object call; the job object re-parses the same bytes.
+ */
+export async function forwardProviderWebhook(
+    request: Request,
+    env: Env,
+    kind: MediaProviderKind,
+): Promise<Response> {
     const startedAtMs = Date.now();
     try {
-        if (!env.LIVEPEER_CONTROL || !validWebhookConfig(env)) {
+        if (!env.LIVEPEER_CONTROL
+            || !(kind === 'stream' ? validStreamWebhookConfig(env) : validWebhookConfig(env))) {
             throw new Error('runtime_not_configured');
         }
         const rawBody = new Uint8Array(await request.arrayBuffer());
         if (rawBody.byteLength > MAX_CONTROL_BODY_BYTES) throw new Error('control_body_too_large');
-        // This route is the Studio ingress; the adapter owns the signature header and scheme.
-        const provider = mediaProvider(env, { provider: 'studio' });
+        // Each route names its adapter; the adapter owns the signature header and scheme.
+        const provider = mediaProvider(env, { provider: kind });
         const event = await provider.verifyWebhook(rawBody, request.headers, Date.now());
+        if (kind === 'stream') await signalStreamAdmission(env, { lastWebhookAtMs: Date.now() });
         const route = event?.route;
         if (!route) return json({ accepted: true, ignored: true }, 202);
         if (env.LIVEPEER_WEBHOOK_QUEUE_ENABLED === 'true') {
@@ -5408,6 +6121,10 @@ export async function forwardLivepeerWebhook(request: Request, env: Env): Promis
                     generation: route.generation,
                     enqueued_at_ms: String(Date.now()),
                     raw_body_base64: bytesToBase64(rawBody),
+                    ...(kind === 'stream' ? {
+                        provider: 'stream' as const,
+                        ...(event ? { signed_time_ms: String(event.timestampMs) } : {}),
+                    } : {}),
                 } satisfies LivepeerWebhookQueueMessage, { contentType: 'json' });
             } catch {
                 throw new Error('webhook_queue_unavailable');
@@ -5427,12 +6144,17 @@ export async function forwardLivepeerWebhook(request: Request, env: Env): Promis
         )));
         return await object.fetch(new Request('https://object/internal/livepeer-webhook', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', [MEDIA_PROVIDER_HEADER]: provider.id },
+            headers: {
+                'Content-Type': 'application/json',
+                [MEDIA_PROVIDER_HEADER]: provider.id,
+                // Stream signs the time outside the body; the job object folds it into the digest.
+                ...(kind === 'stream' && event ? { [MEDIA_WEBHOOK_TIME_HEADER]: String(event.timestampMs) } : {}),
+            },
             body: rawBody,
         }));
     } catch (error) {
         const code = safeErrorCode(error);
-        console.error(formatLog('livepeer_webhook_failed', { code }));
+        console.error(formatLog(kind === 'stream' ? 'stream_webhook_rejected' : 'livepeer_webhook_failed', { code }));
         return json({ error: code }, errorStatus(code));
     }
 }
@@ -5447,7 +6169,13 @@ function parseLivepeerWebhookQueueMessage(value: unknown): LivepeerWebhookQueueM
         'generation',
         'enqueued_at_ms',
         'raw_body_base64',
+        ...['provider', 'signed_time_ms'].filter((key) => input[key] !== undefined),
     ], 'invalid_webhook');
+    if ((input.provider !== undefined && input.provider !== 'stream')
+        || (input.signed_time_ms !== undefined
+            && (typeof input.signed_time_ms !== 'string' || !/^[1-9][0-9]{0,15}$/.test(input.signed_time_ms)))) {
+        throw new Error('invalid_webhook');
+    }
     const maxEncodedBodyLength = Math.ceil(MAX_CONTROL_BODY_BYTES / 3) * 4;
     if (input.schema !== 'youtick.livepeer-webhook-queue.v1'
         || !['testnet', 'mainnet'].includes(String(input.network))
@@ -5585,7 +6313,7 @@ function publicBetaDeadlineExpired(record: JobRecord): boolean {
 async function parseUploadIntentRequest(request: Request, env: Env): Promise<UploadIntentRequest> {
     const value = await readJsonObject(request);
     requireExactKeys(value, ['body', 'envelope'], 'invalid_control_request');
-    const body = parseUploadBody(value.body);
+    const body = parseUploadBody(value.body, env);
     const envelope = parseControlEnvelope(value.envelope);
     const bodySha256 = await sha256Hex(canonicalJson(body));
 
@@ -5913,7 +6641,7 @@ function parsePlaybackTokenBody(value: unknown): PlaybackTokenBody {
     return body as PlaybackTokenBody;
 }
 
-function parseUploadBody(value: unknown): UploadIntentBody {
+function parseUploadBody(value: unknown, env: Env): UploadIntentBody {
     const body = requireObject(value, 'invalid_upload_intent');
     const keys = [
         'job_id',
@@ -5935,8 +6663,8 @@ function parseUploadBody(value: unknown): UploadIntentBody {
         || typeof body.source_fingerprint_sha256 !== 'string'
         || !SHA256_PATTERN.test(body.source_fingerprint_sha256)
         || !isLivepeerSourceType(body.source_type)
-        || body.profile_id !== 'paid-media-livepeer-v1'
-        || !supportedMediaProfile(body.profile_config_sha256)
+        || body.profile_id !== marketProfileId(env)
+        || !uploadProfileAccepted(env, body.profile_config_sha256)
         || (body.recovery !== undefined && !['reconcile', 'resume'].includes(String(body.recovery)))) {
         throw new Error('invalid_upload_intent');
     }
@@ -6241,6 +6969,25 @@ function studioProvider(env: Env): LivepeerProvider {
     });
 }
 
+function streamProvider(env: Env): CloudflareStreamProvider {
+    return new CloudflareStreamProvider({
+        accountId: env.STREAM_ACCOUNT_ID,
+        apiToken: env.STREAM_API_TOKEN,
+        customerCode: env.STREAM_CUSTOMER_CODE,
+        signingKeyId: env.STREAM_SIGNING_KEY_ID,
+        signingKey: env.STREAM_SIGNING_KEY_PEM,
+        webhookSecrets: [env.STREAM_WEBHOOK_SECRET, env.STREAM_WEBHOOK_SECRET_PREVIOUS],
+        webhookToleranceMs: WEBHOOK_TOLERANCE_MS,
+        maxDurationSeconds: streamMaxDurationSeconds(env) ?? undefined,
+        // A ready webhook may precede the ladder by a long transcode: never shorter than 60 minutes.
+        readyPendingWindowMs: Math.max(streamStuckTimeoutMs(env) ?? STREAM_DEFAULT_STUCK_TIMEOUT_MS, STREAM_MIN_READY_PENDING_MS),
+        verificationTokenTtlSeconds: PLAYBACK_MIN_TTL_SECONDS,
+        sha256: sha256Hex,
+        isValidJobId: (jobId) => JOB_ID_PATTERN.test(jobId),
+        readyVerificationEnabled: validStreamConfig(env),
+    });
+}
+
 // Adapter registry: registering a provider here is the only change the call sites need.
 // supportsProfile is static so request parsers can check a hash without building an adapter.
 const MEDIA_PROVIDER_REGISTRY: Record<MediaProviderKind, {
@@ -6248,6 +6995,7 @@ const MEDIA_PROVIDER_REGISTRY: Record<MediaProviderKind, {
     supportsProfile(profileConfigSha256: unknown): boolean;
 }> = {
     studio: { create: studioProvider, supportsProfile: livepeerSupportsProfile },
+    stream: { create: streamProvider, supportsProfile: streamSupportsProfile },
 };
 const DEFAULT_MEDIA_PROVIDER: MediaProviderKind = 'studio';
 
@@ -6272,6 +7020,12 @@ function mediaProvider(
 
 function jobProviderKind(job: Pick<JobRecord, 'provider'>): MediaProviderKind {
     return job.provider ?? 'studio';
+}
+
+// New intents: the Stream hash needs the flag; Studio hashes stay open unless V2 is Stream-only.
+function uploadProfileAccepted(env: Env, hash: unknown): boolean {
+    const family = mediaProfileFamily(hash);
+    return family === 'stream' ? streamEnabled(env) : family === 'studio' && studioActive(env);
 }
 
 function supportedMediaProfile(hash: unknown): hash is string {
@@ -6370,9 +7124,11 @@ function jobRecord(
     env: Env,
     absoluteDeadlineAtMs?: string,
 ): JobRecord {
-    if (typeof env.LIVEPEER_API_TOKEN_NAME !== 'string'
+    // The adapter is fixed at creation from the profile hash and never re-derived later.
+    const stream = mediaProfileFamily(input.body.profile_config_sha256) === 'stream';
+    if (!stream && (typeof env.LIVEPEER_API_TOKEN_NAME !== 'string'
         || env.LIVEPEER_API_TOKEN_NAME.length < 1
-        || env.LIVEPEER_API_TOKEN_NAME.length > 128) {
+        || env.LIVEPEER_API_TOKEN_NAME.length > 128)) {
         throw new Error('runtime_not_configured');
     }
     const createdAtMs = Date.now();
@@ -6391,7 +7147,7 @@ function jobRecord(
         profileConfigSha256: input.body.profile_config_sha256,
         createdAtMs,
         stateChangedAtMs: createdAtMs,
-        apiTokenName: env.LIVEPEER_API_TOKEN_NAME,
+        ...(stream ? { provider: 'stream' as const } : { apiTokenName: env.LIVEPEER_API_TOKEN_NAME }),
         ...(absoluteDeadlineAtMs === undefined
             ? {}
             : { absoluteDeadlineAtMs: Number(absoluteDeadlineAtMs) }),
@@ -6410,6 +7166,8 @@ async function issueStatelessPlaybackToken(request: Request, env: Env): Promise<
         await requireActivePublicTestnetBetaForPlayback(env);
         const certificateCacheHit = await verifyPlaybackV2Proofs(env, input);
         const authorization = await readStatelessPlaybackAuthorization(env, input);
+        // The /v2 device-certificate path is Studio-only: a Stream publication plays through /v3.
+        if (mediaProfileFamily(authorization.profileConfigSha256) === 'stream') throw new Error('playback_denied');
         const nowMs = Date.now();
         const certificateRemainingSeconds = Math.floor(
             ((input.certificate.version === '3' ? input.deviceExpiresAtMs! : Number(input.certificate.expires_at_ms)) - nowMs) / 1000,
@@ -6496,25 +7254,38 @@ async function issueTicketPlaybackToken(request: Request, env: Env): Promise<Res
         }
         // The publication read above carries the profile hash that selects the media adapter.
         const profileConfigSha256 = publicationProfileHash(publication.value);
-        const provider = await verifyStatelessProviderPolicy(env, decision.playbackId, profileConfigSha256);
+        // Same 30-second provider-policy cache as /v2 (Studio keys are shared with /v2; Stream keys are namespaced).
+        const providerCacheKey = await playbackCacheKey(
+            env,
+            'provider-policy',
+            mediaProfileFamily(profileConfigSha256) === 'stream' ? `stream:${decision.playbackId}` : decision.playbackId,
+        );
+        let provider = playbackCacheGet<{ previewVttUrl?: string }>(providerCacheKey);
+        if (!provider) {
+            provider = await verifyStatelessProviderPolicy(env, decision.playbackId, profileConfigSha256);
+            playbackCachePut(providerCacheKey, provider, Date.now() + PROVIDER_POLICY_CACHE_MS);
+        }
         const nowMs = Date.now();
         const deviceRemainingSeconds = Math.floor((decision.deviceExpiresAtMs - nowMs) / 1000);
         if (deviceRemainingSeconds < 1) throw new Error('playback_denied');
         const ttlSeconds = Math.min(PLAYBACK_V2_TTL_SECONDS, deviceRemainingSeconds);
         const issuedAtSeconds = Math.floor(nowMs / 1000);
-        const signed = await mediaProvider(env, profileConfigSha256)
-            .signPlayback(decision.playbackId, ttlSeconds, issuedAtSeconds);
+        const adapter = mediaProvider(env, profileConfigSha256);
+        const signed = await adapter.signPlayback(decision.playbackId, ttlSeconds, issuedAtSeconds);
         console.info(formatLog('ticket_playback_authorization_completed', {
             markWatched: markWatchedRequired,
             latencyMs: Math.max(0, performance.now() - startedAtMs),
         }));
+        // Studio responses stay byte-identical; Stream adds `provider` and never a preview VTT.
         return json({
             schema: 'youtick.livepeer-playback-token.v3',
             playback_id: decision.playbackId,
             token: signed.token,
             expires_at_ms: String(signed.expiresAtSeconds * 1000),
             hls_url: signed.hlsUrl,
-            ...(provider.previewVttUrl ? { preview_vtt_url: provider.previewVttUrl } : {}),
+            ...(adapter.id === 'stream'
+                ? { provider: 'cloudflare-stream' }
+                : provider.previewVttUrl ? { preview_vtt_url: provider.previewVttUrl } : {}),
         });
     } catch (error) {
         const code = safeErrorCode(error);
@@ -6766,7 +7537,7 @@ async function readStatelessPlaybackAuthorization(
     if (publication.publication_id !== input.body.publication_id
         || publication.generation !== input.body.generation
         || publication.playback_id !== input.body.playback_id
-        || publication.profile_id !== 'paid-media-livepeer-v1'
+        || !playbackProfileIdAccepted(env, publication.profile_id)
         || !supportedMediaProfile(publication.profile_config_sha256)
         || !['ACTIVE', 'SALES_SUSPENDED'].includes(String(publication.availability))) {
         throw new Error('playback_denied');
@@ -6817,6 +7588,7 @@ async function readStatelessPlaybackAuthorization(
     let providerPolicy = playbackCacheGet<{ previewVttUrl?: string }>(providerCacheKey);
     const providerCacheHit = providerPolicy !== undefined;
     const profileConfigSha256 = publication.profile_config_sha256 as string;
+    if (mediaProfileFamily(profileConfigSha256) === 'stream') throw new Error('playback_denied');
     if (!providerPolicy) {
         providerPolicy = await verifyStatelessProviderPolicy(env, input.body.playback_id, profileConfigSha256);
         playbackCachePut(providerCacheKey, providerPolicy, Date.now() + PROVIDER_POLICY_CACHE_MS);
@@ -7031,12 +7803,14 @@ type VerifiedPublication = {
     publication: FinalizePublication;
     // Byte proof to persist with READY_VERIFIED; only 'tus-offset' adapters return one.
     sourceBytesEvidence?: SourceBytesEvidence;
+    // Media duration the adapter reported (Stream storage accounting).
+    durationSeconds?: number;
 };
 
 async function verifyReadyProviderAsset(
     state: DurableObjectState, env: Env, job: JobRecord, mode: VerificationMode,
 ): Promise<VerifiedPublication | null> {
-    if (!validProviderVerificationConfig(env)
+    if (!(jobProviderKind(job) === 'stream' ? validStreamConfig(env) : validStudioVerificationConfig(env))
         || !job.assetId || !job.playbackId || !job.projectId) {
         throw new Error('runtime_not_configured');
     }
@@ -7052,19 +7826,25 @@ async function verifyReadyProviderAsset(
             assetId: job.assetId,
             playbackId: job.playbackId,
             projectId: job.projectId,
-            expectedProjectId: env.LIVEPEER_PROJECT_ID!,
+            expectedProjectId: jobProviderKind(job) === 'stream' ? env.STREAM_ACCOUNT_ID! : env.LIVEPEER_PROJECT_ID!,
             apiTokenName: job.apiTokenName,
             checkpoint: job.providerVerification,
             tusEndpoint: job.tusEndpoint,
             mode,
             storedEvidence: job.sourceBytesEvidence,
+            ...(jobProviderKind(job) === 'stream' && job.providerCreate?.completedAtMs !== undefined
+                ? { uploadCreatedAtMs: job.providerCreate.completedAtMs } : {}),
         });
-        const nextAtMs = job.state === 'ONCHAIN_PUBLISHED' ? Date.now() + 1_000
-            : Math.min(Date.now() + 1_000, job.absoluteDeadlineAtMs ?? Number.MAX_SAFE_INTEGER);
+        // A pending result may ask for a later look (Stream waits for its ladder); default 1 s.
+        const continueAfterMs = 'pending' in verified && verified.retryAfterMs !== undefined
+            ? verified.retryAfterMs : 1_000;
+        const nextAtMs = job.state === 'ONCHAIN_PUBLISHED' ? Date.now() + continueAfterMs
+            : Math.min(Date.now() + continueAfterMs, job.absoluteDeadlineAtMs ?? Number.MAX_SAFE_INTEGER);
         await state.storage.transaction(async (transaction) => {
             const current = await transaction.get<JobRecord>(JOB_KEY);
-            if (!current || canonicalJson({ ...current, providerVerification: undefined })
-                !== canonicalJson({ ...job, providerVerification: undefined })
+            // streamProgress is observability a concurrent Stream webhook may update mid-verification.
+            if (!current || canonicalJson({ ...current, providerVerification: undefined, streamProgress: undefined })
+                !== canonicalJson({ ...job, providerVerification: undefined, streamProgress: undefined })
                 || current.state !== 'ONCHAIN_PUBLISHED' && publicBetaDeadlineExpired(current)) {
                 throw new Error('provider_verification_incomplete');
             }
@@ -7102,8 +7882,11 @@ async function verifyReadyProviderAsset(
             ready_at_ms: verified.readyAtMs,
             availability: 'ACTIVE',
         };
-        return verified.sourceBytesEvidence
-            ? { publication, sourceBytesEvidence: verified.sourceBytesEvidence } : { publication };
+        return {
+            publication,
+            ...(verified.sourceBytesEvidence ? { sourceBytesEvidence: verified.sourceBytesEvidence } : {}),
+            ...(verified.durationSeconds !== undefined ? { durationSeconds: verified.durationSeconds } : {}),
+        };
     } catch (error) {
         if (safeErrorCode(error) !== 'provider_unavailable') {
             await state.storage.transaction(async (transaction) => {
@@ -7451,7 +8234,7 @@ async function parseSuspendSalesInput(value: JsonObject): Promise<SuspendSalesIn
     return value as SuspendSalesInput;
 }
 
-async function parseFinalizeInput(value: JsonObject): Promise<FinalizeInput> {
+async function parseFinalizeInput(value: JsonObject, env: Env): Promise<FinalizeInput> {
     requireExactKeys(value, ['idempotencyKey', 'payloadSha256', 'submission'], 'invalid_finalize_request');
     const submission = requireObject(value.submission, 'invalid_finalize_request');
     requireExactKeys(submission, [
@@ -7469,7 +8252,7 @@ async function parseFinalizeInput(value: JsonObject): Promise<FinalizeInput> {
         || !/^[1-9][0-9]{0,19}$/.test(submission.expected_source_bytes)
         || BigInt(submission.expected_source_bytes) > MAX_SOURCE_BYTES
         || submission.verified_source_bytes !== submission.expected_source_bytes
-        || submission.profile_id !== 'paid-media-livepeer-v1'
+        || submission.profile_id !== marketProfileId(env)
         || !supportedMediaProfile(submission.profile_config_sha256)
         || typeof submission.asset_id_hash !== 'string'
         || !SHA256_PATTERN.test(submission.asset_id_hash)
@@ -7523,7 +8306,7 @@ async function processFinalizeOutbox(
         state,
         env,
         input,
-        'finalize_livepeer_publication',
+        finalizeMethod(env),
         { submission: input.submission },
         () => finalPublicationMatches(env, input.submission),
     );
@@ -7543,7 +8326,7 @@ async function processSuspendSalesOutbox(
         state,
         env,
         input,
-        'suspend_livepeer_sales',
+        suspendMethod(env),
         { publication_id: input.publicationId },
         () => finalPublicationSalesSuspended(env, input.publicationId),
     );
@@ -7562,12 +8345,27 @@ async function processOperatorOutbox(
     const signer = KeyPairSigner.fromSecretKey(env.NEAR_OPERATOR_PRIVATE_KEY as `ed25519:${string}`);
     const publicKey = await signer.getPublicKey();
     const key = `outbox:${input.idempotencyKey}`;
+    let legacyConfirmed = false as boolean;
     let record = await state.storage.transaction(async (transaction) => {
         const existing = await transaction.get<OperatorRecord>(key);
         if (existing) {
-            if (existing.payloadSha256 !== input.payloadSha256
-                || (existing.method !== undefined && existing.method !== method)) {
-                throw new Error('outbox_conflict');
+            if (existing.payloadSha256 !== input.payloadSha256) throw new Error('outbox_conflict');
+            if (existing.method !== undefined && existing.method !== method) {
+                // Records written under the V1 names before the MC rename (V2 testnet only).
+                if (LEGACY_METHOD_ALIASES.get(existing.method) !== method) throw new Error('outbox_conflict');
+                if (existing.state === 'CONFIRMED') {
+                    // Already executed: idempotent success, the stored method stays as archived.
+                    legacyConfirmed = true;
+                    return existing;
+                }
+                // An unconfirmed legacy finalization can never land (old profile id); the guarded
+                // advanceFinalization never retries it, so a new request for it is a conflict.
+                if (method !== 'suspend_sales') throw new Error('outbox_conflict');
+                // The payload hash is method-less; a signed V1-name transaction can only fail on the
+                // MC contract, so it is dropped and the same record is re-signed under the new name.
+                const rekeyed = normalizeOperatorRecord(clearSignedTransaction(existing), method);
+                await transaction.put(key, rekeyed);
+                return rekeyed;
             }
             const normalized = normalizeOperatorRecord(existing, method);
             await transaction.put(key, normalized);
@@ -7589,6 +8387,7 @@ async function processOperatorOutbox(
         await transaction.put(key, created);
         return created;
     });
+    if (legacyConfirmed) return { confirmed: true, txHash: record.txHash || null, status: 200 };
 
     if (await isConfirmed()) {
         record = await persistConfirmedOperatorRecord(state, env, key, record);
@@ -7965,13 +8764,86 @@ async function persistConfirmedOperatorRecord(
     return confirmed;
 }
 
+// Stream adapter switches. With the flag on, Market V2 runs Stream-only (OD19): the Studio
+// configuration is not required and new Studio-hash intents are refused. V1 is unchanged.
+function streamEnabled(env: Env): boolean {
+    return env.MEDIA_PROVIDER_STREAM_ENABLED === 'true';
+}
+
+function studioActive(env: Env): boolean {
+    return !(isMarketV2(env) && streamEnabled(env));
+}
+
+function positiveIntegerVar(value: string | undefined, max = Number.MAX_SAFE_INTEGER): number | null {
+    if (typeof value !== 'string' || !/^[1-9][0-9]{0,15}$/.test(value)) return null;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed <= max ? parsed : null;
+}
+
+function streamMaxDurationSeconds(env: Env): number | null {
+    // 1..36000 is Stream's documented range; the descriptor cap (7200) binds this deployment.
+    const value = positiveIntegerVar(env.STREAM_MAX_DURATION_SECONDS, 36_000);
+    return value !== null && value <= STREAM_PROFILE_MAX_DURATION_SECONDS ? value : null;
+}
+
+function streamStuckTimeoutMs(env: Env): number | null {
+    return positiveIntegerVar(env.STREAM_STUCK_TIMEOUT_MS);
+}
+
+// STREAM_SIGNING_PUBLIC_KEY is base64 of an SPKI PEM (or the PEM itself); the release checks the pair.
+function validStreamPublicKey(value: string | undefined): boolean {
+    if (typeof value !== 'string' || value.trim().length < 64) return false;
+    try {
+        return decodeStreamKeyText(value).startsWith('-----BEGIN PUBLIC KEY-----');
+    } catch {
+        return false;
+    }
+}
+
+function validStreamConfig(env: Env): boolean {
+    return /^[0-9a-f]{32}$/.test(env.STREAM_ACCOUNT_ID || '')
+        && typeof env.STREAM_API_TOKEN === 'string'
+        && env.STREAM_API_TOKEN.length >= 16
+        && !/[\s]/.test(env.STREAM_API_TOKEN)
+        && /^[a-z0-9]{1,64}$/.test(env.STREAM_CUSTOMER_CODE || '')
+        && /^[0-9a-f]{32}$/.test(env.STREAM_SIGNING_KEY_ID || '')
+        && validStreamPublicKey(env.STREAM_SIGNING_PUBLIC_KEY)
+        && typeof env.STREAM_SIGNING_KEY_PEM === 'string'
+        && env.STREAM_SIGNING_KEY_PEM.trim().length >= 64
+        && typeof env.STREAM_WEBHOOK_SECRET === 'string'
+        && env.STREAM_WEBHOOK_SECRET.length >= 16
+        && (env.STREAM_WEBHOOK_SECRET_PREVIOUS === undefined || env.STREAM_WEBHOOK_SECRET_PREVIOUS === ''
+            || env.STREAM_WEBHOOK_SECRET_PREVIOUS.length >= 16)
+        && streamLimitsConsistent(env)
+        && streamStuckTimeoutMs(env) !== null;
+}
+
+// The budget and the capacity must each fit at least one upload at the cap (the release tooling
+// refuses the same combination with stream_limits_inconsistent).
+function streamLimitsConsistent(env: Env): boolean {
+    const cap = streamMaxDurationSeconds(env);
+    const capacity = positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY);
+    const budget = positiveIntegerVar(env.STREAM_RESERVATION_SECONDS_BUDGET);
+    return cap !== null && capacity !== null && budget !== null && budget >= cap && capacity * 60 >= cap;
+}
+
+// Validators are evaluated per active adapter: Studio unless Market V2 runs Stream-only, Stream
+// when its flag is on. The flag off with no STREAM_* values is "not configured", never an error.
 function validWebhookConfig(env: Env): boolean {
+    return (!studioActive(env) || validStudioWebhookSecrets(env))
+        && validProviderVerificationConfig(env)
+        && validOperatorConfig(env);
+}
+
+function validStudioWebhookSecrets(env: Env): boolean {
     return typeof env.LIVEPEER_WEBHOOK_SECRET === 'string'
         && env.LIVEPEER_WEBHOOK_SECRET.length >= 16
         && (env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS === undefined
-            || env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS.length >= 16)
-        && validProviderVerificationConfig(env)
-        && validOperatorConfig(env);
+            || env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS.length >= 16);
+}
+
+function validStreamWebhookConfig(env: Env): boolean {
+    return validStreamConfig(env) && validOperatorConfig(env);
 }
 
 function validWebhookQueuePolicy(env: Env): boolean {
@@ -8028,6 +8900,11 @@ function validOperatorStatusConfig(env: Env): boolean {
 }
 
 function validProviderVerificationConfig(env: Env): boolean {
+    return (!studioActive(env) || validStudioVerificationConfig(env))
+        && (!streamEnabled(env) || validStreamConfig(env));
+}
+
+function validStudioVerificationConfig(env: Env): boolean {
     return validApiKey(env.LIVEPEER_API_KEY)
         && typeof env.LIVEPEER_PROJECT_ID === 'string'
         && PROVIDER_ID_PATTERN.test(env.LIVEPEER_PROJECT_ID)
@@ -8041,7 +8918,12 @@ function validPlaybackConfig(env: Env): boolean {
         && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
         && ACCOUNT_ID_PATTERN.test(env.ACCESS_CONTRACT_ID || '')
         && ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
-        && typeof env.LIVEPEER_JWT_PRIVATE_KEY === 'string'
+        && (!studioActive(env) || validStudioPlaybackKeys(env))
+        && (!streamEnabled(env) || validStreamConfig(env));
+}
+
+function validStudioPlaybackKeys(env: Env): boolean {
+    return typeof env.LIVEPEER_JWT_PRIVATE_KEY === 'string'
         && env.LIVEPEER_JWT_PRIVATE_KEY.length >= 64
         && typeof env.LIVEPEER_JWT_PUBLIC_KEY === 'string'
         && env.LIVEPEER_JWT_PUBLIC_KEY.length >= 32
@@ -8054,14 +8936,8 @@ function validPlaybackV2Config(env: Env): boolean {
     return isHttpsUrl(env.NEAR_RPC_URL)
         && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
         && ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
-        && validApiKey(env.LIVEPEER_API_KEY)
-        && typeof env.LIVEPEER_JWT_PRIVATE_KEY === 'string'
-        && env.LIVEPEER_JWT_PRIVATE_KEY.length >= 64
-        && typeof env.LIVEPEER_JWT_PUBLIC_KEY === 'string'
-        && env.LIVEPEER_JWT_PUBLIC_KEY.length >= 32
-        && !/[\r\n]/.test(env.LIVEPEER_JWT_PUBLIC_KEY)
-        && typeof env.LIVEPEER_JWT_ISSUER === 'string'
-        && isHttpsOrigin(env.LIVEPEER_JWT_ISSUER);
+        && (!studioActive(env) || (validApiKey(env.LIVEPEER_API_KEY) && validStudioPlaybackKeys(env)))
+        && (!streamEnabled(env) || validStreamConfig(env));
 }
 
 function validCreatorFeeQuoteConfig(env: Env): boolean {
@@ -8080,12 +8956,16 @@ function validQuoteSigningConfig(env: Env): boolean {
 }
 
 function validSponsoredUploadQuoteConfig(env: Env): boolean {
+    // Fail closed on Market V2: the compact upload format carries the V1 profile id, which the
+    // MC contract no longer accepts, so the V2 Bridge never quotes or relays sponsored uploads.
+    if (isMarketV2(env)) return false;
     return env.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true'
         && validQuoteSigningConfig(env)
         && validAdmissionConfig(env);
 }
 
 function validSponsoredUploadRelayConfig(env: Env): boolean {
+    if (isMarketV2(env)) return false;
     const accountId = env.NEAR_SPONSOR_RELAYER_ACCOUNT_ID || '';
     const structurallyValid = validSponsoredUploadQuoteConfig(env)
         && ACCOUNT_ID_PATTERN.test(accountId)
@@ -8250,6 +9130,8 @@ function errorStatus(code: string): number {
         || code === 'provider_verification_incomplete'
         || code === 'verification_evidence_missing'
         || code === 'provider_state_invalid'
+        || code === 'provider_tus_state_invalid'
+        || code === 'provider_tus_url_expired'
         || code === 'device_nonce_replayed'
         || code === 'provider_create_pending'
         || code === 'provider_delete_ambiguous'

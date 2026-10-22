@@ -1,0 +1,40 @@
+{
+  "stream": {
+    "hash": "1128da32be3187c804326ef68a3c4c5344b47fc956a09ee88f8c0779ea5f4c64",
+    "provider": "cloudflare-stream",
+    "container": "fmp4",
+    "codec": "h264",
+    "policy": {
+      "requireSignedURLs": true,
+      "tokenPlacement": "path"
+    },
+    "maxDurationSecondsCap": 7200,
+    "profiles": [
+      {
+        "name": "240p",
+        "width": 426,
+        "height": 240
+      },
+      {
+        "name": "360p",
+        "width": 640,
+        "height": 360
+      },
+      {
+        "name": "480p",
+        "width": 852,
+        "height": 480
+      },
+      {
+        "name": "720p",
+        "width": 1280,
+        "height": 720
+      },
+      {
+        "name": "1080p",
+        "width": 1920,
+        "height": 1080
+      }
+    ]
+  }
+}

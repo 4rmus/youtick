@@ -172,6 +172,7 @@ function playbackRpc(input: {
     availability?: string;
     entitlement?: boolean;
     playbackId?: string;
+    profileId?: string;
     profileHash?: string;
     betaState?: unknown;
     publicUploadPolicy?: unknown;
@@ -202,7 +203,7 @@ function playbackRpc(input: {
                 publication_id: PUBLICATION_ID,
                 generation: 1,
                 playback_id: input.playbackId ?? PLAYBACK_ID,
-                profile_id: 'paid-media-livepeer-v1',
+                profile_id: input.profileId ?? 'paid-media-livepeer-v1',
                 profile_config_sha256: input.profileHash ?? PROFILE_HASH,
                 availability: input.availability ?? 'ACTIVE',
             });
@@ -530,6 +531,25 @@ describe('stateless playback v2', () => {
         expect(idFromName).not.toHaveBeenCalled();
     });
 
+    it.each([
+        // [case, MARKET_PROTOCOL, publication profile id, status]
+        ['Market V2 plays a publication finalized before the MC rename', 'v2', 'paid-media-livepeer-v1', 200],
+        ['Market V2 plays a neutral-id publication', 'v2', 'paid-media-v1', 200],
+        ['V1 plays its own profile id', undefined, 'paid-media-livepeer-v1', 200],
+        ['V1 refuses the neutral id', undefined, 'paid-media-v1', 403],
+        ['Market V2 refuses an unknown id', 'v2', 'paid-media-other-v1', 403],
+    ] as const)('binds the publication profile id to the market: %s', async (_case, protocol, profileId, status) => {
+        const { env } = await createEnv();
+        env.MARKET_PROTOCOL = protocol;
+        const signed = await playbackRequest();
+        vi.stubGlobal('fetch', playbackDependencies({ ...signed, profileId }).fetcher);
+
+        const response = await handler.fetch(signed.request, env);
+
+        expect(response.status).toBe(status);
+        if (status !== 200) expect(await response.json()).toEqual({ error: 'playback_denied' });
+    });
+
     it('fails closed when the provider playback policy is no longer JWT protected', async () => {
         const { env, idFromName } = await createEnv();
         const signed = await playbackRequest();
@@ -542,6 +562,22 @@ describe('stateless playback v2', () => {
         expect(await response.json()).toEqual({ error: 'playback_denied' });
         expect(dependencies.rpc).toHaveBeenCalledTimes(3);
         expect(dependencies.provider).toHaveBeenCalledOnce();
+        expect(idFromName).not.toHaveBeenCalled();
+    });
+
+    it('fails closed for a Cloudflare Stream publication without any provider read (Stream plays through /v3)', async () => {
+        const { env, idFromName } = await createEnv();
+        const signed = await playbackRequest();
+        const dependencies = playbackDependencies({
+            ...signed, profileHash: '1128da32be3187c804326ef68a3c4c5344b47fc956a09ee88f8c0779ea5f4c64',
+        });
+        vi.stubGlobal('fetch', dependencies.fetcher);
+
+        const response = await handler.fetch(signed.request, env);
+
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: 'playback_denied' });
+        expect(dependencies.provider).not.toHaveBeenCalled();
         expect(idFromName).not.toHaveBeenCalled();
     });
 

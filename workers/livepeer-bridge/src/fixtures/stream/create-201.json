@@ -1,0 +1,8 @@
+{
+  "status": 201,
+  "headers": {
+    "location": "https://upload.cloudflarestream.com/tus/<UID>?tusv2=true",
+    "stream-media-id": "<UID>",
+    "tus-resumable": "1.0.0"
+  }
+}

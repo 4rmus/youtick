@@ -175,8 +175,9 @@ The job object consumes a `NormalizedWebhookEvent` (`ready`, `processing`,
 `failed`, `deleted`, plus the provider phase and digest); its own alarm and
 reconcile observations are synthesized in that envelope by
 `src/provider-webhook.ts`. `src/cover-image.ts` is the neutral bounded cover
-reader. Dependency logs keep the `livepeer_*` labels for Studio;
-`media_api`, `media_tus` and `media_cdn` are reserved for other adapters.
+reader. Dependency logs keep the `livepeer_*` labels for Studio; Cloudflare
+Stream logs `stream_api`, `stream_tus` and `stream_media`; `media_api`,
+`media_tus` and `media_cdn` stay reserved.
 Deploy identities (Worker name, `LivepeerControl`, Queue names, `LIVEPEER_*`
 variables and secrets, schema literals) and the on-chain method names are
 unchanged.
@@ -211,10 +212,142 @@ inventory drift sets: the job stays `PROVIDER_UNKNOWN` and no sales suspension
 is queued. Evidence that does not match the expected bytes is
 `provider_state_invalid` (strong drift).
 
-M2 notes: the pending/checkpoint contract is reachable today only through an
-adapter's deferred denial list (Studio storyboard thumbnails). A Stream ready
-webhook can arrive before every rendition is listed, so M2-G3 must add a pending
-path for missing renditions instead of failing with a strong drift code.
+### Cloudflare Stream adapter (M2, flag off)
+
+`src/cloudflare-stream-provider.ts` and `src/cloudflare-stream-verification.ts`
+implement `MediaProvider` for Cloudflare Stream behind
+`MEDIA_PROVIDER_STREAM_ENABLED` (default `"false"`). A new intent selects Stream
+only with the flag on and the `paid-media-v1` descriptor hash from
+`protocol/paid-media-v1/stream-profile.json`; the job record stores
+`provider: 'stream'` at creation. With the flag on, Market V2 runs Stream-only
+(OD19): Studio hashes are refused for new intents and the Studio configuration
+is not required by any validator. V1 is unchanged. Existing Stream jobs and
+publications keep working with the flag off (rollback is a flag flip), as long
+as the Stream configuration is present.
+
+- Upload: `POST /accounts/{STREAM_ACCOUNT_ID}/stream?direct_user=true` (tus,
+  `Upload-Length` = expected bytes, `maxDurationSeconds` = cap, bare
+  `requiresignedurls`, `expiry` = min(creation + 6 h, the job's absolute
+  deadline) (`STREAM_UPLOAD_EXPIRY_MS`; never the 30-minute admission lease,
+  which heartbeats renew but Stream does not),
+  `filename`/`filetype`, routing as plain `jobid`/`generation` and a JSON
+  `meta` value). The 201 `Location` must be on `upload.cloudflarestream.com`
+  without a port and `stream-media-id` 32 lowercase hex; asset id = playback id
+  = UID, project id = account id. A post-create HEAD (length = expected,
+  offset 0) and GET (echoed cap, signed URLs, meta route) gate the job; a
+  refused or unverifiable creation (including a 201 with an unusable
+  `Location`) is deleted. Storage exhaustion (413) is
+  `provider_admission_closed`; every 429 and 5xx is `provider_unavailable`
+  (transient, never an admission latch).
+- Byte proof (option A): at readiness one tus HEAD must show
+  `Upload-Offset == Upload-Length == expected_source_bytes`; overflow or any
+  mismatch is `provider_tus_state_invalid` (job `PROVIDER_FAILED`, UID deleted,
+  never finalized); a URL past creation + 24 h or answering 404/410 is
+  `provider_tus_url_expired` (`UPLOAD_EXPIRED`, UID deleted). The evidence and
+  the publication's `ready_at_ms` are stored on the job; published-mode
+  re-verification never sends a HEAD and reproduces the stored publication.
+- Verification: identity is UID = asset = playback, the account and the meta
+  route; the video must be `ready`, `readyToStream` and `requireSignedURLs`.
+  Manifests: alternate media allowed (not required), `p`/`s` query keys,
+  `EXT-X-MAP` and `EXT-X-ENDLIST` required (every recorded playlist has both).
+  Expected renditions are the descriptor heights capped by the source. The
+  denial matrix is the spike's (docs report §9.3): anonymous, forged and
+  expired credentials must be refused with 401 (403 also counts) on every
+  surface; a wrong-subject token gets 404
+  on the HLS master and variants, DASH, `thumbnail.jpg`/`.gif` and the MP4
+  download; iframe and watch are probed for 401/403 only; a valid viewer token gets
+  403 (or 404 without a generated MP4) on the download; a query-stripped
+  segment answering 401, 403 or 404 counts as denied. A listed `p`/`s` segment
+  URL is never fetched anonymously and no authorized segment is ever fetched.
+  A ready webhook that precedes the full ladder (`pctComplete < 100`) is
+  pending (look again after 15 s, bounded by max(`STREAM_STUCK_TIMEOUT_MS`,
+  60 minutes)), never a drift code.
+- Webhooks: `POST /v1/stream-webhooks`, `Webhook-Signature: time=<s>,sig1=<hex>`
+  HMAC-SHA256 over `time.body` with `STREAM_WEBHOOK_SECRET`, then
+  `STREAM_WEBHOOK_SECRET_PREVIOUS` (rotation is PUT-then-deploy; whether
+  Stream keeps the old secret alive is unproven), five-minute tolerance. Every
+  delivery whose signature verifies advances `stream.lastWebhookAtMs`, before
+  routing and before the body is parsed; an unroutable or unparsable one gets
+  `202 {accepted, ignored}`, a forged one 403. With the Queue on, a Stream
+  message carries optional `provider` and `signed_time_ms` fields (Studio
+  messages are unchanged). `ready` is readiness, `error` is
+  `PROVIDER_FAILED` with the reason code and an immediate DELETE (even while GET
+  still says `inprogress`), `queued`/`inprogress` is processing. Stream has no
+  delete event: loss shows as `provider_asset_missing` in reconciliation.
+- Admission: a Stream intent reads `GET /stream/storage-usage`; the admission
+  object then decides, serialized with the budget: a new reservation over
+  `STREAM_RESERVATION_SECONDS_BUDGET` is denied with reason
+  `reservation_budget` (also on the Stream-only preflight), and one where used
+  minutes + our open reservations + the cap exceed
+  min(`STREAM_STORAGE_MINUTES_CAPACITY`, Stream's reported limit) is refused
+  with `provider_admission_closed`. The admission record's optional `stream`
+  block keeps the open reservations (`openReservedSeconds`, each held at most
+  24 h). A reservation is released at `READY_VERIFIED` and at every terminal
+  state. `verifiedStorageSeconds` (durations at `READY_VERIFIED`) is
+  informational only, never closes admission, and restarts from the last
+  reported usage on an operator reopen. Studio jobs on the same admission
+  object are not counted.
+- Lifecycle and poll: `UPLOAD_EXPIRED` (including a job-deadline expiry) and
+  `PROVIDER_FAILED` delete the UID exactly once (gated by
+  `LIVEPEER_PROVIDER_MUTATIONS_ENABLED`; a 429/5xx/network DELETE is retried
+  once, then an ambiguous delete closes admission). The job alarm polls
+  `GET /stream/{uid}` every 5 minutes while uploading and every minute while
+  processing: `error` fails and deletes; a job whose `status.state` and
+  `pctComplete` (from webhooks or polls, `streamProgress` on the job) have not
+  changed for `STREAM_STUCK_TIMEOUT_MS` fails and deletes
+  (`provider_job_stuck`) only after one more confirming GET; `ready` runs
+  readiness (a lost webhook cannot strand a paid job); `pendingupload` with a
+  lapsed lease expires and deletes; any pre-ready job ends at creation + 24 h.
+- Playback: `/v3/playback-tokens` picks the adapter from the publication's
+  `profile_config_sha256` and signs RS256 itself (no Workers binding): header
+  `{alg: 'RS256', kid}`, claims exactly `{sub, kid, exp, nbf: iat - 60}`, never
+  `downloadable`, lifetime `min(180 s, device remaining)` and at most 24 h. The
+  token replaces the UID in `https://customer-<code>.cloudflarestream.com/<token>/manifest/video.m3u8`;
+  the response keeps schema `youtick.livepeer-playback-token.v3`, adds
+  `provider: 'cloudflare-stream'` and has no `preview_vtt_url`. The provider
+  policy check is the same GET (`requireSignedURLs && readyToStream`), cached
+  30 s like `/v2`. `/v1`
+  and `/v2` tokens fail closed for a Stream publication. Covers use a 120 s
+  token on `/<token>/thumbnails/thumbnail.jpg` with no request header.
+- Cron: every run with the flag on logs `stream_storage_headroom`.
+  `/__health` gains `streamConfigured` (never true with the flag off) and, only
+  with the flag on, a `stream` block `{openReservedSeconds,
+  reservationBudgetSeconds, storageMinutesUsed, storageMinutesCapacity,
+  lastWebhookAtMs, stuckProcessingJobs, lastStuckAtMs}` (stuck jobs = stuck
+  terminations in the last 24 h) and nothing else about quotas.
+
+Configuration (vars in `wrangler.toml` as placeholders, filled by the release
+tooling): `MEDIA_PROVIDER_STREAM_ENABLED`, `STREAM_ACCOUNT_ID` (32 hex),
+`STREAM_CUSTOMER_CODE`, `STREAM_SIGNING_KEY_ID` (32 hex),
+`STREAM_SIGNING_PUBLIC_KEY` (base64 of the SPKI PEM, checked for shape only;
+never used to sign), `STREAM_MAX_DURATION_SECONDS` (1..36000 and at most the
+descriptor cap 7200), `STREAM_STORAGE_MINUTES_CAPACITY` (at least one cap),
+`STREAM_RESERVATION_SECONDS_BUDGET` (at least one cap; the release tooling
+refuses the same with `stream_limits_inconsistent`), `STREAM_STUCK_TIMEOUT_MS`. Secrets:
+`STREAM_API_TOKEN` (`Stream:Edit`), `STREAM_WEBHOOK_SECRET` (at least 16
+characters), optional `STREAM_WEBHOOK_SECRET_PREVIOUS`, `STREAM_SIGNING_KEY_PEM`
+(a PKCS8 or PKCS1 PEM, a JWK JSON, or base64 of either; detected by prefix).
+With the flag off, empty Stream values mean "not configured", never an error.
+
+M0 switches: each value an M0 probe has not recorded is a config value or a
+fixture-driven branch, not a guess presented as fact.
+
+| Unknown | Where it lives | Closed by |
+|---|---|---|
+| Which `Upload-Metadata` keys land in `meta` (U1) | routing accepts plain `jobid`/`jobId`/`job_id` + `generation`, a JSON `meta` value, or the `youtick-<job>-g<n>` name; all present shapes must agree | M0-P4 |
+| Echo of `maxDurationSeconds` after creation (U1) | post-create GET must echo the cap, else the UID is deleted | M0-P3/P4 |
+| Whether `totalStorageMinutes` already includes reservations booked at URL creation (U9, U25) | headroom adds our open reservations on top (a deliberate double count); drop the `open / 60` term if it does | M0-P3 |
+| Body and status of storage exhaustion (U9) | 413 only; every 429 is transient; the fixture body is invented | M0-P3 |
+| Whether `expiry` shortens the upload URL or drops the reservation (U25) | `expiry` = min(creation + 6 h, absolute deadline); reservations counted up to 24 h; drop the field if it does not help | M0-P3 |
+| `EXT-X-ENDLIST` on every variant at readiness (U4, U21) | required (constant; spike and dashboard 2026-10-22 both had it) | M0-P1/P7 |
+| Manifest shape at the ready webhook (U21) | pending rule from authorized reads while `pctComplete < 100`, window max(stuck timeout, 60 min) | M0-P1/P7 |
+| Billing of an authorized segment read (U22) | never done (constant `false`) | M0-P9 |
+| `pem` encoding of `POST /stream/keys` (U24) and JWK use | prefix detection, PKCS1 wrapped into PKCS8 | M0-P8 |
+| Required or tolerated JWT claims (U23) | exactly `{sub, kid, exp, nbf}`, header `{alg, kid}` | M0-P8 |
+| Valid-token status on `downloads/default.mp4` without a generated MP4 | 403 or 404 both accepted | M0-P1 |
+| `readyToStreamAt` presence | `ready_at_ms` from `readyToStreamAt`, else `modified`; stored at readiness | M0-P1/P4 |
+| tus HEAD hours after ready (U7) | HEAD only at readiness, refused past creation + 24 h | M0-P2 |
+| Webhook secret retrieval, rotation and retries (U6) | two configured secrets accepted; poll covers lost deliveries | M0-P4 |
 
 Webhook Queue transport is source-complete behind
 `LIVEPEER_WEBHOOK_QUEUE_ENABLED=false`. When enabled with a `LIVEPEER_EVENTS`
@@ -266,8 +399,20 @@ Off unless `MARKET_PROTOCOL=v2` and `LIVEPEER_PLAYBACK_V3_ENABLED=true` (with th
   - A pending outcome returns `503 playback_pending`. A contract refusal (refunded or voided
     ticket, takedown) returns `403 playback_denied`. No token is issued in either case.
 - **Operator key.** In V2 the on-chain operator function-call key must allow exactly
-  `finalize_livepeer_publication`, `suspend_livepeer_sales` and `mark_watched`. The operator
-  account must be the V2 contract's active Bridge.
+  `finalize_publication`, `suspend_sales`, `mark_watched` and `release_expired` (the
+  provider-neutral names of gate MC). A key that still carries `finalize_livepeer_publication`
+  or `suspend_livepeer_sales` is refused with `runtime_not_configured`; V1 deployments keep
+  exactly those two V1 names. The operator account must be the V2 contract's active Bridge.
+- **Profile id.** A V2 Bridge accepts only `paid-media-v1` on new upload intents and
+  finalizations, and plays stored publications under either `paid-media-v1` or
+  `paid-media-livepeer-v1`. A job stored under `paid-media-livepeer-v1` is never finalized on
+  V2: one holding a publication becomes `ONCHAIN_PUBLISHED` if that publication is already final
+  on chain, otherwise `UPLOAD_EXPIRED`; an unpublished one becomes `UPLOAD_EXPIRED` (an
+  `AUTHORIZED` job only when an alarm fires). `CREATE_PENDING` and `CREATE_AMBIGUOUS` jobs are
+  left untouched, since `JOB_STATE_TRANSITIONS` has no `UPLOAD_EXPIRED` edge from them: no retry
+  loop and no finalize, and their admission reservation expires on its own. Sponsored upload
+  quotes and relays are closed on V2 (the compact upload format carries the V1 profile id). V1
+  keeps `paid-media-livepeer-v1` throughout.
 - **Tokens.** Each token lives at most 180 seconds, and never longer than the device's
   remaining validity.
 - **Escrow release.** With `MARKET_V2_RELEASE_ENABLED=true`, the `scheduled` handler releases
@@ -318,7 +463,8 @@ explicit cleanup plan.
 
 ## Configuration
 
-Public bindings and placeholders are in `wrangler.toml`. Put API, webhook,
+Public bindings and placeholders are in `wrangler.toml` (the Stream keys are
+listed under "Cloudflare Stream adapter"). Put API, webhook,
 operator, JWT, NEAR operator, sponsor-relayer and quote-signing private values
 in Worker secrets, never in that file or `.dev.vars` committed to git.
 
