@@ -1,75 +1,52 @@
-export type JsonObject = Record<string, unknown>;
+// Provider-neutral webhook semantics. Each adapter authenticates and normalizes its own payloads
+// (signature scheme, routing key, digest inputs); the job object only sees NormalizedWebhookEvent.
+import type { MediaProviderKind, NormalizedWebhookEvent } from './media-provider';
 
-export type WebhookEvent = {
-    event: string;
-    timestamp: number;
-    payload: JsonObject;
-};
+const ACTIVE_UPLOAD_STATES = new Set(['UPLOAD_READY', 'UPLOADING', 'PROCESSING']);
 
-export function parseWebhook(value: JsonObject): WebhookEvent {
-    if (typeof value.event !== 'string'
-        || value.event.length < 1
-        || value.event.length > 64
-        || !Number.isSafeInteger(value.timestamp)
-        || !value.payload
-        || typeof value.payload !== 'object'
-        || Array.isArray(value.payload)) {
-        throw new Error('invalid_webhook');
-    }
-    return {
-        event: value.event,
-        timestamp: value.timestamp as number,
-        payload: value.payload as JsonObject,
-    };
+/** A ready event always counts; a progress update counts only while the upload is still active. */
+export function isReadinessEvent(event: NormalizedWebhookEvent, jobState: string): boolean {
+    return event.event === 'ready'
+        || (event.event === 'processing' && ACTIVE_UPLOAD_STATES.has(jobState) && event.phase === 'ready');
 }
 
-export function webhookAsset(webhook: WebhookEvent): JsonObject | null {
-    const asset = webhook.payload.asset;
-    if (!asset || typeof asset !== 'object' || Array.isArray(asset)) return null;
-    const snapshot = (asset as JsonObject).snapshot;
-    return snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
-        ? snapshot as JsonObject
-        : asset as JsonObject;
+export function isProviderFailureEvent(event: NormalizedWebhookEvent): boolean {
+    return event.event === 'failed' || event.event === 'deleted';
 }
 
-export function webhookRoute(
-    webhook: WebhookEvent,
-    isValidJobId: (value: string) => boolean,
-): { jobId: string; generation: number } | null {
-    const asset = webhookAsset(webhook);
-    if (!asset || !['asset.ready', 'asset.updated', 'asset.failed', 'asset.deleted'].includes(webhook.event)) {
-        return null;
-    }
-    const creator = asset.creatorId;
-    if (!creator || typeof creator !== 'object' || Array.isArray(creator)) return null;
-    const value = (creator as JsonObject).value;
-    if ((creator as JsonObject).type !== 'unverified' || typeof value !== 'string') return null;
-    const separator = value.lastIndexOf(':');
-    if (separator < 1) return null;
-    const jobId = value.slice(0, separator);
-    const generation = Number(value.slice(separator + 1));
-    return isValidJobId(jobId) && Number.isSafeInteger(generation) && generation > 0
-        ? { jobId, generation }
-        : null;
+export function isProcessingEvent(event: NormalizedWebhookEvent): boolean {
+    return event.event === 'processing' && event.phase === 'processing';
 }
 
-export async function webhookDigest(
-    webhook: WebhookEvent,
-    asset: JsonObject,
-    rawBodyHash: string,
+/**
+ * An observation the job object makes itself (alarm continuation or upload reconcile read).
+ * The digest only has to be unique per observation; it never collides with a provider digest
+ * because its first line is a fixed marker.
+ */
+export async function synthesizedProviderEvent(
+    input: {
+        provider: MediaProviderKind;
+        event: 'processing' | 'failed';
+        assetId: string;
+        phase: string;
+        nowMs: number;
+    },
     sha256: (value: string) => Promise<string>,
-): Promise<string> {
-    return sha256([
-        String(webhook.timestamp),
-        rawBodyHash,
-        String(asset.id || ''),
-        providerPhase(asset),
-    ].join('\n'));
-}
-
-export function providerPhase(asset: JsonObject): string {
-    const status = asset.status;
-    return status && typeof status === 'object' && !Array.isArray(status)
-        ? String((status as JsonObject).phase || '')
-        : '';
+): Promise<NormalizedWebhookEvent> {
+    return {
+        provider: input.provider,
+        event: input.event,
+        providerEvent: `synthesized.${input.event}`,
+        assetId: input.assetId,
+        phase: input.phase,
+        timestampMs: input.nowMs,
+        digest: await sha256([
+            'youtick.synthesized-provider-event.v1',
+            input.provider,
+            input.event,
+            String(input.nowMs),
+            input.assetId,
+            input.phase,
+        ].join('\n')),
+    };
 }

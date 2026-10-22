@@ -204,6 +204,33 @@ describe('/v3/playback-tokens', () => {
         expect(forged.markWatched).not.toHaveBeenCalled();
     });
 
+    it('keeps the v3 token response byte-identical across the provider boundary', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_600_000_000);
+        const watched = await setup({ status: 'watched' });
+
+        const response = await watched.call();
+
+        expect(response.status).toBe(200);
+        const raw = await response.text();
+        const body = JSON.parse(raw) as Record<string, unknown>;
+        const [header, payload, signature] = String(body.token).split('.');
+        const decode = (part: string) => JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>;
+        expect({
+            body: raw.replace(String(body.token), '<token>'),
+            header: JSON.stringify(decode(header)),
+            claims: JSON.stringify({ ...decode(payload), pub: '<LIVEPEER_JWT_PUBLIC_KEY>' }),
+            signatureLength: signature.length,
+        }).toMatchInlineSnapshot(`
+          {
+            "body": "{"schema":"youtick.livepeer-playback-token.v3","playback_id":"playback_001","token":"<token>","expires_at_ms":"1785600180000","hls_url":"https://playback.livepeer.studio/asset/hls/playback_001/index.m3u8"}",
+            "claims": "{"action":"pull","iss":"https://preview.youtick.net","pub":"<LIVEPEER_JWT_PUBLIC_KEY>","sub":"playback_001","video":"none","exp":1785600180,"iat":1785600000}",
+            "header": "{"alg":"ES256","typ":"JWT"}",
+            "signatureLength": 86,
+          }
+        `);
+        vi.restoreAllMocks();
+    });
+
     it('stays disabled without the V2 protocol and the v3 flag', async () => {
         for (const flags of [{ MARKET_PROTOCOL: undefined }, { LIVEPEER_PLAYBACK_V3_ENABLED: 'false' }]) {
             const disabled = await setup({ status: 'purchased', flags });
