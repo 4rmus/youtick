@@ -429,7 +429,7 @@ test('card deploy: the operator key must be the function-call key, and the webho
     }), /card_path_requires_acceptance/);
 });
 
-test('relayer profile hash allowlist (M2-G7): empty until the Stream descriptor hash is committed, then that hash', () => {
+test('relayer profile hash allowlist (M2-G7, filled in M3): exactly the committed Stream descriptor hash', () => {
     const value = COMPONENTS.relayer.vars.UPLOAD_PROFILE_HASH_ALLOWLIST;
     assert.equal(typeof value, 'string');
     assert.equal(uploadProfileHashAllowlist(value), value);
@@ -442,9 +442,9 @@ test('relayer profile hash allowlist (M2-G7): empty until the Stream descriptor 
     for (const bad of ['a'.repeat(63), 'A'.repeat(64), ` ${'a'.repeat(64)}`, `${'a'.repeat(64)},`, `${'a'.repeat(64)},${'a'.repeat(64)}`]) {
         assert.throws(() => uploadProfileHashAllowlist(bad), /upload_profile_hash_allowlist_invalid/, bad);
     }
-    // Once filled, the list must name the committed Stream descriptor.
+    // Filled on 2026-10-22 (M3): the list is the committed Stream descriptor's hash and nothing else.
     const descriptor = new URL('../protocol/paid-media-v1/stream-profile.json', import.meta.url);
-    if (value !== '' && existsSync(descriptor)) {
-        assert.ok(value.split(',').includes(JSON.parse(readFileSync(descriptor, 'utf8')).stream.hash));
-    }
+    assert.ok(existsSync(descriptor));
+    assert.equal(value, JSON.parse(readFileSync(descriptor, 'utf8')).stream.hash);
+    assert.equal(value, '1128da32be3187c804326ef68a3c4c5344b47fc956a09ee88f8c0779ea5f4c64');
 });

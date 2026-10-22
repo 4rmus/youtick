@@ -120,10 +120,11 @@ export const COMPONENTS = Object.freeze({
             DAILY_DEVICE_LIMIT: '1000',
             TICKET_DAILY_DEVICE_LIMIT: '6',
             // Gate M2-G7: the profile hashes an upload may name, comma-separated 64 hex. Empty = any hash (the
-            // relayer's behaviour before M2-G7). Fill it with the `hash` of protocol/paid-media-v1/stream-profile.json
-            // (`node scripts/check-paid-media-v1.mjs` prints it) in one commit, deployed with the Bridge's Stream
-            // flag (docs/v2-testnet-runbook.md, Stream cutover inputs).
-            UPLOAD_PROFILE_HASH_ALLOWLIST: '',
+            // relayer's behaviour before M2-G7). Filled on 2026-10-22 (M3) with the `hash` of
+            // protocol/paid-media-v1/stream-profile.json (`node scripts/check-paid-media-v1.mjs` prints it), deployed
+            // with the Bridge's Stream flag (docs/v2-testnet-runbook.md, Stream cutover inputs): from then on only a
+            // web build with NEXT_PUBLIC_V2_MEDIA_PROFILE=stream can start a V2 upload.
+            UPLOAD_PROFILE_HASH_ALLOWLIST: '1128da32be3187c804326ef68a3c4c5344b47fc956a09ee88f8c0779ea5f4c64',
         }),
         secrets: Object.freeze(['NEAR_RPC_URL', 'RELAYER_PRIVATE_KEY', 'RELAYER_ADMIN_TOKEN']),
         smokePath: '/v1/ckd',
