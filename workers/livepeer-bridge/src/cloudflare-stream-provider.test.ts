@@ -62,11 +62,9 @@ function provider(overrides: Partial<CloudflareStreamOptions> = {}): CloudflareS
         customerCode: V.CUSTOMER_CODE,
         signingKeyId: KEY_ID,
         signingKey: keys.privatePem,
-        signingKeyFormat: 'pkcs8',
         webhookSecrets: [WEBHOOK_SECRET, PREVIOUS_SECRET],
         webhookToleranceMs: 5 * 60 * 1000,
         maxDurationSeconds: 7200,
-        extraPlaybackHosts: [],
         requireEndList: true,
         readySegmentProbe: false,
         readyPendingWindowMs: 30 * 60 * 1000,
@@ -413,17 +411,19 @@ describe('Cloudflare Stream adapter: RS256 path tokens', () => {
         await expect(provider({ customerCode: 'Bad.Code' }).signPlayback(V.UID, 180)).rejects.toThrow('runtime_not_configured');
     });
 
-    it('imports a base64 PKCS1 PEM and, behind the jwk switch, a base64 JWK', async () => {
-        const pkcs1 = await provider({ signingKey: keys.pkcs1Base64 }).signPlayback(V.UID, 180);
-        expect(await verifyJwt(pkcs1.token, keys.pkcs1PublicKey)).toBe(true);
-        const jwk = await provider({ signingKey: keys.jwkBase64, signingKeyFormat: 'jwk' }).signPlayback(V.UID, 180);
-        expect(await verifyJwt(jwk.token, keys.pkcs1PublicKey)).toBe(true);
+    it('detects the key by prefix: PKCS8 PEM, base64 PEM, base64 PKCS1 PEM, JWK JSON and base64 JWK', async () => {
+        for (const signingKey of [keys.privatePem, `  ${btoa(keys.privatePem)}\n`]) {
+            expect(await verifyJwt((await provider({ signingKey }).signPlayback(V.UID, 180)).token, keys.publicKey)).toBe(true);
+        }
+        for (const signingKey of [keys.pkcs1Base64, keys.jwkBase64, atob(keys.jwkBase64)]) {
+            expect(await verifyJwt((await provider({ signingKey }).signPlayback(V.UID, 180)).token, keys.pkcs1PublicKey)).toBe(true);
+        }
     });
 });
 
 describe('Cloudflare Stream adapter: shape', () => {
     it('declares the Stream capabilities, hosts and profile', () => {
-        const adapter = provider({ extraPlaybackHosts: ['videodelivery.net'] });
+        const adapter = provider();
         expect(adapter.id).toBe('stream');
         expect(adapter.capabilities).toEqual({
             storyboard: false, mp4: false, sourceHash: false, deleteWebhook: false, customLadder: false,
@@ -431,9 +431,9 @@ describe('Cloudflare Stream adapter: shape', () => {
         });
         expect(STREAM_CAPABILITIES).toBe(adapter.capabilities);
         expect(adapter.hostAllowlist()).toEqual({
-            exact: [`customer-${V.CUSTOMER_CODE}.cloudflarestream.com`, 'videodelivery.net'], suffixes: [],
+            exact: [`customer-${V.CUSTOMER_CODE}.cloudflarestream.com`], suffixes: [],
         });
-        expect(provider().hostAllowlist().exact).toEqual([`customer-${V.CUSTOMER_CODE}.cloudflarestream.com`]);
+        expect(provider({ customerCode: undefined }).hostAllowlist().exact).toEqual([]);
         expect(adapter.supportsProfile(STREAM_PROFILE_HASH)).toBe(true);
         expect(adapter.supportsProfile('96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77')).toBe(false);
     });
@@ -468,5 +468,35 @@ describe('Cloudflare Stream adapter: shape', () => {
             expect(line).not.toContain(V.UID);
         }
         expect(await rawStreamFixture('create-201.json')).toContain('<UID>');
+    });
+});
+
+describe('Cloudflare Stream adapter: cover', () => {
+    it('reads thumbnail.jpg with a 120 s path token and no header, keeping the cover rules', async () => {
+        const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0xff, 0xd9]);
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(jpeg, {
+            headers: { 'Content-Type': 'image/jpeg', 'Content-Length': String(jpeg.byteLength) },
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+        vi.spyOn(Date, 'now').mockReturnValue(1_790_000_000_000);
+        const cover = await provider().readCover(V.UID);
+        expect(cover).toEqual({ bytes: jpeg, contentType: 'image/jpeg' });
+        const [input, init] = fetchMock.mock.calls[0];
+        const url = new URL(String(input));
+        expect(url.hostname).toBe(`customer-${V.CUSTOMER_CODE}.cloudflarestream.com`);
+        const [, token, ...rest] = url.pathname.split('/');
+        expect(rest.join('/')).toBe('thumbnails/thumbnail.jpg');
+        expect(decodeSegment(token.split('.')[1])).toEqual({ sub: V.UID, kid: KEY_ID, exp: 1_790_000_120, nbf: 1_789_999_940 });
+        expect([...new Headers(init?.headers).keys()]).toEqual([]);
+        expect(init?.redirect).toBe('manual');
+
+        fetchMock.mockImplementationOnce(async () => new Response(null, { status: 401 }));
+        await expect(provider().readCover(V.UID)).rejects.toThrow('publication_cover_image_denied');
+        fetchMock.mockImplementationOnce(async () => new Response('x', { headers: { 'Content-Type': 'text/html' } }));
+        await expect(provider().readCover(V.UID)).rejects.toThrow('publication_cover_image_type');
+        // Bytes that echo the API token are refused (the sensitive-byte scan covers the token and the key).
+        const echo = new Uint8Array([0xff, 0xd8, 0xff, ...new TextEncoder().encode(API_TOKEN), 0xff, 0xd9]);
+        fetchMock.mockImplementationOnce(async () => new Response(echo, { headers: { 'Content-Type': 'image/jpeg' } }));
+        await expect(provider().readCover(V.UID)).rejects.toThrow('provider_playback_mismatch');
     });
 });

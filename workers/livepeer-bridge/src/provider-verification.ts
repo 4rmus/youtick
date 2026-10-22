@@ -53,7 +53,12 @@ export type ManifestPolicy = {
     deniedStatuses: { manifest: readonly number[]; media: readonly number[] };
 };
 
-export type ProbeRequest = { url: string; headers: Record<string, string> };
+export type ProbeRequest = {
+    url: string;
+    headers: Record<string, string>;
+    // Overrides policy.deniedStatuses.manifest for this probe (for example a wrong-subject token).
+    deniedStatuses?: readonly number[];
+};
 
 /** How the core reaches one adapter's delivery surfaces. */
 export type ProviderProbeSpec = {
@@ -164,7 +169,8 @@ export async function verifyReadyProviderAsset(
     const deferred = surfaces.deferredDenials;
     // Fields added for other adapters stay out of the binding so in-flight checkpoints survive a deploy.
     const {
-        checkpoint: previous, tusEndpoint: _tusEndpoint, mode: _mode, storedEvidence: _storedEvidence, ...identity
+        checkpoint: previous, tusEndpoint: _tusEndpoint, mode: _mode, storedEvidence: _storedEvidence,
+        uploadCreatedAtMs: _uploadCreatedAtMs, ...identity
     } = input;
     const bindingSha256 = await dependencies.sha256(JSON.stringify([
         identity, asset, playback, [...context.manifests], ...surfaces.bindingParts, deferred,
@@ -303,7 +309,7 @@ async function requireHlsPlaybackDenied(spec: ProviderProbeSpec, url: string, bu
             throw new Error('provider_unavailable');
         }
         if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
-        if (!await hlsPlaybackDenied(response, spec.policy.deniedStatuses.manifest)) {
+        if (!await hlsPlaybackDenied(response, probe.deniedStatuses ?? spec.policy.deniedStatuses.manifest)) {
             throw new Error('provider_playback_exposed');
         }
     }

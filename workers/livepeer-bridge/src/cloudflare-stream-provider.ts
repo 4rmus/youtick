@@ -58,21 +58,16 @@ export const STREAM_CAPABILITIES: MediaProviderCapabilities = Object.freeze({
     tokenPlacement: 'path',
 });
 
-export type StreamSigningKeyFormat = 'pkcs8' | 'jwk';
-
 export type CloudflareStreamOptions = {
     accountId?: string;
     apiToken?: string;
     customerCode?: string;
     signingKeyId?: string;
-    /** Private key: PEM (PKCS8 or PKCS1, raw or base64 as `POST /stream/keys` returns it) or, with format 'jwk', the JWK. */
+    /** Private key: a PEM (PKCS8, or PKCS1 as `POST /stream/keys` may return it), a JWK JSON, or base64 of either. */
     signingKey?: string;
-    signingKeyFormat: StreamSigningKeyFormat;
     webhookSecrets: readonly (string | undefined)[];
     webhookToleranceMs: number;
     maxDurationSeconds?: number;
-    /** Extra playback hosts (for example videodelivery.net) allowed only when M0-P1 records them. */
-    extraPlaybackHosts: readonly string[];
     /** M0-P1: whether every variant playlist must carry #EXT-X-ENDLIST at readiness. */
     requireEndList: boolean;
     /** One authorized `Range: bytes=0-0` segment read at readiness; off by default. */
@@ -306,7 +301,7 @@ export class CloudflareStreamProvider implements MediaProvider {
     async signToken(subject: string, expiresAtSeconds: number, notBeforeSeconds: number): Promise<string> {
         const kid = this.options.signingKeyId;
         if (!kid || !STREAM_UID_PATTERN.test(subject)) throw new Error('runtime_not_configured');
-        const key = await importStreamSigningKey(this.options.signingKey, this.options.signingKeyFormat);
+        const key = await importStreamSigningKey(this.options.signingKey);
         const signingInput = `${base64UrlJson({ alg: 'RS256', kid })}.${base64UrlJson({
             sub: subject, kid, exp: expiresAtSeconds, nbf: notBeforeSeconds,
         })}`;
@@ -405,15 +400,10 @@ export class CloudflareStreamProvider implements MediaProvider {
             && routeMatches(asset.stream?.route ?? null, expected);
     }
 
+    // Only the account's customer host: videodelivery.net resets the connection (dashboard evidence 2026-10-22).
     hostAllowlist(): HostAllowlist {
         const code = this.options.customerCode || '';
-        return {
-            exact: [
-                ...(CUSTOMER_CODE_PATTERN.test(code) ? [streamCustomerHost(code)] : []),
-                ...this.options.extraPlaybackHosts,
-            ],
-            suffixes: [],
-        };
+        return { exact: CUSTOMER_CODE_PATTERN.test(code) ? [streamCustomerHost(code)] : [], suffixes: [] };
     }
 
     supportsProfile(profileConfigSha256: unknown): boolean {
@@ -650,17 +640,17 @@ function timestampMs(value: unknown): number {
 const importedKeys = new Map<string, Promise<CryptoKey>>();
 
 /**
- * Imports the RS256 signing key once per isolate. PEM input may be raw or base64 (the
- * `POST /stream/keys` `pem` field); a PKCS1 `RSA PRIVATE KEY` is wrapped into PKCS8 because Web
- * Crypto imports only PKCS8 (the returned encoding is unrecorded until M0-P8). Format 'jwk' takes
- * the JWK (raw JSON or base64), the documented Worker example's input.
+ * Imports the RS256 signing key once per isolate, detected by prefix after trimming: a JWK JSON
+ * (`{`), a PEM (`-----BEGIN`), or base64 of either (the `POST /stream/keys` `pem` and `jwk` fields).
+ * A PKCS1 `RSA PRIVATE KEY` is wrapped into PKCS8 because Web Crypto imports only PKCS8 (the
+ * returned encoding is unrecorded until M0-P8).
  */
-export function importStreamSigningKey(value: string | undefined, format: StreamSigningKeyFormat): Promise<CryptoKey> {
-    if (typeof value !== 'string' || value.length < 64) return Promise.reject(new Error('runtime_not_configured'));
-    const cacheKey = `${format}:${value}`;
+export function importStreamSigningKey(value: string | undefined): Promise<CryptoKey> {
+    if (typeof value !== 'string' || value.trim().length < 64) return Promise.reject(new Error('runtime_not_configured'));
+    const cacheKey = value;
     let key = importedKeys.get(cacheKey);
     if (!key) {
-        key = importKey(value, format).catch(() => {
+        key = importKey(value.trim()).catch(() => {
             importedKeys.delete(cacheKey);
             throw new Error('runtime_not_configured');
         });
@@ -670,14 +660,20 @@ export function importStreamSigningKey(value: string | undefined, format: Stream
     return key;
 }
 
-async function importKey(value: string, format: StreamSigningKeyFormat): Promise<CryptoKey> {
+export function decodeStreamKeyText(value: string): string {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('-----BEGIN')) return trimmed;
+    return new TextDecoder().decode(base64Decode(trimmed.replace(/\s/g, ''))).trim();
+}
+
+async function importKey(value: string): Promise<CryptoKey> {
     const algorithm = { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' };
-    if (format === 'jwk') {
-        const text = value.trim().startsWith('{') ? value : new TextDecoder().decode(base64Decode(value.trim()));
-        const jwk = JSON.parse(text) as JsonWebKey;
+    const text = decodeStreamKeyText(value);
+    if (text.startsWith('{')) {
+        const { kid: _kid, ...jwk } = JSON.parse(text) as JsonWebKey & { kid?: unknown };
         return crypto.subtle.importKey('jwk', { ...jwk, alg: 'RS256' }, algorithm, false, ['sign']);
     }
-    const pem = value.includes('-----BEGIN') ? value : new TextDecoder().decode(base64Decode(value.trim()));
+    const pem = text;
     const pkcs1 = /-----BEGIN RSA PRIVATE KEY-----/.test(pem);
     if (!pkcs1 && !/-----BEGIN PRIVATE KEY-----/.test(pem)) throw new Error('invalid_key');
     const der = base64Decode(pem.replace(/-----(?:BEGIN|END) (?:RSA )?PRIVATE KEY-----|\s/g, ''));

@@ -10,6 +10,7 @@
     "storage-usage.json": "size-binding 8 F5 field totalStorageMinutes; the other field names follow the probe mock (UNPROVEN until M0-P3).",
     "storage-exhausted-413.json": "docs: 429/413 at upload-URL creation when over limits; error code and body UNPROVEN (M0-P3).",
     "keys-create.json": "docs 4: POST /stream/keys returns id, base64 pem and jwk; pem encoding (PKCS1 vs PKCS8) UNPROVEN (M0-P8).",
-    "meta-variants.json": "routing-key candidates; which one Stream produces is UNPROVEN (M0-P4)."
+    "meta-variants.json": "routing-key candidates; which one Stream produces is UNPROVEN (M0-P4).",
+    "master-dashboard.m3u8, variant-dashboard.m3u8": "media-account dashboard import 2026-10-22 (PROVIDER): 5 variants in non-height order with AVERAGE-BANDWIDTH/SCORE/FRAME-RATE, no EXT-X-MEDIA audio group, r-suffixed variant names, VOD playlist with MEDIA-SEQUENCE, TARGETDURATION 4, EXT-X-MAP and ENDLIST; pctComplete is a decimal string there too."
   }
 }

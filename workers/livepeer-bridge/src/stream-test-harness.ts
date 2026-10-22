@@ -226,7 +226,7 @@ export type StreamBackend = {
     state: {
         video: Record<string, unknown> | null;
         head: { status: number; offset: string; length: string };
-        ladder: 'full' | 'partial' | 'open';
+        ladder: 'full' | 'partial' | 'open' | 'dashboard';
         storageMinutes: number;
         createStatus: number;
         createBody?: unknown;
@@ -335,13 +335,16 @@ async function delivery(keys: StreamKeys, backend: StreamBackend, url: URL, head
         return new Response(null, { status: 404 });
     }
     if (path === 'manifest/video.m3u8') {
-        return new Response(await streamText(backend.state.ladder === 'partial' ? 'master-partial.m3u8' : 'master.m3u8'));
+        const master = { partial: 'master-partial.m3u8', dashboard: 'master-dashboard.m3u8' }[backend.state.ladder as string];
+        return new Response(await streamText(master ?? 'master.m3u8'));
     }
-    const variant = /^manifest\/stream_(t\d)\.m3u8$/.exec(path);
+    const variant = /^manifest\/stream_(t\d)(?:_r\d+)?\.m3u8$/.exec(path);
     if (variant) {
         const height = VARIANT_HEIGHTS[variant[1]];
         if (!height || backend.state.ladder === 'partial' && !PARTIAL_HEIGHTS.has(height)) return new Response(null, { status: 404 });
-        const text = await streamText(backend.state.ladder === 'open' && height === '1080' ? 'variant-open.m3u8' : 'variant.m3u8', { HEIGHT: height });
+        const name = backend.state.ladder === 'open' && height === '1080' ? 'variant-open.m3u8'
+            : backend.state.ladder === 'dashboard' ? 'variant-dashboard.m3u8' : 'variant.m3u8';
+        const text = await streamText(name, { HEIGHT: height });
         return new Response(text);
     }
     if (path === 'manifest/video.mpd') return new Response('<MPD/>');

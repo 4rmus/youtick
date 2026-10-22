@@ -41,6 +41,7 @@ import { LivepeerProvider, livepeerSupportsProfile } from './livepeer-provider';
 import {
     CloudflareStreamProvider,
     STREAM_TUS_URL_LIFETIME_MS,
+    decodeStreamKeyText,
 } from './cloudflare-stream-provider';
 import { dependencyFetch } from './dependency-fetch';
 import {
@@ -152,9 +153,7 @@ export interface Env {
     STREAM_STORAGE_MINUTES_CAPACITY?: string;
     STREAM_RESERVATION_SECONDS_BUDGET?: string;
     STREAM_STUCK_TIMEOUT_MS?: string;
-    // M0 switches (optional; absent = the documented default, see README "M0 switches").
-    STREAM_SIGNING_KEY_FORMAT?: string;
-    STREAM_PLAYBACK_EXTRA_HOSTS?: string;
+    // M0 switches (optional, never in wrangler.toml; absent = the default, see README "M0 switches").
     STREAM_REQUIRE_END_LIST?: string;
     STREAM_READY_SEGMENT_PROBE_ENABLED?: string;
 }
@@ -659,7 +658,7 @@ const LIFECYCLE_DELETE_BATCH = 128;
 const PLAYBACK_MIN_TTL_SECONDS = 120;
 const PLAYBACK_MAX_TTL_SECONDS = 300;
 const PLAYBACK_V2_TTL_SECONDS = 180;
-const STREAM_DEFAULT_STUCK_TIMEOUT_MS = 30 * 60 * 1000;
+const STREAM_DEFAULT_STUCK_TIMEOUT_MS = 15 * 60 * 1000;
 const DEVICE_CERTIFICATE_MAX_LIFETIME_MS = 8 * 60 * 60 * 1000;
 const MARKET_DEVICE_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 const PLAYBACK_CACHE_MAX_RECORDS = 1024;
@@ -839,6 +838,8 @@ const SAFE_ERROR_CODES = new Set([
     'publication_cover_image_size',
     'publication_cover_image_invalid',
     'provider_state_invalid',
+    'provider_tus_state_invalid',
+    'provider_tus_url_expired',
     'provider_unavailable',
     'provider_mutations_disabled',
     'rate_source_invalid',
@@ -971,7 +972,7 @@ const bridgeWorker = {
             if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
                 return json({ error: 'control_plane_disabled' }, 503);
             }
-            if (!validApiKey(env.LIVEPEER_API_KEY) || !validPlaybackConfig(env)) {
+            if (!(validApiKey(env.LIVEPEER_API_KEY) || validStreamConfig(env)) || !validPlaybackConfig(env)) {
                 return json({ error: 'runtime_not_configured' }, 503);
             }
             return publicationCover(request, env, coverRoute.jobId, coverRoute.generation);
@@ -989,7 +990,7 @@ const bridgeWorker = {
             if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
                 return json({ error: 'control_plane_disabled' }, 503);
             }
-            if (!env.LIVEPEER_CONTROL || !validWebhookConfig(env)) {
+            if (!env.LIVEPEER_CONTROL || !validWebhookConfig(env) || !validStudioWebhookSecrets(env)) {
                 return json({ error: 'runtime_not_configured' }, 503);
             }
             return forwardLivepeerWebhook(request, env);
@@ -2000,6 +2001,11 @@ export class LivepeerControl {
                 'FINALIZE_RETRY',
                 'PROVIDER_FAILED',
             ].includes(existing.state)) {
+                if (jobProviderKind(existing) === 'stream') {
+                    // The signed error webhook is terminal even while GET still reports inprogress.
+                    await terminateStreamJob(this.state, this.env, existing, 'PROVIDER_FAILED', event.failureCode ?? 'ERR_UNKNOWN');
+                    return json({ accepted: true, provider_failed: true });
+                }
                 const failed = transitionJob(existing, 'PROVIDER_FAILED');
                 await this.state.storage.put(JOB_KEY, failed);
                 logJobStateTransition(existing.state, failed.state, existing);
@@ -2022,6 +2028,11 @@ export class LivepeerControl {
             return settleLegacyProfileJob(this.state, this.env, existing);
         }
 
+        if (jobProviderKind(existing) === 'stream' && existing.publication
+            && ['READY_VERIFIED', 'FINALIZE_QUEUED', 'FINALIZE_RETRY'].includes(existing.state)) {
+            // The byte proof is stored and the upload URL is gone: never re-verify; the alarm finalizes.
+            return json({ accepted: true, duplicate: true, processing: true }, 202);
+        }
         const dedupKey = `webhook:${event.digest}`;
         const seen = await this.state.storage.transaction(async (transaction) => {
             const duplicate = await transaction.get(dedupKey);
@@ -2069,7 +2080,15 @@ export class LivepeerControl {
                 });
             } catch (error) {
                 await this.state.storage.delete(dedupKey);
-                await persistUploadVerificationResult(this.state, safeErrorCode(error));
+                const code = safeErrorCode(error);
+                await persistUploadVerificationResult(this.state, code);
+                if (jobProviderKind(record) === 'stream'
+                    && (code === 'provider_tus_state_invalid' || code === 'provider_tus_url_expired')) {
+                    // Option A failed (overflow, short or foreign upload) or the URL died: never finalize.
+                    await terminateStreamJob(this.state, this.env, record,
+                        code === 'provider_tus_url_expired' ? 'UPLOAD_EXPIRED' : 'PROVIDER_FAILED', code);
+                    return json({ accepted: true, provider_failed: code === 'provider_tus_state_invalid', code }, 202);
+                }
                 throw error;
             }
         } else {
@@ -2186,6 +2205,53 @@ export class LivepeerControl {
             throw new Error('provider_delete_ambiguous');
         }
     }
+}
+
+/**
+ * Ends a Stream job (failure, expiry or cancellation) and deletes its UID exactly once, so the
+ * reservation Stream booked at creation is released; gated by the provider-mutation flag.
+ */
+async function terminateStreamJob(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+    toState: 'PROVIDER_FAILED' | 'UPLOAD_EXPIRED' | 'CANCELLED',
+    code: string,
+): Promise<JobRecord> {
+    const current = await state.storage.get<JobRecord>(JOB_KEY) ?? job;
+    let record = current;
+    if (!['PROVIDER_FAILED', 'UPLOAD_EXPIRED', 'CANCELLED'].includes(current.state)) {
+        record = transitionJob(current, toState);
+        await state.storage.put(JOB_KEY, record);
+        logJobStateTransition(current.state, record.state, current);
+    }
+    console.warn(formatLog(toState === 'PROVIDER_FAILED' ? 'stream_upload_failed' : 'stream_upload_ended', {
+        toState: record.state,
+        code: /^[A-Za-z0-9_]{1,64}$/.test(code) ? code : 'unknown',
+    }));
+    record = await deleteStreamUpload(state, env, record);
+    await scheduleTerminalArchive(state, env, record);
+    await updateAdmission(env, record, record.state as 'PROVIDER_FAILED' | 'UPLOAD_EXPIRED' | 'CANCELLED');
+    return record;
+}
+
+async function deleteStreamUpload(state: DurableObjectState, env: Env, job: JobRecord): Promise<JobRecord> {
+    if (jobProviderKind(job) !== 'stream' || !job.assetId || job.providerDelete
+        || env.LIVEPEER_PROVIDER_MUTATIONS_ENABLED !== 'true') return job;
+    let outcome: NonNullable<JobRecord['providerDelete']>['outcome'];
+    try {
+        outcome = await mediaProvider(env, job).deleteAsset(job.assetId) === 'deleted' ? 'DELETED' : 'MISSING';
+    } catch {
+        outcome = 'AMBIGUOUS';
+    }
+    const record: JobRecord = {
+        ...job,
+        providerDelete: { assetIdSha256: await sha256Hex(job.assetId), outcome, attemptedAtMs: Date.now() },
+    };
+    await state.storage.put(JOB_KEY, record);
+    console.info(formatLog('stream_upload_deleted', { outcome }));
+    if (outcome === 'AMBIGUOUS') await closeAdmissionAfterAmbiguousDelete(env, record);
+    return record;
 }
 
 async function purgeExpiredWebhookDedup(state: DurableObjectState): Promise<void> {
@@ -6420,11 +6486,9 @@ function streamProvider(env: Env): CloudflareStreamProvider {
         customerCode: env.STREAM_CUSTOMER_CODE,
         signingKeyId: env.STREAM_SIGNING_KEY_ID,
         signingKey: env.STREAM_SIGNING_KEY_PEM,
-        signingKeyFormat: env.STREAM_SIGNING_KEY_FORMAT === 'jwk' ? 'jwk' : 'pkcs8',
         webhookSecrets: [env.STREAM_WEBHOOK_SECRET, env.STREAM_WEBHOOK_SECRET_PREVIOUS],
         webhookToleranceMs: WEBHOOK_TOLERANCE_MS,
         maxDurationSeconds: streamMaxDurationSeconds(env) ?? undefined,
-        extraPlaybackHosts: streamExtraPlaybackHosts(env),
         requireEndList: env.STREAM_REQUIRE_END_LIST !== 'false',
         readySegmentProbe: env.STREAM_READY_SEGMENT_PROBE_ENABLED === 'true',
         readyPendingWindowMs: streamStuckTimeoutMs(env) ?? STREAM_DEFAULT_STUCK_TIMEOUT_MS,
@@ -7239,7 +7303,7 @@ type VerifiedPublication = {
 async function verifyReadyProviderAsset(
     state: DurableObjectState, env: Env, job: JobRecord, mode: VerificationMode,
 ): Promise<VerifiedPublication | null> {
-    if (!validProviderVerificationConfig(env)
+    if (!(jobProviderKind(job) === 'stream' ? validStreamConfig(env) : validStudioVerificationConfig(env))
         || !job.assetId || !job.playbackId || !job.projectId) {
         throw new Error('runtime_not_configured');
     }
@@ -7255,15 +7319,20 @@ async function verifyReadyProviderAsset(
             assetId: job.assetId,
             playbackId: job.playbackId,
             projectId: job.projectId,
-            expectedProjectId: env.LIVEPEER_PROJECT_ID!,
+            expectedProjectId: jobProviderKind(job) === 'stream' ? env.STREAM_ACCOUNT_ID! : env.LIVEPEER_PROJECT_ID!,
             apiTokenName: job.apiTokenName,
             checkpoint: job.providerVerification,
             tusEndpoint: job.tusEndpoint,
             mode,
             storedEvidence: job.sourceBytesEvidence,
+            ...(jobProviderKind(job) === 'stream' && job.providerCreate?.completedAtMs !== undefined
+                ? { uploadCreatedAtMs: job.providerCreate.completedAtMs } : {}),
         });
-        const nextAtMs = job.state === 'ONCHAIN_PUBLISHED' ? Date.now() + 1_000
-            : Math.min(Date.now() + 1_000, job.absoluteDeadlineAtMs ?? Number.MAX_SAFE_INTEGER);
+        // A pending result may ask for a later look (Stream waits for its ladder); default 1 s.
+        const continueAfterMs = 'pending' in verified && verified.retryAfterMs !== undefined
+            ? verified.retryAfterMs : 1_000;
+        const nextAtMs = job.state === 'ONCHAIN_PUBLISHED' ? Date.now() + continueAfterMs
+            : Math.min(Date.now() + continueAfterMs, job.absoluteDeadlineAtMs ?? Number.MAX_SAFE_INTEGER);
         await state.storage.transaction(async (transaction) => {
             const current = await transaction.get<JobRecord>(JOB_KEY);
             if (!current || canonicalJson({ ...current, providerVerification: undefined })
@@ -8210,9 +8279,14 @@ function streamStuckTimeoutMs(env: Env): number | null {
     return positiveIntegerVar(env.STREAM_STUCK_TIMEOUT_MS);
 }
 
-function streamExtraPlaybackHosts(env: Env): string[] {
-    return (env.STREAM_PLAYBACK_EXTRA_HOSTS || '').split(',').map((host) => host.trim().toLowerCase())
-        .filter((host) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host));
+// STREAM_SIGNING_PUBLIC_KEY is base64 of an SPKI PEM (or the PEM itself); the release checks the pair.
+function validStreamPublicKey(value: string | undefined): boolean {
+    if (typeof value !== 'string' || value.trim().length < 64) return false;
+    try {
+        return decodeStreamKeyText(value).startsWith('-----BEGIN PUBLIC KEY-----');
+    } catch {
+        return false;
+    }
 }
 
 function validStreamConfig(env: Env): boolean {
@@ -8222,12 +8296,9 @@ function validStreamConfig(env: Env): boolean {
         && !/[\s]/.test(env.STREAM_API_TOKEN)
         && /^[a-z0-9]{1,64}$/.test(env.STREAM_CUSTOMER_CODE || '')
         && /^[0-9a-f]{32}$/.test(env.STREAM_SIGNING_KEY_ID || '')
-        && typeof env.STREAM_SIGNING_PUBLIC_KEY === 'string'
-        && env.STREAM_SIGNING_PUBLIC_KEY.length >= 64
-        && !env.STREAM_SIGNING_PUBLIC_KEY.startsWith('<')
+        && validStreamPublicKey(env.STREAM_SIGNING_PUBLIC_KEY)
         && typeof env.STREAM_SIGNING_KEY_PEM === 'string'
-        && env.STREAM_SIGNING_KEY_PEM.length >= 64
-        && [undefined, 'pkcs8', 'jwk'].includes(env.STREAM_SIGNING_KEY_FORMAT)
+        && env.STREAM_SIGNING_KEY_PEM.trim().length >= 64
         && typeof env.STREAM_WEBHOOK_SECRET === 'string'
         && env.STREAM_WEBHOOK_SECRET.length >= 16
         && (env.STREAM_WEBHOOK_SECRET_PREVIOUS === undefined || env.STREAM_WEBHOOK_SECRET_PREVIOUS === ''
@@ -8238,13 +8309,19 @@ function validStreamConfig(env: Env): boolean {
         && streamStuckTimeoutMs(env) !== null;
 }
 
+// Validators are evaluated per active adapter: Studio unless Market V2 runs Stream-only, Stream
+// when its flag is on. The flag off with no STREAM_* values is "not configured", never an error.
 function validWebhookConfig(env: Env): boolean {
+    return (!studioActive(env) || validStudioWebhookSecrets(env))
+        && validProviderVerificationConfig(env)
+        && validOperatorConfig(env);
+}
+
+function validStudioWebhookSecrets(env: Env): boolean {
     return typeof env.LIVEPEER_WEBHOOK_SECRET === 'string'
         && env.LIVEPEER_WEBHOOK_SECRET.length >= 16
         && (env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS === undefined
-            || env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS.length >= 16)
-        && validProviderVerificationConfig(env)
-        && validOperatorConfig(env);
+            || env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS.length >= 16);
 }
 
 function validStreamWebhookConfig(env: Env): boolean {
@@ -8305,6 +8382,11 @@ function validOperatorStatusConfig(env: Env): boolean {
 }
 
 function validProviderVerificationConfig(env: Env): boolean {
+    return (!studioActive(env) || validStudioVerificationConfig(env))
+        && (!streamEnabled(env) || validStreamConfig(env));
+}
+
+function validStudioVerificationConfig(env: Env): boolean {
     return validApiKey(env.LIVEPEER_API_KEY)
         && typeof env.LIVEPEER_PROJECT_ID === 'string'
         && PROVIDER_ID_PATTERN.test(env.LIVEPEER_PROJECT_ID)
@@ -8318,7 +8400,12 @@ function validPlaybackConfig(env: Env): boolean {
         && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
         && ACCOUNT_ID_PATTERN.test(env.ACCESS_CONTRACT_ID || '')
         && ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
-        && typeof env.LIVEPEER_JWT_PRIVATE_KEY === 'string'
+        && (!studioActive(env) || validStudioPlaybackKeys(env))
+        && (!streamEnabled(env) || validStreamConfig(env));
+}
+
+function validStudioPlaybackKeys(env: Env): boolean {
+    return typeof env.LIVEPEER_JWT_PRIVATE_KEY === 'string'
         && env.LIVEPEER_JWT_PRIVATE_KEY.length >= 64
         && typeof env.LIVEPEER_JWT_PUBLIC_KEY === 'string'
         && env.LIVEPEER_JWT_PUBLIC_KEY.length >= 32
@@ -8331,14 +8418,8 @@ function validPlaybackV2Config(env: Env): boolean {
     return isHttpsUrl(env.NEAR_RPC_URL)
         && ACCOUNT_ID_PATTERN.test(env.MARKET_CONTRACT_ID || '')
         && ['testnet', 'mainnet'].includes(env.NEAR_NETWORK || '')
-        && validApiKey(env.LIVEPEER_API_KEY)
-        && typeof env.LIVEPEER_JWT_PRIVATE_KEY === 'string'
-        && env.LIVEPEER_JWT_PRIVATE_KEY.length >= 64
-        && typeof env.LIVEPEER_JWT_PUBLIC_KEY === 'string'
-        && env.LIVEPEER_JWT_PUBLIC_KEY.length >= 32
-        && !/[\r\n]/.test(env.LIVEPEER_JWT_PUBLIC_KEY)
-        && typeof env.LIVEPEER_JWT_ISSUER === 'string'
-        && isHttpsOrigin(env.LIVEPEER_JWT_ISSUER);
+        && (!studioActive(env) || (validApiKey(env.LIVEPEER_API_KEY) && validStudioPlaybackKeys(env)))
+        && (!streamEnabled(env) || validStreamConfig(env));
 }
 
 function validCreatorFeeQuoteConfig(env: Env): boolean {
@@ -8531,6 +8612,8 @@ function errorStatus(code: string): number {
         || code === 'provider_verification_incomplete'
         || code === 'verification_evidence_missing'
         || code === 'provider_state_invalid'
+        || code === 'provider_tus_state_invalid'
+        || code === 'provider_tus_url_expired'
         || code === 'device_nonce_replayed'
         || code === 'provider_create_pending'
         || code === 'provider_delete_ambiguous'

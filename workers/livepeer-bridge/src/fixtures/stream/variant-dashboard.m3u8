@@ -1,0 +1,14 @@
+#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-TARGETDURATION:4
+#EXT-X-MAP:URI="../../<UID>/video/<HEIGHT>/init.mp4?p=<P>&s=<S>"
+#EXT-X-INDEPENDENT-SEGMENTS
+#EXTINF:4.00000,
+../../<UID>/video/<HEIGHT>/seg_1.mp4?p=<P>&s=<S>
+#EXTINF:4.00000,
+../../<UID>/video/<HEIGHT>/seg_2.mp4?p=<P>&s=<S>
+#EXTINF:2,
+../../<UID>/video/<HEIGHT>/seg_3.mp4?p=<P>&s=<S>
+#EXT-X-ENDLIST
