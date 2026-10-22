@@ -599,3 +599,109 @@ and anything on Preview, Production or mainnet. The first upload of the day
 Open after this walk: the first watermark and the `lp-bcc8f530…` publication in `/v1/publications`,
 the `watched` ticket row, the Bridge binding and cron, and the 30-day release (earliest
 2026-11-12).
+
+## Media account (2026-10-22)
+
+Step M1.5 of the Cloudflare Stream migration moves the Bridge and the read model into a separate
+Cloudflare account, the "media" account. Both then serve from that account's `workers.dev`
+subdomain. The owner decided this on 2026-10-22 (OD2, OD14, OD16, OD17, OD18). The relayer, the
+payment service and the payments D1 stay where they are, with the same specs and configs. For
+the relayer and the payment service, the `write-config` output before and after this change is
+byte-identical.
+
+| Worker | Cloudflare account | Host |
+|---|---|---|
+| `youtick-relayer-v2-testnet` | default (`V2_CLOUDFLARE_*`) | `relayer-v2-testnet.youtick.net` (unchanged) |
+| `youtick-payment-service-v2-testnet` | default (`V2_CLOUDFLARE_*`) | `pay-v2-testnet.youtick.net` (unchanged) |
+| `youtick-market-read-model-v2-testnet` | media `6caaaf27c430b5da0ce18f68f35c1dcb` (`V2_MEDIA_CLOUDFLARE_*`) | `youtick-market-read-model-v2-testnet.<subdomain>.workers.dev` |
+| `youtick-livepeer-bridge-v2-testnet` | media (`V2_MEDIA_CLOUDFLARE_*`) | `youtick-livepeer-bridge-v2-testnet.<subdomain>.workers.dev` |
+
+D1 `youtick-market-read-model-v2-testnet` moves to the media account. D1
+`youtick-payments-v2-testnet` stays in the default account. The web keeps its origin.
+`ALLOWED_ORIGINS`, `READ_MODEL_WEB_ORIGIN` and `LIVEPEER_JWT_ISSUER` do not change.
+
+What the release tooling does now:
+- **Media account constant.** `MEDIA_ACCOUNT` in `scripts/v2-testnet-release.mjs` holds the account
+  id and the workers.dev subdomain. The subdomain is the sentinel `<register-on-the-media-account>`
+  until the owner registers one. Every path that needs a media host stops with
+  `media_account_unconfigured`. This includes the prepare-job summary of both workflows, so before
+  M1.5-G2 neither workflow reaches environment approval.
+- **Read model.** The deployed config sets `workers_dev = true` and `preview_urls = false`, and there
+  is no `--domain`. The read model deploys with `MEDIA_CLOUDFLARE_*`, checked only when the release
+  reaches it. Failures stop there: `media_credentials_missing`, or `cloudflare_account_not_media`
+  when the account is not the media one. The default pair must not be the media account
+  (`cloudflare_default_account_is_media`). The read-model D1 migrations run with
+  `V2_MEDIA_CLOUDFLARE_*`. The payments D1 migrations still run with `V2_CLOUDFLARE_*`.
+- **Bridge.** The deployed config sets `workers_dev = true`, and there is no `--domain`.
+  `CLOUDFLARE_ACCOUNT_ID` must be the media account. The smoke test calls the workers.dev host.
+  The Livepeer webhook URL must be exactly `https://<bridge host>/v1/livepeer-webhooks`, or the
+  release stops with `webhook_binding_mismatch`. The Bridge workflow no longer fingerprints
+  `https://youtick.net`, because the media token has no `youtick.net` zone. *V2 Testnet Workers*
+  still fingerprints it.
+- **Environment URL.** The Bridge workflow's `environment.url` is a literal and must equal
+  `https://youtick-livepeer-bridge-v2-testnet.<subdomain>.workers.dev/__health`.
+  `scripts/ci-security.test.mjs` fails when the literal and `MEDIA_ACCOUNT` disagree.
+- **Workers releases are all-or-nothing.** *V2 Testnet Workers* always deploys all three Workers.
+  Until M1.5-G2 is done, the relayer and the payment service cannot be released on their own.
+
+### Owner steps (M1.5-G2)
+
+1. **Register the workers.dev subdomain** on the media account (dashboard, Workers & Pages).
+   If no subdomain exists, wrangler asks for one interactively. The CI jobs are non-interactive,
+   so a deploy without a subdomain fails. Then commit the subdomain on the open M1.5 branch, in
+   two places that must agree:
+   - `MEDIA_ACCOUNT.workersSubdomain` in `scripts/v2-testnet-release.mjs`;
+   - the `environment.url` literal in `.github/workflows/deploy-v2-testnet-bridge.yml`.
+2. **Create the read-model D1 in the media account.** Wrangler must be signed in to that account.
+   Create the database and record its id. This changes the variable for both workflows, so the
+   old account's read model and Bridge can no longer deploy from them:
+   ```bash
+   cd workers/livepeer-bridge && CLOUDFLARE_ACCOUNT_ID=6caaaf27c430b5da0ce18f68f35c1dcb npx wrangler d1 create youtick-market-read-model-v2-testnet
+   gh variable set V2_READ_MODEL_D1_ID --repo 4rmus/youtick --body "<database_id>"
+   ```
+3. **Create the API token** in the media account, with the same scopes as the current
+   `V2_CLOUDFLARE_API_TOKEN` (OD18), D1 edit included.
+4. **Add the environment secrets** to `v2-testnet`. The account id is not sensitive, but the
+   workflows read it as a secret:
+   ```bash
+   printf %s 6caaaf27c430b5da0ce18f68f35c1dcb | gh secret set V2_MEDIA_CLOUDFLARE_ACCOUNT_ID --env v2-testnet --repo 4rmus/youtick
+   ```
+   Add `V2_MEDIA_CLOUDFLARE_API_TOKEN` in the GitHub UI.
+5. **Point the Studio V2 webhook** (`f7a3992a-…`, OD17) at
+   `https://youtick-livepeer-bridge-v2-testnet.<subdomain>.workers.dev/v1/livepeer-webhooks`.
+   Use the dashboard or the API. Keep the events and the signing secret. Then read the webhook
+   back and check two things: `url` is the new one, and `sharedSecret` still equals
+   `V2_LIVEPEER_WEBHOOK_SECRET`. From this moment the old Bridge receives no deliveries, so do it
+   with no upload in flight and right before the first media Bridge deploy.
+6. **Check the media account's Workers plan** at deploy time. The two Workers need Durable
+   Objects (SQLite), D1 and two cron triggers: the read model every minute and the Bridge every 15
+   minutes.
+
+### Deploy order (M1.5-G3)
+
+1. **Stop the old Bridge first.** The old Bridge in the default account and the new one sign with
+   the same NEAR operator key. Both would run the `*/15` `release_expired` scan, and their
+   operator outboxes would race for nonces. Deploy the old Bridge `closed` before this change
+   reaches `main`: after the merge, the workflows only target the media account. Otherwise,
+   remove the old Bridge's cron trigger in the dashboard. Also stop the old read model's cron.
+   Delete nothing until M4 reaches `PASS`.
+2. **Run *V2 Testnet Workers*.** The read-model D1 migrations `0001`–`0011` apply to the new, empty
+   database. The read model rescans Market V2 from block `272905000`. Until it catches up, the
+   Bridge's release job sees fewer tickets than exist.
+3. **Run *V2 Testnet Bridge* `closed`, then `acceptance`.** The Bridge's Durable Object state does
+   not move between accounts: upload jobs and the operator outbox start empty. Drain the old
+   outbox first (step 2 of the MC cutover shows the check) and leave no upload in flight.
+4. **Point the web at the new hosts.** Set `NEXT_PUBLIC_LIVEPEER_BRIDGE_URL` and
+   `NEXT_PUBLIC_MARKET_READ_MODEL_URL` to the two workers.dev URLs for the local run against the
+   V2 testnet.
+5. **Leave the old Workers disabled** in the default account until M4 reaches `PASS`.
+
+Known gaps:
+- The Bridge caches publication covers with `caches.default`. How that cache behaves on a
+  workers.dev host is UNPROVEN; M1.5-G3 checks it.
+- `SMOKE_DELAYS_MS` was sized for a new custom domain. Whether it fits a new workers.dev host is
+  UNPROVEN.
+
+Older sections and `docs/testing.md` still name `bridge-v2-testnet.youtick.net` and
+`read-v2-testnet.youtick.net`. After the move those hosts are historical. The text gets fixed
+once M1.5-G3 is done.
