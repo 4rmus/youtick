@@ -200,6 +200,14 @@ The local fault regressions prove bounded NEAR read fallback/circuit behavior
 and one-attempt Livepeer create degradation. They do not constitute provider,
 staging or distributed-isolate chaos evidence.
 
+`npm run probe:stream` (`scripts/stream-probe.mjs`, the Cloudflare Stream M0
+proof round) is owner-run only and writes to the provider: every live
+subcommand needs `STREAM_PROBE_MUTATIONS=true` plus `STREAM_ACCOUNT_ID` and
+`STREAM_API_TOKEN` in the shell, and a per-gate approval. Never run it from an
+agent session or CI; `--dry-run` prints the request plan without network
+calls. Its mocked tests (`scripts/stream-probe.test.mjs`) run inside
+`npm run test:provider-canary`.
+
 ## Relayer
 
 ```bash

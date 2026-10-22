@@ -138,29 +138,83 @@ but cannot silently acquire a fingerprint during recovery. Heartbeats remain
 control envelope v2. Creator cancellation also uses control envelope v2 and
 the exact final on-chain job-bound session key.
 
-Provider upload creation, TUS offset reads and keyed asset/playback reads now
-cross the vendor-neutral `MediaProvider` contract in `src/media-provider.ts`.
-The 319-line `src/livepeer-provider.ts` owns the `MediaProvider` implementation,
-Livepeer request-upload/TUS sequence, API paths, HTTP error classification and
-raw asset/playback conversion into neutral identity, policy, phase, size, hash
-and `hls`/`mp4`/`vtt` source fields.
-UploadJob state stores only normalized asset, playback, project and
-resumable-upload identifiers. Ready-asset identity, exact-size, output and
-private-media verification is invoked through `MediaProvider.verifyReadyAsset`
-and returns only normalized publication evidence. The 251-line
-`src/provider-verification.ts` module owns those fail-closed HLS, MP4, VTT,
-thumbnail and download probes; signing keys and environment validation remain
-in the Worker and cross the boundary only as a token callback. The small
-Only a small environment/secret composition factory and cost guard remain in
-`index.ts`; the adapter split is still partial because actual provider billing
-reconciliation is external.
-Provider asset deletion is not exposed by the runtime today, so a speculative
-unused delete operation is intentionally not added.
+### Media provider boundary
 
-Livepeer event payload parsing, snapshot selection, creator/job routing, phase
-normalization and deterministic dedup input now live in the 75-line
-`src/provider-webhook.ts`. HMAC verification, timestamp tolerance, accepted job
-ID policy, Queue dispatch and Durable Object authority stay in `index.ts`.
+Every provider call crosses the `MediaProvider` contract in `src/media-provider.ts`:
+upload creation, TUS offset reads, asset and playback reads, ready-asset
+verification, deletion, playback token signing (`signPlayback`), webhook
+authentication and normalization (`verifyWebhook`, `parseWebhook`), the asset
+identity binding (`identityMatches`), the playback host allowlist
+(`hostAllowlist`), the profile catalog (`supportsProfile`, `describeProfile`)
+and the cover read (`readCover`). Each adapter also declares `capabilities`
+(storyboard, MP4, source hash, delete webhook, custom ladder, how the source
+byte count is proven, and whether the playback token travels in a header or the
+URL path).
+
+Studio hosts, headers and credentials appear only in the two Studio runtime
+modules. `src/livepeer-provider.ts` is the Studio adapter: the API and TUS
+hosts, the playback host allowlist, the `Livepeer-Signature` and `Livepeer-Jwt`
+header names, the ES256 playback JWT, the `t=,v1=` webhook HMAC, the
+`creatorId` `<jobId>:<generation>` routing value, the webhook dedup digest
+(`sha256(timestamp, rawBodyHash, asset.id, status.phase)`, unchanged) and the
+frozen `profiles.json` catalog. `src/livepeer-verification.ts` (below) carries
+the Studio probes, including the forged ES256 token shapes and the
+`livepeer_media` dependency label. `index.ts` selects an adapter with
+`mediaProvider(env, job | publicationHash)` from one registry
+(`MEDIA_PROVIDER_REGISTRY`): a job record's optional `provider` field (absent
+means `studio`, so every existing record reads unchanged; an unknown value fails
+closed with `runtime_not_configured`) or a publication's
+`profile_config_sha256` through each registered `supportsProfile`, which also
+backs every request-side profile check; the default is Studio. `/__health`
+reports `mediaProvider.kind`.
+
+Webhook ingress keeps the pinned `youtick.livepeer-webhook-queue.v1` message and
+forwards the exact raw body; the direct path adds the internal
+`X-YouTick-Provider` header and the Queue path falls back to the job record.
+The job object consumes a `NormalizedWebhookEvent` (`ready`, `processing`,
+`failed`, `deleted`, plus the provider phase and digest); its own alarm and
+reconcile observations are synthesized in that envelope by
+`src/provider-webhook.ts`. `src/cover-image.ts` is the neutral bounded cover
+reader. Dependency logs keep the `livepeer_*` labels for Studio;
+`media_api`, `media_tus` and `media_cdn` are reserved for other adapters.
+Deploy identities (Worker name, `LivepeerControl`, Queue names, `LIVEPEER_*`
+variables and secrets, schema literals) and the on-chain method names are
+unchanged.
+
+UploadJob state stores only normalized asset, playback, project and
+resumable-upload identifiers. Ready-asset verification is invoked through
+`MediaProvider.verifyReadyAsset` and returns only normalized publication
+evidence. `src/provider-verification.ts` is the provider-neutral core: identity
+through the adapter's `identityMatches`, ready state, the byte proof chosen by
+the `sourceBytesProof` capability (Studio keeps `declared-size`; `tus-offset`
+reads the upload offset at readiness and reuses stored evidence in `published`
+mode), the HLS invariants of an adapter-declared `ManifestPolicy` (alternate
+media, allowed query keys, `EXT-X-ENDLIST`, init segment, denied statuses per
+surface), anonymous denial probes, the request/time budget and the
+pending/checkpoint contract, all unchanged for Studio. Token placement is the
+adapter's `capabilities.tokenPlacement`; the core refuses a `path` adapter whose
+authorized request sets a header and a `header` adapter that rewrites the URL.
+A unit test keeps Studio hosts, headers and MIME types out of the neutral
+modules and out of `index.ts`. `src/livepeer-verification.ts` holds the Studio
+probes: `Livepeer-Jwt` header credentials, forged ES256 shapes, the MP4
+cross-check with the portrait transpose quirk, the VTT storyboard and the
+download URL. Published-mode reconciliation passes `mode: 'published'`; the
+Studio adapter ignores mode, upload URL and stored evidence.
+
+The canonical `tus-offset` byte proof is `SourceBytesEvidence`
+`{ method: 'tus-offset', offsetBytes, lengthBytes, observedAtMs }`. The job
+object stores it on the job record (`sourceBytesEvidence`) no later than the
+`READY_VERIFIED` write that clears the upload URL, and passes it back as
+`storedEvidence` in published mode. Evidence that is missing in published mode
+raises `verification_evidence_missing`, which is outside the strong and
+inventory drift sets: the job stays `PROVIDER_UNKNOWN` and no sales suspension
+is queued. Evidence that does not match the expected bytes is
+`provider_state_invalid` (strong drift).
+
+M2 notes: the pending/checkpoint contract is reachable today only through an
+adapter's deferred denial list (Studio storyboard thumbnails). A Stream ready
+webhook can arrive before every rendition is listed, so M2-G3 must add a pending
+path for missing renditions instead of failing with a strong drift code.
 
 Webhook Queue transport is source-complete behind
 `LIVEPEER_WEBHOOK_QUEUE_ENABLED=false`. When enabled with a `LIVEPEER_EVENTS`

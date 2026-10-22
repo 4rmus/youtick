@@ -19,7 +19,7 @@ jobs:
   dependency-audit:
     name: Runtime Dependency Audit
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     needs: detect-changes
     if: needs.detect-changes.outputs.npm_deps == 'true'
     steps:
@@ -29,11 +29,11 @@ jobs:
           node-version-file: .nvmrc
       - name: Reject high-severity runtime dependency advisories
         run: |
-          npm --prefix apps/web audit --omit=dev --audit-level=high
-          npm --prefix workers/livepeer-bridge audit --omit=dev --audit-level=high
-          npm --prefix workers/relayer audit --omit=dev --audit-level=high
-          npm --prefix workers/payment-service audit --omit=dev --audit-level=high
-          npm --prefix docs audit --omit=dev --audit-level=high
+          npm --prefix apps/web audit --omit=dev --audit-level=high --fetch-timeout=60000 --fetch-retries=3
+          npm --prefix workers/livepeer-bridge audit --omit=dev --audit-level=high --fetch-timeout=60000 --fetch-retries=3
+          npm --prefix workers/relayer audit --omit=dev --audit-level=high --fetch-timeout=60000 --fetch-retries=3
+          npm --prefix workers/payment-service audit --omit=dev --audit-level=high --fetch-timeout=60000 --fetch-retries=3
+          npm --prefix docs audit --omit=dev --audit-level=high --fetch-timeout=60000 --fetch-retries=3
 
   rust-wasm-audit:
     name: Production WASM Dependency Audit

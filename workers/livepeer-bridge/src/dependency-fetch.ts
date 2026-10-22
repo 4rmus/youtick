@@ -1,5 +1,16 @@
+// Studio keeps its livepeer_* labels so existing dashboards and log queries do not move;
+// the provider-neutral media_* labels are for adapters added behind the MediaProvider seam.
+export type DependencyLabel =
+    | 'near_rpc'
+    | 'livepeer_api'
+    | 'livepeer_tus'
+    | 'livepeer_media'
+    | 'media_api'
+    | 'media_tus'
+    | 'media_cdn';
+
 export async function dependencyFetch(
-    dependency: 'near_rpc' | 'livepeer_api' | 'livepeer_tus' | 'livepeer_media',
+    dependency: DependencyLabel,
     operation: string,
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
