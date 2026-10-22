@@ -919,7 +919,13 @@ The MC cutover table above stays, with these changes:
   every validly signed delivery, routable or not; a reachable `/__health` without that field
   fails the canary.
 
-Effects to expect: publications made through Studio before the cutover no longer play through
+Effects to expect: with the OD3 defaults (`STREAM_MAX_DURATION_SECONDS` and
+`STREAM_RESERVATION_SECONDS_BUDGET` both `7200`) only one Stream upload can be open at a time, so
+a second creator who starts an upload while another is open is refused with `reservation_budget`.
+That is the routine denial until the owner raises the budget (a commit to
+`STREAM.reservationSecondsBudget`, at most what the 1,000-minute storage allows) and redeploys.
+`STREAM_MAX_DURATION_SECONDS` accepts 1..7200 only, the descriptor cap the Bridge enforces.
+Publications made through Studio before the cutover no longer play through
 the new Bridge (it has no Studio configuration); the old Bridge keeps serving them until it is
 switched off (OD13). With `stream_enabled=false` the Bridge writes the Stream constants as empty
 and deploys no Stream secret.

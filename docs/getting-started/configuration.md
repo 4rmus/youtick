@@ -174,6 +174,8 @@ Non-secret values, written into `[vars]` by the release:
   (`stream_signing_key_unconfigured`).
 - `STREAM_MAX_DURATION_SECONDS` (`7200`), `STREAM_STORAGE_MINUTES_CAPACITY`
   (`1000`), `STREAM_RESERVATION_SECONDS_BUDGET` (`7200`): owner decision OD3.
+  The duration must be 1..7200, the descriptor cap the Bridge enforces
+  (`stream_max_duration_invalid` otherwise).
   The release refuses a budget below the cap or a capacity below one upload at
   the cap (`stream_limits_inconsistent`); the smoke test requires the Bridge's
   `/__health` `stream` block to echo the budget and the capacity.

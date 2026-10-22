@@ -265,7 +265,9 @@ test('Stream constants: sentinels are empty with the flag off and refused with i
             /stream_signing_public_key_invalid/],
         [{ signingPublicKey: Buffer.from(generateKeyPairSync('rsa', { modulusLength: 1024 }).publicKey.export({ format: 'pem', type: 'spki' })).toString('base64') },
             /stream_signing_public_key_invalid/],
-        [{ maxDurationSeconds: '36001' }, /stream_max_duration_invalid/],
+        // 1..7200: the descriptor cap the Bridge enforces (OD3), not Stream's own 36000.
+        [{ maxDurationSeconds: '7201' }, /stream_max_duration_invalid/],
+        [{ maxDurationSeconds: '36000' }, /stream_max_duration_invalid/],
         [{ maxDurationSeconds: '0' }, /stream_max_duration_invalid/],
         [{ storageMinutesCapacity: '' }, /stream_storage_capacity_invalid/],
         [{ reservationSecondsBudget: '-1' }, /stream_reservation_budget_invalid/],

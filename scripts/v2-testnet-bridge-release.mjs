@@ -90,7 +90,9 @@ export const STREAM = Object.freeze({
 });
 const STREAM_CUSTOMER_CODE = /^[a-z0-9]{8,64}$/;
 const STREAM_KEY_ID = /^[a-f0-9]{32}$/;
-const STREAM_MAX_DURATION_LIMIT = 36000;
+// The descriptor cap (OD3, protocol/paid-media-v1): the Bridge's validStreamConfig refuses anything above it,
+// although Stream itself accepts up to 36000 s.
+const STREAM_MAX_DURATION_LIMIT = 7200;
 let streamOverride = null;
 
 /** Tests only: replaces fields of STREAM for this process (null restores it); validated like STREAM. */
