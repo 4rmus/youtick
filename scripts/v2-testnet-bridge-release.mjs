@@ -496,9 +496,9 @@ export async function preflight(secrets, fetchImpl, policy = DEFAULT_OPERATOR_KE
  * Stream token. The secret is compared only if the response carries one; whether GET returns it is not
  * documented (M0-P4 UNPROVEN). Without it the post-deploy webhook canary is the only proof that Stream
  * signs with STREAM_WEBHOOK_SECRET, and the receipt says so. A returned value that differs fails hard;
- * because Stream may return a masked or stale value (also M0-P4), the owner can set
- * STREAM_WEBHOOK_SECRET_PREFLIGHT=skip (repository variable V2_STREAM_WEBHOOK_SECRET_PREFLIGHT): the
- * URL binding is still required and the receipt records `secret-not-compared`.
+ * because Stream may return a masked or stale value (also M0-P4), the owner can choose the workflow
+ * input stream_webhook_secret_preflight=skip (deploy env STREAM_WEBHOOK_SECRET_PREFLIGHT, attested in
+ * the manifest): the URL binding is still required and the receipt records `secret-not-compared`.
  */
 export const WEBHOOK_SECRET_PREFLIGHT_MODES = Object.freeze(['compare', 'skip']);
 
@@ -619,8 +619,13 @@ export async function deployRelease({
     const receipt = {
         schema: 'youtick.v2-testnet-bridge-receipt.v1', sha, mode, status: 'IN_PROGRESS',
         worker: BRIDGE.worker, host: bridgeHost(), operatorKeySetPolicy: operatorKeySet, operatorKeySet: keySet,
-        streamEnabled, streamWebhook,
+        streamEnabled, streamWebhookSecretPreflight: secretPreflight, streamWebhook,
     };
+    // Visible in the receipt and the step summary: acceptance opens uploads without a secret comparison.
+    if (streamEnabled && secretPreflight === 'skip' && mode === 'acceptance') {
+        receipt.warnings = ['stream_webhook_secret_not_compared: acceptance ran with stream_webhook_secret_preflight=skip; '
+            + 'run the stream-canary webhook check before any upload'];
+    }
     const save = () => writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o644 });
     const tempRoot = await mkdtemp(join(tmpdir(), 'youtick-v2-testnet-bridge-release-'));
     try {
@@ -689,8 +694,10 @@ async function main(argv) {
         const summary = {
             status: receipt.status, worker: receipt.worker, version_id: receipt.version_id,
             operatorKeySetPolicy: receipt.operatorKeySetPolicy, operatorKeySet: receipt.operatorKeySet,
-            streamEnabled: receipt.streamEnabled, streamWebhook: receipt.streamWebhook,
+            streamEnabled: receipt.streamEnabled, streamWebhookSecretPreflight: receipt.streamWebhookSecretPreflight,
+            streamWebhook: receipt.streamWebhook, ...(receipt.warnings ? { warnings: receipt.warnings } : {}),
         };
+        for (const warning of receipt.warnings ?? []) console.log(`WARNING ${warning}`);
         console.log(JSON.stringify(summary));
         if (process.env.GITHUB_STEP_SUMMARY) {
             await appendFile(process.env.GITHUB_STEP_SUMMARY, `V2 testnet Bridge deploy: ${JSON.stringify(summary)}\n`);

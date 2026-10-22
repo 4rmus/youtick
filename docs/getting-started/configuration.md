@@ -201,10 +201,11 @@ Stream token and requires `notificationUrl` to be
 only if the response carries one (undocumented, M0-P4); otherwise the receipt
 records `secret: not_returned` and the post-deploy webhook canary is the proof.
 A returned secret that differs fails `stream_webhook_secret_mismatch_or_masked`
-(Stream may return a masked value; unproven). Setting the repository variable
-`V2_STREAM_WEBHOOK_SECRET_PREFLIGHT` to `skip` (deploy env
-`STREAM_WEBHOOK_SECRET_PREFLIGHT`) keeps the URL check, skips the comparison and
-records `secret-not-compared` in the receipt.
+(Stream may return a masked value; unproven). The workflow input
+`stream_webhook_secret_preflight=skip` (deploy env
+`STREAM_WEBHOOK_SECRET_PREFLIGHT`, attested in the release manifest) keeps the
+URL check, skips the comparison and records `secret-not-compared` in the
+receipt; on an `acceptance` run the receipt also carries a warning.
 
 The relayer guards the same boundary for NEAR Auth uploads (gate M2-G7):
 `UPLOAD_PROFILE_HASH_ALLOWLIST` in `workers/relayer` is an optional

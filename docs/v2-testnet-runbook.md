@@ -893,9 +893,11 @@ only webhook slot and deletes it at cleanup, which would remove the Bridge's web
    Stream's `GET /stream/webhook` does not return the secret (M0-P4), the receipt says
    `secret: not_returned` and the webhook canary below is the only proof. If it returns a value that
    differs (`stream_webhook_secret_mismatch_or_masked`; a masked readback is possible, M0-P4),
-   either rotate (step 3) or set the repository variable `V2_STREAM_WEBHOOK_SECRET_PREFLIGHT=skip`
-   for that run: the URL check stays, the receipt records `secret-not-compared`, and the webhook
-   canary must pass before uploads open.
+   either rotate (step 3) or start that run with the workflow input
+   `stream_webhook_secret_preflight=skip` (attested in the manifest next to `stream_enabled`): the
+   URL check stays, the receipt records `secret-not-compared` (an `acceptance` run also carries a
+   `stream_webhook_secret_not_compared` warning), and the webhook canary must pass before uploads
+   open.
 
 ### Deploy order on the cutover
 

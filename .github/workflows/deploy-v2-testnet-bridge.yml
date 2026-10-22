@@ -34,6 +34,11 @@ on:
         type: choice
         default: 'false'
         options: ['false', 'true']
+      stream_webhook_secret_preflight:
+        description: compare checks the Stream webhook secret if GET returns one; skip only checks the URL (M0-P4 unproven, GET may mask the secret)
+        type: choice
+        default: compare
+        options: [compare, skip]
       confirmation:
         description: Type DEPLOY_V2_TESTNET_BRIDGE_closed or DEPLOY_V2_TESTNET_BRIDGE_acceptance
         required: true
@@ -78,6 +83,7 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
           STREAM_ENABLED: ${{ inputs.stream_enabled }}
+          SECRET_PREFLIGHT: ${{ inputs.stream_webhook_secret_preflight }}
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
@@ -86,6 +92,7 @@ jobs:
           [[ "$RELEASE_MODE" =~ ^(closed|acceptance)$ ]]
           [[ "$OPERATOR_KEY_SET" =~ ^(any|neutral|legacy)$ ]]
           [[ "$STREAM_ENABLED" =~ ^(true|false)$ ]]
+          [[ "$SECRET_PREFLIGHT" =~ ^(compare|skip)$ ]]
           [[ "$CONFIRMATION" == "DEPLOY_V2_TESTNET_BRIDGE_${RELEASE_MODE}" ]]
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$RUNNER_TEMP/ci.json"
           jq -e --arg sha "$REQUESTED_SHA" --arg repo "$GITHUB_REPOSITORY" '
@@ -111,6 +118,7 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
           MEDIA_PROVIDER_STREAM_ENABLED: ${{ inputs.stream_enabled }}
+          STREAM_WEBHOOK_SECRET_PREFLIGHT: ${{ inputs.stream_webhook_secret_preflight }}
           READ_MODEL_D1_ID: ${{ vars.V2_READ_MODEL_D1_ID }}
         run: |
           set -euo pipefail
@@ -119,8 +127,9 @@ jobs:
           install -m 0644 "$RUNNER_TEMP/build/index.js" "$RUNNER_TEMP/release/index.js"
           node scripts/v2-testnet-bridge-release.mjs write-config "$RUNNER_TEMP/release"
           node scripts/v2-testnet-bridge-release.mjs check "$RUNNER_TEMP/release" "$SHA" "$RELEASE_MODE"
-          jq -n --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg keyset "$OPERATOR_KEY_SET" --arg stream "$MEDIA_PROVIDER_STREAM_ENABLED" --arg run "$(jq -r .id "$RUNNER_TEMP/ci.json")" \
-            '{schema:"youtick.v2-testnet-bridge-release.v1", sha:$sha, mode:$mode, operator_key_set:$keyset, stream_enabled:$stream, ci_run_id:$run}' > "$RUNNER_TEMP/release/manifest.json"
+          jq -n --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg keyset "$OPERATOR_KEY_SET" --arg stream "$MEDIA_PROVIDER_STREAM_ENABLED" \
+            --arg preflight "$STREAM_WEBHOOK_SECRET_PREFLIGHT" --arg run "$(jq -r .id "$RUNNER_TEMP/ci.json")" \
+            '{schema:"youtick.v2-testnet-bridge-release.v1", sha:$sha, mode:$mode, operator_key_set:$keyset, stream_enabled:$stream, stream_webhook_secret_preflight:$preflight, ci_run_id:$run}' > "$RUNNER_TEMP/release/manifest.json"
           (cd "$RUNNER_TEMP/release" && find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
       - name: Summarize the exact packet for environment approval
         id: summary
@@ -129,14 +138,16 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
           MEDIA_PROVIDER_STREAM_ENABLED: ${{ inputs.stream_enabled }}
+          STREAM_WEBHOOK_SECRET_PREFLIGHT: ${{ inputs.stream_webhook_secret_preflight }}
         run: |
           node --input-type=module <<'JS'
           import { appendFileSync, readFileSync } from 'node:fs';
-          import { BRIDGE, bridgeHost, bridgeVars, releaseVars, streamFlag, streamWebhookUrl } from './scripts/v2-testnet-bridge-release.mjs';
+          import { BRIDGE, bridgeHost, bridgeVars, releaseVars, streamFlag, streamWebhookUrl, webhookSecretPreflight } from './scripts/v2-testnet-bridge-release.mjs';
           const streamEnabled = streamFlag(process.env.MEDIA_PROVIDER_STREAM_ENABLED);
           const packet = {
             worker: BRIDGE.worker, account: 'media', host: bridgeHost(), operator_key_set: process.env.OPERATOR_KEY_SET,
             stream_enabled: streamEnabled, stream_webhook_url: streamWebhookUrl(),
+            stream_webhook_secret_preflight: webhookSecretPreflight(process.env.STREAM_WEBHOOK_SECRET_PREFLIGHT),
             flags: releaseVars(process.env.RELEASE_MODE), vars: bridgeVars({ streamEnabled }),
           };
           appendFileSync(process.env.GITHUB_OUTPUT, `health_url=https://${bridgeHost()}/__health\n`);
@@ -186,6 +197,7 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
           STREAM_ENABLED: ${{ inputs.stream_enabled }}
+          SECRET_PREFLIGHT: ${{ inputs.stream_webhook_secret_preflight }}
         run: |
           set -euo pipefail
           gh api "repos/${GITHUB_REPOSITORY}/environments/v2-testnet" | jq -e '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length) > 0)'
@@ -196,8 +208,8 @@ jobs:
             gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/deploy-v2-testnet-bridge.yml" --source-digest "$SHA"
           done < SHA256SUMS
-          jq -e --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg keyset "$OPERATOR_KEY_SET" --arg stream "$STREAM_ENABLED" \
-            '.sha == $sha and .mode == $mode and .operator_key_set == $keyset and .stream_enabled == $stream' manifest.json
+          jq -e --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg keyset "$OPERATOR_KEY_SET" --arg stream "$STREAM_ENABLED" --arg preflight "$SECRET_PREFLIGHT" \
+            '.sha == $sha and .mode == $mode and .operator_key_set == $keyset and .stream_enabled == $stream and .stream_webhook_secret_preflight == $preflight' manifest.json
       - run: npm ci --no-audit --no-fund --prefer-offline
         working-directory: workers/livepeer-bridge
       - name: Preflight keys on chain, deploy the Bridge and smoke it
@@ -217,8 +229,7 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
           MEDIA_PROVIDER_STREAM_ENABLED: ${{ inputs.stream_enabled }}
-          # Empty (compare) unless the owner sets the repository variable to skip (M0-P4: GET may mask the secret).
-          STREAM_WEBHOOK_SECRET_PREFLIGHT: ${{ vars.V2_STREAM_WEBHOOK_SECRET_PREFLIGHT }}
+          STREAM_WEBHOOK_SECRET_PREFLIGHT: ${{ inputs.stream_webhook_secret_preflight }}
         run: node scripts/v2-testnet-bridge-release.mjs deploy "$SHA" "$RUNNER_TEMP/release" "$RUNNER_TEMP/v2-testnet-bridge-receipt.json" "$RELEASE_MODE"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()

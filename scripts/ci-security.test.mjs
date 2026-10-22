@@ -592,9 +592,16 @@ test('V2 testnet Bridge is Stream-only (OD19): V2_STREAM_* secrets, no Studio tr
     const prepare = bridge.slice(bridge.indexOf('\n  prepare:\n'), bridge.indexOf('\n  deploy:\n'));
     assert.ok(prepare.length > 0);
     assert.doesNotMatch(prepare, /V2_STREAM_|secrets\.V2_/);
-    // The documented secret-preflight override is a repository variable, never a secret, and only in the deploy step.
-    assert.match(deploy, /\n          STREAM_WEBHOOK_SECRET_PREFLIGHT: \$\{\{ vars\.V2_STREAM_WEBHOOK_SECRET_PREFLIGHT \}\}\n/);
-    assert.equal((bridge.match(/STREAM_WEBHOOK_SECRET_PREFLIGHT:/g) ?? []).length, 1);
+    // The secret-preflight override is a reviewed choice input, checked, attested in the manifest and
+    // re-checked at deploy; never a repository variable or a secret.
+    const preflightInput = /\n      stream_webhook_secret_preflight:\n        description: .*M0-P4.*\n        type: choice\n        default: (\w+)\n        options: \[([^\]]+)\]\n/.exec(bridge);
+    assert.equal(preflightInput?.[1], 'compare');
+    assert.deepEqual(preflightInput[2].split(', '), ['compare', 'skip']);
+    assert.match(bridge, /\[\[ "\$SECRET_PREFLIGHT" =~ \^\(compare\|skip\)\$ \]\]/);
+    assert.match(bridge, /stream_enabled:\$stream, stream_webhook_secret_preflight:\$preflight, ci_run_id:\$run\}/);
+    assert.match(bridge, /\.stream_enabled == \$stream and \.stream_webhook_secret_preflight == \$preflight' manifest\.json/);
+    assert.match(deploy, /\n          STREAM_WEBHOOK_SECRET_PREFLIGHT: \$\{\{ inputs\.stream_webhook_secret_preflight \}\}\n/);
+    assert.doesNotMatch(bridge, /V2_STREAM_WEBHOOK_SECRET_PREFLIGHT/);
     const summary = steps.find((entry) => entry.name === 'Summarize the exact packet for environment approval').text;
     assert.ok(summary.includes('vars: bridgeVars({ streamEnabled })'));
     assert.doesNotMatch(summary, /FIXED_VARS/);
@@ -618,8 +625,8 @@ test('V2 testnet media account (M1.5): the Bridge and the read model use V2_MEDI
     assert.equal(keySetInput?.[1], DEFAULT_OPERATOR_KEY_SET);
     assert.deepEqual(keySetInput[2].split(', '), [...OPERATOR_KEY_SETS]);
     assert.match(bridgeDeploy, /\n          OPERATOR_KEY_SET: \$\{\{ inputs\.operator_key_set \}\}\n/);
-    assert.match(bridge, /operator_key_set:\$keyset, stream_enabled:\$stream, ci_run_id:\$run\}/);
-    assert.match(bridge, /\.operator_key_set == \$keyset and \.stream_enabled == \$stream' manifest\.json/);
+    assert.match(bridge, /operator_key_set:\$keyset, stream_enabled:\$stream, stream_webhook_secret_preflight:\$preflight, ci_run_id:\$run\}/);
+    assert.match(bridge, /\.operator_key_set == \$keyset and \.stream_enabled == \$stream and /);
     assert.doesNotMatch(bridge, /V2_CLOUDFLARE_/);
     assert.doesNotMatch(bridge, /release-smoke\.mjs/);
     assert.match(bridge, /READ_MODEL_D1_ID: \$\{\{ vars\.V2_READ_MODEL_D1_ID \}\}/);

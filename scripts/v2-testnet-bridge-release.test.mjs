@@ -491,7 +491,20 @@ test('acceptance deploy on Stream: preflight, webhook check, one deploy with the
         receiptPath, secretPreflight: 'skip', fetchImpl: fakeFetch({ webhook: { secret: 'masked' } }).impl, makeRunner: fakeRunner([]),
     });
     assert.equal(skipped.streamWebhook.secret, 'secret-not-compared');
-    assert.equal(JSON.parse(await readFile(receiptPath, 'utf8')).streamWebhook.secret, 'secret-not-compared');
+    assert.equal(skipped.streamWebhookSecretPreflight, 'skip');
+    const savedSkip = JSON.parse(await readFile(receiptPath, 'utf8'));
+    assert.equal(savedSkip.streamWebhook.secret, 'secret-not-compared');
+    // An acceptance run without the comparison carries a visible warning; a compare run carries none.
+    assert.match(savedSkip.warnings.join('\n'), /^stream_webhook_secret_not_compared: /);
+    assert.equal(matched.warnings, undefined);
+    assert.equal(matched.streamWebhookSecretPreflight, 'compare');
+    const closedSkip = await deploy({
+        receiptPath, mode: 'closed', streamEnabled: true, secretPreflight: 'skip',
+        fetchImpl: fakeFetch({ bridge: { stage: 'DISABLED' } }).impl, makeRunner: fakeRunner([]),
+    });
+    assert.equal(closedSkip.warnings, undefined);
+    await assert.rejects(acceptance({ receiptPath, secretPreflight: 'off', fetchImpl: fakeFetch().impl, makeRunner: fakeRunner([]) }),
+        /stream_webhook_secret_preflight_invalid/);
 });
 
 test('acceptance without Stream is refused before any call; the Stream preflight refuses before wrangler', async () => {
