@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-    BRIDGE, CREATOR_ALLOWLIST, FIXED_VARS, FLAGS, JWT_PUBLIC_KEY, NEAR_AUTH_CREATOR_ALLOWLIST, OPERATOR_METHODS, RATE_LIMIT_NAMESPACE,
+    BRIDGE, CREATOR_ALLOWLIST, DEFAULT_OPERATOR_KEY_SET, FIXED_VARS, FLAGS, JWT_PUBLIC_KEY, NEAR_AUTH_CREATOR_ALLOWLIST, OPERATOR_KEY_METHOD_SETS,
+    OPERATOR_METHODS, RATE_LIMIT_NAMESPACE,
     READ_MODEL_D1_NAME, RELEASE_CRON, SECRETS, WALLET_CREATOR_ALLOWLIST,
     bridgeHost, deployRelease, jwtKeyMatches, livepeerWebhookUrl, quotePublicKey, releaseSecrets, releaseVars, sanitizeBridgeConfig, wranglerArgs,
 } from './v2-testnet-bridge-release.mjs';
@@ -253,6 +254,9 @@ test('acceptance deploy: preflight, one deploy with all seven secrets, smoke and
     assert.equal(receipt.status, 'PASS');
     assert.equal(receipt.version_id, 'v-1');
     assert.equal(receipt.host, BRIDGE_HOST);
+    assert.equal(receipt.operatorKeySet, 'neutral');
+    assert.equal(receipt.operatorKeySetPolicy, 'any');
+    assert.equal(JSON.parse(await readFile(receiptPath, 'utf8')).operatorKeySet, 'neutral');
     assert.deepEqual(receipt.smoke, {
         health_status: 200, stage: 'ENABLED', allowed_origin_status: 204, denied_origin_status: 403, empty_v3_status: 400,
     });
@@ -296,8 +300,6 @@ test('preflight refuses a chain without the exact operator key or quote key vers
     for (const [options, error] of [
         [{ methods: [...OPERATOR_METHODS, 'withdraw_creator_balance'] }, /operator_key_not_on_chain/],
         [{ methods: OPERATOR_METHODS.slice(1) }, /operator_key_not_on_chain/],
-        // The pre-MC key lists the provider-named methods that Market V2 no longer exports.
-        [{ methods: ['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired'] }, /operator_key_not_on_chain/],
         [{ receiver: 'other.testnet' }, /operator_key_not_on_chain/],
         [{ quoteVersion: 2 }, /quote_key_version_mismatch/],
         [{ chainId: 'mainnet' }, /rpc_network/],
@@ -323,4 +325,50 @@ test('a smoke that sees an old version, a wrong market, an open off-switch or a 
         await assert.rejects(deploy({ receiptPath, mode: 'acceptance', fetchImpl: fakeFetch(options).impl, makeRunner: fakeRunner([]) }), error);
         assert.equal(JSON.parse(await readFile(receiptPath, 'utf8')).status, 'FAILED');
     }
+});
+
+test('operator key sets: neutral and legacy during the transition, each pinnable, nothing else', async () => {
+    assert.equal(DEFAULT_OPERATOR_KEY_SET, 'any');
+    assert.deepEqual([...OPERATOR_KEY_METHOD_SETS.neutral], ['finalize_publication', 'suspend_sales', 'mark_watched', 'release_expired']);
+    assert.deepEqual([...OPERATOR_KEY_METHOD_SETS.legacy], ['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired']);
+    const neutral = [...OPERATOR_KEY_METHOD_SETS.neutral];
+    const legacy = [...OPERATOR_KEY_METHOD_SETS.legacy];
+    const cases = [
+        // [methods on chain, policy, expected key set or error]
+        [legacy, 'any', 'legacy'], [legacy, 'legacy', 'legacy'], [legacy, 'neutral', /operator_key_set_mismatch_legacy/],
+        [neutral, 'any', 'neutral'], [neutral, 'neutral', 'neutral'], [neutral, 'legacy', /operator_key_set_mismatch_neutral/],
+        // Order on chain does not matter.
+        [[...legacy].reverse(), 'any', 'legacy'],
+    ];
+    // Mixed, partial or widened sets are refused under every policy.
+    for (const methods of [
+        ['finalize_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired'],
+        ['finalize_livepeer_publication', 'suspend_sales', 'mark_watched', 'release_expired'],
+        legacy.slice(1), neutral.slice(0, 3), [...neutral, ...legacy.slice(0, 2)], [...legacy, 'withdraw_creator_balance'], [],
+    ]) {
+        for (const policy of ['any', 'neutral', 'legacy']) cases.push([methods, policy, /operator_key_not_on_chain/]);
+    }
+    for (const [methods, policy, outcome] of cases) {
+        const dir = await mkdtemp(join(tmpdir(), 'v2-bridge-keyset-'));
+        const receiptPath = join(dir, 'r.json');
+        const record = [];
+        const run = deploy({
+            receiptPath, mode: 'acceptance', operatorKeySet: policy, fetchImpl: fakeFetch({ methods }).impl, makeRunner: fakeRunner(record),
+        });
+        const label = `${policy}: ${methods.join(',')}`;
+        if (typeof outcome === 'string') {
+            const receipt = await run;
+            assert.equal(receipt.status, 'PASS', label);
+            assert.equal(receipt.operatorKeySet, outcome, label);
+            assert.equal(receipt.operatorKeySetPolicy, policy, label);
+            assert.equal(JSON.parse(await readFile(receiptPath, 'utf8')).operatorKeySet, outcome, label);
+        } else {
+            await assert.rejects(run, outcome, label);
+            assert.equal(record.length, 0, label);
+        }
+    }
+    await assert.rejects(deploy({
+        receiptPath: join(await mkdtemp(join(tmpdir(), 'v2-bridge-keyset-')), 'r.json'), mode: 'closed', operatorKeySet: 'both',
+        fetchImpl: fakeFetch().impl, makeRunner: fakeRunner([]),
+    }), /operator_key_set_invalid/);
 });

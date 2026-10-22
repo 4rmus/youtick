@@ -10,7 +10,7 @@
 // M1.5: the Bridge deploys to the media Cloudflare account and serves from its workers.dev host
 // (docs/v2-testnet-runbook.md, Media account).
 import { createPrivateKey, createPublicKey } from 'node:crypto';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
@@ -31,7 +31,29 @@ export function bridgeHost() {
 const BRIDGE_ACCOUNT = `v2-bridge-261007.${PARENT}`;
 // Function-call key of the Bridge account from v2-testnet-bootstrap-policy.json (bridge_operator.keys[1]).
 const OPERATOR_PUBLIC_KEY = 'ed25519:BDyHUFs1wbkaQJQ2Tq4AcyJWHanaC8j4spLQRwAKiYed';
-export const OPERATOR_METHODS = Object.freeze(['finalize_publication', 'suspend_sales', 'mark_watched', 'release_expired']);
+// The function-call key's method list. `neutral` is the post-MC set; `legacy` is the set the testnet key
+// carries until the on-chain MC cutover (docs/v2-testnet-runbook.md, MC cutover). The owner moves the
+// Bridge to the media account (M1.5-G3) before that cutover, so the release accepts either set.
+export const OPERATOR_KEY_METHOD_SETS = Object.freeze({
+    neutral: Object.freeze(['finalize_publication', 'suspend_sales', 'mark_watched', 'release_expired']),
+    legacy: Object.freeze(['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired']),
+});
+export const OPERATOR_METHODS = OPERATOR_KEY_METHOD_SETS.neutral;
+// Which set a release accepts: OPERATOR_KEY_SET in the deploy job. `any` is the transition default; the
+// cutover run pins `neutral`. After the cutover the default goes back to `neutral` (one-line follow-up).
+export const OPERATOR_KEY_SETS = Object.freeze(['any', 'neutral', 'legacy']);
+export const DEFAULT_OPERATOR_KEY_SET = 'any';
+
+export function operatorKeySetPolicy(value = DEFAULT_OPERATOR_KEY_SET) {
+    if (!OPERATOR_KEY_SETS.includes(value)) fail('operator_key_set_invalid');
+    return value;
+}
+
+/** The name of the set the on-chain method list equals exactly, or null for any other list. */
+export function operatorKeySetOf(methodNames) {
+    const sorted = [...(methodNames ?? [])].sort().join();
+    return Object.keys(OPERATOR_KEY_METHOD_SETS).find((name) => [...OPERATOR_KEY_METHOD_SETS[name]].sort().join() === sorted) ?? null;
+}
 // Market V2 quote key as bootstrapped (v2-testnet-bootstrap-policy.json market.quote_public_key_base64).
 const QUOTE_PUBLIC_KEY_BASE64 = 'YYvahur/L80hl0moUnEBLkHjv1jNjzIgXQFMs/jkSf4=';
 const QUOTE_KEY_VERSION = '1';
@@ -258,17 +280,22 @@ async function rpcCall(fetchImpl, rpc, method, params) {
     return body;
 }
 
-/** Refuses to deploy unless the chain holds the operator key with exactly the V2 outbox methods and quote key v1. */
-export async function preflight(secrets, fetchImpl) {
+/**
+ * Refuses to deploy unless the chain holds the operator key for Market V2 with exactly one of the operator
+ * method sets that `policy` allows, and quote key v1. Returns the name of the set that matched.
+ */
+export async function preflight(secrets, fetchImpl, policy = DEFAULT_OPERATOR_KEY_SET) {
+    operatorKeySetPolicy(policy);
     const status = await rpcCall(fetchImpl, secrets.rpc, 'status', []);
     if (status?.result?.chain_id !== 'testnet') fail('rpc_network');
     const key = await rpcCall(fetchImpl, secrets.rpc, 'query', {
         finality: 'final', request_type: 'view_access_key', account_id: BRIDGE_ACCOUNT, public_key: secrets.operatorPublicKey,
     });
     const call = key.result?.permission?.FunctionCall;
-    if (call?.receiver_id !== MARKET_V2 || [...(call.method_names ?? [])].sort().join() !== [...OPERATOR_METHODS].sort().join()) {
-        fail('operator_key_not_on_chain');
-    }
+    const keySet = call?.receiver_id === MARKET_V2 ? operatorKeySetOf(call.method_names) : null;
+    if (!keySet) fail('operator_key_not_on_chain');
+    // A known set that this release does not allow, e.g. the legacy key on the cutover run pinned to neutral.
+    if (policy !== 'any' && keySet !== policy) fail(`operator_key_set_mismatch_${keySet}`);
     const version = await rpcCall(fetchImpl, secrets.rpc, 'query', {
         finality: 'final', request_type: 'call_function', account_id: MARKET_V2, method_name: 'get_quote_key_version',
         args_base64: Buffer.from('{}').toString('base64'),
@@ -281,6 +308,7 @@ export async function preflight(secrets, fetchImpl) {
     }
     if (String(onChain) !== QUOTE_KEY_VERSION) fail('quote_key_version_mismatch');
     await preflightWebhookSecret(secrets.worker, fetchImpl);
+    return keySet;
 }
 
 /** The Bridge verifies Livepeer's HMAC with LIVEPEER_WEBHOOK_SECRET; Livepeer signs with the webhook's sharedSecret. */
@@ -360,14 +388,16 @@ export async function smoke(mode, versionId, fetchImpl) {
 export async function deployRelease({
     sha, releaseDir, receiptPath, mode, env = process.env, fetchImpl = fetch,
     sleep = (ms) => new Promise((done) => setTimeout(done, ms)), makeRunner, expected = EXPECTED_KEYS,
+    operatorKeySet = DEFAULT_OPERATOR_KEY_SET,
 }) {
     if (!/^[a-f0-9]{40}$/.test(sha ?? '')) fail('sha_invalid');
     if (!MODES.includes(mode)) fail('mode_invalid');
+    operatorKeySetPolicy(operatorKeySet);
     const secrets = releaseSecrets(env, expected);
-    await preflight(secrets, fetchImpl);
+    const keySet = await preflight(secrets, fetchImpl, operatorKeySet);
     const receipt = {
         schema: 'youtick.v2-testnet-bridge-receipt.v1', sha, mode, status: 'IN_PROGRESS',
-        worker: BRIDGE.worker, host: bridgeHost(),
+        worker: BRIDGE.worker, host: bridgeHost(), operatorKeySetPolicy: operatorKeySet, operatorKeySet: keySet,
     };
     const save = () => writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o644 });
     const tempRoot = await mkdtemp(join(tmpdir(), 'youtick-v2-testnet-bridge-release-'));
@@ -426,8 +456,16 @@ async function main(argv) {
     }
     if (command === 'deploy' && args.length === 4) {
         const [sha, releaseDir, receiptPath, mode] = args;
-        const receipt = await deployRelease({ sha, releaseDir: resolve(releaseDir), receiptPath, mode });
-        console.log(JSON.stringify({ status: receipt.status, worker: receipt.worker, version_id: receipt.version_id }));
+        const operatorKeySet = process.env.OPERATOR_KEY_SET || DEFAULT_OPERATOR_KEY_SET;
+        const receipt = await deployRelease({ sha, releaseDir: resolve(releaseDir), receiptPath, mode, operatorKeySet });
+        const summary = {
+            status: receipt.status, worker: receipt.worker, version_id: receipt.version_id,
+            operatorKeySetPolicy: receipt.operatorKeySetPolicy, operatorKeySet: receipt.operatorKeySet,
+        };
+        console.log(JSON.stringify(summary));
+        if (process.env.GITHUB_STEP_SUMMARY) {
+            await appendFile(process.env.GITHUB_STEP_SUMMARY, `V2 testnet Bridge deploy: ${JSON.stringify(summary)}\n`);
+        }
         return;
     }
     fail('usage');

@@ -712,6 +712,38 @@ webhook, and only then deploy into the media account.
       workers.dev URLs for the local run against the V2 testnet.
 5. **Leave the old Workers disabled** in the default account until M4 reaches `PASS`.
 
+### Operator key set during the MC transition
+
+The owner moves the Bridge to the media account before the on-chain
+[MC cutover](#mc-cutover-provider-neutral-market-v2-names). Until that cutover, the testnet
+function-call key still lists the legacy method names. So the Bridge release preflight accepts
+either of two exact method sets on the key of `v2-bridge-261007…` for Market V2:
+
+| Set | Methods |
+|---|---|
+| `neutral` | `finalize_publication`, `suspend_sales`, `mark_watched`, `release_expired` |
+| `legacy` | `finalize_livepeer_publication`, `suspend_livepeer_sales`, `mark_watched`, `release_expired` |
+
+- **The `operator_key_set` input** of *V2 Testnet Bridge* (env `OPERATOR_KEY_SET`) chooses which
+  set a run accepts: `any` (the transition default), `neutral` or `legacy`. The input is checked
+  in the prepare job, shown in the approval summary, bound into the attested manifest, and
+  re-checked in the deploy job.
+- **Mismatches.** A known set that the input does not allow stops the run with
+  `operator_key_set_mismatch_<set>`. Any other list stops it with `operator_key_not_on_chain`:
+  a mixed or partial list, extra methods, or another receiver.
+- **Receipt.** The receipt and the deploy summary record `operatorKeySet` (the set that matched)
+  and `operatorKeySetPolicy` (the input).
+- **The cutover run pins `neutral`.** If the key swap did not happen, the run fails before
+  wrangler is called.
+- **After the cutover, switch the default back to `neutral`.** Make it a follow-up commit that
+  changes `DEFAULT_OPERATOR_KEY_SET` in `scripts/v2-testnet-bridge-release.mjs` and the
+  `operator_key_set` default in `.github/workflows/deploy-v2-testnet-bridge.yml`.
+  `scripts/ci-security.test.mjs` keeps these two values equal.
+- **Older text.** This supersedes the note in the Bridge section above, which says a post-MC
+  Bridge release stops with `operator_key_not_on_chain` until the cutover.
+- **The Bridge itself is unchanged.** It still validates its own method set at runtime; its
+  `/__health` checks are the same.
+
 Known gaps:
 - The Bridge caches publication covers with `caches.default`. How that cache behaves on a
   workers.dev host is UNPROVEN; M1.5-G3 checks it.

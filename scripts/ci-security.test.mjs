@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BRIDGE, bridgeHost } from './v2-testnet-bridge-release.mjs';
+import { BRIDGE, DEFAULT_OPERATOR_KEY_SET, OPERATOR_KEY_SETS, bridgeHost } from './v2-testnet-bridge-release.mjs';
 import { MEDIA_ACCOUNT } from './v2-testnet-release.mjs';
 
 const workflows = [
@@ -558,6 +558,13 @@ test('V2 testnet media account (M1.5): the Bridge and the read model use V2_MEDI
     const bridgeDeploy = bridgeSteps.find((entry) => entry.name === 'Preflight keys on chain, deploy the Bridge and smoke it').text;
     assert.match(bridgeDeploy, /\n          CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID \}\}\n/);
     assert.match(bridgeDeploy, /\n          CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_API_TOKEN \}\}\n/);
+    // The operator key set the preflight accepts is a reviewed input, bound into the attested manifest.
+    const keySetInput = /\n      operator_key_set:\n        description: .+\n        type: choice\n        default: (\S+)\n        options: \[([^\]]+)\]\n/.exec(bridge);
+    assert.equal(keySetInput?.[1], DEFAULT_OPERATOR_KEY_SET);
+    assert.deepEqual(keySetInput[2].split(', '), [...OPERATOR_KEY_SETS]);
+    assert.match(bridgeDeploy, /\n          OPERATOR_KEY_SET: \$\{\{ inputs\.operator_key_set \}\}\n/);
+    assert.match(bridge, /operator_key_set:\$keyset, ci_run_id:\$run\}/);
+    assert.match(bridge, /\.operator_key_set == \$keyset' manifest\.json/);
     assert.doesNotMatch(bridge, /V2_CLOUDFLARE_/);
     assert.doesNotMatch(bridge, /release-smoke\.mjs/);
     assert.match(bridge, /READ_MODEL_D1_ID: \$\{\{ vars\.V2_READ_MODEL_D1_ID \}\}/);
