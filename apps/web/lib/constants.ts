@@ -96,6 +96,41 @@ export const LAUNCH_STAGE: LaunchStage = resolveLaunchStage({
     nodeEnv: process.env.NODE_ENV,
 });
 
+/**
+ * Media profile a V2 upload is created under (Livepeer Studio to Cloudflare Stream migration, M3).
+ * `legacy` (the default) keeps today's profile hash and upload origin; `stream` sends the Stream
+ * descriptor hash (protocol/paid-media-v1/stream-profile.json) and accepts only the Stream upload
+ * origin. V1 paths never read it. The customer code is the public delivery subdomain
+ * (`customer-<code>.cloudflarestream.com`) that V2 Stream playback URLs must use; a `stream`
+ * build requires it.
+ */
+export type V2MediaProfile = 'legacy' | 'stream';
+
+export const STREAM_CUSTOMER_CODE_PATTERN = /^[a-z0-9]{8,64}$/;
+
+export function resolveV2MediaConfig(env: {
+    profile: string | undefined;
+    customerCode: string | undefined;
+}): { profile: V2MediaProfile; streamCustomerCode: string } {
+    const profile = env.profile?.trim() || 'legacy';
+    if (profile !== 'legacy' && profile !== 'stream') {
+        throw new Error('NEXT_PUBLIC_V2_MEDIA_PROFILE must be legacy or stream');
+    }
+    const streamCustomerCode = env.customerCode?.trim() ?? '';
+    if (streamCustomerCode && !STREAM_CUSTOMER_CODE_PATTERN.test(streamCustomerCode)) {
+        throw new Error('NEXT_PUBLIC_STREAM_CUSTOMER_CODE must be 8 to 64 lowercase letters or digits');
+    }
+    if (profile === 'stream' && !streamCustomerCode) {
+        throw new Error('NEXT_PUBLIC_STREAM_CUSTOMER_CODE is required when NEXT_PUBLIC_V2_MEDIA_PROFILE=stream');
+    }
+    return { profile, streamCustomerCode };
+}
+
+export const V2_MEDIA_CONFIG = resolveV2MediaConfig({
+    profile: process.env.NEXT_PUBLIC_V2_MEDIA_PROFILE,
+    customerCode: process.env.NEXT_PUBLIC_STREAM_CUSTOMER_CODE,
+});
+
 export const MEDIA_UPLOAD_POLICY = {
     paidSourceMaxBytes: publicTestnetVideoV1 ? 5_000_000_000 : 20_000_000_000,
     livepeerTusChunkBytes: 32 * 1024 * 1024,

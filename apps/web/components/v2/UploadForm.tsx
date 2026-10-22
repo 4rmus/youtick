@@ -11,6 +11,7 @@ import { FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
 import { formatUsdc, readLivepeerUploadProgress } from '@/lib/livepeer-publication';
 import {
     LIVEPEER_SOURCE_ACCEPT,
+    LivepeerAdmissionDeniedError,
     advanceLivepeerUploadDraftStage,
     clearLivepeerJobSessionKey,
     clearLivepeerUploadDraft,
@@ -25,10 +26,14 @@ import {
     uploadLivepeerSource,
     validateLivepeerSourceFile,
     writeLivepeerUploadDraft,
+    type LivepeerAdmissionReason,
     type LivepeerUploadIntent,
 } from '@/lib/livepeer-upload';
 import { readAccessKey } from '@/lib/v2/near-reads';
-import { authorizeV2PaidJob, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, PROFILE_ID, TERMINAL_UPLOAD_STATES, UploadError } from '@/lib/v2/upload';
+import {
+    authorizeV2PaidJob, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, PROCESSING_POLL_MS, PROCESSING_WAIT_MS, PROFILE_ID,
+    TERMINAL_UPLOAD_STATES, UploadError, v2UploadProfileHash,
+} from '@/lib/v2/upload';
 import { useNearAuthV2 } from './NearAuthV2Provider';
 import { SignInPanel } from './SignInPanel';
 
@@ -50,6 +55,8 @@ const ERRORS: Record<string, string> = {
     uploads_paused: 'Uploads are paused right now. Please try again later.',
     admission_closed: 'Your account is not open for uploads. Apply at youtick.net/apply or write to contact@youtick.net.',
     admission_denied: 'Uploads are busy right now. Please try again in a few minutes.',
+    provider_admission_closed: 'Uploads are at capacity right now. Please try again later; an upload you already paid for stays here to resume.',
+    media_provider_not_ready: 'Uploads are not available right now. No fee was taken; please try again later.',
     job_conflict: 'This upload id is already in use. Reload the page and start again.',
     upload_not_confirmed: 'The fee was returned, so no upload was created. Please try again.',
     upload_pending: 'Your payment is still being processed. Wait a minute, then use Resume.',
@@ -64,9 +71,18 @@ const ERRORS: Record<string, string> = {
     popup_blocked: 'Your browser blocked the approval window. Allow pop-ups for this site and try again.',
 };
 
+/** Preflight refusals with a Bridge reason; any other reason keeps the `admission_denied` copy. */
+const ADMISSION_ERRORS: Partial<Record<LivepeerAdmissionReason, string>> = {
+    reservation_budget: 'Another upload is in progress on the platform. Please try again in a few minutes. No fee was taken.',
+    capacity: 'Uploads are at capacity right now. Please try again in a few minutes. No fee was taken.',
+};
+
 type Step = 'idle' | 'paying' | 'uploading' | 'processing' | 'published' | 'error';
 
-function message(error: unknown): string {
+export function uploadErrorMessage(error: unknown): string {
+    if (error instanceof LivepeerAdmissionDeniedError && error.reason && ADMISSION_ERRORS[error.reason]) {
+        return ADMISSION_ERRORS[error.reason]!;
+    }
     const code = error instanceof UploadError || error instanceof Error ? error.message : '';
     return ERRORS[code] ?? `The upload did not complete (${code || 'unknown'}). Nothing was published; please try again.`;
 }
@@ -99,14 +115,14 @@ export function UploadForm() {
 
     const fail = useCallback((reason: unknown) => {
         setStep('error');
-        setError(message(reason));
+        setError(uploadErrorMessage(reason));
     }, []);
 
     /** Livepeer processing and the Bridge's on-chain publication; the chain is the only source of truth. */
     const awaitPublication = useCallback(async (accountId: string, activeJobId: string, controller: AbortController) => {
         setProgress(100);
         setStep('processing');
-        for (let attempt = 0; attempt < 120; attempt += 1) {
+        for (let attempt = 0; attempt < PROCESSING_WAIT_MS / PROCESSING_POLL_MS; attempt += 1) {
             const state = await readLivepeerUploadProgress(activeJobId, accountId).catch(() => null);
             controller.signal.throwIfAborted();
             if (state?.publication) {
@@ -117,7 +133,7 @@ export function UploadForm() {
                 setStep('published');
                 return;
             }
-            await new Promise((resolve) => setTimeout(resolve, 5_000));
+            await new Promise((resolve) => setTimeout(resolve, PROCESSING_POLL_MS));
         }
         // The fee stays paid and the job stays resumable; only this page stops waiting.
         throw new UploadError('livepeer_processing_timeout');
@@ -172,7 +188,7 @@ export function UploadForm() {
             const intent = await requestLivepeerUploadIntent({
                 accountId, jobId: activeJobId, generation: 1, expectedSourceBytes: file.size,
                 sourceFingerprintSha256: await fingerprintLivepeerSource(file), sourceType: source.sourceType, signal: controller.signal,
-                profileId: PROFILE_ID,
+                profileId: PROFILE_ID, profileConfigSha256: v2UploadProfileHash(),
             });
             await transfer(accountId, activeJobId, intent, controller);
         } catch (reason) {

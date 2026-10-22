@@ -1,4 +1,5 @@
 import profiles from '../../../../protocol/paid-media-livepeer-v1/profiles.json';
+import streamProfile from '../../../../protocol/paid-media-v1/stream-profile.json';
 import titleVectors from '../../../../protocol/paid-media-livepeer-v1/upload-title-vectors.json';
 import marketV2Vectors from '../../../../protocol/youtick-market-v2/golden-vectors.json';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -828,6 +829,81 @@ describe('Livepeer browser upload', () => {
         expect(storedProfileHash({ ...v2ChainJob, profile_id: 'paid-media-livepeer-v1' })).toBe(profiles.legacy.hash);
     });
 
+    describe('per-provider tus origin (M3)', () => {
+        const STREAM_HASH = streamProfile.stream.hash;
+        const STREAM_TUS = 'https://upload.cloudflarestream.com/tus/0123456789abcdef0123456789abcdef?tusv2=true';
+        const input = {
+            accountId: 'creator.testnet', jobId: 'job-001', generation: 1,
+            expectedSourceBytes: SOURCE_BYTES, sourceFingerprintSha256: SOURCE_FINGERPRINT, sourceType: 'mp4' as const,
+        };
+        const streamInput = { ...input, profileId: 'paid-media-v1', profileConfigSha256: STREAM_HASH };
+
+        function bridgeAnswers(endpoint: string) {
+            const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+                .mockImplementation(async () => Response.json({ ...INTENT, tus_endpoint: endpoint }, { status: 201 }));
+            vi.stubGlobal('fetch', fetchMock);
+            return (call = 0) => (JSON.parse(String(fetchMock.mock.calls[call][1]?.body)) as { body: Record<string, unknown> }).body;
+        }
+
+        it('requires the Stream upload origin for a Stream-hash intent and the Studio origin otherwise', async () => {
+            expect(STREAM_HASH).toBe('1128da32be3187c804326ef68a3c4c5344b47fc956a09ee88f8c0779ea5f4c64');
+            await provisionJobSession(createWallet());
+            let sent = bridgeAnswers(STREAM_TUS);
+            await expect(requestLivepeerUploadIntent(streamInput)).resolves.toMatchObject({ tus_endpoint: STREAM_TUS });
+            expect(sent()).toMatchObject({ profile_id: 'paid-media-v1', profile_config_sha256: STREAM_HASH });
+
+            // The Studio origin is refused for a Stream job, and the Stream origin for V1 or a legacy V2 job.
+            bridgeAnswers(INTENT.tus_endpoint);
+            await expect(requestLivepeerUploadIntent(streamInput)).rejects.toThrow('invalid_livepeer_upload_intent');
+            bridgeAnswers(STREAM_TUS);
+            await expect(requestLivepeerUploadIntent(input)).rejects.toThrow('invalid_livepeer_upload_intent');
+            sent = bridgeAnswers(STREAM_TUS);
+            await expect(requestLivepeerUploadIntent({ ...input, profileId: 'paid-media-v1', profileConfigSha256: profiles.legacy.hash }))
+                .rejects.toThrow('invalid_livepeer_upload_intent');
+            expect(sent().profile_config_sha256).toBe(profiles.legacy.hash);
+            for (const lookalike of [
+                'https://upload.cloudflarestream.com.example.test/tus/x',
+                'http://upload.cloudflarestream.com/tus/x',
+                'https://upload.cloudflarestream.com:8443/tus/x',
+                'https://customer-7v4my51gigdqb5jn.cloudflarestream.com/tus/x',
+                'not a url',
+            ]) {
+                bridgeAnswers(lookalike);
+                await expect(requestLivepeerUploadIntent(streamInput)).rejects.toThrow('invalid_livepeer_upload_intent');
+            }
+        });
+
+        it('sends no hash it does not know and keeps the Stream hash to the Market V2 profile id', async () => {
+            await provisionJobSession(createWallet());
+            const fetchMock = vi.fn();
+            vi.stubGlobal('fetch', fetchMock);
+            await expect(requestLivepeerUploadIntent({ ...streamInput, profileConfigSha256: 'f'.repeat(64) }))
+                .rejects.toThrow('livepeer_paid_job_conflict');
+            await expect(requestLivepeerUploadIntent({ ...input, profileConfigSha256: STREAM_HASH }))
+                .rejects.toThrow('livepeer_paid_job_conflict');
+            expect(fetchMock).not.toHaveBeenCalled();
+            expect(storedProfileHash({ profile_id: 'paid-media-v1', profile_config_sha256: STREAM_HASH }, 'paid-media-v1')).toBe(STREAM_HASH);
+            expect(() => storedProfileHash({ profile_id: 'paid-media-livepeer-v1', profile_config_sha256: STREAM_HASH }))
+                .toThrow('livepeer_paid_job_conflict');
+        });
+
+        it('uploads a Stream intent with the unchanged tus settings and refuses one not parsed as Stream', async () => {
+            await provisionJobSession(createWallet());
+            bridgeAnswers(STREAM_TUS);
+            const intent = await requestLivepeerUploadIntent(streamInput);
+            const file = new File([new Uint8Array(SOURCE_BYTES)], 'video.mp4', { type: 'video/mp4' });
+            vi.spyOn(console, 'info').mockImplementation(() => undefined);
+            await uploadLivepeerSource(file, intent);
+            expect(tus.instances[0].options).toMatchObject({
+                uploadUrl: STREAM_TUS, chunkSize: 32 * 1024 * 1024, parallelUploads: 1, storeFingerprintForResuming: false,
+            });
+            // A copy or a hand-built intent carries no parsed provider and falls back to the Studio rule.
+            await expect(uploadLivepeerSource(file, { ...intent })).rejects.toThrow('invalid_livepeer_upload');
+            await expect(uploadLivepeerSource(file, { ...INTENT, tus_endpoint: STREAM_TUS })).rejects.toThrow('invalid_livepeer_upload');
+            expect(tus.instances).toHaveLength(1);
+        });
+    });
+
     it('reads only bounded status for the same signed job without wallet or payment calls', async () => {
         const wallet = createWallet();
         await provisionJobSession(wallet);
@@ -975,6 +1051,9 @@ describe('Livepeer browser upload', () => {
         expect(active).toMatchObject({ message: 'admission_denied', reason: 'active_upload', retryAtMs: 1_790_841_127_708 });
         deny({ error: 'admission_denied' });
         await expect(preflightLivepeerUpload(input)).rejects.toMatchObject({ message: 'admission_denied', reason: null, retryAtMs: null });
+        // Stream-only V2 Bridge: the platform-wide reservation budget, without a retry time.
+        deny({ error: 'admission_denied', reason: 'reservation_budget' });
+        await expect(preflightLivepeerUpload(input)).rejects.toMatchObject({ message: 'admission_denied', reason: 'reservation_budget', retryAtMs: null });
         deny({ error: 'admission_denied', reason: 'something_new', retry_at_ms: 'soon' });
         await expect(preflightLivepeerUpload(input)).rejects.toMatchObject({ reason: null, retryAtMs: null });
     });

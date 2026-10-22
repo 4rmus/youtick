@@ -10,7 +10,9 @@ import { KeyPair, PublicKey, actions, buildDelegateAction, encodeDelegateAction 
 import profiles from '../../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { hasTitleContent } from '../../../../protocol/paid-media-livepeer-v1/title';
 import { requestDelegateApproval, type OidcEnvironment, type PopupLike } from '../near-auth/oidc';
+import { V2_MEDIA_CONFIG, type V2MediaProfile } from '../constants';
 import {
+    STREAM_PROFILE_HASH,
     livepeerUploadFeeUsdc,
     loadLivepeerJobSessionKey,
     persistLivepeerJobSessionKey,
@@ -44,6 +46,39 @@ export const MIN_TICKET_PRICE_USDC = 5_000_000n;
 export const UPLOAD_KEY_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const MAX_TITLE_BYTES = 200;
 const MAX_SOURCE_BYTES = 20_000_000_000n;
+/**
+ * How long /studio waits for processing and the on-chain publication once the source is sent;
+ * the job stays resumable past it. No M0-P7 run (processing time by source length) exists yet:
+ * the media-account dashboard import of a 10 s 1080p source was ready in 13 s, and the spike's
+ * long sources reached ready at 33-64 % of their encode, so the wait is sized generously.
+ */
+export const PROCESSING_WAIT_MS = 30 * 60 * 1000;
+export const PROCESSING_POLL_MS = 5_000;
+
+/**
+ * Profile config hash a new V2 job is paid under (`NEXT_PUBLIC_V2_MEDIA_PROFILE`): the legacy
+ * profile by default, the Stream descriptor hash with `stream`. The profile id stays `PROFILE_ID`.
+ */
+export function v2UploadProfileHash(profile: V2MediaProfile = V2_MEDIA_CONFIG.profile): string {
+    return profile === 'stream' ? STREAM_PROFILE_HASH : profiles.legacy.hash;
+}
+
+/**
+ * A Stream-profile fee is paid only while the Bridge reports its Stream adapter configured
+ * (`/__health` `streamConfigured`); anything else stops before the approval, so no fee is taken.
+ */
+async function requireStreamConfigured(fetcher: typeof fetch, bridgeUrl: string): Promise<void> {
+    let value: Record<string, unknown> = {};
+    try {
+        const response = await fetcher(`${bridgeUrl}/__health`, {
+            method: 'GET', cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(15_000),
+        });
+        if (response.ok) value = await response.json().catch(() => ({})) as Record<string, unknown>;
+    } catch {
+        // Unreachable counts as not configured.
+    }
+    if (value.streamConfigured !== true) throw new UploadError('media_provider_not_ready');
+}
 
 export interface UploadArgs {
     receiver_id: string;
@@ -254,9 +289,10 @@ export async function authorizeV2PaidJob(input: {
         const publicKey = keyPair.getPublicKey().toString();
         const uploadKeyExpiresAtMs = existing?.uploadKeyExpiresAtMs ?? String(now() + UPLOAD_KEY_LIFETIME_MS);
         const expectedSourceBytes = String(input.expectedSourceBytes);
+        const mediaProfile = V2_MEDIA_CONFIG.profile;
         const msg = buildUploadMessage({
             jobId: input.jobId, title: input.title, priceUsdc: input.priceUsdc, expectedSourceBytes,
-            profileConfigSha256: profiles.legacy.hash, uploadPublicKey: publicKey, uploadKeyExpiresAtMs,
+            profileConfigSha256: v2UploadProfileHash(mediaProfile), uploadPublicKey: publicKey, uploadKeyExpiresAtMs,
         });
         const onChain = await readJob(deps, config.marketContractId, input.jobId);
         if (onChain) {
@@ -269,6 +305,9 @@ export async function authorizeV2PaidJob(input: {
             throw new UploadError('livepeer_resume_required');
         }
         const args: UploadArgs = { receiver_id: config.marketContractId, amount: livepeerUploadFeeUsdc(input.expectedSourceBytes), msg };
+        if (mediaProfile === 'stream') {
+            await requireStreamConfigured(deps.fetch ?? ((...request: Parameters<typeof fetch>) => fetch(...request)), config.bridgeUrl);
+        }
         const key = await deps.accessKey(session.accountId, session.publicKey);
         const nonce = key.nonce + 1n;
         const maxBlockHeight = key.blockHeight + DELEGATE_TTL_BLOCKS;
@@ -350,7 +389,8 @@ export async function prepareV2UploadResume(input: {
         const intent = {
             accountId: session.accountId, jobId: input.jobId, generation: 1, expectedSourceBytes: input.file.size,
             sourceType: source.sourceType, sourceFingerprintSha256: draft.sourceFingerprintSha256, signal: input.signal,
-            profileId: PROFILE_ID,
+            // The job keeps the hash it was paid under, whatever this build's media profile is.
+            profileId: PROFILE_ID, profileConfigSha256: job.profile_config_sha256,
         };
         const status = await requestLivepeerUploadIntent({ ...intent, recovery: 'reconcile' });
         if (!UPLOADABLE_STATES.includes(status.state)) return status;
