@@ -76,10 +76,11 @@ export const STREAM = Object.freeze({
     // customer-<code>.cloudflarestream.com of the media account: read from the dashboard on 2026-10-22 (the first
     // import's playback host; claudedocs/stream-m0-pano-kanitlari-2026-10-22.md). A public value, carried by the web build too.
     customerCode: '7v4my51gigdqb5jn',
-    // `id` of POST /accounts/{id}/stream/keys; the private `pem` goes to V2_STREAM_SIGNING_KEY_PEM.
-    signingKeyId: STREAM_SENTINELS.signingKey,
+    // `id` of POST /accounts/{id}/stream/keys, minted on 2026-10-22 for the V2 testnet Bridge; the private `pem`
+    // (returned as PKCS1, converted to PKCS8) is the V2_STREAM_SIGNING_KEY_PEM secret.
+    signingKeyId: 'a9f988cdc7c7ed76650fa6b5d946c1c1',
     // Base64 of the SPKI PEM public half of that key (openssl pkey -pubout), committed like the other keys.
-    signingPublicKey: STREAM_SENTINELS.signingKey,
+    signingPublicKey: 'LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF2aTBkL3BVMVk5R3N0bW1IRzJDZQpvNGxiRk5idGRZWFpGL01sUURvbCtuaXlZQ1NOZnZBTWlXelNrMUo5SmhiTUhTSnJ3Y1hTYlJISUp6V3FVRWFFCmprNmxINEFINlBDZUNJem95UkU1djRXbnFnRVhHTjU1ODFYVXhPMmk1WkoxOVI1ZXBQSmZ4citKUHZ5MzY1dk4KWW1wR0VTbHlIL0tMaklVZC9GMVMrQXNYbDFXaFJqRmJ5K2Joc201TkkxMzJpNWIyS1ZsK00wTXllUGxpbzNhRQpweUtNREJaeVlPeTliVGRXaTlpQ1FpNktkYVg4WnVmeExNM3Y0ZVJ1U21FZTZUS29KSWMzZ1VnYUZSTXNqbDlUCjg1VVc1YW85THQrdi9IcHNCRFRuSHJHVkpGNUJZMVFsMTQ3OTJWeU9WeHZUU01KdFp5Vmw3OGN6eHFWRFI0VWgKS1FJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==',
     // Owner decision OD3: 2-hour cap, one open 2-hour reservation, the Starter Bundle's 1,000 minutes.
     maxDurationSeconds: '7200',
     storageMinutesCapacity: '1000',

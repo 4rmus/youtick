@@ -834,7 +834,8 @@ only webhook slot and deletes it at cleanup, which would remove the Bridge's web
    If it is `-----BEGIN RSA PRIVATE KEY-----` (PKCS1, which Web Crypto in the Bridge cannot import
    and the release refuses with `stream_signing_key_pkcs1`), convert it first:
    `jq -r .result.pem "$KEYS" | base64 -d | openssl pkcs8 -topk8 -nocrypt | base64 | tr -d '\n' | gh secret set V2_STREAM_SIGNING_KEY_PEM --env v2-testnet`.
-   Which form Stream returns is UNPROVEN until M0-P8. Then `rm -P "$KEYS"`.
+   Stream returned the PKCS1 form on 2026-10-22 (key `a9f988cd…`; M0-P8/U24 closed, PROVIDER), so the
+   conversion is the normal path. Then `rm -P "$KEYS"`.
 3. **Webhook.** One `PUT /stream/webhook` to the Bridge's workers.dev URL. Stream issues the
    signing secret in the response, so it goes straight to GitHub:
 
@@ -875,9 +876,9 @@ only webhook slot and deletes it at cleanup, which would remove the Bridge's web
 6. **One-line commits** on the milestone branch (or the next PR), each a public value:
    - `scripts/v2-testnet-bridge-release.mjs`, `STREAM.customerCode`: done on 2026-10-22 (`7v4my51gigdqb5jn`);
      the `<record-after-first-upload>` sentinel is only for a different media account.
-   - same file, `STREAM.signingKeyId` and `STREAM.signingPublicKey` together: the step 2 id and
-     base64 public half (replace `<create-with-post-stream-keys>`; one without the other fails
-     `stream_signing_key_incomplete`).
+   - same file, `STREAM.signingKeyId` and `STREAM.signingPublicKey` together: done on 2026-10-22 (key
+     `a9f988cd…`); for another media account replace `<create-with-post-stream-keys>` in both (one without
+     the other fails `stream_signing_key_incomplete`).
    - `scripts/v2-testnet-release.mjs`, relayer `UPLOAD_PROFILE_HASH_ALLOWLIST`: the `hash` of
      `protocol/paid-media-v1/stream-profile.json` (`node scripts/check-paid-media-v1.mjs` prints
      it). Empty keeps today's behaviour (any 64-hex hash). Once this allowlist is live (MC cutover

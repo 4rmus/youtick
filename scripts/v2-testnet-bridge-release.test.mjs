@@ -240,15 +240,17 @@ test('the Stream flag is a FIXED_VARS value set per release, never a mode flag; 
 });
 
 test('Stream constants: sentinels are empty with the flag off and refused with it on; filled values must be well-formed', () => {
-    // The committed constants: the customer code is filled (dashboard read of 2026-10-22); the signing key
-    // sentinels stay until the owner's one-line commit.
+    // The committed constants: the customer code (dashboard read of 2026-10-22) and the signing key id with its
+    // public half (POST /stream/keys of 2026-10-22) are filled; the sentinels remain only for another media account.
     assert.equal(STREAM.customerCode, '7v4my51gigdqb5jn');
-    assert.equal(STREAM.signingKeyId, STREAM_SENTINELS.signingKey);
-    assert.equal(STREAM.signingPublicKey, STREAM_SENTINELS.signingKey);
+    assert.equal(STREAM.signingKeyId, 'a9f988cdc7c7ed76650fa6b5d946c1c1');
+    assert.match(STREAM.signingPublicKey, /^[A-Za-z0-9+\/]+=*$/);
     withStream({ customerCode: STREAM.customerCode, signingKeyId: STREAM.signingKeyId, signingPublicKey: STREAM.signingPublicKey }, () => {
         const off = bridgeVars();
-        assert.deepEqual([off.STREAM_CUSTOMER_CODE, off.STREAM_SIGNING_KEY_ID, off.STREAM_SIGNING_PUBLIC_KEY], ['7v4my51gigdqb5jn', '', '']);
-        assert.throws(() => bridgeVars({ streamEnabled: true }), /stream_signing_key_unconfigured/);
+        assert.deepEqual([off.STREAM_CUSTOMER_CODE, off.STREAM_SIGNING_KEY_ID, off.STREAM_SIGNING_PUBLIC_KEY], ['7v4my51gigdqb5jn', 'a9f988cdc7c7ed76650fa6b5d946c1c1', STREAM.signingPublicKey]);
+        const on = bridgeVars({ streamEnabled: true });
+        assert.equal(on.MEDIA_PROVIDER_STREAM_ENABLED, 'true');
+        assert.equal(on.STREAM_SIGNING_KEY_ID, 'a9f988cdc7c7ed76650fa6b5d946c1c1');
     });
     for (const [fields, pattern] of [
         [{ customerCode: STREAM_SENTINELS.customerCode }, /stream_customer_code_unconfigured/],
