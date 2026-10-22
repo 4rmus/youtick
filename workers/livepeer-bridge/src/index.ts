@@ -901,17 +901,24 @@ const SAFE_ERROR_CODES = new Set([
 const bridgeWorker = {
     async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
         const url = new URL(request.url);
+        // The V2 web reads `streamConfigured` here before it takes an upload fee, so the configured
+        // web origins may read health cross-origin (GET only, no credentials).
+        if (request.method === 'OPTIONS' && url.pathname === '/__health') {
+            const origin = request.headers.get('Origin') || '';
+            if (!allowedOrigins(env).has(origin)) return json({ error: 'origin_denied' }, 403);
+            return withHealthCors(new Response(null, { status: 204 }), request, env);
+        }
         if (request.method === 'GET' && url.pathname === '/__health') {
             // Health stays observable without the binding; it reports publicBetaRateLimitReady itself.
             if (env.PUBLIC_BETA_RATE_LIMITER && (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))) {
                 const limited = await publicBetaRateLimitResponse(request, env, '/__health');
-                if (limited?.status === 429) return limited;
+                if (limited?.status === 429) return withHealthCors(limited, request, env);
             }
             if (isPublicTestnetEnvironment(env)) {
                 try { await requirePublicUploadPolicy(env); }
-                catch { return json({ status: 'error', error: 'deployment_binding_mismatch' }, 503); }
+                catch { return withHealthCors(json({ status: 'error', error: 'deployment_binding_mismatch' }, 503), request, env); }
             }
-            return json({
+            return withHealthCors(json({
                 status: 'ok',
                 service: 'livepeer-bridge',
                 compactUpload: { version: 1, network: env.NEAR_NETWORK, market: env.MARKET_CONTRACT_ID },
@@ -975,7 +982,7 @@ const bridgeWorker = {
                 // Never true with the flag off: empty STREAM_* values then mean "not configured".
                 streamConfigured: streamEnabled(env) && validStreamConfig(env),
                 ...(streamEnabled(env) ? { stream: await streamHealthBlock(env) } : {}),
-            });
+            }), request, env);
         }
 
         if (request.method === 'POST'
@@ -9178,6 +9185,20 @@ function json(body: JsonObject, status = 200): Response {
         status,
         headers: { 'Cache-Control': 'no-store' },
     });
+}
+
+/**
+ * `/__health` for the allowed web origins: GET (and its preflight) only, no credentials, no
+ * request headers. Any other request, with or without an Origin, gets the response unchanged.
+ */
+function withHealthCors(response: Response, request: Request, env: Env): Response {
+    const origin = request.headers.get('Origin') || '';
+    if (!allowedOrigins(env).has(origin)) return response;
+    const headers = new Headers(response.headers);
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    headers.set('Vary', 'Origin');
+    return new Response(response.body, { status: response.status, headers });
 }
 
 function withCors(response: Response, origin: string): Response {

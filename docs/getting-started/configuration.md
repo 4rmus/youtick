@@ -215,7 +215,9 @@ comma-separated list of lowercase SHA-256 hex digests. When set, the relayer
 refuses (`profile_not_allowed`, before any signature or fee) an upload whose
 `profile_config_sha256` is not listed; Market V2 itself accepts any 64-hex
 digest. Unset or empty keeps that behaviour; a malformed list refuses every
-upload (`uploads_misconfigured`, 503) while the other routes keep working. The V2 testnet release
-(`scripts/v2-testnet-release.mjs`) ships it empty until the Stream descriptor
-hash is committed there, and the relayer deploy that fills it goes out with the
-Bridge's Stream flag.
+upload (`uploads_misconfigured`, 503) while the other routes keep working. Since M3
+the V2 testnet release (`scripts/v2-testnet-release.mjs`) pins it to the Stream
+descriptor hash (`protocol/paid-media-v1/stream-profile.json`), deployed with the
+Bridge's Stream flag, so only a web build with `NEXT_PUBLIC_V2_MEDIA_PROFILE=stream`
+can start a V2 upload there; for other targets an empty list keeps the permissive
+behaviour.
