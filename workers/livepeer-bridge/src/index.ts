@@ -133,13 +133,15 @@ export interface Env {
 
 type JsonObject = Record<string, unknown>;
 type LivepeerSourceType = MediaSourceType;
+// V1 deployments keep the Livepeer-named profile; Market V2 (gate MC) uses the provider-neutral id.
+type MediaProfileId = 'paid-media-livepeer-v1' | 'paid-media-v1';
 type UploadIntentBody = {
     job_id: string;
     generation: number;
     expected_source_bytes: string;
     source_fingerprint_sha256: string;
     source_type: LivepeerSourceType;
-    profile_id: 'paid-media-livepeer-v1';
+    profile_id: MediaProfileId;
     profile_config_sha256: string;
     recovery?: 'reconcile' | 'resume';
 };
@@ -257,7 +259,7 @@ type SponsoredPaidJobRequest = {
     title: string;
     price_usdc: string;
     expected_source_bytes: string;
-    profile_id: 'paid-media-livepeer-v1';
+    profile_id: MediaProfileId;
     profile_config_sha256: string;
     upload_public_key: string;
     upload_key_expires_at_ms: string;
@@ -365,7 +367,7 @@ type JobRecord = {
     expectedSourceBytes: string;
     sourceFingerprintSha256?: string;
     sourceType: LivepeerSourceType;
-    profileId: 'paid-media-livepeer-v1';
+    profileId: MediaProfileId;
     profileConfigSha256: string;
     createdAtMs: number;
     stateChangedAtMs?: number;
@@ -436,7 +438,9 @@ type ReconcileRecord = {
     salesSuspensionQueuedAtMs?: number;
 };
 type FinalJob = { job: OnChainJob; blockHash: string };
-type OutboxMethod = 'finalize_livepeer_publication' | 'suspend_livepeer_sales' | 'mark_watched' | 'release_expired';
+type LegacyOutboxMethod = 'finalize_livepeer_publication' | 'suspend_livepeer_sales';
+type NeutralOutboxMethod = 'finalize_publication' | 'suspend_sales';
+type OutboxMethod = LegacyOutboxMethod | NeutralOutboxMethod | 'mark_watched' | 'release_expired';
 type OutboxInput = {
     idempotencyKey: string;
     method: OutboxMethod;
@@ -454,7 +458,7 @@ type FinalizePublication = {
     generation: number;
     creator_id: string;
     expected_source_bytes: string;
-    profile_id: 'paid-media-livepeer-v1';
+    profile_id: MediaProfileId;
     profile_config_sha256: string;
     asset_id_hash: string;
     playback_id: string;
@@ -678,15 +682,26 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
 const PLAYBACK_ID_PATTERN = /^[A-Za-z0-9_-]{6,128}$/;
-const OUTBOX_METHODS = new Set<OutboxMethod>([
+// V1 (Preview, public testnet) keeps the Livepeer-named methods; Market V2 (gate MC) renamed them.
+const V1_OUTBOX_METHODS = new Set<OutboxMethod>([
     'finalize_livepeer_publication',
     'suspend_livepeer_sales',
 ]);
-const MARKET_V2_OUTBOX_METHODS = new Set<OutboxMethod>([...OUTBOX_METHODS, 'mark_watched', 'release_expired']);
+const NEUTRAL_OUTBOX_METHODS = new Set<OutboxMethod>(['finalize_publication', 'suspend_sales']);
+// Env-less record validity: records of either generation stay valid in storage and status reads.
+const OUTBOX_METHODS = new Set<OutboxMethod>([...V1_OUTBOX_METHODS, ...NEUTRAL_OUTBOX_METHODS]);
+const MARKET_V2_OUTBOX_METHODS = new Set<OutboxMethod>([...NEUTRAL_OUTBOX_METHODS, 'mark_watched', 'release_expired']);
+// A stored record written under a V1 method name maps to its Market V2 name.
+const LEGACY_METHOD_ALIASES = new Map<OutboxMethod, OutboxMethod>([
+    ['finalize_livepeer_publication', 'finalize_publication'],
+    ['suspend_livepeer_sales', 'suspend_sales'],
+]);
 // Per-ticket settlements: the chain is the durable record, so confirmed records are deleted and
 // never archived (the operator object's record budget must not grow with tickets).
 const EPHEMERAL_OUTBOX_METHODS = new Set<OutboxMethod>(['mark_watched', 'release_expired']);
 const TICKET_ID_PATTERN = /^[0-9a-f]{64}$/;
+const LEGACY_PROFILE_ID = 'paid-media-livepeer-v1' satisfies MediaProfileId;
+const NEUTRAL_PROFILE_ID = 'paid-media-v1' satisfies MediaProfileId;
 
 function isMarketV2(env: Env): boolean {
     return env.MARKET_PROTOCOL === 'v2';
@@ -694,7 +709,25 @@ function isMarketV2(env: Env): boolean {
 
 // The on-chain operator key must allow exactly these methods; V1 deployments are unchanged.
 function operatorOutboxMethods(env: Env): Set<OutboxMethod> {
-    return isMarketV2(env) ? MARKET_V2_OUTBOX_METHODS : OUTBOX_METHODS;
+    return isMarketV2(env) ? MARKET_V2_OUTBOX_METHODS : V1_OUTBOX_METHODS;
+}
+
+function finalizeMethod(env: Env): OutboxMethod {
+    return isMarketV2(env) ? 'finalize_publication' : 'finalize_livepeer_publication';
+}
+
+function suspendMethod(env: Env): OutboxMethod {
+    return isMarketV2(env) ? 'suspend_sales' : 'suspend_livepeer_sales';
+}
+
+// The only profile id a new upload or finalization may carry on this deployment.
+function marketProfileId(env: Env): MediaProfileId {
+    return isMarketV2(env) ? NEUTRAL_PROFILE_ID : LEGACY_PROFILE_ID;
+}
+
+// Playback also honours publications finalized on the V2 testnet before the MC rename.
+function playbackProfileIdAccepted(env: Env, profileId: unknown): boolean {
+    return profileId === marketProfileId(env) || (isMarketV2(env) && profileId === LEGACY_PROFILE_ID);
 }
 const playbackAuthorizationCache = new Map<string, { value: unknown; expiresAtMs: number }>();
 let edgeColdStartPending = true;
@@ -1271,6 +1304,7 @@ export class LivepeerControl {
             await scheduleReconcile(this.state, Date.now() + RECONCILE_HEALTHY_INTERVAL_MS);
             return;
         }
+        if (await expireLegacyProfileJob(this.state, this.env, job)) return;
         if (!job.publication) {
             if (job.providerVerification && ['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(job.state)) {
                 const event = await synthesizedProviderEvent({
@@ -1885,6 +1919,8 @@ export class LivepeerControl {
         if (!existing || event.assetId !== existing.assetId || event.provider !== jobProviderKind(existing)) {
             return json({ accepted: true, ignored: true }, 202);
         }
+        const legacyExpired = await expireLegacyProfileJob(this.state, this.env, existing);
+        if (legacyExpired) return legacyExpired;
         if (publicBetaDeadlineExpired(existing)
             && !['UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'CANCELLED', 'ONCHAIN_PUBLISHED']
                 .includes(existing.state)) {
@@ -2002,7 +2038,7 @@ export class LivepeerControl {
     }
 
     private async finalizePublication(request: Request): Promise<Response> {
-        const input = await parseFinalizeInput(await readJsonObject(request));
+        const input = await parseFinalizeInput(await readJsonObject(request), this.env);
         return processFinalizeOutbox(this.state, this.env, input);
     }
 
@@ -2497,11 +2533,10 @@ async function advanceFinalization(
     job: JobRecord,
 ): Promise<Response> {
     if (publicBetaDeadlineExpired(job)) {
-        const expired = transitionJob(job, 'UPLOAD_EXPIRED');
-        await state.storage.put(JOB_KEY, expired);
-        await scheduleTerminalArchive(state, env, expired);
-        await updateAdmission(env, expired, 'UPLOAD_EXPIRED');
-        return json({ accepted: true, expired: true }, 202);
+        return expireJob(state, env, job);
+    }
+    if (isLegacyProfileJobOnMarketV2(env, job)) {
+        return settleLegacyProfileJob(state, env, job);
     }
     if (!operatorJobAllowed(env, job.jobId, job.creator) || job.generation !== 1) {
         return json({ accepted: true, ignored: true }, 202);
@@ -2539,6 +2574,72 @@ async function advanceFinalization(
         await scheduleReconcile(state, Date.now() + RECONCILE_BACKOFF_MS[0]);
     }
     return response;
+}
+
+async function expireJob(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+): Promise<Response> {
+    const expired = transitionJob(job, 'UPLOAD_EXPIRED');
+    await state.storage.put(JOB_KEY, expired);
+    await scheduleTerminalArchive(state, env, expired);
+    await updateAdmission(env, expired, 'UPLOAD_EXPIRED');
+    return json({ accepted: true, expired: true }, 202);
+}
+
+// A job stored with the V1 profile id before the MC rename can never finalize on Market V2
+// (assert_profile requires the neutral id and job.profile_id == submission.profile_id).
+function isLegacyProfileJobOnMarketV2(env: Env, job: JobRecord): boolean {
+    return isMarketV2(env) && job.profileId === LEGACY_PROFILE_ID;
+}
+
+// States from which UPLOAD_EXPIRED is a legal transition before a publication exists.
+const LEGACY_PROFILE_EXPIRABLE_STATES = new Set<JobState>([
+    'AUTHORIZED', 'LEASED', 'PROVIDER_CREATE_PENDING', 'UPLOAD_READY', 'UPLOADING', 'PROCESSING',
+]);
+
+async function expireLegacyProfileJob(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+): Promise<Response | null> {
+    if (!isLegacyProfileJobOnMarketV2(env, job) || !LEGACY_PROFILE_EXPIRABLE_STATES.has(job.state)) return null;
+    console.warn(formatLog('legacy_profile_job_expired', { fromState: job.state, generation: job.generation }));
+    logJobStateTransition(job.state, 'UPLOAD_EXPIRED', job);
+    return expireJob(state, env, job);
+}
+
+// Never forwards a finalization: a publication already final on chain is adopted, anything else expires.
+async function settleLegacyProfileJob(
+    state: DurableObjectState,
+    env: Env,
+    job: JobRecord,
+): Promise<Response> {
+    let published = false;
+    if (job.publication) {
+        try {
+            published = await finalPublicationMatches(env, job.publication);
+        } catch (error) {
+            if (safeErrorCode(error) !== 'near_finalize_mismatch') {
+                // NEAR is unavailable: keep the job and read again later; nothing is signed.
+                await scheduleReconcile(state, Date.now() + RECONCILE_BACKOFF_MS[0]);
+                return json({ accepted: true, pending: true }, 202);
+            }
+        }
+    }
+    if (!published) {
+        console.warn(formatLog('legacy_profile_job_expired', { fromState: job.state, generation: job.generation }));
+        logJobStateTransition(job.state, 'UPLOAD_EXPIRED', job);
+        return expireJob(state, env, job);
+    }
+    const { finalizeRetry: _retry, ...withoutRetry } = job;
+    const record = transitionJob(withoutRetry, 'ONCHAIN_PUBLISHED');
+    await state.storage.put(JOB_KEY, record);
+    logJobStateTransition(job.state, record.state, job);
+    await updateAdmission(env, record, 'ONCHAIN_PUBLISHED');
+    await ensureReconcileScheduled(state);
+    return json({ accepted: true, finalized: true });
 }
 
 async function requestAdmission(env: Env, job: JobRecord): Promise<AdmissionLease> {
@@ -3606,7 +3707,7 @@ async function persistDriftReconcile(
         && operatorJobAllowed(env, job.jobId, job.creator)
         && job.generation === 1
     ) {
-        await enqueueSalesSuspension(state, job, code);
+        await enqueueSalesSuspension(state, env, job, code);
         salesSuspensionQueuedAtMs = now;
     }
     if (confirmed) await tryProcessSalesSuspension(state, env, job);
@@ -3662,13 +3763,15 @@ async function persistHealthyReconcile(state: DurableObjectState): Promise<void>
 
 async function enqueueSalesSuspension(
     state: DurableObjectState,
+    env: Env,
     job: JobRecord,
     driftCode: string,
 ): Promise<void> {
     const idempotencyKey = `${job.jobId}:suspend-sales`;
     const key = `outbox:${idempotencyKey}`;
+    const method = suspendMethod(env);
     const payloadSha256 = await sha256Hex(canonicalJson({
-        method: 'suspend_livepeer_sales',
+        method,
         publication_id: job.jobId,
         drift_code: driftCode,
     }));
@@ -3684,7 +3787,7 @@ async function enqueueSalesSuspension(
             schema: 'youtick.livepeer-control-outbox.v1',
             state: 'PENDING',
             idempotencyKey,
-            method: 'suspend_livepeer_sales',
+            method,
             jobId: job.jobId,
             generation: job.generation,
             payloadSha256,
@@ -5585,7 +5688,7 @@ function publicBetaDeadlineExpired(record: JobRecord): boolean {
 async function parseUploadIntentRequest(request: Request, env: Env): Promise<UploadIntentRequest> {
     const value = await readJsonObject(request);
     requireExactKeys(value, ['body', 'envelope'], 'invalid_control_request');
-    const body = parseUploadBody(value.body);
+    const body = parseUploadBody(value.body, env);
     const envelope = parseControlEnvelope(value.envelope);
     const bodySha256 = await sha256Hex(canonicalJson(body));
 
@@ -5913,7 +6016,7 @@ function parsePlaybackTokenBody(value: unknown): PlaybackTokenBody {
     return body as PlaybackTokenBody;
 }
 
-function parseUploadBody(value: unknown): UploadIntentBody {
+function parseUploadBody(value: unknown, env: Env): UploadIntentBody {
     const body = requireObject(value, 'invalid_upload_intent');
     const keys = [
         'job_id',
@@ -5935,7 +6038,7 @@ function parseUploadBody(value: unknown): UploadIntentBody {
         || typeof body.source_fingerprint_sha256 !== 'string'
         || !SHA256_PATTERN.test(body.source_fingerprint_sha256)
         || !isLivepeerSourceType(body.source_type)
-        || body.profile_id !== 'paid-media-livepeer-v1'
+        || body.profile_id !== marketProfileId(env)
         || !supportedMediaProfile(body.profile_config_sha256)
         || (body.recovery !== undefined && !['reconcile', 'resume'].includes(String(body.recovery)))) {
         throw new Error('invalid_upload_intent');
@@ -6766,7 +6869,7 @@ async function readStatelessPlaybackAuthorization(
     if (publication.publication_id !== input.body.publication_id
         || publication.generation !== input.body.generation
         || publication.playback_id !== input.body.playback_id
-        || publication.profile_id !== 'paid-media-livepeer-v1'
+        || !playbackProfileIdAccepted(env, publication.profile_id)
         || !supportedMediaProfile(publication.profile_config_sha256)
         || !['ACTIVE', 'SALES_SUSPENDED'].includes(String(publication.availability))) {
         throw new Error('playback_denied');
@@ -7451,7 +7554,7 @@ async function parseSuspendSalesInput(value: JsonObject): Promise<SuspendSalesIn
     return value as SuspendSalesInput;
 }
 
-async function parseFinalizeInput(value: JsonObject): Promise<FinalizeInput> {
+async function parseFinalizeInput(value: JsonObject, env: Env): Promise<FinalizeInput> {
     requireExactKeys(value, ['idempotencyKey', 'payloadSha256', 'submission'], 'invalid_finalize_request');
     const submission = requireObject(value.submission, 'invalid_finalize_request');
     requireExactKeys(submission, [
@@ -7469,7 +7572,7 @@ async function parseFinalizeInput(value: JsonObject): Promise<FinalizeInput> {
         || !/^[1-9][0-9]{0,19}$/.test(submission.expected_source_bytes)
         || BigInt(submission.expected_source_bytes) > MAX_SOURCE_BYTES
         || submission.verified_source_bytes !== submission.expected_source_bytes
-        || submission.profile_id !== 'paid-media-livepeer-v1'
+        || submission.profile_id !== marketProfileId(env)
         || !supportedMediaProfile(submission.profile_config_sha256)
         || typeof submission.asset_id_hash !== 'string'
         || !SHA256_PATTERN.test(submission.asset_id_hash)
@@ -7523,7 +7626,7 @@ async function processFinalizeOutbox(
         state,
         env,
         input,
-        'finalize_livepeer_publication',
+        finalizeMethod(env),
         { submission: input.submission },
         () => finalPublicationMatches(env, input.submission),
     );
@@ -7543,7 +7646,7 @@ async function processSuspendSalesOutbox(
         state,
         env,
         input,
-        'suspend_livepeer_sales',
+        suspendMethod(env),
         { publication_id: input.publicationId },
         () => finalPublicationSalesSuspended(env, input.publicationId),
     );
@@ -7562,12 +7665,27 @@ async function processOperatorOutbox(
     const signer = KeyPairSigner.fromSecretKey(env.NEAR_OPERATOR_PRIVATE_KEY as `ed25519:${string}`);
     const publicKey = await signer.getPublicKey();
     const key = `outbox:${input.idempotencyKey}`;
+    let legacyConfirmed = false as boolean;
     let record = await state.storage.transaction(async (transaction) => {
         const existing = await transaction.get<OperatorRecord>(key);
         if (existing) {
-            if (existing.payloadSha256 !== input.payloadSha256
-                || (existing.method !== undefined && existing.method !== method)) {
-                throw new Error('outbox_conflict');
+            if (existing.payloadSha256 !== input.payloadSha256) throw new Error('outbox_conflict');
+            if (existing.method !== undefined && existing.method !== method) {
+                // Records written under the V1 names before the MC rename (V2 testnet only).
+                if (LEGACY_METHOD_ALIASES.get(existing.method) !== method) throw new Error('outbox_conflict');
+                if (existing.state === 'CONFIRMED') {
+                    // Already executed: idempotent success, the stored method stays as archived.
+                    legacyConfirmed = true;
+                    return existing;
+                }
+                // An unconfirmed legacy finalization can never land (old profile id); the guarded
+                // advanceFinalization never retries it, so a new request for it is a conflict.
+                if (method !== 'suspend_sales') throw new Error('outbox_conflict');
+                // The payload hash is method-less; a signed V1-name transaction can only fail on the
+                // MC contract, so it is dropped and the same record is re-signed under the new name.
+                const rekeyed = normalizeOperatorRecord(clearSignedTransaction(existing), method);
+                await transaction.put(key, rekeyed);
+                return rekeyed;
             }
             const normalized = normalizeOperatorRecord(existing, method);
             await transaction.put(key, normalized);
@@ -7589,6 +7707,7 @@ async function processOperatorOutbox(
         await transaction.put(key, created);
         return created;
     });
+    if (legacyConfirmed) return { confirmed: true, txHash: record.txHash || null, status: 200 };
 
     if (await isConfirmed()) {
         record = await persistConfirmedOperatorRecord(state, env, key, record);
@@ -8080,12 +8199,16 @@ function validQuoteSigningConfig(env: Env): boolean {
 }
 
 function validSponsoredUploadQuoteConfig(env: Env): boolean {
+    // Fail closed on Market V2: the compact upload format carries the V1 profile id, which the
+    // MC contract no longer accepts, so the V2 Bridge never quotes or relays sponsored uploads.
+    if (isMarketV2(env)) return false;
     return env.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true'
         && validQuoteSigningConfig(env)
         && validAdmissionConfig(env);
 }
 
 function validSponsoredUploadRelayConfig(env: Env): boolean {
+    if (isMarketV2(env)) return false;
     const accountId = env.NEAR_SPONSOR_RELAYER_ACCOUNT_ID || '';
     const structurallyValid = validSponsoredUploadQuoteConfig(env)
         && ACCOUNT_ID_PATTERN.test(accountId)

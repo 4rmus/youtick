@@ -1115,6 +1115,34 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(deniedRuntime.quoteState.values.size).toBe(0);
     });
 
+    it('never quotes or relays sponsored uploads on Market V2', async () => {
+        // The compact upload format carries the V1 profile id, which the MC contract refuses.
+        const v1 = sponsoredRuntime({ LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true' });
+        expect(await (await handler.fetch(new Request('https://bridge.youtick.net/__health'), v1.env)).json())
+            .toMatchObject({ sponsoredUploadQuoteReady: true, sponsoredUploadRelayReady: true });
+
+        const runtime = sponsoredRuntime({ MARKET_PROTOCOL: 'v2', LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED: 'true' });
+        const health = await handler.fetch(new Request('https://bridge.youtick.net/__health'), runtime.env);
+        expect(await health.json()).toMatchObject({
+            sponsoredUploadQuoteReady: false,
+            sponsoredUploadRelayReady: false,
+        });
+        for (const profileId of ['paid-media-livepeer-v1', 'paid-media-v1']) {
+            const quote = await handler.fetch(sponsoredQuoteRequest({ profile_id: profileId }), runtime.env);
+            expect(quote.status).toBe(503);
+            expect(await quote.json()).toEqual({ error: 'runtime_not_configured' });
+        }
+        const relay = await handler.fetch(new Request('https://bridge.youtick.net/v1/sponsored-upload-relays', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+            body: JSON.stringify({ signed_delegate_base64: 'invalid' }),
+        }), runtime.env);
+        expect(relay.status).toBe(503);
+        expect(await relay.json()).toEqual({ error: 'runtime_not_configured' });
+        expect(runtime.quoteState.values.size).toBe(0);
+        expect(runtime.relayerState.values.size).toBe(0);
+    });
+
     it('serves only a recorded paid job id per creator from the pending-upload lookup', async () => {
         const url = (creator: string) => `https://bridge.youtick.net/v1/creators/${creator}/pending-upload`;
         const disabled = await handler.fetch(new Request(url('creator.testnet'), { headers: { Origin: ORIGIN } }), createEnv());
@@ -2036,6 +2064,34 @@ describe('Livepeer bridge PR-3 upload intent', () => {
 
         expect(response.status).toBe(400);
         expect(await response.json()).toEqual({ error: 'invalid_upload_intent' });
+    });
+
+    it.each([
+        // [case, env overrides, body profile id, accepted]
+        ['Market V2 accepts the neutral id', { MARKET_PROTOCOL: 'v2' }, 'paid-media-v1', true],
+        ['Market V2 refuses the pre-MC id', { MARKET_PROTOCOL: 'v2' }, 'paid-media-livepeer-v1', false],
+        ['V1 keeps the Livepeer-named id', {}, 'paid-media-livepeer-v1', true],
+        ['V1 refuses the neutral id', {}, 'paid-media-v1', false],
+    ] as const)('binds the upload intent profile id to the market: %s', async (_case, overrides, profileId, accepted) => {
+        const forwarded = vi.fn(async () => Response.json({ accepted: true }));
+        const env = createEnv({
+            ...overrides,
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: forwarded }),
+            } as unknown as DurableObjectNamespace,
+        });
+
+        const response = await forwardUploadIntent(await controlRequest({ body: { profile_id: profileId } }), env);
+
+        if (accepted) {
+            expect(response.status).toBe(200);
+            expect(forwarded).toHaveBeenCalledOnce();
+        } else {
+            expect(response.status).toBe(400);
+            expect(await response.json()).toEqual({ error: 'invalid_upload_intent' });
+            expect(forwarded).not.toHaveBeenCalled();
+        }
     });
 
     it('accepts one concurrent reservation winner after final NEAR reads', async () => {
@@ -3818,6 +3874,63 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(JSON.stringify(body)).not.toContain(OPERATOR_TOKEN);
         expect(JSON.stringify(body)).not.toContain(env.NEAR_OPERATOR_PRIVATE_KEY);
         expect(JSON.stringify(body)).not.toContain('sensitive-test-transaction');
+    });
+
+    it.each([undefined, 'v2'])('counts operator records of both method generations as valid (MARKET_PROTOCOL=%s)', async (protocol) => {
+        const operatorState = createState();
+        const now = Date.now();
+        const methods = ['finalize_livepeer_publication', 'suspend_livepeer_sales', 'finalize_publication', 'suspend_sales'];
+        for (const [index, method] of methods.entries()) {
+            operatorState.values.set(`outbox:generation-${index}`, {
+                schema: 'youtick.livepeer-operator-outbox.v1',
+                state: index % 2 ? 'PENDING' : 'CONFIRMED',
+                method,
+                idempotencyKey: `generation-${index}`,
+                payloadSha256: 'a'.repeat(64),
+                createdAtMs: now - 2_000,
+                ...(index % 2 ? {} : {
+                    confirmedAtMs: now - 1_000,
+                    archive: { status: 'COMMITTED', attempts: 1, createdAtMs: now - 1_000, nextAttemptAtMs: now - 1_000 },
+                }),
+            });
+        }
+        operatorState.values.set('outbox:unknown-method', {
+            schema: 'youtick.livepeer-operator-outbox.v1',
+            state: 'PENDING',
+            method: 'withdraw',
+            idempotencyKey: 'unknown-method',
+            payloadSha256: 'a'.repeat(64),
+            createdAtMs: now - 2_000,
+        });
+        let control!: LivepeerControl;
+        const env = createEnv({
+            MARKET_PROTOCOL: protocol,
+            LIVEPEER_BRIDGE_ENABLED: 'false',
+            OPERATOR_OUTBOX_ARCHIVE_ENABLED: 'false',
+            LIVEPEER_PAID_MEDIA_OPERATOR_ID: OPERATOR_ID,
+            LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN: OPERATOR_TOKEN,
+            NEAR_OPERATOR_ACCOUNT_ID: OPERATOR_ID,
+            NEAR_OPERATOR_PRIVATE_KEY: OPERATOR_PRIVATE_KEY,
+            NEAR_OPERATOR_KEY_EPOCH: '1',
+            LIVEPEER_CONTROL: {
+                idFromName: (name: string) => ({ toString: () => name }),
+                get: () => ({ fetch: (request: Request) => control.fetch(request) }),
+            } as unknown as DurableObjectNamespace,
+        });
+        control = new LivepeerControl(operatorState.state, env);
+
+        const response = await handler.fetch(new Request(
+            'https://bridge.youtick.net/v1/operations/operator-outbox-status',
+            { headers: { Authorization: `Bearer ${OPERATOR_TOKEN}` } },
+        ), env);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+            totalRecords: 5,
+            invalidRecords: 1,
+            confirmedRecords: 2,
+            committedRecords: 2,
+        });
     });
 
     it('does not archive a preexisting operator record without an explicit scan marker', async () => {

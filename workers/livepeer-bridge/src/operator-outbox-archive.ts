@@ -4,7 +4,8 @@ export type OperatorOutboxArchive = {
     operatorAccountId: string;
     operatorKeyEpoch: number;
     idempotencyKey: string;
-    method: 'finalize_livepeer_publication' | 'suspend_livepeer_sales';
+    // V1 names (V1 deployments, pre-MC V2 records) and the Market V2 names; D1 0011 accepts all four.
+    method: 'finalize_livepeer_publication' | 'suspend_livepeer_sales' | 'finalize_publication' | 'suspend_sales';
     payloadSha256: string;
     txHash: string | null;
     createdAtMs: number;

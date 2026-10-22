@@ -7,7 +7,9 @@ const CONTRACT_ID = 'market-v2.youtick.testnet';
 const OPERATOR_ID = 'bridge.testnet';
 const BLOCK_HASH = '11111111111111111111111111111111';
 const TICKET_ID = 'b'.repeat(64);
-const V2_METHODS = ['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired'];
+// Market V2 (gate MC) names; the V1 pair is refused on a V2 Bridge.
+const V2_METHODS = ['finalize_publication', 'suspend_sales', 'mark_watched', 'release_expired'];
+const LEGACY_V2_METHODS = ['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired'];
 
 function createState() {
     const values = new Map<string, unknown>();
@@ -184,10 +186,18 @@ describe('mark_watched operator outbox (V2 Market)', () => {
     });
 
     it('requires the V2 key method set and the V2 protocol', async () => {
-        vi.stubGlobal('fetch', rpc({ statusAfterSend: 'watched', methodNames: ['finalize_livepeer_publication', 'suspend_livepeer_sales'] }));
-        const wrongKey = await new LivepeerControl(createState().state, createEnv()).fetch(await markWatchedRequest());
-        expect(wrongKey.status).toBe(503);
-        expect(await wrongKey.json()).toEqual({ error: 'runtime_not_configured' });
+        for (const methodNames of [
+            ['finalize_livepeer_publication', 'suspend_livepeer_sales'],
+            ['finalize_publication', 'suspend_sales'],
+            // A key still carrying the pre-MC names is refused even with the settlement methods.
+            LEGACY_V2_METHODS,
+            [...V2_METHODS, 'finalize_livepeer_publication', 'suspend_livepeer_sales'],
+        ]) {
+            vi.stubGlobal('fetch', rpc({ statusAfterSend: 'watched', methodNames }));
+            const wrongKey = await new LivepeerControl(createState().state, createEnv()).fetch(await markWatchedRequest());
+            expect(wrongKey.status).toBe(503);
+            expect(await wrongKey.json()).toEqual({ error: 'runtime_not_configured' });
+        }
 
         vi.stubGlobal('fetch', rpc({ statusAfterSend: 'watched' }));
         const v1 = await new LivepeerControl(createState().state, createEnv({ MARKET_PROTOCOL: undefined })).fetch(await markWatchedRequest());
