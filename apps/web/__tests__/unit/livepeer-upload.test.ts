@@ -866,11 +866,22 @@ describe('Livepeer browser upload', () => {
                 'http://upload.cloudflarestream.com/tus/x',
                 'https://upload.cloudflarestream.com:8443/tus/x',
                 'https://customer-7v4my51gigdqb5jn.cloudflarestream.com/tus/x',
+                // userinfo on the right origin (the URL origin ignores it, the check does not)
+                'https://user:pass@upload.cloudflarestream.com/tus/x',
+                'https://user@upload.cloudflarestream.com/tus/x',
+                'https://:pass@upload.cloudflarestream.com/tus/x',
                 'not a url',
             ]) {
                 bridgeAnswers(lookalike);
                 await expect(requestLivepeerUploadIntent(streamInput)).rejects.toThrow('invalid_livepeer_upload_intent');
             }
+        });
+
+        it('leaves the V1 Studio origin rule as it was', async () => {
+            await provisionJobSession(createWallet());
+            // Unchanged V1 behaviour: only the origin is compared for Studio.
+            bridgeAnswers('https://user:pass@origin.livepeer.com/api/asset/upload/tus/upload-123');
+            await expect(requestLivepeerUploadIntent(input)).resolves.toMatchObject({ job_id: 'job-001' });
         });
 
         it('sends no hash it does not know and keeps the Stream hash to the Market V2 profile id', async () => {

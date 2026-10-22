@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nativePlaybackSource } from '@/lib/v2/playback';
 import {
     createStreamHlsConfig, expectedStreamHlsUrl, isStreamAuthFailure, isStreamMediaUrl, reloadStreamSource, streamAuthRetryDelay,
-    streamCustomerHost, STREAM_TOKEN_PATTERN,
+    startPlaybackRenewal, streamCustomerHost, STREAM_TOKEN_PATTERN,
 } from '@/lib/v2/stream-playback';
 import { redactPlaybackUrl } from '@/lib/video-measurements';
 
@@ -92,8 +92,11 @@ describe('Stream delivery URLs', () => {
 
 class FakeHls {
     readonly sources: string[] = [];
+    /** `config.startPosition` at the moment of each `loadSource`. */
+    readonly startPositions: number[] = [];
+    readonly config = { startPosition: -1 };
     private readonly handlers = new Map<string, Array<() => void>>();
-    loadSource(url: string) { this.sources.push(url); }
+    loadSource(url: string) { this.sources.push(url); this.startPositions.push(this.config.startPosition); }
     once(event: string, handler: () => void) { this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler]); }
     emit(event: string) {
         const handlers = this.handlers.get(event) ?? [];
@@ -107,15 +110,18 @@ describe('Stream renewal', () => {
 
     it('loads the renewed URL and seeks back to the saved position, resuming a playing video', async () => {
         const hls = new FakeHls();
-        const video = { currentTime: 1_234.5, paused: false, play: vi.fn(async () => undefined) };
+        const video = { currentTime: 1_234.5, paused: false, play: vi.fn(async () => undefined), pause: vi.fn() };
         reloadStreamSource(hls, video, RENEWED, 'hlsManifestParsed');
         expect(hls.sources).toEqual([RENEWED]);
+        // The first fetch of the new manifest already starts at the saved position.
+        expect(hls.startPositions).toEqual([1_234.5]);
         // The new manifest restarts at its own position until it is parsed.
         video.currentTime = 0;
         expect(video.play).not.toHaveBeenCalled();
         hls.emit('hlsManifestParsed');
         expect(video.currentTime).toBe(1_234.5);
         expect(video.play).toHaveBeenCalledOnce();
+        expect(video.pause).not.toHaveBeenCalled();
         // Only the first parse after the swap restores the position.
         video.currentTime = 50;
         hls.emit('hlsManifestParsed');
@@ -124,12 +130,14 @@ describe('Stream renewal', () => {
 
     it('keeps a paused video paused', () => {
         const hls = new FakeHls();
-        const video = { currentTime: 42, paused: true, play: vi.fn(async () => undefined) };
+        const video = { currentTime: 42, paused: true, play: vi.fn(async () => undefined), pause: vi.fn() };
         reloadStreamSource(hls, video, RENEWED, 'hlsManifestParsed');
+        expect(hls.startPositions).toEqual([42]);
         video.currentTime = 0;
         hls.emit('hlsManifestParsed');
         expect(video.currentTime).toBe(42);
         expect(video.play).not.toHaveBeenCalled();
+        expect(video.pause).toHaveBeenCalledOnce();
     });
 
     it('renews once at once on a 401 or 403, then backs off, then stops', () => {
@@ -157,5 +165,137 @@ describe('Stream renewal', () => {
         expect(redactPlaybackUrl(MASTER)).toBe(`${HOST}/<redacted>/manifest/video.m3u8`);
         expect(redactPlaybackUrl(`${MASTER} then ${RENEWED}`)).not.toMatch(/eyJ/);
         expect(redactPlaybackUrl('v2-market-261007.youtick-dev-v3.testnet')).toBe('v2-market-261007.youtick-dev-v3.testnet');
+    });
+});
+
+// The TicketPlayer's renewal chain, driven with fake timers: the player wires the hls.js ERROR
+// (401/403) and FRAG_LOADED events to authFailure/fragmentLoaded, its cleanup to stop(), and
+// apply to reloadStreamSource, as here.
+describe('playback renewal chain', () => {
+    type Access = { expiresAtMs: number; hlsUrl: string };
+    const TTL_MS = 180_000;
+
+    function harness() {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        const hls = new FakeHls();
+        const video = { currentTime: 30, paused: false, play: vi.fn(async () => undefined), pause: vi.fn() };
+        const pending: Array<{ resolve: (value: Access) => void; reject: (error: Error) => void }> = [];
+        let issued = 0;
+        const request = vi.fn(() => new Promise<Access>((resolve, reject) => { pending.push({ resolve, reject }); }));
+        const answer = () => {
+            issued += 1;
+            pending.shift()!.resolve({ expiresAtMs: Date.now() + TTL_MS, hlsUrl: `${HOST}/token-${issued}/manifest/video.m3u8` });
+        };
+        const onFailed = vi.fn();
+        const renewal = startPlaybackRenewal<Access>({
+            initial: { expiresAtMs: Date.now() + TTL_MS, hlsUrl: MASTER },
+            request,
+            apply: (next) => reloadStreamSource(hls, video, next.hlsUrl, 'hlsManifestParsed'),
+            onFailed,
+            refreshBeforeExpiryMs: 60_000,
+        });
+        return { hls, request, answer, pending, onFailed, renewal };
+    }
+
+    afterEach(() => vi.useRealTimers());
+
+    it('renews 60 s before expiry and then on each new expiry', async () => {
+        const h = harness();
+        await vi.advanceTimersByTimeAsync(119_999);
+        expect(h.request).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(h.request).toHaveBeenCalledOnce();
+        h.answer();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(h.hls.sources).toEqual([`${HOST}/token-1/manifest/video.m3u8`]);
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(h.request).toHaveBeenCalledTimes(2);
+    });
+
+    it('ignores a 401 while a scheduled renewal is in flight: exactly one loadSource', async () => {
+        const h = harness();
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(h.request).toHaveBeenCalledOnce();
+        h.renewal.authFailure();
+        h.renewal.authFailure();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(h.request).toHaveBeenCalledOnce();
+        h.answer();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(h.hls.sources).toHaveLength(1);
+        // One chain remains: the next renewal comes once, at the new expiry.
+        await vi.advanceTimersByTimeAsync(119_999);
+        expect(h.request).toHaveBeenCalledOnce();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(h.request).toHaveBeenCalledTimes(2);
+    });
+
+    it('does nothing after stop, even when a renewal was in flight', async () => {
+        const h = harness();
+        await vi.advanceTimersByTimeAsync(120_000);
+        h.renewal.stop();
+        h.answer();
+        await vi.advanceTimersByTimeAsync(10 * TTL_MS);
+        expect(h.hls.sources).toEqual([]);
+        expect(h.request).toHaveBeenCalledOnce();
+        h.renewal.authFailure();
+        await vi.advanceTimersByTimeAsync(TTL_MS);
+        expect(h.request).toHaveBeenCalledOnce();
+
+        // A request that fails after stop reports nothing.
+        const failing = harness();
+        await vi.advanceTimersByTimeAsync(120_000);
+        failing.renewal.stop();
+        failing.pending.shift()!.reject(new Error('playback_unavailable'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(failing.onFailed).not.toHaveBeenCalled();
+    });
+
+    it('retries 401/403 at 0, 5, 15 and 30 s, then fails; a loaded fragment resets the count', async () => {
+        const h = harness();
+        const renewAfter = async (delay: number) => {
+            h.renewal.authFailure();
+            // Repeated failures while the retry waits do not add requests or move the timer.
+            h.renewal.authFailure();
+            if (delay > 0) {
+                await vi.advanceTimersByTimeAsync(delay - 1);
+                expect(h.request).toHaveBeenCalledTimes(calls);
+            }
+            await vi.advanceTimersByTimeAsync(delay > 0 ? 1 : 0);
+            calls += 1;
+            expect(h.request).toHaveBeenCalledTimes(calls);
+            h.answer();
+            await vi.advanceTimersByTimeAsync(0);
+        };
+        let calls = 0;
+        for (const delay of [0, 5_000, 15_000, 30_000]) await renewAfter(delay);
+        expect(h.hls.sources).toHaveLength(4);
+        h.renewal.authFailure();
+        expect(h.onFailed).toHaveBeenCalledOnce();
+        await vi.advanceTimersByTimeAsync(10 * TTL_MS);
+        expect(h.request).toHaveBeenCalledTimes(4);
+
+        const reset = harness();
+        reset.renewal.authFailure();
+        await vi.advanceTimersByTimeAsync(0);
+        reset.answer();
+        await vi.advanceTimersByTimeAsync(0);
+        reset.renewal.fragmentLoaded();
+        reset.renewal.authFailure();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reset.request).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports a failed renewal once and stops', async () => {
+        const h = harness();
+        await vi.advanceTimersByTimeAsync(120_000);
+        h.pending.shift()!.reject(new Error('playback_denied'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(h.onFailed).toHaveBeenCalledOnce();
+        h.renewal.authFailure();
+        await vi.advanceTimersByTimeAsync(10 * TTL_MS);
+        expect(h.request).toHaveBeenCalledOnce();
+        expect(h.onFailed).toHaveBeenCalledOnce();
     });
 });

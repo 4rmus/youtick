@@ -1652,7 +1652,10 @@ function errorStatus(error: Error | DetailedError): number {
 
 function isLivepeerTusUrl(value: string, provider: TusProvider): boolean {
     try {
-        return new URL(value).origin === TUS_ORIGINS[provider];
+        const url = new URL(value);
+        // Stream also refuses userinfo, as the Bridge does; the Studio (V1) rule stays as it was.
+        if (provider === 'stream' && (url.username || url.password)) return false;
+        return url.origin === TUS_ORIGINS[provider];
     } catch {
         return false;
     }

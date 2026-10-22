@@ -48,12 +48,23 @@ const MAX_TITLE_BYTES = 200;
 const MAX_SOURCE_BYTES = 20_000_000_000n;
 /**
  * How long /studio waits for processing and the on-chain publication once the source is sent;
- * the job stays resumable past it. No M0-P7 run (processing time by source length) exists yet:
- * the media-account dashboard import of a 10 s 1080p source was ready in 13 s, and the spike's
- * long sources reached ready at 33-64 % of their encode, so the wait is sized generously.
+ * the job stays resumable past it. The legacy profile keeps its 10 minutes (120 polls of 5 s).
+ * For Stream no M0-P7 run (processing time by source length) exists yet: the media-account
+ * dashboard import of a 10 s 1080p source was ready in 13 s, and the spike's long sources reached
+ * ready at 33-64 % of their encode, so its wait is sized generously.
  */
-export const PROCESSING_WAIT_MS = 30 * 60 * 1000;
+export const LEGACY_PROCESSING_WAIT_MS = 120 * 5_000;
+export const STREAM_PROCESSING_WAIT_MS = 30 * 60 * 1000;
 export const PROCESSING_POLL_MS = 5_000;
+
+/** Media profile of a job's profile hash: the Stream descriptor hash or the legacy profile. */
+export function v2ProfileOf(profileConfigSha256: string): V2MediaProfile {
+    return profileConfigSha256 === STREAM_PROFILE_HASH ? 'stream' : 'legacy';
+}
+
+export function processingWaitMs(profile: V2MediaProfile = V2_MEDIA_CONFIG.profile): number {
+    return profile === 'stream' ? STREAM_PROCESSING_WAIT_MS : LEGACY_PROCESSING_WAIT_MS;
+}
 
 /**
  * Profile config hash a new V2 job is paid under (`NEXT_PUBLIC_V2_MEDIA_PROFILE`): the legacy
@@ -260,10 +271,23 @@ async function confirmUploadKey(deps: UploadDeps, marketContractId: string, acco
     throw new UploadError('upload_not_confirmed');
 }
 
+/** The chain job's hash; the intent then validates it against the known profiles. */
+function jobProfileHash(job: Partial<MediaJobView>, fallback: string): string {
+    return typeof job.profile_config_sha256 === 'string' ? job.profile_config_sha256 : fallback;
+}
+
+export interface AuthorizedV2Job {
+    /** Per-job upload public key. */
+    publicKey: string;
+    /** Hash the job is paid under, for the upload intent: the chain's for a reused job. */
+    profileConfigSha256: string;
+}
+
 /**
- * Pays the upload fee for a new job and returns the per-job upload public key. The relayer is
- * asked only after the chain shows no job under this id; an identical authorized job is reused,
- * a job whose upload key is lost needs `prepareV2UploadResume`.
+ * Pays the upload fee for a new job and returns the per-job upload public key with the job's
+ * profile hash. The relayer is asked only after the chain shows no job under this id; an
+ * identical authorized job is reused under its own on-chain hash, a job whose upload key is lost
+ * needs `prepareV2UploadResume`.
  */
 export async function authorizeV2PaidJob(input: {
     config: V2Config;
@@ -277,13 +301,14 @@ export async function authorizeV2PaidJob(input: {
     redirectUri: string;
     deps: UploadDeps;
     signal?: AbortSignal;
-}): Promise<string> {
+}): Promise<AuthorizedV2Job> {
     const { config, session, deps } = input;
     const now = deps.now ?? (() => Date.now());
     const closePopup = () => { if (!input.popup.closed) input.popup.close(); };
     try {
         input.signal?.throwIfAborted();
         validateJobSessionIdentity(session.accountId, input.jobId);
+        const profileConfigSha256 = v2UploadProfileHash();
         const existing = loadLivepeerJobSessionKey(session.accountId, input.jobId);
         const keyPair = existing?.keyPair ?? KeyPair.fromRandom('ed25519');
         const publicKey = keyPair.getPublicKey().toString();
@@ -292,14 +317,15 @@ export async function authorizeV2PaidJob(input: {
         const mediaProfile = V2_MEDIA_CONFIG.profile;
         const msg = buildUploadMessage({
             jobId: input.jobId, title: input.title, priceUsdc: input.priceUsdc, expectedSourceBytes,
-            profileConfigSha256: v2UploadProfileHash(mediaProfile), uploadPublicKey: publicKey, uploadKeyExpiresAtMs,
+            profileConfigSha256, uploadPublicKey: publicKey, uploadKeyExpiresAtMs,
         });
         const onChain = await readJob(deps, config.marketContractId, input.jobId);
         if (onChain) {
             if (onChain.creator_id !== session.accountId) throw new UploadError('livepeer_paid_job_conflict');
             if (onChain.upload_public_key === publicKey && onChain.status === 'Authorized') {
                 closePopup();
-                return publicKey;
+                // Already paid, possibly by a build with another media profile: keep the job's hash.
+                return { publicKey, profileConfigSha256: jobProfileHash(onChain, profileConfigSha256) };
             }
             // Same job, lost or expired key: the resume path replaces the key instead of paying again.
             throw new UploadError('livepeer_resume_required');
@@ -318,8 +344,8 @@ export async function authorizeV2PaidJob(input: {
         await relayApproval({ config, session, popup: input.popup, redirectUri: input.redirectUri, deps, path: '/v1/uploads', alreadyDone: ['job_exists'] },
             bytes, { nonce, maxBlockHeight, args });
         // The relay landed; only the chain says whether the Market created the job or refunded the fee.
-        await confirmUploadKey(deps, config.marketContractId, session.accountId, input.jobId, publicKey);
-        return publicKey;
+        const confirmed = await confirmUploadKey(deps, config.marketContractId, session.accountId, input.jobId, publicKey);
+        return { publicKey, profileConfigSha256: jobProfileHash(confirmed, profileConfigSha256) };
     } catch (error) {
         closePopup();
         throw toUploadError(error);

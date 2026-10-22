@@ -59,6 +59,7 @@ export function createStreamHlsConfig(customerCode: string) {
 
 /** The parts of hls.js and the video element a source swap uses. */
 export interface StreamHlsLike {
+    config: { startPosition: number };
     loadSource(url: string): void;
     once(event: string, handler: () => void): void;
 }
@@ -67,11 +68,16 @@ export interface StreamVideoLike {
     currentTime: number;
     paused: boolean;
     play(): Promise<void>;
+    pause(): void;
 }
 
 /**
- * Loads a renewed path-token URL and puts the viewer back where they were: the position and the
- * play state are saved first and restored once the new manifest is parsed.
+ * Loads a renewed path-token URL and puts the viewer back where they were. The swap is required
+ * on Stream: hls.js does not re-fetch a VOD playlist, and the segment `p`/`s` signatures in it
+ * expire with the token, so only a new manifest carries usable segment URLs. hls.js 1.6 restarts
+ * the media pipeline on `loadSource`; `startPosition` makes its first fetch at the saved position,
+ * and the seek after `MANIFEST_PARSED` stays as the fallback, with the play/pause state restored.
+ * The stall each 180 s renewal causes is measured in M4 (OD4, DP1-Stream).
  */
 export function reloadStreamSource(
     hls: StreamHlsLike,
@@ -81,9 +87,11 @@ export function reloadStreamSource(
 ): void {
     const position = video.currentTime;
     const playing = !video.paused;
+    hls.config.startPosition = position;
     hls.once(manifestParsedEvent, () => {
         video.currentTime = position;
         if (playing) void video.play().catch(() => undefined);
+        else video.pause();
     });
     hls.loadSource(hlsUrl);
 }
@@ -102,4 +110,90 @@ export const STREAM_AUTH_RETRY_DELAYS_MS: readonly number[] = [0, 5_000, 15_000,
 
 export function streamAuthRetryDelay(consecutiveFailures: number): number | null {
     return STREAM_AUTH_RETRY_DELAYS_MS[consecutiveFailures] ?? null;
+}
+
+export interface RenewalTimers {
+    setTimeout(run: () => void, ms: number): ReturnType<typeof setTimeout>;
+    clearTimeout(handle: ReturnType<typeof setTimeout>): void;
+    now(): number;
+}
+
+const browserTimers: RenewalTimers = {
+    setTimeout: (run, ms) => setTimeout(run, ms),
+    clearTimeout: (handle) => clearTimeout(handle),
+    now: () => Date.now(),
+};
+
+/**
+ * The single renewal chain of one playback (V2 ticket player). At most one timer and one token
+ * request exist at a time: the expiry renewal and the auth-failure renewal share the in-flight
+ * guard, an auth failure while a request is in flight or a retry is pending is ignored (that
+ * renewal brings the new URL), and nothing runs after `stop()` or a failure, even when a request
+ * was already in flight.
+ */
+export function startPlaybackRenewal<T extends { expiresAtMs: number }>(input: {
+    initial: T;
+    request: () => Promise<T>;
+    /** Puts a renewed access in place (source swap, native `src`, or the header token). */
+    apply: (access: T) => void;
+    onFailed: () => void;
+    refreshBeforeExpiryMs: number;
+    timers?: RenewalTimers;
+}): { authFailure(): void; fragmentLoaded(): void; stop(): void } {
+    const timers = input.timers ?? browserTimers;
+    let access = input.initial;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    let busy = false;
+    let failures = 0;
+
+    const clear = () => {
+        if (timer !== undefined) timers.clearTimeout(timer);
+        timer = undefined;
+    };
+    const fail = () => {
+        if (stopped) return;
+        stopped = true;
+        clear();
+        input.onFailed();
+    };
+    const renew = async () => {
+        timer = undefined;
+        if (stopped) return;
+        busy = true;
+        try {
+            const next = await input.request();
+            if (stopped) return;
+            access = next;
+            input.apply(next);
+            schedule();
+        } catch {
+            fail();
+        } finally {
+            busy = false;
+        }
+    };
+    const schedule = () => {
+        clear();
+        if (stopped) return;
+        timer = timers.setTimeout(() => { void renew(); },
+            Math.max(5_000, access.expiresAtMs - timers.now() - input.refreshBeforeExpiryMs));
+    };
+    schedule();
+    return {
+        authFailure() {
+            if (stopped || busy) return;
+            const delay = streamAuthRetryDelay(failures);
+            failures += 1;
+            if (delay === null) return fail();
+            clear();
+            busy = true;
+            timer = timers.setTimeout(() => { busy = false; void renew(); }, delay);
+        },
+        fragmentLoaded() { failures = 0; },
+        stop() {
+            stopped = true;
+            clear();
+        },
+    };
 }

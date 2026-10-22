@@ -31,8 +31,8 @@ import {
 } from '@/lib/livepeer-upload';
 import { readAccessKey } from '@/lib/v2/near-reads';
 import {
-    authorizeV2PaidJob, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, PROCESSING_POLL_MS, PROCESSING_WAIT_MS, PROFILE_ID,
-    TERMINAL_UPLOAD_STATES, UploadError, v2UploadProfileHash,
+    authorizeV2PaidJob, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, PROCESSING_POLL_MS, processingWaitMs, PROFILE_ID,
+    TERMINAL_UPLOAD_STATES, UploadError, v2ProfileOf,
 } from '@/lib/v2/upload';
 import { useNearAuthV2 } from './NearAuthV2Provider';
 import { SignInPanel } from './SignInPanel';
@@ -55,8 +55,9 @@ const ERRORS: Record<string, string> = {
     uploads_paused: 'Uploads are paused right now. Please try again later.',
     admission_closed: 'Your account is not open for uploads. Apply at youtick.net/apply or write to contact@youtick.net.',
     admission_denied: 'Uploads are busy right now. Please try again in a few minutes.',
-    provider_admission_closed: 'Uploads are at capacity right now. Please try again later; an upload you already paid for stays here to resume.',
+    provider_admission_closed: 'Uploads are at capacity right now. Please try again later. No fee was taken.',
     media_provider_not_ready: 'Uploads are not available right now. No fee was taken; please try again later.',
+    profile_not_allowed: 'This version of the app can no longer start uploads; reload or update. No fee was taken.',
     job_conflict: 'This upload id is already in use. Reload the page and start again.',
     upload_not_confirmed: 'The fee was returned, so no upload was created. Please try again.',
     upload_pending: 'Your payment is still being processed. Wait a minute, then use Resume.',
@@ -77,14 +78,20 @@ const ADMISSION_ERRORS: Partial<Record<LivepeerAdmissionReason, string>> = {
     capacity: 'Uploads are at capacity right now. Please try again in a few minutes. No fee was taken.',
 };
 
+/** Codes whose copy differs once the fee is paid (the upload intent and later). */
+const PAID_ERRORS: Record<string, string> = {
+    provider_admission_closed: 'Uploads are at capacity right now. Your fee is paid and this upload stays here; use Resume later.',
+};
+
 type Step = 'idle' | 'paying' | 'uploading' | 'processing' | 'published' | 'error';
 
-export function uploadErrorMessage(error: unknown): string {
+export function uploadErrorMessage(error: unknown, feePaid = false): string {
     if (error instanceof LivepeerAdmissionDeniedError && error.reason && ADMISSION_ERRORS[error.reason]) {
         return ADMISSION_ERRORS[error.reason]!;
     }
     const code = error instanceof UploadError || error instanceof Error ? error.message : '';
-    return ERRORS[code] ?? `The upload did not complete (${code || 'unknown'}). Nothing was published; please try again.`;
+    return (feePaid ? PAID_ERRORS[code] : undefined) ?? ERRORS[code]
+        ?? `The upload did not complete (${code || 'unknown'}). Nothing was published; please try again.`;
 }
 
 export function UploadForm() {
@@ -113,16 +120,16 @@ export function UploadForm() {
     // need that to be Market V2, which the V2 web environment sets.
     const configured = FEATURE_FLAGS.enablePaidMediaLivepeerV1 && NEAR_CONFIG.marketContractId === config.marketContractId;
 
-    const fail = useCallback((reason: unknown) => {
+    const fail = useCallback((reason: unknown, feePaid = false) => {
         setStep('error');
-        setError(uploadErrorMessage(reason));
+        setError(uploadErrorMessage(reason, feePaid));
     }, []);
 
-    /** Livepeer processing and the Bridge's on-chain publication; the chain is the only source of truth. */
-    const awaitPublication = useCallback(async (accountId: string, activeJobId: string, controller: AbortController) => {
+    /** Media processing and the Bridge's on-chain publication; the chain is the only source of truth. */
+    const awaitPublication = useCallback(async (accountId: string, activeJobId: string, controller: AbortController, waitMs: number) => {
         setProgress(100);
         setStep('processing');
-        for (let attempt = 0; attempt < PROCESSING_WAIT_MS / PROCESSING_POLL_MS; attempt += 1) {
+        for (let attempt = 0; attempt < waitMs / PROCESSING_POLL_MS; attempt += 1) {
             const state = await readLivepeerUploadProgress(activeJobId, accountId).catch(() => null);
             controller.signal.throwIfAborted();
             if (state?.publication) {
@@ -139,7 +146,9 @@ export function UploadForm() {
         throw new UploadError('livepeer_processing_timeout');
     }, []);
 
-    const transfer = useCallback(async (accountId: string, activeJobId: string, intent: LivepeerUploadIntent, controller: AbortController) => {
+    const transfer = useCallback(async (
+        accountId: string, activeJobId: string, intent: LivepeerUploadIntent, controller: AbortController, waitMs: number,
+    ) => {
         if (!file) throw new UploadError('empty_file');
         setStep('uploading');
         advanceLivepeerUploadDraftStage(accountId, activeJobId, 'uploading');
@@ -150,7 +159,7 @@ export function UploadForm() {
         });
         controller.signal.throwIfAborted();
         advanceLivepeerUploadDraftStage(accountId, activeJobId, 'provider_processing');
-        await awaitPublication(accountId, activeJobId, controller);
+        await awaitPublication(accountId, activeJobId, controller, waitMs);
     }, [file, awaitPublication]);
 
     async function start() {
@@ -163,6 +172,7 @@ export function UploadForm() {
         setError('');
         setProgress(0);
         const accountId = session.accountId;
+        let feePaid = false;
         try {
             const source = validateLivepeerSourceFile(file);
             if (!source.ok) throw new UploadError(source.error);
@@ -177,23 +187,25 @@ export function UploadForm() {
             });
             await preflightLivepeerUpload({ accountId, jobId: activeJobId, generation: 1, expectedSourceBytes: file.size });
             setStep('paying');
-            await authorizeV2PaidJob({
+            const paid = await authorizeV2PaidJob({
                 config, usdcContractId: NEAR_CONFIG.usdcContractId, session: { accountId, publicKey: session.publicKey },
                 jobId: activeJobId, title, priceUsdc, expectedSourceBytes: file.size, popup, redirectUri: window.location.origin,
                 deps: { view, accessKey: readAccessKey }, signal: controller.signal,
             });
+            feePaid = true;
             setResumable(true);
             advanceLivepeerUploadDraftStage(accountId, activeJobId, 'authorized');
             void balance.refetch();
             const intent = await requestLivepeerUploadIntent({
                 accountId, jobId: activeJobId, generation: 1, expectedSourceBytes: file.size,
                 sourceFingerprintSha256: await fingerprintLivepeerSource(file), sourceType: source.sourceType, signal: controller.signal,
-                profileId: PROFILE_ID, profileConfigSha256: v2UploadProfileHash(),
+                // The hash the chain job carries (a reused job keeps its own).
+                profileId: PROFILE_ID, profileConfigSha256: paid.profileConfigSha256,
             });
-            await transfer(accountId, activeJobId, intent, controller);
+            await transfer(accountId, activeJobId, intent, controller, processingWaitMs(v2ProfileOf(paid.profileConfigSha256)));
         } catch (reason) {
             if (!popup.closed) popup.close();
-            if (!controller.signal.aborted) fail(reason);
+            if (!controller.signal.aborted) fail(reason, feePaid);
         } finally {
             if (operation.current === controller) operation.current = null;
         }
@@ -212,24 +224,27 @@ export function UploadForm() {
                 config, session: { accountId: session.accountId, publicKey: session.publicKey }, jobId, file, popup,
                 redirectUri: window.location.origin, deps: { view, accessKey: readAccessKey }, signal: controller.signal,
             });
+            // The resume path does not surface the job's hash, so the wait follows this build's profile.
+            const waitMs = processingWaitMs();
             if ('state' in result) {
                 if (result.state === 'ONCHAIN_PUBLISHED') {
-                    await awaitPublication(session.accountId, jobId, controller);
+                    await awaitPublication(session.accountId, jobId, controller, waitMs);
                 } else if (TERMINAL_UPLOAD_STATES.includes(result.state)) {
                     // Nothing more can happen on this job; the next attempt is a new job.
                     setResumable(false);
                     setJobId(null);
                     throw new UploadError(result.state === 'PROVIDER_FAILED' ? 'livepeer_provider_failed' : 'livepeer_upload_expired');
                 } else {
-                    // Source received; only Livepeer processing and the Bridge's publication remain.
-                    await awaitPublication(session.accountId, jobId, controller);
+                    // Source received; only media processing and the Bridge's publication remain.
+                    await awaitPublication(session.accountId, jobId, controller, waitMs);
                 }
             } else {
-                await transfer(session.accountId, jobId, result, controller);
+                await transfer(session.accountId, jobId, result, controller, waitMs);
             }
         } catch (reason) {
             if (!popup.closed) popup.close();
-            if (!controller.signal.aborted) fail(reason);
+            // A resumed upload was paid for.
+            if (!controller.signal.aborted) fail(reason, true);
         } finally {
             if (operation.current === controller) operation.current = null;
         }

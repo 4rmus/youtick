@@ -40,7 +40,7 @@ vi.mock('@/lib/livepeer-upload', async (importOriginal) => {
 import { fingerprintLivepeerSource, loadLivepeerJobSessionKey, persistLivepeerJobSessionKey, writeLivepeerUploadDraft } from '@/lib/livepeer-upload';
 import {
     authorizeV2PaidJob, buildUploadMessage, prepareV2UploadResume, PROFILE_ID, UPLOAD_GAS, UPLOAD_KEY_DEPOSIT, UploadError, uploadDelegateBytes,
-    uploadKeyDelegateBytes, v2UploadProfileHash,
+    uploadKeyDelegateBytes, processingWaitMs, v2ProfileOf, v2UploadProfileHash,
 } from '@/lib/v2/upload';
 import { KeyPair } from 'near-api-js';
 
@@ -105,6 +105,8 @@ class FakePopup implements PopupLike {
 }
 
 const UPLOAD_ID = 'cd'.repeat(32);
+const LEGACY_HASH = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
+const STREAM_PROFILE_HASH = '1128da32be3187c804326ef68a3c4c5344b47fc956a09ee88f8c0779ea5f4c64';
 
 function harness(options: {
     relayer?: Array<[number, unknown]>; job?: (reads: number) => unknown; health?: unknown; healthStatus?: number;
@@ -164,7 +166,7 @@ describe('NEAR Auth upload fee', () => {
         pending.catch(() => undefined);
         await vi.waitFor(() => { const key = loadLivepeerJobSessionKey(session.accountId, JOB); expect(key).not.toBeNull(); uploadKey = key!.keyPair.getPublicKey().toString(); });
         h.approve();
-        expect(await pending).toBe(uploadKey);
+        expect(await pending).toEqual({ publicKey: uploadKey, profileConfigSha256: LEGACY_HASH });
         const relay = h.requests.find((request) => request.url === 'https://relayer.test/v1/uploads')!;
         const args = relay.body.args as { receiver_id: string; amount: string; msg: string };
         expect(args.receiver_id).toBe(MARKET);
@@ -179,14 +181,14 @@ describe('NEAR Auth upload fee', () => {
         expect(h.popup.closed).toBe(true);
     });
 
-    it('reuses an authorized job with this key, and sends to resume when the key is lost', async () => {
+    it('reuses an authorized job with this key under its on-chain hash, and sends to resume when the key is lost', async () => {
         const keyPair = KeyPair.fromRandom('ed25519');
         persistLivepeerJobSessionKey(session.accountId, JOB, keyPair, String(NOW + 60_000));
-        const same = harness({ job: () => ({ job_id: JOB, creator_id: session.accountId, status: 'Authorized', upload_public_key: keyPair.getPublicKey().toString() }) });
+        const same = harness({ job: () => ({ job_id: JOB, creator_id: session.accountId, status: 'Authorized', upload_public_key: keyPair.getPublicKey().toString(), profile_id: 'paid-media-v1', profile_config_sha256: STREAM_PROFILE_HASH }) });
         await expect(authorizeV2PaidJob({
             config, usdcContractId: USDC, session, jobId: JOB, title: 'x', priceUsdc: '5000000', expectedSourceBytes: 1_024,
             popup: same.popup, redirectUri: 'https://youtick.test', deps: same.deps,
-        })).resolves.toBe(keyPair.getPublicKey().toString());
+        })).resolves.toEqual({ publicKey: keyPair.getPublicKey().toString(), profileConfigSha256: STREAM_PROFILE_HASH });
         expect(same.requests).toEqual([]);
         expect(same.popup.closed).toBe(true);
 
@@ -226,7 +228,7 @@ describe('NEAR Auth upload fee', () => {
         paid.catch(() => undefined);
         await vi.waitFor(() => { const stored = loadLivepeerJobSessionKey(session.accountId, JOB); expect(stored).not.toBeNull(); key = stored!.keyPair.getPublicKey().toString(); });
         exists.approve();
-        expect(await paid).toBe(key);
+        expect(await paid).toEqual({ publicKey: key, profileConfigSha256: LEGACY_HASH });
         expect(exists.requests.filter((request) => request.url.endsWith('/v1/uploads/status'))).toEqual([]);
     });
 });
@@ -296,6 +298,16 @@ describe('media profile selector', () => {
         expect(h.accessKey).not.toHaveBeenCalled();
         expect(h.popup.location.href).toBe('about:blank');
         expect(h.popup.closed).toBe(true);
+    });
+
+    it('keeps the legacy processing wait at 10 minutes and gives Stream 30', () => {
+        expect(processingWaitMs('legacy')).toBe(120 * 5_000);
+        expect(processingWaitMs()).toBe(120 * 5_000);
+        expect(processingWaitMs('stream')).toBe(30 * 60 * 1000);
+        mediaConfig.profile = 'stream';
+        expect(processingWaitMs()).toBe(30 * 60 * 1000);
+        expect(v2ProfileOf(STREAM_HASH)).toBe('stream');
+        expect(v2ProfileOf(LEGACY_HASH)).toBe('legacy');
     });
 
     it('resumes with the hash the chain job was paid under', async () => {
@@ -376,11 +388,18 @@ describe('upload refusal copy', () => {
             uploadErrorMessage(new LivepeerAdmissionDeniedError('capacity', null)),
             uploadErrorMessage(new Error('provider_admission_closed')),
             uploadErrorMessage(new UploadError('media_provider_not_ready')),
+            uploadErrorMessage(new Error('provider_admission_closed'), true),
+            uploadErrorMessage(new UploadError('profile_not_allowed')),
         ];
         expect(copy[0]).toBe('Another upload is in progress on the platform. Please try again in a few minutes. No fee was taken.');
         expect(copy[1]).toMatch(/^Uploads are at capacity right now/);
-        expect(copy[2]).toMatch(/^Uploads are at capacity right now.*stays here to resume\.$/);
+        // Before the fee (preflight) and after it (intent, resume) the capacity refusal reads differently.
+        expect(copy[2]).toBe('Uploads are at capacity right now. Please try again later. No fee was taken.');
         expect(copy[3]).toBe('Uploads are not available right now. No fee was taken; please try again later.');
+        expect(copy[4]).toBe('Uploads are at capacity right now. Your fee is paid and this upload stays here; use Resume later.');
+        expect(copy[5]).toBe('This version of the app can no longer start uploads; reload or update. No fee was taken.');
+        // feePaid changes only the codes that differ after payment.
+        expect(uploadErrorMessage(new UploadError('media_provider_not_ready'), true)).toBe(copy[3]);
         for (const text of copy) expect(text).not.toMatch(/livepeer|cloudflare|stream|studio|\(/i);
         // Other reasons keep today's admission_denied copy.
         const busy = 'Uploads are busy right now. Please try again in a few minutes.';
