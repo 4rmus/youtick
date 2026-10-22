@@ -147,3 +147,53 @@ Multi-asset quotes are mainnet-only. The allowlist is a comma-separated subset
 of the built-in canonical 1Click asset IDs. Release environments retain
 `ONECLICK_API_KEY` and the positive payment gas reserve in every mode so an
 existing conversion can still finish after quote creation is switched off.
+
+### V2 Bridge on Cloudflare Stream
+
+The V2 testnet Bridge is Stream-only (owner decision OD19, 2026-10-22): its
+release (`scripts/v2-testnet-bridge-release.mjs`) writes no Livepeer Studio
+configuration (`LIVEPEER_PROJECT_ID`, `LIVEPEER_API_TOKEN_NAME`,
+`LIVEPEER_JWT_PUBLIC_KEY` and `LIVEPEER_JWT_ISSUER` are empty) and deploys none
+of `LIVEPEER_API_KEY`, `LIVEPEER_WEBHOOK_SECRET` or `LIVEPEER_JWT_PRIVATE_KEY`.
+V1 (Preview, public testnet) keeps the Studio values above.
+
+Non-secret values, written into `[vars]` by the release:
+
+- `MEDIA_PROVIDER_STREAM_ENABLED`: `false` by default; set per release with the
+  workflow input `stream_enabled` (never a mode flag). `acceptance` requires
+  `true`.
+- `STREAM_ACCOUNT_ID`: the media Cloudflare account id (the Worker's own
+  account, 32 hex).
+- `STREAM_CUSTOMER_CODE`: the `<code>` of
+  `customer-<code>.cloudflarestream.com`, read from the first upload's playback
+  URL. Until it is committed the release writes it empty with the flag off and
+  refuses the flag on (`stream_customer_code_unconfigured`).
+- `STREAM_SIGNING_KEY_ID`, `STREAM_SIGNING_PUBLIC_KEY`: the `id` of
+  `POST /accounts/{id}/stream/keys` and base64 of the SPKI PEM public half
+  (RSA, at least 2048 bits). Sentinels until the owner creates the key
+  (`stream_signing_key_unconfigured`).
+- `STREAM_MAX_DURATION_SECONDS` (`7200`), `STREAM_STORAGE_MINUTES_CAPACITY`
+  (`1000`), `STREAM_RESERVATION_SECONDS_BUDGET` (`7200`): owner decision OD3.
+- `STREAM_STUCK_TIMEOUT_MS` (`900000`): a job still at 0 % after 15 minutes is
+  failed and its video deleted; not measured yet (M0-P7).
+
+Worker secrets, deployed only when the release turns Stream on (GitHub
+`v2-testnet` secrets in brackets):
+
+- `STREAM_API_TOKEN` (`V2_STREAM_API_TOKEN`): `Stream:Edit` on the media
+  account only.
+- `STREAM_WEBHOOK_SECRET` (`V2_STREAM_WEBHOOK_SECRET`): the `secret` returned
+  by `PUT /accounts/{id}/stream/webhook`; optional
+  `STREAM_WEBHOOK_SECRET_PREVIOUS` (`V2_STREAM_WEBHOOK_SECRET_PREVIOUS`). The
+  secret is issued by the PUT, so a rotation is PUT then deploy, with a gap.
+- `STREAM_SIGNING_KEY_PEM` (`V2_STREAM_SIGNING_KEY_PEM`): the private half,
+  PKCS8 PEM (as text or base64) or, if the returned `pem` is PKCS1, the
+  returned JWK. PKCS1 itself is refused (`stream_signing_key_pkcs1`); which
+  form Stream returns is unproven until M0-P8. The release checks that it
+  derives `STREAM_SIGNING_PUBLIC_KEY`.
+
+The release's preflight reads `GET /accounts/{id}/stream/webhook` with the
+Stream token and requires `notificationUrl` to be
+`https://<bridge workers.dev host>/v1/stream-webhooks`. It compares the secret
+only if the response carries one (undocumented, M0-P4); otherwise the receipt
+records `secret: not_returned` and the post-deploy webhook canary is the proof.

@@ -769,3 +769,101 @@ Known gaps:
 Older sections and `docs/testing.md` still name `bridge-v2-testnet.youtick.net` and
 `read-v2-testnet.youtick.net`. After the move those hosts are historical. The text gets fixed
 once M1.5-G3 is done.
+
+## Stream cutover inputs (M2)
+
+Status: `PREPARED / NOT_RUN` (2026-10-22). Owner decision OD19 makes the V2 Bridge Stream-only: the
+first Bridge deploy into the media account is the M2 build (Stream adapter and M2-G0 names) together
+with the on-chain MC cutover. Cloudflare Stream lives in the same media account (`6caaaf27…1dcb`) as
+the Worker, so `STREAM_ACCOUNT_ID` is that account id. The release no longer reads the Studio
+webhook and deploys no `LIVEPEER_API_KEY`, `LIVEPEER_WEBHOOK_SECRET` or `LIVEPEER_JWT_PRIVATE_KEY`;
+`V2_LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN` stays (it is the Bridge operator token, not a Studio
+secret). This supersedes the Studio steps of "Webhook secret and tokens" and of "Cutover order
+(M1.5-G3)" step 3 for the V2 Bridge; V1 keeps them.
+
+Every step below is an owner action (provider write, GitHub secret write, commit or deploy). Run
+the M0 proof round before step 3: its webhook proof (`stream-probe webhooks`) takes the account's
+only webhook slot and deletes it at cleanup, which would remove the Bridge's webhook.
+
+### Owner steps
+
+1. **Stream API token.** Cloudflare dashboard, media account, Manage account → API tokens →
+   Create token → Custom: permission *Account · Stream · Edit*, account resources *only the media
+   account*. Store it at once: `gh secret set V2_STREAM_API_TOKEN --env v2-testnet` (paste at the
+   prompt). In the shell for steps 2–4: `export STREAM_ACCOUNT_ID=6caaaf27c430b5da0ce18f68f35c1dcb`
+   and `read -rs STREAM_API_TOKEN; export STREAM_API_TOKEN`.
+2. **Signing key.** One `POST /stream/keys`; the response is shown once and holds the private
+   half, so it goes to a 0600 file outside the repository and never to the terminal:
+
+   ```bash
+   umask 077; KEYS=$(mktemp)
+   curl --fail -sS -X POST "https://api.cloudflare.com/client/v4/accounts/$STREAM_ACCOUNT_ID/stream/keys" \
+     -H "Authorization: Bearer $STREAM_API_TOKEN" -o "$KEYS"
+   jq -r .result.id "$KEYS"                                     # STREAM_SIGNING_KEY_ID (step 5)
+   jq -r .result.pem "$KEYS" | base64 -d | head -1              # format line only
+   jq -r .result.pem "$KEYS" | base64 -d | openssl pkey -pubout | base64 | tr -d '\n'; echo   # STREAM_SIGNING_PUBLIC_KEY (step 5)
+   ```
+
+   If the format line is `-----BEGIN PRIVATE KEY-----` (PKCS8):
+   `jq -j .result.pem "$KEYS" | gh secret set V2_STREAM_SIGNING_KEY_PEM --env v2-testnet` (`-j`: no trailing newline).
+   If it is `-----BEGIN RSA PRIVATE KEY-----` (PKCS1, which Web Crypto in the Bridge cannot import
+   and the release refuses with `stream_signing_key_pkcs1`), convert it first:
+   `jq -r .result.pem "$KEYS" | base64 -d | openssl pkcs8 -topk8 -nocrypt | base64 | tr -d '\n' | gh secret set V2_STREAM_SIGNING_KEY_PEM --env v2-testnet`.
+   Which form Stream returns is UNPROVEN until M0-P8. Then `rm -P "$KEYS"`.
+3. **Webhook.** One `PUT /stream/webhook` to the Bridge's workers.dev URL. Stream issues the
+   signing secret in the response, so it goes straight to GitHub:
+
+   ```bash
+   SECRET=$(curl --fail -sS -X PUT "https://api.cloudflare.com/client/v4/accounts/$STREAM_ACCOUNT_ID/stream/webhook" \
+     -H "Authorization: Bearer $STREAM_API_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"notificationUrl":"https://youtick-livepeer-bridge-v2-testnet.kocoinci.workers.dev/v1/stream-webhooks"}' \
+     | jq -er .result.secret) && [ ${#SECRET} -ge 16 ] && printf %s "$SECRET" | gh secret set V2_STREAM_WEBHOOK_SECRET --env v2-testnet; unset SECRET
+   ```
+
+   Deliveries before the Bridge deploy fail; nothing uploads to Stream before it. Every later PUT
+   issues a new secret: rotation is PUT, `gh secret set`, then a Bridge deploy, with a gap in
+   between (a two-secret overlap does not help on Stream unless M0-P4 shows the old secret
+   surviving). `V2_STREAM_WEBHOOK_SECRET_PREVIOUS` is optional and normally unset.
+4. **Customer code.** The `<code>` of `customer-<code>.cloudflarestream.com`, from any video of
+   the media account (the M0-P1 upload; keep one with `--keep` or read it before cleanup):
+   `curl --fail -sS "https://api.cloudflare.com/client/v4/accounts/$STREAM_ACCOUNT_ID/stream?limit=1" -H "Authorization: Bearer $STREAM_API_TOKEN" | jq -r '.result[0].playback.hls' | sed -E 's#^https://customer-([a-z0-9]+)\.cloudflarestream\.com/.*#\1#'`.
+   It is a public value (the web build carries it too). Then `unset STREAM_API_TOKEN`.
+5. **One-line commits** on the milestone branch (or the next PR), each a public value:
+   - `scripts/v2-testnet-bridge-release.mjs`, `STREAM.customerCode`: the step 4 code (replaces
+     `<record-after-first-upload>`).
+   - same file, `STREAM.signingKeyId` and `STREAM.signingPublicKey` together: the step 2 id and
+     base64 public half (replace `<create-with-post-stream-keys>`; one without the other fails
+     `stream_signing_key_incomplete`).
+   - `scripts/v2-testnet-release.mjs`, relayer `UPLOAD_PROFILE_HASH_ALLOWLIST`: the `hash` of
+     `protocol/paid-media-v1/stream-profile.json` (`node scripts/check-paid-media-v1.mjs` prints
+     it). Empty keeps today's behaviour (any 64-hex hash).
+6. **Check the inputs** without deploying: *V2 Testnet Bridge* `closed` with
+   `stream_enabled=true`. Its prepare job fails on any remaining sentinel; its deploy job checks
+   every `V2_STREAM_*` secret, that the PEM derives the committed public key, and that the
+   account webhook names `/v1/stream-webhooks` on the workers.dev host. When Stream's
+   `GET /stream/webhook` does not return the secret (M0-P4), the receipt says
+   `secret: not_returned` and the webhook canary below is the only proof.
+
+### Deploy order on the cutover
+
+The MC cutover table above stays, with these changes:
+
+- Step 6 (*V2 Testnet Workers*) runs on the commit that carries the step 5 allowlist, so the
+  relayer accepts only the Stream descriptor hash from then on.
+- Step 7 becomes two *V2 Testnet Bridge* runs on the same commit, both with
+  `operator_key_set=neutral` and `stream_enabled=true`: first `closed` (all Stream checks,
+  `DISABLED` stage), then `acceptance` (smoke requires `streamConfigured: true` and the `stream`
+  block in `/__health`). `acceptance` with `stream_enabled=false` is refused
+  (`acceptance_requires_stream`).
+- After step 8 (unfreeze), the M4-G2 Stream canaries with `STREAM_CANARY_MUTATIONS=true`
+  (`docs/testing.md`, Livepeer Bridge): `canary:stream:webhook` with
+  `--bridge-health-url https://youtick-livepeer-bridge-v2-testnet.kocoinci.workers.dev/__health`
+  first, then provider, reservation, playback, ladder and keys.
+
+Effects to expect: publications made through Studio before the cutover no longer play through
+the new Bridge (it has no Studio configuration); the old Bridge keeps serving them until it is
+switched off (OD13). With `stream_enabled=false` the Bridge writes the Stream constants as empty
+and deploys no Stream secret.
+
+Evidence today: LOCAL_TEST only (release-script, workflow-shape and canary tests with mocks). No
+step above has run.

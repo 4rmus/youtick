@@ -5,7 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BRIDGE, DEFAULT_OPERATOR_KEY_SET, OPERATOR_KEY_SETS, bridgeHost } from './v2-testnet-bridge-release.mjs';
+import {
+    BASE_SECRETS, BRIDGE, DEFAULT_OPERATOR_KEY_SET, OPERATOR_KEY_SETS, OPTIONAL_STREAM_SECRETS, RETIRED_SECRETS, STREAM_SECRETS, bridgeHost,
+} from './v2-testnet-bridge-release.mjs';
 import { MEDIA_ACCOUNT } from './v2-testnet-release.mjs';
 
 const workflows = [
@@ -563,6 +565,34 @@ function workflowSteps(source) {
     return source.split(/\n(?=      - )/).slice(1).map((text) => ({ name: /^      - (?:name: (.+)|uses: (\S+))/.exec(text)?.slice(1).find(Boolean), text }));
 }
 
+test('V2 testnet Bridge is Stream-only (OD19): V2_STREAM_* secrets, no Studio trio, the Stream flag bound into the attested packet', async () => {
+    const bridge = await readFile(new URL('../.github/workflows/deploy-v2-testnet-bridge.yml', import.meta.url), 'utf8');
+    const steps = workflowSteps(bridge);
+    const deploy = steps.find((entry) => entry.name === 'Preflight keys on chain, deploy the Bridge and smoke it').text;
+    // Every secret the release can deploy is mapped from its V2_ name, and nothing else is.
+    const mapped = [...deploy.matchAll(/\n          ([A-Z0-9_]+): \$\{\{ secrets\.([A-Z0-9_]+) \}\}/g)].map((match) => [match[1], match[2]]);
+    const workerSecrets = mapped.filter(([name]) => !name.startsWith('CLOUDFLARE_'));
+    assert.deepEqual(workerSecrets.map(([name]) => name).sort(), [...BASE_SECRETS, ...STREAM_SECRETS, ...OPTIONAL_STREAM_SECRETS].sort());
+    for (const name of [...STREAM_SECRETS, ...OPTIONAL_STREAM_SECRETS]) {
+        assert.deepEqual(workerSecrets.find(([env]) => env === name), [name, `V2_${name}`], name);
+    }
+    // The Studio trio is gone from the V2 Bridge workflow entirely; V1 workflows keep their own names.
+    for (const name of RETIRED_SECRETS) {
+        assert.doesNotMatch(bridge, new RegExp(`\\b${name}\\b`), name);
+        assert.doesNotMatch(bridge, new RegExp(`V2_${name}`), name);
+    }
+    // The per-release Stream flag is a reviewed choice input, checked, attested in the manifest and passed to every step that needs it.
+    const input = /\n      stream_enabled:\n        description: .+\n        type: choice\n        default: '(\w+)'\n        options: \[([^\]]+)\]\n/.exec(bridge);
+    assert.equal(input?.[1], 'false');
+    assert.deepEqual(input[2].split(', '), ["'false'", "'true'"]);
+    assert.match(bridge, /\[\[ "\$STREAM_ENABLED" =~ \^\(true\|false\)\$ \]\]/);
+    assert.equal((bridge.match(/MEDIA_PROVIDER_STREAM_ENABLED: \$\{\{ inputs\.stream_enabled \}\}/g) ?? []).length, 3);
+    assert.match(deploy, /\n          MEDIA_PROVIDER_STREAM_ENABLED: \$\{\{ inputs\.stream_enabled \}\}\n/);
+    const summary = steps.find((entry) => entry.name === 'Summarize the exact packet for environment approval').text;
+    assert.ok(summary.includes('vars: bridgeVars({ streamEnabled })'));
+    assert.doesNotMatch(summary, /FIXED_VARS/);
+});
+
 test('V2 testnet media account (M1.5): the Bridge and the read model use V2_MEDIA_CLOUDFLARE_*, nothing else does', async () => {
     const [bridge, workers] = await Promise.all([
         readFile(new URL('../.github/workflows/deploy-v2-testnet-bridge.yml', import.meta.url), 'utf8'),
@@ -581,8 +611,8 @@ test('V2 testnet media account (M1.5): the Bridge and the read model use V2_MEDI
     assert.equal(keySetInput?.[1], DEFAULT_OPERATOR_KEY_SET);
     assert.deepEqual(keySetInput[2].split(', '), [...OPERATOR_KEY_SETS]);
     assert.match(bridgeDeploy, /\n          OPERATOR_KEY_SET: \$\{\{ inputs\.operator_key_set \}\}\n/);
-    assert.match(bridge, /operator_key_set:\$keyset, ci_run_id:\$run\}/);
-    assert.match(bridge, /\.operator_key_set == \$keyset' manifest\.json/);
+    assert.match(bridge, /operator_key_set:\$keyset, stream_enabled:\$stream, ci_run_id:\$run\}/);
+    assert.match(bridge, /\.operator_key_set == \$keyset and \.stream_enabled == \$stream' manifest\.json/);
     assert.doesNotMatch(bridge, /V2_CLOUDFLARE_/);
     assert.doesNotMatch(bridge, /release-smoke\.mjs/);
     assert.match(bridge, /READ_MODEL_D1_ID: \$\{\{ vars\.V2_READ_MODEL_D1_ID \}\}/);

@@ -216,6 +216,40 @@ agent session or CI; `--dry-run` prints the request plan without network
 calls. Its mocked tests (`scripts/stream-probe.test.mjs`) run inside
 `npm run test:provider-canary`.
 
+`scripts/stream-canary.mjs` holds the Cloudflare Stream canaries the Stream-only
+V2 Bridge relies on (gate M2-G6; live only in M4-G2, owner-run with approval):
+
+```bash
+# mocked, inside npm run test:provider-canary:
+node --test scripts/stream-canary.test.mjs
+# request plan, no network:
+npm run canary:stream:playback -- --out <dir> --uid <uid> --signing-key-file <file> --dry-run
+```
+
+`canary:stream:provider` (create, tus HEAD, DELETE 200, GET 404),
+`canary:stream:reservation` (abandoned reservation counted in `storage-usage`
+and released by DELETE), `canary:stream:playback` (the denial matrix of the
+2026-10-21 spike for none, forged, expired, wrong-sub and valid tokens on
+manifests, thumbnail, watch, iframe and MP4 download, plus a query-stripped
+segment; a listed `p`/`s` segment URL is never fetched), `canary:stream:webhook`
+(a 64 KiB non-video upload whose signed `ERR_NON_VIDEO` delivery the Bridge
+must accept: PASS with `--bridge-health-url`, otherwise `OPERATOR_CHECK` from
+the Bridge log), `canary:stream:ladder` (master and variant playlists against
+`protocol/paid-media-v1/stream-profile.json`, no segments) and
+`canary:stream:keys` (two signing keys overlap; the deleted one is refused).
+Each live run needs `STREAM_CANARY_MUTATIONS=true` plus `STREAM_ACCOUNT_ID` and
+`STREAM_API_TOKEN` in the shell, writes a scrubbed `youtick.stream-canary.v1`
+receipt under `--out` (outside the repository) and deletes what it created.
+The Studio canaries above stay for V1.
+
+The V2 Bridge release tooling (`scripts/v2-testnet-bridge-release.mjs`, Stream
+constants and secrets in [Configuration](getting-started/configuration.md)) is
+tested from the repository root:
+
+```bash
+node --test scripts/v2-testnet-bridge-release.test.mjs scripts/v2-testnet-release.test.mjs scripts/ci-security.test.mjs scripts/slo-policy.test.mjs
+```
+
 ## Relayer
 
 ```bash
