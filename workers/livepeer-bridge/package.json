@@ -27,7 +27,7 @@
         "tus-js-client": "4.3.1",
         "typescript": "5.9.3",
         "vitest": "4.1.11",
-        "wrangler": "4.147.0"
+        "wrangler": "4.151.3"
     },
     "dependencies": {
         "@defuse-protocol/one-click-sdk-typescript": "0.1.25",
