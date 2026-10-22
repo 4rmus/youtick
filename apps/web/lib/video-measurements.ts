@@ -41,7 +41,19 @@ function playbackResult(outcome: VideoOutcome, error: unknown, signal?: AbortSig
     return { outcome: cancelled ? 'cancelled' : outcome, errorCode, httpStatus };
 }
 
-// Local console only: no collector, persistent storage, URLs, keys or raw errors.
+// A JWT anywhere in a string: base64url header starting `{"`, payload and signature.
+const JWT_SHAPED = /eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+
+/**
+ * A playback URL safe to log: Stream URLs carry the viewer's signed token as a path segment,
+ * so every JWT-shaped part becomes `<redacted>`.
+ */
+export function redactPlaybackUrl(value: string): string {
+    return value.replace(JWT_SHAPED, '<redacted>');
+}
+
+// Local console only: no collector, persistent storage, URLs, keys or raw errors. Strings are
+// still redacted in case a URL ever reaches a field.
 function report(details: Record<string, unknown>): void {
     try {
         console.info(JSON.stringify({
@@ -53,7 +65,7 @@ function report(details: Record<string, unknown>): void {
             timeOriginMs: performance.timeOrigin,
             observedAtMs: performance.now(),
             ...details,
-        }));
+        }, (_key, value: unknown) => (typeof value === 'string' ? redactPlaybackUrl(value) : value)));
     } catch {
         // Measurement failure must never change a payment or playback result.
     }

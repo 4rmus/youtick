@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlaybackEvent } from '@livepeer/react';
-import { measureVideoOperation, observeVideoState, recordVideoPlaybackEvents, startVideoMeasurement } from '@/lib/video-measurements';
+import { measureVideoOperation, observeVideoState, recordVideoPlaybackEvents, redactPlaybackUrl, startVideoMeasurement } from '@/lib/video-measurements';
 
 describe('local video measurements', () => {
     afterEach(() => vi.restoreAllMocks());
@@ -180,5 +180,21 @@ describe('local video measurements', () => {
         expect(entries[1]).toMatchObject({ playerEvent: 'first-frame', playerTimestampMs: 75 });
         expect(entries[1]).not.toHaveProperty('durationMs');
         expect(JSON.stringify(entries)).not.toMatch(/jwt|secret|mount_to_first_frame/);
+    });
+
+    it('redacts JWT-shaped path segments of Stream playback URLs and never logs one', async () => {
+        // Synthetic token: base64url of fake JSON, never a signed one.
+        const token = 'eyJmYWtlIjoiaGVhZGVyIn0.eyJmYWtlIjoicGF5bG9hZCJ9.ZmFrZS1zaWduYXR1cmU';
+        const url = `https://customer-7v4my51gigdqb5jn.cloudflarestream.com/${token}/manifest/video.m3u8`;
+        expect(redactPlaybackUrl(url)).toBe('https://customer-7v4my51gigdqb5jn.cloudflarestream.com/<redacted>/manifest/video.m3u8');
+        expect(redactPlaybackUrl('https://customer-7v4my51gigdqb5jn.cloudflarestream.com/0123456789abcdef0123456789abcdef/video/720/seg_1.mp4'))
+            .toBe('https://customer-7v4my51gigdqb5jn.cloudflarestream.com/0123456789abcdef0123456789abcdef/video/720/seg_1.mp4');
+        const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const failure = Object.assign(new Error(`playback failed at ${url}`), { status: 403 });
+        await expect(measureVideoOperation('playback_token_renewal', async () => { throw failure; })).rejects.toBe(failure);
+        const logged = JSON.stringify(log.mock.calls);
+        expect(logged).not.toContain('eyJ');
+        expect(logged).not.toContain('cloudflarestream');
+        expect(JSON.parse(String(log.mock.calls[1][0]))).toMatchObject({ outcome: 'failed', errorCode: 'unknown_error', httpStatus: 403 });
     });
 });
