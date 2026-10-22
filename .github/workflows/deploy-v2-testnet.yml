@@ -2,6 +2,8 @@ name: V2 Testnet Workers
 
 # Deploys the V2 relayer, payment service and read model to the separate V2 testnet environment.
 # Runbook: docs/v2-testnet-runbook.md (Workers). The Bridge V2 deploys from deploy-v2-testnet-bridge.yml.
+# M1.5: the relayer and the payment service deploy with V2_CLOUDFLARE_*; the read model and its D1 live in the
+# media account (V2_MEDIA_CLOUDFLARE_*) on a workers.dev host (docs/v2-testnet-runbook.md, Media account).
 on:
   workflow_dispatch:
     inputs:
@@ -132,9 +134,9 @@ jobs:
         run: |
           node --input-type=module <<'JS'
           import { appendFileSync, readFileSync } from 'node:fs';
-          import { COMPONENTS, releaseVars } from './scripts/v2-testnet-release.mjs';
+          import { COMPONENTS, componentHost, releaseVars } from './scripts/v2-testnet-release.mjs';
           const packet = Object.fromEntries(Object.entries(COMPONENTS).map(([name, spec]) =>
-            [name, { worker: spec.worker, domain: spec.domain, vars: releaseVars(name, process.env.RELEASE_MODE, process.env.CARD_PATH) }]));
+            [name, { worker: spec.worker, account: spec.account ?? 'default', host: componentHost(spec), vars: releaseVars(name, process.env.RELEASE_MODE, process.env.CARD_PATH) }]));
           const sums = readFileSync(`${process.env.RUNNER_TEMP}/release/SHA256SUMS`, 'utf8');
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `V2 testnet Workers, ${process.env.RELEASE_MODE}, card path ${process.env.CARD_PATH}, ${process.env.SHA} (no NEAR transaction in this workflow):\n\n` +
             '```json\n' + JSON.stringify(packet, null, 2) + '\n```\n\n```\n' + sums + '```\n');
@@ -197,10 +199,10 @@ jobs:
         run: node scripts/release-smoke.mjs fingerprint https://youtick.net > "$RUNNER_TEMP/root-before.json"
       - name: Apply the V2 read-model D1 migrations
         # Idempotent: wrangler applies only the migrations the database has not recorded. The attested packet
-        # carries the same d1/*.sql files as the commit.
+        # carries the same d1/*.sql files as the commit. M1.5: the database is in the media account.
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.V2_MEDIA_CLOUDFLARE_API_TOKEN }}
           WRANGLER_SEND_METRICS: 'false'
         run: workers/relayer/node_modules/.bin/wrangler d1 migrations apply youtick-market-read-model-v2-testnet --remote --config "$RUNNER_TEMP/release/read-model/wrangler.toml"
       - name: Apply the V2 payments D1 migrations (refund request inbox, card orders)
@@ -214,6 +216,9 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
+          # The read model only; the release checks them before its preflight and before any Worker deploys.
+          MEDIA_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID }}
+          MEDIA_CLOUDFLARE_API_TOKEN: ${{ secrets.V2_MEDIA_CLOUDFLARE_API_TOKEN }}
           NEAR_RPC_URL: ${{ secrets.V2_NEAR_RPC_URL }}
           RELAYER_PRIVATE_KEY: ${{ secrets.V2_RELAYER_PRIVATE_KEY }}
           RELAYER_ADMIN_TOKEN: ${{ secrets.V2_RELAYER_ADMIN_TOKEN }}

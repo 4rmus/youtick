@@ -615,3 +615,157 @@ and anything on Preview, Production or mainnet. The first upload of the day
 Open after this walk: the first watermark and the `lp-bcc8f530…` publication in `/v1/publications`,
 the `watched` ticket row, the Bridge binding and cron, and the 30-day release (earliest
 2026-11-12).
+
+## Media account (2026-10-22)
+
+Step M1.5 of the Cloudflare Stream migration moves the Bridge and the read model into a separate
+Cloudflare account, the "media" account. Both then serve from that account's `workers.dev`
+subdomain. The owner decided this on 2026-10-22 (OD2, OD14, OD16, OD17, OD18). The relayer, the
+payment service and the payments D1 stay where they are, with the same specs and configs. For
+the relayer and the payment service, the `write-config` output before and after this change is
+byte-identical.
+
+| Worker | Cloudflare account | Host |
+|---|---|---|
+| `youtick-relayer-v2-testnet` | default (`V2_CLOUDFLARE_*`) | `relayer-v2-testnet.youtick.net` (unchanged) |
+| `youtick-payment-service-v2-testnet` | default (`V2_CLOUDFLARE_*`) | `pay-v2-testnet.youtick.net` (unchanged) |
+| `youtick-market-read-model-v2-testnet` | media `6caaaf27c430b5da0ce18f68f35c1dcb` (`V2_MEDIA_CLOUDFLARE_*`) | `youtick-market-read-model-v2-testnet.<subdomain>.workers.dev` |
+| `youtick-livepeer-bridge-v2-testnet` | media (`V2_MEDIA_CLOUDFLARE_*`) | `youtick-livepeer-bridge-v2-testnet.<subdomain>.workers.dev` |
+
+D1 `youtick-market-read-model-v2-testnet` moves to the media account. D1
+`youtick-payments-v2-testnet` stays in the default account. The web keeps its origin.
+`ALLOWED_ORIGINS`, `READ_MODEL_WEB_ORIGIN` and `LIVEPEER_JWT_ISSUER` do not change.
+
+What the release tooling does now:
+- **Media account constant.** `MEDIA_ACCOUNT` in `scripts/v2-testnet-release.mjs` holds the account
+  id and the workers.dev subdomain. The subdomain is `kocoinci` (registered on the media account, read from the dashboard on 2026-10-22; until then it was the sentinel `<register-on-the-media-account>`)
+  until the owner registers one. Every path that needs a media host stops with
+  `media_account_unconfigured`. In both workflows that is the `check` command in the prepare
+  job's build step, with the summary step as a second guard. So before M1.5-G2, neither workflow
+  reaches environment approval.
+- **Read model.** The deployed config sets `workers_dev = true` and `preview_urls = false`, and there
+  is no `--domain`. The read model deploys with `MEDIA_CLOUDFLARE_*`. Every release deploys all
+  three Workers, so the release checks the media account and this pair before its chain preflight
+  and before any Worker deploys. A missing pair stops it with `media_credentials_missing`; a pair
+  for another account stops it with `cloudflare_account_not_media`. The default pair must not be
+  the media account (`cloudflare_default_account_is_media`). The read-model D1 migrations run with
+  `V2_MEDIA_CLOUDFLARE_*`. The payments D1 migrations still run with `V2_CLOUDFLARE_*`.
+- **Bridge.** The deployed config sets `workers_dev = true`, and there is no `--domain`.
+  `CLOUDFLARE_ACCOUNT_ID` must be the media account. The smoke test calls the workers.dev host.
+  The Livepeer webhook URL must be exactly `https://<bridge host>/v1/livepeer-webhooks`, or the
+  release stops with `webhook_binding_mismatch`. The Bridge workflow no longer fingerprints
+  `https://youtick.net`: the Bridge is no longer in the `youtick.net` zone, so it cannot affect
+  the root origin. *V2 Testnet Workers* still fingerprints it.
+- **Environment URL.** The prepare job derives the Bridge's environment URL with `bridgeHost()`
+  and passes it to the deploy job as the output `health_url`. The workflow holds no literal host.
+- **Workers releases are all-or-nothing.** *V2 Testnet Workers* always deploys all three Workers.
+  Until M1.5-G2 is done, the relayer and the payment service cannot be released on their own.
+
+### Owner steps (M1.5-G2)
+
+1. **Register the workers.dev subdomain** on the media account (dashboard, Workers & Pages).
+   If no subdomain exists, wrangler asks for one interactively. The CI jobs are non-interactive,
+   so a deploy without a subdomain fails. Then put the subdomain in
+   `MEDIA_ACCOUNT.workersSubdomain` (`scripts/v2-testnet-release.mjs`) with a one-line commit on
+   the open M1.5 branch.
+2. **Create the read-model D1 in the media account.** Wrangler must be signed in to that account:
+   ```bash
+   cd workers/livepeer-bridge && CLOUDFLARE_ACCOUNT_ID=6caaaf27c430b5da0ce18f68f35c1dcb npx wrangler d1 create youtick-market-read-model-v2-testnet
+   ```
+   Before recording the id, confirm that this id belongs to the media account, for example with
+   `wrangler d1 info youtick-market-read-model-v2-testnet` and the media credentials. The release
+   checks only the id's format and refuses the V1 id (`read_model_d1_is_v1`). It cannot tell
+   which account an id belongs to. Then record the id:
+   ```bash
+   gh variable set V2_READ_MODEL_D1_ID --repo 4rmus/youtick --body "<database_id>"
+   ```
+   Both workflows read this variable, so afterwards the old account's read model and Bridge can no
+   longer deploy from them.
+3. **Create the API token** in the media account, with the same scopes as the current
+   `V2_CLOUDFLARE_API_TOKEN` (OD18), D1 edit included.
+4. **Add the environment secrets** to `v2-testnet`. The account id is not sensitive, but the
+   workflows read it as a secret:
+   ```bash
+   printf %s 6caaaf27c430b5da0ce18f68f35c1dcb | gh secret set V2_MEDIA_CLOUDFLARE_ACCOUNT_ID --env v2-testnet --repo 4rmus/youtick
+   ```
+   Add `V2_MEDIA_CLOUDFLARE_API_TOKEN` in the GitHub UI.
+5. **Check the media account's Workers plan** at deploy time. The two Workers need Durable
+   Objects (SQLite), D1 and two cron triggers: the read model every minute and the Bridge every 15
+   minutes.
+
+### Cutover order (M1.5-G3)
+
+Order matters. The old Bridge's release compares the Studio webhook URL with
+`bridge-v2-testnet.youtick.net`. Once the webhook is repointed, an old-Bridge deploy fails with
+`webhook_binding_mismatch`. So shut the old Bridge and drain its outbox first. Then repoint the
+webhook, and only then deploy into the media account.
+
+1. **Shut the old Bridge.** The old Bridge in the default account and the new one sign with the
+   same NEAR operator key. Both would run the `*/15` `release_expired` scan, and their operator
+   outboxes would race for nonces. Deploy the old Bridge `closed` before this change reaches
+   `main`: after the merge, the workflows only target the media account. Otherwise, remove the
+   old Bridge's cron trigger in the dashboard. Also stop the old read model's cron. Delete
+   nothing until M4 reaches `PASS`.
+2. **Drain and check the operator outbox.** Step 2 of the MC cutover shows the check. Leave no
+   upload in flight. The Bridge's Durable Object state does not move between accounts: upload jobs
+   and the operator outbox start empty in the media account.
+3. **Point the Studio V2 webhook** (`f7a3992a-…`, OD17) at
+   `https://youtick-livepeer-bridge-v2-testnet.<subdomain>.workers.dev/v1/livepeer-webhooks`.
+   Use the dashboard or the API. Keep the events and the signing secret. Then read the webhook
+   back and check two things: `url` is the new one, and `sharedSecret` still equals
+   `V2_LIVEPEER_WEBHOOK_SECRET`. From now on the old Bridge receives no deliveries.
+4. **Deploy into the media account:**
+   1. Run *V2 Testnet Workers*. The read-model D1 migrations `0001`–`0011` apply to the new, empty
+      database, and the read model rescans Market V2 from block `272905000`
+      (`READ_MODEL_START_BLOCK_HEIGHT`).
+   2. Run *V2 Testnet Bridge* `closed`.
+   3. Run *V2 Testnet Bridge* `acceptance` only after the read model has caught up. Its
+      `/__health` must show ingestion current. `acceptance` turns on `MARKET_V2_RELEASE_ENABLED`,
+      and the 30-day `release_expired` scan reads the read model's `market_v2_tickets`. The first
+      release is possible on 2026-11-12. What the scan does against an incomplete read model is
+      UNPROVEN.
+   4. Set `NEXT_PUBLIC_LIVEPEER_BRIDGE_URL` and `NEXT_PUBLIC_MARKET_READ_MODEL_URL` to the two
+      workers.dev URLs for the local run against the V2 testnet.
+5. **Leave the old Workers disabled** in the default account until M4 reaches `PASS`.
+
+### Operator key set during the MC transition
+
+The owner moves the Bridge to the media account before the on-chain
+[MC cutover](#mc-cutover-provider-neutral-market-v2-names). Until that cutover, the testnet
+function-call key still lists the legacy method names. So the Bridge release preflight accepts
+either of two exact method sets on the key of `v2-bridge-261007…` for Market V2:
+
+| Set | Methods |
+|---|---|
+| `neutral` | `finalize_publication`, `suspend_sales`, `mark_watched`, `release_expired` |
+| `legacy` | `finalize_livepeer_publication`, `suspend_livepeer_sales`, `mark_watched`, `release_expired` |
+
+- **The `operator_key_set` input** of *V2 Testnet Bridge* (env `OPERATOR_KEY_SET`) chooses which
+  set a run accepts: `any` (the transition default), `neutral` or `legacy`. The input is checked
+  in the prepare job, shown in the approval summary, bound into the attested manifest, and
+  re-checked in the deploy job.
+- **Mismatches.** A known set that the input does not allow stops the run with
+  `operator_key_set_mismatch_<set>`. Any other list stops it with `operator_key_not_on_chain`:
+  a mixed or partial list, extra methods, or another receiver.
+- **Receipt.** The receipt and the deploy summary record `operatorKeySet` (the set that matched)
+  and `operatorKeySetPolicy` (the input).
+- **The cutover run pins `neutral`.** If the key swap did not happen, the run fails before
+  wrangler is called.
+- **After the cutover, switch the default back to `neutral`.** Make it a follow-up commit that
+  changes `DEFAULT_OPERATOR_KEY_SET` in `scripts/v2-testnet-bridge-release.mjs` and the
+  `operator_key_set` default in `.github/workflows/deploy-v2-testnet-bridge.yml`.
+  `scripts/ci-security.test.mjs` keeps these two values equal.
+- **Older text.** This supersedes the note in the Bridge section above, which says a post-MC
+  Bridge release stops with `operator_key_not_on_chain` until the cutover.
+- **The Bridge itself is unchanged.** It still validates its own method set at runtime; its
+  `/__health` checks are the same.
+
+Known gaps:
+- The Bridge caches publication covers with `caches.default`. How that cache behaves on a
+  workers.dev host is UNPROVEN; M1.5-G3 checks it.
+- `SMOKE_DELAYS_MS` was sized for a new custom domain. Whether it fits a new workers.dev host is
+  UNPROVEN.
+
+Older sections and `docs/testing.md` still name `bridge-v2-testnet.youtick.net` and
+`read-v2-testnet.youtick.net`. After the move those hosts are historical. The text gets fixed
+once M1.5-G3 is done.
