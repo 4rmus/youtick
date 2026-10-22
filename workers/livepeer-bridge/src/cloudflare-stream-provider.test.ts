@@ -65,8 +65,6 @@ function provider(overrides: Partial<CloudflareStreamOptions> = {}): CloudflareS
         webhookSecrets: [WEBHOOK_SECRET, PREVIOUS_SECRET],
         webhookToleranceMs: 5 * 60 * 1000,
         maxDurationSeconds: 7200,
-        requireEndList: true,
-        readySegmentProbe: false,
         readyPendingWindowMs: 30 * 60 * 1000,
         verificationTokenTtlSeconds: 120,
         sha256: async (value) => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))),
@@ -176,6 +174,17 @@ describe('Cloudflare Stream adapter: upload', () => {
         await expect(provider().createUpload(uploadInput)).rejects.toThrow('provider_create_ambiguous');
     });
 
+    it('deletes the known UID when a 201 carries an unusable Location or the post-create read is unavailable', async () => {
+        const badLocation = transport({ create: () => createResponse({ location: `https://upload.example.com/tus/${V.UID}` }) });
+        vi.stubGlobal('fetch', badLocation);
+        await expect(provider().createUpload(uploadInput)).rejects.toThrow('provider_create_ambiguous');
+        expect(badLocation.mock.calls.filter(([url, init]) => init?.method === 'DELETE' && String(url) === `${API}/${V.UID}`)).toHaveLength(1);
+        const unavailable = transport({ head: () => new Response(null, { status: 503 }) });
+        vi.stubGlobal('fetch', unavailable);
+        await expect(provider().createUpload(uploadInput)).rejects.toThrow('provider_unavailable');
+        expect(unavailable.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1);
+    });
+
     it('requires Upload-Length == expected and offset 0 after creation, deleting the refused UID', async () => {
         const fetchMock = transport({ head: () => headResponse('head-created.json', { LENGTH: '19999999' }) });
         vi.stubGlobal('fetch', fetchMock);
@@ -197,11 +206,11 @@ describe('Cloudflare Stream adapter: upload', () => {
         }
     });
 
-    it('maps storage exhaustion to provider_admission_closed and other limits to provider_unavailable', async () => {
+    it('maps 413 to provider_admission_closed and every 429 (even one naming storage) to provider_unavailable', async () => {
         const exhausted = await streamJson('storage-exhausted-413.json');
         const cases: [Response, string][] = [
             [Response.json(exhausted, { status: 413 }), 'provider_admission_closed'],
-            [Response.json(exhausted, { status: 429 }), 'provider_admission_closed'],
+            [Response.json(exhausted, { status: 429 }), 'provider_unavailable'],
             [Response.json({ success: false, errors: [{ code: 971, message: 'Rate limited' }] }, { status: 429 }), 'provider_unavailable'],
             [new Response('upstream', { status: 503 }), 'provider_unavailable'],
             [new Response(null, { status: 400 }), 'provider_create_ambiguous'],
@@ -280,13 +289,22 @@ describe('Cloudflare Stream adapter: reads and deletes', () => {
         await expect(provider().readAsset(V.UID)).rejects.toThrow('provider_unavailable');
     });
 
-    it('deletes: 200 deleted, 404 missing, anything else ambiguous', async () => {
+    it('deletes: 200 deleted, 404 missing, one retry on 429/5xx/network, then ambiguous', async () => {
         vi.stubGlobal('fetch', transport());
         expect(await provider().deleteAsset(V.UID)).toBe('deleted');
         vi.stubGlobal('fetch', transport({ del: () => new Response(null, { status: 404 }) }));
         expect(await provider().deleteAsset(V.UID)).toBe('missing');
-        vi.stubGlobal('fetch', transport({ del: () => new Response(null, { status: 500 }) }));
+        const twice = transport({ del: () => new Response(null, { status: 500 }) });
+        vi.stubGlobal('fetch', twice);
         await expect(provider().deleteAsset(V.UID)).rejects.toThrow('provider_delete_ambiguous');
+        expect(twice).toHaveBeenCalledTimes(2);
+        let calls = 0;
+        vi.stubGlobal('fetch', transport({ del: () => new Response(null, { status: calls++ === 0 ? 429 : 200 }) }));
+        expect(await provider().deleteAsset(V.UID)).toBe('deleted');
+        const refused = transport({ del: () => new Response(null, { status: 403 }) });
+        vi.stubGlobal('fetch', refused);
+        await expect(provider().deleteAsset(V.UID)).rejects.toThrow('provider_delete_ambiguous');
+        expect(refused).toHaveBeenCalledTimes(1);
         vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network'); }));
         await expect(provider().deleteAsset(V.UID)).rejects.toThrow('provider_delete_ambiguous');
     });
@@ -365,6 +383,16 @@ describe('Cloudflare Stream adapter: webhooks', () => {
         expect(streamWebhookRoute(long.json, valid)).toEqual({ jobId: longJob, generation: 1 });
         const tooLong = await streamJson<Record<string, Record<string, unknown>>>('meta-variants.json', { JOB_ID: `${longJob}y` });
         expect(streamWebhookRoute(tooLong.plain, valid)).toBeNull();
+    });
+
+    it('treats an authentic but unparsable body as a non-lifecycle event (null), not a signature failure', async () => {
+        const raw = new TextEncoder().encode('{"not":"a video"');
+        const time = String(Math.floor(Date.now() / 1000));
+        const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(WEBHOOK_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+        const sig = hex(new Uint8Array(await crypto.subtle.sign('HMAC', key, new Uint8Array([...new TextEncoder().encode(`${time}.`), ...raw]))));
+        expect(await provider().verifyWebhook(raw, new Headers({ 'webhook-signature': `time=${time},sig1=${sig}` }), Date.now())).toBeNull();
+        await expect(provider().verifyWebhook(raw, new Headers({ 'webhook-signature': `time=${time},sig1=${'0'.repeat(64)}` }), Date.now()))
+            .rejects.toThrow('invalid_webhook_signature');
     });
 
     it('folds the signed time into the digest on both the ingress and the job-object parse', async () => {

@@ -28,16 +28,21 @@ import {
     type StreamVideo,
 } from './cloudflare-stream-provider';
 
-/** none, forged and expired credentials: 401 on every surface (spike §9.3). */
-export const STREAM_DENIED_CREDENTIAL_STATUSES: readonly number[] = Object.freeze([401]);
+/** none, forged and expired credentials: the spike saw 401 on every surface (§9.3); 403 is a refusal too. */
+export const STREAM_DENIED_CREDENTIAL_STATUSES: readonly number[] = Object.freeze([401, 403]);
 /** A valid signature for another UID: 404 on manifests, variants, thumbnails and the MP4 download. */
 export const STREAM_WRONG_SUBJECT_STATUSES: readonly number[] = Object.freeze([404]);
 
-export function streamManifestPolicy(requireEndList: boolean): ManifestPolicy {
+/** Every recorded variant playlist carries #EXT-X-ENDLIST (spike and dashboard 2026-10-22). */
+export const STREAM_REQUIRE_END_LIST = true;
+/** No authorized segment read at all: Bridge media bytes and per-segment billing stay out of bounds. */
+export const STREAM_READY_SEGMENT_PROBE = false;
+
+export function streamManifestPolicy(): ManifestPolicy {
     return {
         allowAlternateMedia: true,
         allowedQueryKeys: ['p', 's'],
-        requireEndList,
+        requireEndList: STREAM_REQUIRE_END_LIST,
         initSegment: 'required',
         // Manifests: per-request statuses below; a query-stripped segment returns 404 (denied).
         deniedStatuses: { manifest: STREAM_DENIED_CREDENTIAL_STATUSES, media: [401, 403, 404] },
@@ -189,7 +194,7 @@ function streamProbeSpec(
 ): ProviderProbeSpec {
     return {
         dependency: 'stream_media',
-        policy: streamManifestPolicy(provider.options.requireEndList),
+        policy: streamManifestPolicy(),
         hosts: provider.hostAllowlist(),
         signedPolicy: 'jwt',
         canonicalHlsUrl: (uid) => provider.deliveryUrl(uid, 'manifest/video.m3u8'),
@@ -219,7 +224,7 @@ function streamSurfaces(
             const video = currentVideo();
             return video ? [video.thumbnailUrl, video.dashUrl].filter(Boolean) : [];
         },
-        async probe({ context, budget }) {
+        async probe({ budget }) {
             for (const rule of STREAM_SURFACE_MATRIX) {
                 const url = (credential: string) => provider.deliveryUrl(credential, rule.path);
                 for (const credential of [input.playbackId, credentials.forged, credentials.expired]) {
@@ -231,15 +236,6 @@ function streamSurfaces(
                 if (rule.valid !== undefined) {
                     await requireSurfaceStatus(spec, budget, url(credentials.valid), rule.valid);
                 }
-            }
-            // At most one authorized byte at readiness, behind a default-off switch; never published.
-            if (input.mode === 'ready' && provider.options.readySegmentProbe) {
-                const signed = [...context.mediaReferences].find((reference) => {
-                    const query = new URL(reference).searchParams;
-                    return query.has('p') && query.has('s');
-                });
-                if (!signed) throw new Error('provider_playback_mismatch');
-                await requireSignedSegmentReadable(spec, budget, signed);
             }
             return { bindingParts: [], deferredDenials: [] };
         },
@@ -268,26 +264,6 @@ async function requireSurfaceStatus(
     // A success or redirect on a surface that must refuse is exposure; another refusal is drift.
     if (response.status < 400) throw new Error('provider_playback_exposed');
     throw new Error('provider_playback_mismatch');
-}
-
-async function requireSignedSegmentReadable(
-    spec: ProviderProbeSpec,
-    budget: VerificationBudget,
-    url: string,
-): Promise<void> {
-    let response: Response;
-    try {
-        response = await verificationFetch(spec, budget, 'segment_range_probe', url, {
-            method: 'GET',
-            headers: { Range: 'bytes=0-0' },
-            redirect: 'manual',
-        });
-    } catch {
-        throw new Error('provider_unavailable');
-    }
-    await response.body?.cancel().catch(() => undefined);
-    if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
-    if (![200, 206].includes(response.status)) throw new Error('provider_playback_mismatch');
 }
 
 // The ready webhook can precede the full ladder (spike: pctComplete 33-64). While pctComplete <
@@ -361,7 +337,7 @@ async function ladderComplete(
         if (!provider.hostAllowlist().exact.includes(new URL(url).hostname)) return true;
         const playlist = await authorizedPlaylist(url);
         if (!playlist) return false;
-        if (provider.options.requireEndList && !playlist.includes('#EXT-X-ENDLIST')) return false;
+        if (STREAM_REQUIRE_END_LIST && !playlist.includes('#EXT-X-ENDLIST')) return false;
     }
     return true;
 }

@@ -79,7 +79,7 @@ export type CreateUploadInput = {
     expectedSourceBytes: string;
     profileConfigSha256: string;
     sourceType: MediaSourceType;
-    // Stream: the admission lease deadline, sent as the tus `expiry` metadata. Studio ignores it.
+    // Stream: the tus `expiry` metadata, min(creation + 6 h, absolute deadline). Studio ignores it.
     uploadExpiresAtMs?: number;
 };
 
@@ -238,6 +238,8 @@ export type NormalizedWebhookEvent = {
     phase: string;
     timestampMs: number;
     failureCode?: string;
+    // Stream: the reported state and pctComplete, so the job can tell progress from a stall.
+    streamProgress?: { state: string; pctComplete: number };
     digest: string;
 };
 

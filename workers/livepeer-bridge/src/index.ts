@@ -41,6 +41,7 @@ import { LivepeerProvider, livepeerSupportsProfile } from './livepeer-provider';
 import {
     CloudflareStreamProvider,
     STREAM_TUS_URL_LIFETIME_MS,
+    STREAM_UPLOAD_EXPIRY_MS,
     decodeStreamKeyText,
 } from './cloudflare-stream-provider';
 import { dependencyFetch } from './dependency-fetch';
@@ -153,9 +154,6 @@ export interface Env {
     STREAM_STORAGE_MINUTES_CAPACITY?: string;
     STREAM_RESERVATION_SECONDS_BUDGET?: string;
     STREAM_STUCK_TIMEOUT_MS?: string;
-    // M0 switches (optional, never in wrangler.toml; absent = the default, see README "M0 switches").
-    STREAM_REQUIRE_END_LIST?: string;
-    STREAM_READY_SEGMENT_PROBE_ENABLED?: string;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -413,6 +411,8 @@ type JobRecord = {
     providerVerification?: ProviderVerificationCheckpoint;
     // Persisted byte proof for adapters whose sourceBytesProof capability is 'tus-offset'.
     sourceBytesEvidence?: SourceBytesEvidence;
+    // Stream: last reported state/pctComplete and when either last changed (stuck detection).
+    streamProgress?: { state: string; pctComplete: number; changedAtMs: number };
     finalizeRetry?: {
         attempts: number;
         lastHttpStatus: number;
@@ -579,7 +579,9 @@ type StreamAdmissionState = {
     storageMinutesUsed?: number;
     storageObservedAtMs?: number;
     lastWebhookAtMs?: number;
-    stuckProcessingJobs?: number;
+    // Stuck terminations in the last 24 h (bounded list) and the latest one.
+    stuckAtMs?: number[];
+    lastStuckAtMs?: number;
 };
 type AdmissionCandidate = {
     jobId: string;
@@ -589,6 +591,7 @@ type AdmissionCandidate = {
     // Stream intents: the maxDurationSeconds the upload will book against prepaid storage.
     reservedSeconds?: number;
     storageMinutesUsed?: number;
+    storageMinutesLimit?: number;
 };
 type AdmissionLease = {
     leaseId: string;
@@ -621,6 +624,9 @@ type LivepeerWebhookQueueMessage = {
     generation: number;
     enqueued_at_ms: string;
     raw_body_base64: string;
+    // Optional, Stream only (Studio messages are unchanged): the adapter and the signed time.
+    provider?: 'stream';
+    signed_time_ms?: string;
 };
 
 const PUBLIC_CONTROL_REQUESTS_IMPLEMENTED = true;
@@ -676,6 +682,10 @@ const PLAYBACK_MIN_TTL_SECONDS = 120;
 const PLAYBACK_MAX_TTL_SECONDS = 300;
 const PLAYBACK_V2_TTL_SECONDS = 180;
 const STREAM_DEFAULT_STUCK_TIMEOUT_MS = 15 * 60 * 1000;
+const STREAM_MIN_READY_PENDING_MS = 60 * 60 * 1000;
+// Stuck jobs counted in /__health: terminations in the last 24 hours (a gauge, not a lifetime total).
+const STREAM_STUCK_WINDOW_MS = 24 * 60 * 60 * 1000;
+const STREAM_STUCK_HISTORY = 32;
 // Bounded Stream poll: every 5 minutes while the creator uploads, every minute while processing.
 const STREAM_UPLOAD_POLL_MS = 5 * 60 * 1000;
 const STREAM_PROCESSING_POLL_MS = 60 * 1000;
@@ -964,7 +974,7 @@ const bridgeWorker = {
                 mediaProvider: { kind: studioActive(env) ? mediaProvider(env).id : 'stream' },
                 // Never true with the flag off: empty STREAM_* values then mean "not configured".
                 streamConfigured: streamEnabled(env) && validStreamConfig(env),
-                stream: await streamHealthBlock(env),
+                ...(streamEnabled(env) ? { stream: await streamHealthBlock(env) } : {}),
             });
         }
 
@@ -1302,7 +1312,11 @@ export default {
                     'https://object/internal/livepeer-webhook',
                     {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...(input.provider ? { [MEDIA_PROVIDER_HEADER]: input.provider } : {}),
+                            ...(input.signed_time_ms ? { [MEDIA_WEBHOOK_TIME_HEADER]: input.signed_time_ms } : {}),
+                        },
                         body: rawBody,
                     },
                 ));
@@ -1469,7 +1483,7 @@ export class LivepeerControl {
                 return await preflightAdmission(this.state, this.env, await readJsonObject(request));
             }
             if (request.method === 'POST' && url.pathname === '/internal/admission/mark') {
-                return await markAdmission(this.state, this.env, await readJsonObject(request));
+                return await markAdmission(this.state, await readJsonObject(request));
             }
             if (request.method === 'POST' && url.pathname === '/internal/admission/stream-signal') {
                 return await recordStreamSignal(this.state, await readJsonObject(request));
@@ -1637,7 +1651,7 @@ export class LivepeerControl {
 
         if (record.state === 'AUTHORIZED') {
             const lease = await requestAdmission(this.env, record, jobProviderKind(record) === 'stream'
-                ? { storageMinutesUsed: await requireStreamStorageHeadroom(this.env, record) } : undefined);
+                ? await readStreamStorage(this.env, record) : undefined);
             const leased = {
                 ...transitionJob(record, 'LEASED'),
                 leaseId: lease.leaseId,
@@ -1682,7 +1696,10 @@ export class LivepeerControl {
         try {
             provider = await mediaProvider(this.env, pending).createUpload({
                 ...pending,
-                uploadExpiresAtMs: pending.leaseExpiresAtMs,
+                uploadExpiresAtMs: Math.min(
+                    Date.now() + STREAM_UPLOAD_EXPIRY_MS,
+                    pending.absoluteDeadlineAtMs ?? Number.MAX_SAFE_INTEGER,
+                ),
             });
         } catch (error) {
             const providerError = safeErrorCode(error);
@@ -1724,6 +1741,11 @@ export class LivepeerControl {
                 completedAtMs: Date.now(),
             },
         };
+        if (publicBetaDeadlineExpired(ready) && jobProviderKind(ready) === 'stream') {
+            await this.state.storage.put(JOB_KEY, ready);
+            await terminateStreamJob(this.state, this.env, ready, 'UPLOAD_EXPIRED', 'job_expired');
+            throw new Error('admission_denied');
+        }
         if (publicBetaDeadlineExpired(ready)) {
             const expired = transitionJob(ready, 'UPLOAD_EXPIRED');
             await this.state.storage.put(JOB_KEY, expired);
@@ -1844,21 +1866,47 @@ export class LivepeerControl {
             }
             return;
         }
+        const progress = { state: video.state, pctComplete: Number.isFinite(video.pctComplete) ? video.pctComplete : 0 };
+        const tracked = trackStreamProgress(record, progress, now);
         if (['queued', 'inprogress', 'downloading'].includes(video.state)) {
             if (record.state !== 'PROCESSING') {
-                const processing = transitionJob(record, 'PROCESSING');
+                const processing = transitionJob(tracked, 'PROCESSING');
                 await this.state.storage.put(JOB_KEY, processing);
                 logJobStateTransition(record.state, processing.state, record);
                 await scheduleReconcile(this.state, now + STREAM_PROCESSING_POLL_MS);
                 return;
             }
+            if (tracked !== record) await this.state.storage.put(JOB_KEY, tracked);
             const stuckTimeoutMs = streamStuckTimeoutMs(this.env) ?? STREAM_DEFAULT_STUCK_TIMEOUT_MS;
-            const progress = Number.isFinite(video.pctComplete) ? video.pctComplete : 0;
-            if (progress <= 0 && now - (record.stateChangedAtMs ?? now) > stuckTimeoutMs) {
-                console.warn(formatLog('provider_job_stuck', { state: video.state, stuckTimeoutMs }));
-                await terminateStreamJob(this.state, this.env, record, 'PROVIDER_FAILED', 'provider_job_stuck', { reason: 'stuck' });
+            const lastProgressAtMs = tracked.streamProgress?.changedAtMs ?? tracked.stateChangedAtMs ?? now;
+            if (now - lastProgressAtMs > stuckTimeoutMs) {
+                // One authoritative read before a destructive decision: fail only if nothing moved.
+                let confirm: Awaited<ReturnType<CloudflareStreamProvider['readVideo']>> | null = null;
+                try {
+                    confirm = await provider.readVideo(record.assetId);
+                } catch {
+                    confirm = null;
+                }
+                const unchanged = confirm !== null
+                    && confirm.state === progress.state
+                    && (Number.isFinite(confirm.pctComplete) ? confirm.pctComplete : 0) === progress.pctComplete;
+                if (unchanged) {
+                    console.warn(formatLog('provider_job_stuck', { state: video.state, stuckTimeoutMs }));
+                    await terminateStreamJob(this.state, this.env, tracked, 'PROVIDER_FAILED', 'provider_job_stuck', { reason: 'stuck' });
+                    return;
+                }
+                if (confirm) {
+                    const moved = trackStreamProgress(tracked, {
+                        state: confirm.state,
+                        pctComplete: Number.isFinite(confirm.pctComplete) ? confirm.pctComplete : 0,
+                    }, Date.now());
+                    if (moved !== tracked) await this.state.storage.put(JOB_KEY, moved);
+                }
+                await scheduleReconcile(this.state, Date.now() + STREAM_PROCESSING_POLL_MS);
                 return;
             }
+        } else if (tracked !== record) {
+            await this.state.storage.put(JOB_KEY, tracked);
         }
         if (video.state === 'pendingupload' && record.leaseExpiresAtMs !== undefined && record.leaseExpiresAtMs <= now) {
             // No heartbeat renewed the lease and nothing arrived: release the reservation now.
@@ -2097,6 +2145,10 @@ export class LivepeerControl {
         if (publicBetaDeadlineExpired(existing)
             && !['UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'CANCELLED', 'ONCHAIN_PUBLISHED']
                 .includes(existing.state)) {
+            if (jobProviderKind(existing) === 'stream') {
+                await terminateStreamJob(this.state, this.env, existing, 'UPLOAD_EXPIRED', 'job_expired');
+                return json({ accepted: true, expired: true }, 202);
+            }
             const expired = transitionJob(existing, 'UPLOAD_EXPIRED');
             await this.state.storage.put(JOB_KEY, expired);
             await scheduleTerminalArchive(this.state, this.env, expired);
@@ -2139,13 +2191,15 @@ export class LivepeerControl {
                 await updateAdmission(this.env, failed, 'PROVIDER_FAILED');
                 return json({ accepted: true, provider_failed: true });
             }
+            const tracked = trackStreamProgress(existing, event.streamProgress, Date.now());
             if (['UPLOAD_READY', 'UPLOADING'].includes(existing.state)
                 && isProcessingEvent(event)) {
-                const processing = transitionJob(existing, 'PROCESSING');
+                const processing = transitionJob(tracked, 'PROCESSING');
                 await this.state.storage.put(JOB_KEY, processing);
                 logJobStateTransition(existing.state, processing.state, existing);
                 return json({ accepted: true, processing: true });
             }
+            if (tracked !== existing) await this.state.storage.put(JOB_KEY, tracked);
             return json({ accepted: true, ignored: true }, 202);
         }
         if (isLegacyProfileJobOnMarketV2(this.env, existing) && existing.publication
@@ -2334,6 +2388,18 @@ export class LivepeerControl {
     }
 }
 
+/** Records a Stream state/pctComplete observation; returns the same object when nothing changed. */
+function trackStreamProgress(
+    job: JobRecord,
+    progress: { state: string; pctComplete: number } | undefined,
+    now: number,
+): JobRecord {
+    if (jobProviderKind(job) !== 'stream' || !progress) return job;
+    const previous = job.streamProgress;
+    if (previous && previous.state === progress.state && previous.pctComplete === progress.pctComplete) return job;
+    return { ...job, streamProgress: { state: progress.state, pctComplete: progress.pctComplete, changedAtMs: now } };
+}
+
 /**
  * Ends a Stream job (failure, expiry or cancellation) and deletes its UID exactly once, so the
  * reservation Stream booked at creation is released; gated by the provider-mutation flag.
@@ -2418,6 +2484,7 @@ async function streamHealthBlock(env: Env): Promise<StreamHealthBlock> {
         storageMinutesCapacity: positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY),
         lastWebhookAtMs: null,
         stuckProcessingJobs: null,
+        lastStuckAtMs: null,
     };
     if (!streamEnabled(env) || !env.LIVEPEER_CONTROL || !env.NEAR_NETWORK || !env.MARKET_CONTRACT_ID) return configured;
     try {
@@ -2436,6 +2503,7 @@ async function streamHealthBlock(env: Env): Promise<StreamHealthBlock> {
             storageMinutesCapacity: configured.storageMinutesCapacity,
             lastWebhookAtMs: number('lastWebhookAtMs'),
             stuckProcessingJobs: number('stuckProcessingJobs'),
+            lastStuckAtMs: number('lastStuckAtMs'),
         };
     } catch {
         return configured;
@@ -2449,6 +2517,7 @@ type StreamHealthBlock = {
     storageMinutesCapacity: number | null;
     lastWebhookAtMs: number | null;
     stuckProcessingJobs: number | null;
+    lastStuckAtMs: number | null;
 };
 
 async function readStreamAdmissionStatus(state: DurableObjectState, env: Env): Promise<Response> {
@@ -2469,7 +2538,8 @@ async function readStreamAdmissionStatus(state: DurableObjectState, env: Env): P
         storageMinutesUsed: storageMinutesUsed ?? null,
         storageMinutesCapacity: positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY),
         lastWebhookAtMs: signal?.lastWebhookAtMs ?? null,
-        stuckProcessingJobs: record?.stream?.stuckProcessingJobs ?? 0,
+        stuckProcessingJobs: (record?.stream?.stuckAtMs ?? []).filter((at) => at > now - STREAM_STUCK_WINDOW_MS).length,
+        lastStuckAtMs: record?.stream?.lastStuckAtMs ?? null,
     } satisfies StreamHealthBlock);
 }
 
@@ -2488,25 +2558,13 @@ async function logStreamStorageHeadroom(env: Env): Promise<void> {
     await signalStreamAdmission(env, { storageMinutesUsed: usage.totalStorageMinutes });
 }
 
-/**
- * Stream books maxDurationSeconds against prepaid storage when the upload URL is created: refuse a
- * new Stream lease when used storage plus the cap would exceed the configured capacity.
- */
-async function requireStreamStorageHeadroom(env: Env, job: JobRecord): Promise<number> {
-    const cap = streamMaxDurationSeconds(env);
-    const capacity = positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY);
-    if (cap === null || capacity === null) throw new Error('runtime_not_configured');
+/** Reads Stream's prepaid storage for a new lease; the admission object makes the decision. */
+async function readStreamStorage(
+    env: Env,
+    job: JobRecord,
+): Promise<{ storageMinutesUsed: number; storageMinutesLimit: number | null }> {
     const usage = await (mediaProvider(env, job) as CloudflareStreamProvider).readStorageUsage();
-    if (usage.totalStorageMinutes + cap / 60 > capacity) {
-        console.warn(formatLog('provider_admission_closed', {
-            reason: 'stream_storage_headroom',
-            totalStorageMinutes: usage.totalStorageMinutes,
-            capacityMinutes: capacity,
-            reservedMinutes: cap / 60,
-        }));
-        throw new Error('provider_admission_closed');
-    }
-    return usage.totalStorageMinutes;
+    return { storageMinutesUsed: usage.totalStorageMinutes, storageMinutesLimit: usage.totalStorageMinutesLimit };
 }
 
 async function deleteStreamUpload(state: DurableObjectState, env: Env, job: JobRecord): Promise<JobRecord> {
@@ -3040,7 +3098,7 @@ async function settleLegacyProfileJob(
 async function requestAdmission(
     env: Env,
     job: JobRecord,
-    stream?: { storageMinutesUsed?: number },
+    stream?: { storageMinutesUsed?: number; storageMinutesLimit?: number | null },
 ): Promise<AdmissionLease> {
     if (!env.LIVEPEER_CONTROL) throw new Error('runtime_not_configured');
     const reservedSeconds = jobProviderKind(job) === 'stream' ? streamMaxDurationSeconds(env) : null;
@@ -3058,11 +3116,13 @@ async function requestAdmission(
             expectedSourceBytes: job.expectedSourceBytes,
             ...(reservedSeconds !== null ? { reservedSeconds } : {}),
             ...(stream?.storageMinutesUsed !== undefined ? { storageMinutesUsed: stream.storageMinutesUsed } : {}),
+            ...(typeof stream?.storageMinutesLimit === 'number' ? { storageMinutesLimit: stream.storageMinutesLimit } : {}),
         }),
     }));
     if (!response.ok) {
         const result = await response.json() as { error?: unknown };
-        throw new Error(result.error === 'admission_denied' ? 'admission_denied' : 'admission_closed');
+        throw new Error(result.error === 'admission_denied' || result.error === 'provider_admission_closed'
+            ? result.error : 'admission_closed');
     }
     const result = await response.json() as Record<string, unknown>;
     if (typeof result.lease_id !== 'string'
@@ -3328,13 +3388,13 @@ async function resumeAdmission(state: DurableObjectState, env: Env, input: JsonO
 }
 
 function parseAdmissionCandidate(input: JsonObject, code: string): AdmissionCandidate {
-    const optional = ['reservedSeconds', 'storageMinutesUsed'].filter((key) => input[key] !== undefined);
+    const optional = ['reservedSeconds', 'storageMinutesUsed', 'storageMinutesLimit'].filter((key) => input[key] !== undefined);
     requireExactKeys(input, ['jobId', 'generation', 'creator', 'expectedSourceBytes', ...optional], code);
+    const minutes = (value: unknown) => value === undefined
+        || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
     if ((input.reservedSeconds !== undefined
         && (!Number.isSafeInteger(input.reservedSeconds) || (input.reservedSeconds as number) < 1))
-        || (input.storageMinutesUsed !== undefined
-            && (typeof input.storageMinutesUsed !== 'number' || !Number.isFinite(input.storageMinutesUsed)
-                || input.storageMinutesUsed < 0))) {
+        || !minutes(input.storageMinutesUsed) || !minutes(input.storageMinutesLimit)) {
         throw new Error(code);
     }
     if (typeof input.jobId !== 'string'
@@ -3354,6 +3414,7 @@ function parseAdmissionCandidate(input: JsonObject, code: string): AdmissionCand
         expectedSourceBytes: input.expectedSourceBytes,
         ...(input.reservedSeconds !== undefined ? { reservedSeconds: input.reservedSeconds as number } : {}),
         ...(input.storageMinutesUsed !== undefined ? { storageMinutesUsed: input.storageMinutesUsed as number } : {}),
+        ...(input.storageMinutesLimit !== undefined ? { storageMinutesLimit: input.storageMinutesLimit as number } : {}),
     };
 }
 
@@ -3484,6 +3545,22 @@ function planAdmission(
             }));
             throw new AdmissionDeniedError('reservation_budget');
         }
+        // Storage headroom, serialized with the budget: Stream's reported usage plus our open
+        // reservations plus this cap must fit min(configured capacity, Stream's reported limit).
+        if (candidate.storageMinutesUsed !== undefined) {
+            const configured = positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY);
+            const capacity = Math.min(configured ?? 0, candidate.storageMinutesLimit ?? Number.POSITIVE_INFINITY);
+            if (candidate.storageMinutesUsed + open / 60 + candidate.reservedSeconds / 60 > capacity) {
+                console.warn(formatLog('provider_admission_closed', {
+                    reason: 'stream_storage_headroom',
+                    totalStorageMinutes: candidate.storageMinutesUsed,
+                    openReservedMinutes: open / 60,
+                    reservedMinutes: candidate.reservedSeconds / 60,
+                    capacityMinutes: capacity,
+                }));
+                throw new Error('provider_admission_closed');
+            }
+        }
     }
     if (monthlyBudgetUsdMicros !== null
         && BigInt(monthly.reservedBudgetUsdMicros) + jobReservationUsdMicros > monthlyBudgetUsdMicros) {
@@ -3531,7 +3608,7 @@ function leaseDeadline(reservation: AdmissionReservation): number {
         : reservation.expiresAtMs || reservation.createdAtMs + ADMISSION_LEASE_TTL_MS;
 }
 
-async function markAdmission(state: DurableObjectState, env: Env, input: JsonObject): Promise<Response> {
+async function markAdmission(state: DurableObjectState, input: JsonObject): Promise<Response> {
     const optional = ['durationSeconds', 'reason'].filter((key) => input[key] !== undefined);
     requireExactKeys(input, ['jobId', 'generation', 'state', ...optional], 'invalid_outbox');
     if ((input.durationSeconds !== undefined
@@ -3550,7 +3627,7 @@ async function markAdmission(state: DurableObjectState, env: Env, input: JsonObj
     await state.storage.transaction(async (transaction) => {
         const stored = await transaction.get<AdmissionRecord>(ADMISSION_KEY);
         if (!stored) throw new Error('admission_closed');
-        const record = releaseStreamReservation(stored, reservationKey, String(input.state), input, env);
+        const record = releaseStreamReservation(stored, reservationKey, String(input.state), input);
         if (record !== stored) await transaction.put(ADMISSION_KEY, record);
         if (input.state === 'AUTO_CLOSED') {
             if (record.status === 'AUTO_CLOSED') return;
@@ -3625,15 +3702,14 @@ async function markAdmission(state: DurableObjectState, env: Env, input: JsonObj
 
 // A Stream reservation is released at a terminal state or READY_VERIFIED (Stream then counts the
 // real duration instead of the cap). READY_VERIFIED adds the duration once (only while the
-// reservation is still held) and auto-closes admission when verified storage exceeds capacity.
+// reservation is still held) as an informational counter; it never closes admission.
 function releaseStreamReservation(
     record: AdmissionRecord,
     reservationKey: string,
     nextState: string,
     input: JsonObject,
-    env: Env,
 ): AdmissionRecord {
-    const stuck = input.reason === 'stuck' ? 1 : 0;
+    const stuck = input.reason === 'stuck';
     const held = record.stream?.reservations[reservationKey];
     if (!record.stream || (!held && !stuck)
         || !['READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED', 'CANCELLED'].includes(nextState)) {
@@ -3644,19 +3720,15 @@ function releaseStreamReservation(
     delete reservations[reservationKey];
     const duration = nextState === 'READY_VERIFIED' && held && typeof input.durationSeconds === 'number'
         ? Math.ceil(input.durationSeconds) : 0;
+    const stuckAtMs = [...(record.stream.stuckAtMs ?? []), ...(stuck ? [now] : [])]
+        .filter((at) => at > now - STREAM_STUCK_WINDOW_MS)
+        .slice(-STREAM_STUCK_HISTORY);
+    // verifiedStorageSeconds is informational only: the live storage-usage read at intent decides.
     const stream = withStreamReservations(record.stream, reservations, {
         verifiedStorageSeconds: record.stream.verifiedStorageSeconds + duration,
-        stuckProcessingJobs: (record.stream.stuckProcessingJobs ?? 0) + stuck,
+        stuckAtMs,
+        ...(stuck ? { lastStuckAtMs: now } : {}),
     });
-    const capacity = positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY);
-    const exhausted = capacity !== null && stream.verifiedStorageSeconds > capacity * 60;
-    if (exhausted && record.status !== 'AUTO_CLOSED') {
-        console.warn(formatLog('provider_admission_closed', {
-            reason: 'stream_verified_storage', verifiedStorageSeconds: stream.verifiedStorageSeconds,
-            capacitySeconds: capacity * 60,
-        }));
-        return { ...record, stream, status: 'AUTO_CLOSED', closure: { code: 'provider_budget_or_inventory', observedAtMs: now } };
-    }
     return { ...record, stream };
 }
 
@@ -3778,7 +3850,14 @@ async function reopenAdmission(state: DurableObjectState, input: JsonObject): Pr
             reservations,
             daily: record.daily,
             monthly: record.monthly,
-            ...(record.stream ? { stream: record.stream } : {}),
+            // An operator reopen restarts the informational counter from Stream's last reported usage.
+            ...(record.stream ? {
+                stream: {
+                    ...record.stream,
+                    verifiedStorageSeconds: record.stream.storageMinutesUsed !== undefined
+                        ? Math.round(record.stream.storageMinutesUsed * 60) : 0,
+                },
+            } : {}),
         } satisfies AdmissionRecord);
         await transaction.put(auditKey, {
             schema: 'youtick.livepeer-admission-reopen.v1',
@@ -6040,6 +6119,10 @@ export async function forwardProviderWebhook(
                     generation: route.generation,
                     enqueued_at_ms: String(Date.now()),
                     raw_body_base64: bytesToBase64(rawBody),
+                    ...(kind === 'stream' ? {
+                        provider: 'stream' as const,
+                        ...(event ? { signed_time_ms: String(event.timestampMs) } : {}),
+                    } : {}),
                 } satisfies LivepeerWebhookQueueMessage, { contentType: 'json' });
             } catch {
                 throw new Error('webhook_queue_unavailable');
@@ -6084,7 +6167,13 @@ function parseLivepeerWebhookQueueMessage(value: unknown): LivepeerWebhookQueueM
         'generation',
         'enqueued_at_ms',
         'raw_body_base64',
+        ...['provider', 'signed_time_ms'].filter((key) => input[key] !== undefined),
     ], 'invalid_webhook');
+    if ((input.provider !== undefined && input.provider !== 'stream')
+        || (input.signed_time_ms !== undefined
+            && (typeof input.signed_time_ms !== 'string' || !/^[1-9][0-9]{0,15}$/.test(input.signed_time_ms)))) {
+        throw new Error('invalid_webhook');
+    }
     const maxEncodedBodyLength = Math.ceil(MAX_CONTROL_BODY_BYTES / 3) * 4;
     if (input.schema !== 'youtick.livepeer-webhook-queue.v1'
         || !['testnet', 'mainnet'].includes(String(input.network))
@@ -6888,9 +6977,8 @@ function streamProvider(env: Env): CloudflareStreamProvider {
         webhookSecrets: [env.STREAM_WEBHOOK_SECRET, env.STREAM_WEBHOOK_SECRET_PREVIOUS],
         webhookToleranceMs: WEBHOOK_TOLERANCE_MS,
         maxDurationSeconds: streamMaxDurationSeconds(env) ?? undefined,
-        requireEndList: env.STREAM_REQUIRE_END_LIST !== 'false',
-        readySegmentProbe: env.STREAM_READY_SEGMENT_PROBE_ENABLED === 'true',
-        readyPendingWindowMs: streamStuckTimeoutMs(env) ?? STREAM_DEFAULT_STUCK_TIMEOUT_MS,
+        // A ready webhook may precede the ladder by a long transcode: never shorter than 60 minutes.
+        readyPendingWindowMs: Math.max(streamStuckTimeoutMs(env) ?? STREAM_DEFAULT_STUCK_TIMEOUT_MS, STREAM_MIN_READY_PENDING_MS),
         verificationTokenTtlSeconds: PLAYBACK_MIN_TTL_SECONDS,
         sha256: sha256Hex,
         isValidJobId: (jobId) => JOB_ID_PATTERN.test(jobId),
@@ -7164,7 +7252,17 @@ async function issueTicketPlaybackToken(request: Request, env: Env): Promise<Res
         }
         // The publication read above carries the profile hash that selects the media adapter.
         const profileConfigSha256 = publicationProfileHash(publication.value);
-        const provider = await verifyStatelessProviderPolicy(env, decision.playbackId, profileConfigSha256);
+        // Same 30-second provider-policy cache as /v2 (Studio keys are shared with /v2; Stream keys are namespaced).
+        const providerCacheKey = await playbackCacheKey(
+            env,
+            'provider-policy',
+            mediaProfileFamily(profileConfigSha256) === 'stream' ? `stream:${decision.playbackId}` : decision.playbackId,
+        );
+        let provider = playbackCacheGet<{ previewVttUrl?: string }>(providerCacheKey);
+        if (!provider) {
+            provider = await verifyStatelessProviderPolicy(env, decision.playbackId, profileConfigSha256);
+            playbackCachePut(providerCacheKey, provider, Date.now() + PROVIDER_POLICY_CACHE_MS);
+        }
         const nowMs = Date.now();
         const deviceRemainingSeconds = Math.floor((decision.deviceExpiresAtMs - nowMs) / 1000);
         if (deviceRemainingSeconds < 1) throw new Error('playback_denied');
@@ -8713,10 +8811,17 @@ function validStreamConfig(env: Env): boolean {
         && env.STREAM_WEBHOOK_SECRET.length >= 16
         && (env.STREAM_WEBHOOK_SECRET_PREVIOUS === undefined || env.STREAM_WEBHOOK_SECRET_PREVIOUS === ''
             || env.STREAM_WEBHOOK_SECRET_PREVIOUS.length >= 16)
-        && streamMaxDurationSeconds(env) !== null
-        && positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY) !== null
-        && positiveIntegerVar(env.STREAM_RESERVATION_SECONDS_BUDGET) !== null
+        && streamLimitsConsistent(env)
         && streamStuckTimeoutMs(env) !== null;
+}
+
+// The budget and the capacity must each fit at least one upload at the cap (the release tooling
+// refuses the same combination with stream_limits_inconsistent).
+function streamLimitsConsistent(env: Env): boolean {
+    const cap = streamMaxDurationSeconds(env);
+    const capacity = positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY);
+    const budget = positiveIntegerVar(env.STREAM_RESERVATION_SECONDS_BUDGET);
+    return cap !== null && capacity !== null && budget !== null && budget >= cap && capacity * 60 >= cap;
 }
 
 // Validators are evaluated per active adapter: Studio unless Market V2 runs Stream-only, Stream

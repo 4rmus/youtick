@@ -133,6 +133,13 @@ describe('/v3/playback-tokens on a Stream publication', () => {
         expect((await outage.call()).status).toBe(503);
     });
 
+    it('reuses the 30-second provider-policy cache across tokens', async () => {
+        const run = await v3();
+        expect((await run.call()).status).toBe(200);
+        expect((await run.call()).status).toBe(200);
+        expect(run.backend.calls.filter((call) => call.url === `${API}/${V.UID}`)).toHaveLength(1);
+    });
+
     it('fails closed for a Studio publication on a Stream-only Market V2', async () => {
         const run = await v3({ hash: STUDIO_HASH });
         const response = await run.call();
@@ -161,6 +168,17 @@ describe('/__health with the Stream adapter', () => {
         expect(await accepted.json()).toEqual({ accepted: true, ignored: true });
         const forged = await handler.fetch(await signedStreamWebhook(canary, { secret: 'wrong-secret-wrong-secret' }), env);
         expect(forged.status).toBe(403);
+        // An authentic delivery whose body does not parse is still accepted and counted.
+        const garbled = await signedStreamWebhook(canary);
+        const garbledBody = (await garbled.clone().text()).slice(0, -1);
+        const time = (garbled.headers.get('Webhook-Signature') || '').split(',')[0].slice(5);
+        const key = await crypto.subtle.importKey('raw', new TextEncoder().encode('test-stream-webhook-secret'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+        const sig = Array.from(new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${time}.${garbledBody}`))), (b) => b.toString(16).padStart(2, '0')).join('');
+        const unparsable = await handler.fetch(new Request('https://bridge.youtick.net/v1/stream-webhooks', {
+            method: 'POST', headers: { 'Webhook-Signature': `time=${time},sig1=${sig}` }, body: garbledBody,
+        }), env);
+        expect(unparsable.status).toBe(202);
+        expect(await unparsable.json()).toEqual({ accepted: true, ignored: true });
 
         const response = await handler.fetch(new Request('https://bridge.test/__health'), env);
         const health = await response.json() as Record<string, any>;
@@ -172,7 +190,7 @@ describe('/__health with the Stream adapter', () => {
             mediaProvider: { kind: 'stream' },
         });
         expect(Object.keys(health.stream).sort()).toEqual([
-            'lastWebhookAtMs', 'openReservedSeconds', 'reservationBudgetSeconds',
+            'lastStuckAtMs', 'lastWebhookAtMs', 'openReservedSeconds', 'reservationBudgetSeconds',
             'storageMinutesCapacity', 'storageMinutesUsed', 'stuckProcessingJobs',
         ]);
         expect(health.stream).toMatchObject({
@@ -203,10 +221,7 @@ describe('/__health with the Stream adapter', () => {
         expect(response.status).toBe(200);
         const health = await response.json() as Record<string, any>;
         expect(health.streamConfigured).toBe(false);
-        expect(health.stream).toEqual({
-            openReservedSeconds: null, reservationBudgetSeconds: null, storageMinutesUsed: null,
-            storageMinutesCapacity: null, lastWebhookAtMs: null, stuckProcessingJobs: null,
-        });
+        expect(health).not.toHaveProperty('stream');
         // A full Stream config with the flag off is still not "configured".
         const flagOff = await (await handler.fetch(new Request('https://bridge.test/__health'), {
             ...base, MEDIA_PROVIDER_STREAM_ENABLED: 'false',

@@ -9,6 +9,7 @@ import {
     createStreamKeys,
     finalJobRpc,
     internalStreamWebhook,
+    signedStreamWebhook,
     streamBackend,
     streamEnv,
     streamIntentRequest,
@@ -123,26 +124,47 @@ describe('Stream admission: reservation budget and storage headroom', () => {
         expect(await status.json()).toMatchObject({ openReservedSeconds: 0, reservationBudgetSeconds: 7200, storageMinutesCapacity: 1000 });
     });
 
-    it('auto-closes admission when verified Stream storage exceeds the capacity', async () => {
-        const run = await wired({ env: { STREAM_STORAGE_MINUTES_CAPACITY: '2' } });
-        await seedReservation(run);
-        await run.admission.fetch(admissionRequest('mark', { jobId: 'job-001', generation: 1, state: 'READY_VERIFIED', durationSeconds: 121 }));
-        expect(run.admissionRecord()).toMatchObject({
-            status: 'AUTO_CLOSED', closure: { code: 'provider_budget_or_inventory' },
-            stream: { verifiedStorageSeconds: 121 },
-        });
-        const next = await run.admission.fetch(admissionRequest('reserve', candidate('job-002', 'other.testnet', { reservedSeconds: 60 })));
-        expect(next.status).toBe(503);
+    it('never closes admission on the informational verified-storage counter, and a reopen resets it', async () => {
+        const run = await wired({ env: { STREAM_STORAGE_MINUTES_CAPACITY: '120', STREAM_MAX_DURATION_SECONDS: '60', STREAM_RESERVATION_SECONDS_BUDGET: '7200' } });
+        expect((await run.admission.fetch(admissionRequest('reserve', candidate('job-001', CREATOR, { reservedSeconds: 60, storageMinutesUsed: 5 })))).status).toBe(200);
+        await run.admission.fetch(admissionRequest('mark', { jobId: 'job-001', generation: 1, state: 'READY_VERIFIED', durationSeconds: 9000 }));
+        expect(run.admissionRecord()).toMatchObject({ status: 'OPEN', stream: { verifiedStorageSeconds: 9000 } });
+        expect((await run.admission.fetch(admissionRequest('reserve', candidate('job-002', 'other.testnet', { reservedSeconds: 60 })))).status).toBe(200);
+        // Any operator reopen restarts the counter from Stream's last reported usage (5 minutes).
+        const record = run.admissionRecord()!;
+        run.admissionState.values.set('admission:v1', { ...record, status: 'AUTO_CLOSED', closure: { code: 'provider_unavailable', observedAtMs: 1 } });
+        const reopened = await run.admission.fetch(admissionRequest('reopen', {
+            idempotencyKey: 'reopen-1', operatorId: 'paid-media-operator', closureCode: 'provider_unavailable',
+            closureObservedAtMs: 1, incidentId: 'incident-1', evidenceSha256: 'e'.repeat(64),
+            resolutionCode: 'INVENTORY_RECONCILED', jobId: null, generation: null,
+        }));
+        expect(reopened.status).toBe(201);
+        expect(run.admissionRecord()).toMatchObject({ status: 'OPEN', stream: { verifiedStorageSeconds: 300 } });
+    });
+
+    it('counts our own open reservations and Stream\'s reported limit in the headroom, serialized with the budget', async () => {
+        const run = await wired({ env: { STREAM_MAX_DURATION_SECONDS: '600', STREAM_RESERVATION_SECONDS_BUDGET: '7200' } });
+        // 980 used + 0 open + 10 cap = 990 <= min(1000, 1000)
+        expect((await run.admission.fetch(admissionRequest('reserve', candidate('job-001', CREATOR, { reservedSeconds: 600, storageMinutesUsed: 980, storageMinutesLimit: 1000 })))).status).toBe(200);
+        // 980 used + 10 open + 10 cap = 1000 <= 1000
+        expect((await run.admission.fetch(admissionRequest('reserve', candidate('job-002', 'other.testnet', { reservedSeconds: 600, storageMinutesUsed: 980 })))).status).toBe(200);
+        await run.admission.fetch(admissionRequest('mark', { jobId: 'job-002', generation: 1, state: 'PROVIDER_FAILED' }));
+        // Stream's own lower limit wins over the configured capacity.
+        const limited = await run.admission.fetch(admissionRequest('reserve', candidate('job-003', 'third.testnet', { reservedSeconds: 600, storageMinutesUsed: 980, storageMinutesLimit: 995 })));
+        expect(limited.status).toBe(503);
+        expect(await limited.json()).toEqual({ error: 'provider_admission_closed' });
+        expect(run.admissionRecord()!.status).toBe('OPEN');
     });
 
     it('refuses a Stream intent with provider_admission_closed when storage headroom is below the cap', async () => {
         const run = await wired({ backend: { storageMinutes: 881 } });
+        // 881 used + 120 cap minutes > 1000: refused inside the admission object, no Stream creation.
         const response = await run.control.fetch(await streamIntentRequest(keys));
         expect(response.status).toBe(503);
         expect(await response.json()).toEqual({ error: 'provider_admission_closed' });
         expect(run.job()).toMatchObject({ state: 'AUTHORIZED', provider: 'stream' });
         expect(run.calls((call) => call.method === 'POST' && call.url.endsWith('?direct_user=true'))).toHaveLength(0);
-        expect(run.admissionRecord()).toBeUndefined();
+        expect(run.admissionRecord()?.stream?.openReservedSeconds ?? 0).toBe(0);
     });
 
     it('admits a Stream intent with headroom, books the cap and records the observed usage', async () => {
@@ -173,19 +195,62 @@ describe('Stream lifecycle: bounded poll and deletion', () => {
         expect(run.jobState.alarms.at(-1)).toBe(now + 60_000);
     });
 
-    it('fails a job stuck inprogress at 0% beyond STREAM_STUCK_TIMEOUT_MS and deletes it once', async () => {
+    it('fails a job whose progress has not moved for STREAM_STUCK_TIMEOUT_MS, after one confirming read, and deletes it once', async () => {
+        const stalledSince = Date.now() - 900_001;
         const run = await wired({
             env: { STREAM_STUCK_TIMEOUT_MS: '900000' },
-            job: { state: 'PROCESSING', stateChangedAtMs: Date.now() - 900_001 },
+            job: { state: 'PROCESSING', stateChangedAtMs: stalledSince, streamProgress: { state: 'inprogress', pctComplete: 0, changedAtMs: stalledSince } },
             backend: { video: await streamVideo('video-inprogress-lagging.json') },
         });
         await seedReservation(run);
         await run.control.alarm();
         expect(run.job()).toMatchObject({ state: 'PROVIDER_FAILED', providerDelete: { outcome: 'DELETED' } });
+        expect(run.calls(isVideoGet)).toHaveLength(2);
         expect(run.calls(isDelete)).toHaveLength(1);
-        expect(run.admissionRecord()!.stream).toMatchObject({ openReservedSeconds: 0, stuckProcessingJobs: 1 });
+        const status = await (await run.admission.fetch(new Request('https://object/internal/admission/stream-status'))).json() as Record<string, unknown>;
+        expect(status).toMatchObject({ openReservedSeconds: 0, stuckProcessingJobs: 1, lastStuckAtMs: expect.any(Number) });
         await run.control.alarm();
         expect(run.calls(isDelete)).toHaveLength(1);
+        // A gauge: a stuck termination older than 24 h no longer counts.
+        vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 24 * 60 * 60 * 1000 + 1);
+        expect(await (await run.admission.fetch(new Request('https://object/internal/admission/stream-status'))).json()).toMatchObject({ stuckProcessingJobs: 0 });
+    });
+
+    it('does not fail a long-processing job whose progress moved, nor one the confirming read shows moving', async () => {
+        const long = Date.now() - 3_600_000;
+        const moving = await wired({
+            env: { STREAM_STUCK_TIMEOUT_MS: '900000' },
+            job: { state: 'PROCESSING', stateChangedAtMs: long, streamProgress: { state: 'inprogress', pctComplete: 5, changedAtMs: long } },
+            backend: { video: await streamVideo('video-inprogress.json') },
+        });
+        await moving.control.alarm();
+        expect(moving.job()).toMatchObject({ state: 'PROCESSING', streamProgress: { pctComplete: 12 } });
+        expect((moving.job().streamProgress as { changedAtMs: number }).changedAtMs).toBeGreaterThan(long);
+
+        const confirm = await wired({
+            env: { STREAM_STUCK_TIMEOUT_MS: '900000' },
+            job: { state: 'PROCESSING', stateChangedAtMs: long, streamProgress: { state: 'inprogress', pctComplete: 12, changedAtMs: long } },
+            backend: { video: await streamVideo('video-inprogress.json') },
+        });
+        const original = confirm.backend.fetch;
+        let reads = 0;
+        vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+            if (String(input) === `${API}/${V.UID}` && (init?.method ?? 'GET') === 'GET' && reads++ === 1) {
+                return Response.json({ result: await streamVideo('video-inprogress.json', { status: { state: 'inprogress', pctComplete: '40.000000', errorReasonCode: '' } }) });
+            }
+            return original(input, init);
+        });
+        await confirm.control.alarm();
+        expect(confirm.job()).toMatchObject({ state: 'PROCESSING', streamProgress: { pctComplete: 40 } });
+        expect(confirm.calls(isDelete)).toHaveLength(0);
+    });
+
+    it('records progress from inprogress webhooks', async () => {
+        const run = await wired({ job: { state: 'PROCESSING' } });
+        await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-inprogress.json', {
+            status: { state: 'inprogress', pctComplete: '55.000000', errorReasonCode: '' },
+        })));
+        expect(run.job()).toMatchObject({ streamProgress: { state: 'inprogress', pctComplete: 55 } });
     });
 
     it('keeps polling a slow job that is making progress', async () => {
@@ -292,6 +357,73 @@ describe('Stream lifecycle: bounded poll and deletion', () => {
         for (let index = 0; index < 256; index += 1) run.admissionState.values.set(`filler:${index}`, index);
         const response = await run.admission.fetch(admissionRequest('stream-signal', { lastWebhookAtMs: Date.now() }));
         expect(await response.json()).toEqual({ error: 'durable_object_record_limit' });
+    });
+});
+
+describe('Stream review fixes: expiry exits, Queue envelope, limits', () => {
+    it('routes a job-deadline expiry of a Stream job through the UID delete', async () => {
+        const run = await wired({ job: { state: 'PROCESSING', absoluteDeadlineAtMs: Date.now() - 1 } });
+        await seedReservation(run);
+        const response = await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-inprogress.json')));
+        expect(await response.json()).toEqual({ accepted: true, expired: true });
+        expect(run.job()).toMatchObject({ state: 'UPLOAD_EXPIRED', providerDelete: { outcome: 'DELETED' } });
+        expect(run.calls(isDelete)).toHaveLength(1);
+    });
+
+    it('carries the adapter and the signed time through the Queue so a Stream body is never parsed as Studio', async () => {
+        const sent: unknown[] = [];
+        const jobRequests: Request[] = [];
+        const jobs = new Map([[`job:testnet:${'paid-media-livepeer-v1.testnet'}:job-001:1`, {
+            fetch: async (request: Request) => {
+                jobRequests.push(request.clone());
+                // No job record yet: the job object must still parse the body with the Stream adapter.
+                return new LivepeerControl(createState().state, env).fetch(request);
+            },
+        }]]);
+        const { namespace } = controlNamespace({ jobs });
+        const env = streamEnv(keys, {
+            LIVEPEER_CONTROL: namespace,
+            LIVEPEER_WEBHOOK_QUEUE_ENABLED: 'true',
+            LIVEPEER_EVENTS: { send: async (message: unknown) => { sent.push(message); } } as unknown as Queue,
+            LIVEPEER_WEBHOOK_QUEUE_BATCH_SIZE: '10',
+            LIVEPEER_WEBHOOK_QUEUE_BATCH_TIMEOUT_SECONDS: '5',
+            LIVEPEER_WEBHOOK_QUEUE_MAX_RETRIES: '3',
+            LIVEPEER_WEBHOOK_QUEUE_MAX_CONCURRENCY: '1',
+            LIVEPEER_WEBHOOK_QUEUE_RETENTION_SECONDS: '345600',
+            LIVEPEER_WEBHOOK_QUEUE_DLQ: 'youtick-livepeer-events-dlq-testnet',
+        });
+        const backend = await streamBackend(keys);
+        vi.stubGlobal('fetch', backend.fetch);
+        const time = Math.floor(Date.now() / 1000);
+        const response = await handler.fetch(await signedStreamWebhook(await streamVideo('webhook-ready.json'), { timeSeconds: time }), env);
+        expect(response.status).toBe(202);
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({ schema: 'youtick.livepeer-webhook-queue.v1', provider: 'stream', signed_time_ms: String(time * 1000) });
+        const ack = vi.fn();
+        const retry = vi.fn();
+        await handler.queue({ messages: [{ body: sent[0], ack, retry }] } as unknown as MessageBatch<unknown>, env);
+        expect(ack).toHaveBeenCalledOnce();
+        expect(retry).not.toHaveBeenCalled();
+        expect(jobRequests[0].headers.get('X-YouTick-Provider')).toBe('stream');
+        expect(jobRequests[0].headers.get('X-YouTick-Webhook-Time')).toBe(String(time * 1000));
+        // A malformed optional field is a poison message (ACKed, never delivered).
+        const poison = vi.fn();
+        await handler.queue({ messages: [{ body: { ...(sent[0] as object), provider: 'studio' }, ack: poison, retry }] } as unknown as MessageBatch<unknown>, env);
+        expect(poison).toHaveBeenCalledOnce();
+        expect(jobRequests).toHaveLength(1);
+    });
+
+    it.each([
+        ['a reservation budget below the cap', { STREAM_RESERVATION_SECONDS_BUDGET: '7199' }],
+        ['a capacity below one cap', { STREAM_STORAGE_MINUTES_CAPACITY: '119' }],
+    ])('treats %s as not configured', async (_case, overrides) => {
+        const env = streamEnv(keys, overrides as Partial<Env>);
+        const health = await (await handler.fetch(new Request('https://bridge.test/__health'), env)).json() as Record<string, unknown>;
+        expect(health.streamConfigured).toBe(false);
+        const consistent = await (await handler.fetch(new Request('https://bridge.test/__health'), streamEnv(keys, {
+            STREAM_STORAGE_MINUTES_CAPACITY: '120', STREAM_RESERVATION_SECONDS_BUDGET: '7200',
+        }))).json() as Record<string, unknown>;
+        expect(consistent.streamConfigured).toBe(true);
     });
 });
 

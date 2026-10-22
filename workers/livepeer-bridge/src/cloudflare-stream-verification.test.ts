@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LivepeerControl, type Env } from './index';
 import { STREAM_PROFILE_HASH } from './media-provider';
 import { STREAM_TEST_VALUES as V } from './stream-test-fixtures';
+import { STREAM_READY_SEGMENT_PROBE, STREAM_REQUIRE_END_LIST } from './cloudflare-stream-verification';
 import {
     API,
     DELIVERY_HOST,
@@ -114,12 +115,13 @@ describe('Stream readiness (option A)', () => {
         }
     });
 
-    it('reads one signed segment byte at readiness only behind the default-off switch', async () => {
-        const run = await runtime({ env: { STREAM_READY_SEGMENT_PROBE_ENABLED: 'true' } });
+    it('never reads a signed segment, even at readiness (the probe is a constant false)', async () => {
+        expect(STREAM_READY_SEGMENT_PROBE).toBe(false);
+        expect(STREAM_REQUIRE_END_LIST).toBe(true);
+        const run = await runtime();
         expect((await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')))).status).toBe(200);
         const signed = run.calls((call) => deliveryPath(call)?.startsWith('video/') === true && new URL(call.url).searchParams.has('p'));
-        expect(signed).toHaveLength(1);
-        expect(signed[0].headers.get('Range')).toBe('bytes=0-0');
+        expect(signed).toHaveLength(0);
     });
 
     it('verifies the dashboard-recorded ladder without an audio group', async () => {
@@ -203,8 +205,11 @@ describe('Stream readiness (option A)', () => {
         expect(run.finalizeCalls()).toHaveLength(0);
     });
 
-    it('fails closed on a refusal other than the recorded status', async () => {
-        const run = await runtime({ backend: { anonymousOverride: { iframe: 403 } } });
+    it('accepts 403 as a refusal and fails closed on any other status', async () => {
+        const accepted = await runtime({ backend: { anonymousOverride: { iframe: 403, 'manifest/video.m3u8': 403 } } });
+        expect((await accepted.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')))).status).toBe(200);
+        vi.unstubAllGlobals();
+        const run = await runtime({ backend: { anonymousOverride: { iframe: 404 } } });
         const response = await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')));
         expect(await response.json()).toEqual({ error: 'provider_playback_mismatch' });
     });
@@ -222,8 +227,11 @@ describe('Stream readiness (option A)', () => {
         const run = await runtime({ backend: { ladder: 'partial', video: await streamVideo('video-ready-33.json') } });
         await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')));
         expect(run.job()).toHaveProperty('providerVerification');
-        // The harness sets STREAM_STUCK_TIMEOUT_MS to 30 minutes; the pending window is bounded by it.
-        vi.spyOn(Date, 'now').mockImplementation(() => now + 30 * 60 * 1000 + 1);
+        // The pending window is max(STREAM_STUCK_TIMEOUT_MS, 60 minutes).
+        vi.spyOn(Date, 'now').mockImplementation(() => now + 59 * 60 * 1000);
+        await run.control.alarm();
+        expect(run.job()).toHaveProperty('providerVerification');
+        vi.spyOn(Date, 'now').mockImplementation(() => now + 60 * 60 * 1000 + 1);
         await expect(run.control.alarm()).rejects.toThrow('provider_verification_incomplete');
         expect(run.job()).not.toHaveProperty('providerVerification');
         expect(run.job().state).toBe('UPLOAD_READY');

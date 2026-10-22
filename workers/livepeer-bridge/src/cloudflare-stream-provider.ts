@@ -47,6 +47,13 @@ export const STREAM_TUS_URL_LIFETIME_MS = 24 * 60 * 60 * 1000;
 /** Stream accepts token lifetimes up to 24 hours (docs 4). */
 export const STREAM_MAX_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 export const STREAM_COVER_TOKEN_TTL_SECONDS = 120;
+/**
+ * tus `expiry` for a direct creator upload: creation + 6 h, Stream's documented maximum, never the
+ * admission lease (heartbeats renew our lease, not Stream's expiry). M0-P3 (U25) may show that
+ * `expiry` does not shorten the reservation at all; the field is then dropped. Abandoned uploads
+ * are reclaimed by the lease lapse in the job alarm (UPLOAD_EXPIRED + DELETE).
+ */
+export const STREAM_UPLOAD_EXPIRY_MS = 6 * 60 * 60 * 1000;
 
 export const STREAM_CAPABILITIES: MediaProviderCapabilities = Object.freeze({
     storyboard: false,
@@ -68,10 +75,6 @@ export type CloudflareStreamOptions = {
     webhookSecrets: readonly (string | undefined)[];
     webhookToleranceMs: number;
     maxDurationSeconds?: number;
-    /** M0-P1: whether every variant playlist must carry #EXT-X-ENDLIST at readiness. */
-    requireEndList: boolean;
-    /** One authorized `Range: bytes=0-0` segment read at readiness; off by default. */
-    readySegmentProbe: boolean;
     /** Pending window for a ready webhook that precedes the full ladder. */
     readyPendingWindowMs: number;
     verificationTokenTtlSeconds: number;
@@ -137,11 +140,15 @@ export class CloudflareStreamProvider implements MediaProvider {
         } catch {
             throw new Error('provider_unavailable');
         }
-        if (await storageExhausted(response)) throw new Error('provider_admission_closed');
+        // Docs: 413 at upload-URL creation when storage is exhausted. TODO(M0-P3): pin the recorded
+        // error code; a 429 stays transient (provider_unavailable), never an admission latch.
+        if (response.status === 413) throw new Error('provider_admission_closed');
         if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
         const uid = response.headers.get('stream-media-id') || '';
         const location = response.headers.get('Location') || '';
         if (response.status !== 201 || !STREAM_UID_PATTERN.test(uid) || !isStreamTusEndpoint(location)) {
+            // A 201 with a known UID but an unusable Location still booked a reservation.
+            if (response.status === 201 && STREAM_UID_PATTERN.test(uid)) await this.deleteAsset(uid).catch(() => undefined);
             throw new Error('provider_create_ambiguous');
         }
         try {
@@ -158,13 +165,10 @@ export class CloudflareStreamProvider implements MediaProvider {
                 throw new Error('provider_create_ambiguous');
             }
         } catch (error) {
+            // A booked reservation must not outlive a refused or unverifiable creation.
+            await this.deleteAsset(uid).catch(() => undefined);
             const code = error instanceof Error ? error.message : '';
-            if (code !== 'provider_unavailable') {
-                // A booked reservation must not outlive a refused creation.
-                await this.deleteAsset(uid).catch(() => undefined);
-                throw new Error('provider_create_ambiguous');
-            }
-            throw error;
+            throw new Error(code === 'provider_unavailable' ? 'provider_unavailable' : 'provider_create_ambiguous');
         }
         return { assetId: uid, playbackId: uid, projectId: accountId, tusEndpoint: location };
     }
@@ -261,23 +265,27 @@ export class CloudflareStreamProvider implements MediaProvider {
         return verifyStreamReadyAsset(this, input);
     }
 
+    /** DELETE /stream/{uid}: 200 deleted, 404 missing; one retry on 429/5xx/network, then ambiguous. */
     async deleteAsset(assetId: string): Promise<'deleted' | 'missing'> {
         this.requireApi();
         if (!STREAM_UID_PATTERN.test(assetId)) throw new Error('provider_delete_ambiguous');
-        let response: Response;
-        try {
-            response = await dependencyFetch('stream_api', 'video_delete', `${this.apiBase()}/${assetId}`, {
-                method: 'DELETE',
-                headers: { Authorization: `Bearer ${this.options.apiToken}` },
-                redirect: 'manual',
-                signal: AbortSignal.timeout(10_000),
-            });
-        } catch {
-            throw new Error('provider_delete_ambiguous');
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            let response: Response;
+            try {
+                response = await dependencyFetch('stream_api', 'video_delete', `${this.apiBase()}/${assetId}`, {
+                    method: 'DELETE',
+                    headers: { Authorization: `Bearer ${this.options.apiToken}` },
+                    redirect: 'manual',
+                    signal: AbortSignal.timeout(10_000),
+                });
+            } catch {
+                continue;
+            }
+            await response.body?.cancel().catch(() => undefined);
+            if (response.status === 200 || response.status === 204) return 'deleted';
+            if (response.status === 404) return 'missing';
+            if (response.status !== 429 && response.status < 500) break;
         }
-        await response.body?.cancel().catch(() => undefined);
-        if (response.status === 200 || response.status === 204) return 'deleted';
-        if (response.status === 404) return 'missing';
         throw new Error('provider_delete_ambiguous');
     }
 
@@ -337,6 +345,7 @@ export class CloudflareStreamProvider implements MediaProvider {
         }
         const signed = concatBytes(new TextEncoder().encode(`${timeText}.`), rawBody);
         const secrets = this.options.webhookSecrets.filter((value): value is string => Boolean(value));
+        let authentic = false;
         for (const secret of secrets) {
             const key = await crypto.subtle.importKey(
                 'raw',
@@ -347,10 +356,18 @@ export class CloudflareStreamProvider implements MediaProvider {
             );
             const expected = new Uint8Array(await crypto.subtle.sign('HMAC', key, signed));
             if (signatures.some((signature) => constantTimeEqual(expected, hexDecode(signature)))) {
-                return this.parseWebhook(rawBody, { timestampMs: timeSeconds * 1_000 });
+                authentic = true;
+                break;
             }
         }
-        throw new Error('invalid_webhook_signature');
+        if (!authentic) throw new Error('invalid_webhook_signature');
+        // Authentic but unparsable is "not a lifecycle event" (null), never a signature failure.
+        try {
+            return await this.parseWebhook(rawBody, { timestampMs: timeSeconds * 1_000 });
+        } catch (error) {
+            if (error instanceof Error && error.message === 'invalid_webhook') return null;
+            throw error;
+        }
     }
 
     async parseWebhook(rawBody: Uint8Array, context?: WebhookParseContext): Promise<NormalizedWebhookEvent | null> {
@@ -378,6 +395,7 @@ export class CloudflareStreamProvider implements MediaProvider {
             phase: event.phase,
             timestampMs,
             ...(event.failureCode ? { failureCode: event.failureCode } : {}),
+            streamProgress: { state: video.state, pctComplete: Number.isFinite(video.pctComplete) ? video.pctComplete : 0 },
             digest: await this.options.sha256([
                 'youtick.stream-webhook.v1',
                 String(context?.timestampMs ?? ''),
@@ -474,21 +492,6 @@ export function streamUploadMetadata(input: CreateUploadInput, maxDurationSecond
     return entries
         .map(([key, value]) => value === null ? key : `${key} ${bytesToBase64(new TextEncoder().encode(value))}`)
         .join(',');
-}
-
-// Storage exhaustion at creation: 413, or a 429 whose body names storage or capacity (M0-P3
-// records the real body; a plain rate limit stays provider_unavailable).
-async function storageExhausted(response: Response): Promise<boolean> {
-    if (response.status === 413) return true;
-    if (response.status !== 429) return false;
-    try {
-        const body = requireObject(await response.clone().json(), 'x');
-        const messages = Array.isArray(body.errors) ? body.errors : [];
-        return messages.some((entry) => entry && typeof entry === 'object'
-            && /storage|capacity|quota|minutes/i.test(String((entry as JsonObject).message || '')));
-    } catch {
-        return false;
-    }
 }
 
 export function normalizeStreamVideo(value: unknown, isValidJobId: (value: string) => boolean): StreamVideo {

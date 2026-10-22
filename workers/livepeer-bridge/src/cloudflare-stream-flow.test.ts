@@ -72,7 +72,9 @@ describe('Stream intents: provider selection', () => {
         admission = new LivepeerControl(admissionState.state, env);
         const control = new LivepeerControl(jobState.state, env);
 
+        const before = Date.now();
         const response = await control.fetch(await streamIntentRequest(keys));
+        const after = Date.now();
         expect(response.status).toBe(201);
         const body = await response.json() as Record<string, unknown>;
         expect(body).toMatchObject({ schema: 'youtick.livepeer-upload-intent.v2', tus_endpoint: TUS_URL, created: true });
@@ -87,8 +89,11 @@ describe('Stream intents: provider selection', () => {
             const [key, value] = pair.split(' ');
             return [key, value === undefined ? null : atob(value)];
         }));
-        // The tus expiry is the admission lease deadline the job holds.
-        expect(Date.parse(String(metadata.expiry))).toBe(job.leaseExpiresAtMs);
+        // The tus expiry is creation + 6 h (Stream's maximum), never the 30-minute admission lease.
+        const expiry = Date.parse(String(metadata.expiry));
+        expect(expiry).toBeGreaterThanOrEqual(before + 6 * 60 * 60 * 1000);
+        expect(expiry).toBeLessThanOrEqual(after + 6 * 60 * 60 * 1000);
+        expect(expiry).toBeGreaterThan(Number(job.leaseExpiresAtMs));
         expect(metadata.maxDurationSeconds).toBe('7200');
         expect(backend.calls.some((call) => call.url.startsWith('https://livepeer.studio'))).toBe(false);
     });
