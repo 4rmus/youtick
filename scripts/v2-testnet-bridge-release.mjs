@@ -73,9 +73,9 @@ export const STREAM_SENTINELS = Object.freeze({
     signingKey: '<create-with-post-stream-keys>',
 });
 export const STREAM = Object.freeze({
-    // customer-<code>.cloudflarestream.com of the media account, read from the first upload's playback URL
-    // (the M0-P1 probe records it). Cloudflare does not document how to read it before an upload exists.
-    customerCode: STREAM_SENTINELS.customerCode,
+    // customer-<code>.cloudflarestream.com of the media account: read from the dashboard on 2026-10-22 (the first
+    // import's playback host; claudedocs/stream-m0-pano-kanitlari-2026-10-22.md). A public value, carried by the web build too.
+    customerCode: '7v4my51gigdqb5jn',
     // `id` of POST /accounts/{id}/stream/keys; the private `pem` goes to V2_STREAM_SIGNING_KEY_PEM.
     signingKeyId: STREAM_SENTINELS.signingKey,
     // Base64 of the SPKI PEM public half of that key (openssl pkey -pubout), committed like the other keys.

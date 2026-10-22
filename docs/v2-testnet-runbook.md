@@ -851,8 +851,8 @@ only webhook slot and deletes it at cleanup, which would remove the Bridge's web
    surviving). `V2_STREAM_WEBHOOK_SECRET_PREVIOUS` is optional and normally unset.
 4. **Customer code.** Already recorded: `7v4my51gigdqb5jn` (host
    `customer-7v4my51gigdqb5jn.cloudflarestream.com`, dashboard read of 2026-10-22,
-   `claudedocs/stream-m0-pano-kanitlari-2026-10-22.md`); commit it in `STREAM.customerCode`
-   (step 6). To read it again from any video of the media account:
+   `claudedocs/stream-m0-pano-kanitlari-2026-10-22.md`); committed in `STREAM.customerCode` on
+   2026-10-22 (nothing left to do in step 6 for it). To read it again from any video of the media account:
    `curl --fail -sS "https://api.cloudflare.com/client/v4/accounts/$STREAM_ACCOUNT_ID/stream?limit=1" -H "Authorization: Bearer $STREAM_API_TOKEN" | jq -r '.result[0].playback.hls' | sed -E 's#^https://customer-([a-z0-9]+)\.cloudflarestream\.com/.*#\1#'`.
    It is a public value (the web build carries it too).
 5. **Canary signing key and video ids** (for the M4-G2 canaries `playback` and `ladder`). Mint a
@@ -873,8 +873,8 @@ only webhook slot and deletes it at cleanup, which would remove the Bridge's web
    After the canaries, delete the key (`DELETE /stream/keys/<id>`) and the file. Then
    `unset STREAM_API_TOKEN`.
 6. **One-line commits** on the milestone branch (or the next PR), each a public value:
-   - `scripts/v2-testnet-bridge-release.mjs`, `STREAM.customerCode`: the step 4 code (replaces
-     `<record-after-first-upload>`).
+   - `scripts/v2-testnet-bridge-release.mjs`, `STREAM.customerCode`: done on 2026-10-22 (`7v4my51gigdqb5jn`);
+     the `<record-after-first-upload>` sentinel is only for a different media account.
    - same file, `STREAM.signingKeyId` and `STREAM.signingPublicKey` together: the step 2 id and
      base64 public half (replace `<create-with-post-stream-keys>`; one without the other fails
      `stream_signing_key_incomplete`).
