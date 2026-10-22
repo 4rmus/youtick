@@ -416,6 +416,30 @@ describe('stateless playback v2', () => {
         expect(dependencies.provider).toHaveBeenCalledOnce();
     });
 
+    it('keeps the v2 token response byte-identical across the provider boundary', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_600_000_000);
+        const { env } = await createEnv();
+        const signed = await playbackRequest();
+        const dependencies = playbackDependencies(signed);
+        dependencies.provider.mockImplementation(async () => Response.json({ type: 'vod', meta: {
+            playbackPolicy: { type: 'jwt' },
+            source: [{ type: 'text/vtt', url: 'https://livepeercdn.com/asset/fixture/thumbnails.vtt' }],
+        } }));
+        vi.stubGlobal('fetch', dependencies.fetcher);
+
+        const response = await handler.fetch(signed.request, env);
+
+        expect(response.status).toBe(200);
+        expect(boundaryTokenSnapshot(await response.text(), env.LIVEPEER_JWT_PUBLIC_KEY!)).toMatchInlineSnapshot(`
+          {
+            "body": "{"schema":"youtick.livepeer-playback-token.v2","playback_id":"playback_001","token":"<token>","expires_at_ms":"1785600180000","hls_url":"https://playback.livepeer.studio/asset/hls/playback_001/index.m3u8","preview_vtt_url":"https://livepeercdn.com/asset/fixture/thumbnails.vtt"}",
+            "claims": "{"action":"pull","iss":"https://youtick.net","pub":"<LIVEPEER_JWT_PUBLIC_KEY>","sub":"playback_001","video":"none","exp":1785600180,"iat":1785600000}",
+            "header": "{"alg":"ES256","typ":"JWT"}",
+            "signatureLength": 86,
+          }
+        `);
+    });
+
     it('counts the beta policy read for initial, cached and fresh renewal requests', async () => {
         let now = Date.now();
         vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -901,3 +925,17 @@ describe('Market-backed 30-day playback devices', () => {
         expect((await handler.fetch(await signed.renew(changes, proofChanges), env)).status).toBeGreaterThanOrEqual(400);
     });
 });
+
+// Provider-boundary snapshot (M1): the JSON bytes, key order and JWT claims must not move.
+function boundaryTokenSnapshot(raw: string, publicKey: string) {
+    const body = JSON.parse(raw) as Record<string, unknown>;
+    const [header, payload, signature] = String(body.token).split('.');
+    const claims = decodePart(payload);
+    expect(claims.pub).toBe(publicKey);
+    return {
+        body: raw.replace(String(body.token), '<token>'),
+        header: JSON.stringify(decodePart(header)),
+        claims: JSON.stringify({ ...claims, pub: '<LIVEPEER_JWT_PUBLIC_KEY>' }),
+        signatureLength: signature.length,
+    };
+}

@@ -573,6 +573,27 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(objectFetch).toHaveBeenCalledTimes(2);
     });
 
+    it('forwards the exact raw body with the internal provider header and reports the Studio adapter', async () => {
+        const objectFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true }));
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'id' })),
+                get: vi.fn(() => ({ fetch: objectFetch })),
+            } as unknown as DurableObjectNamespace,
+        });
+        const signed = await signedWebhookRequest(webhook());
+        const raw = await signed.clone().text();
+
+        const response = await handler.fetch(signed, env);
+
+        expect(response.status).toBe(200);
+        const forwarded = objectFetch.mock.calls[0][0];
+        expect(forwarded.headers.get('X-YouTick-Provider')).toBe('studio');
+        expect(await forwarded.text()).toBe(raw);
+        const health = await handler.fetch(new Request('https://bridge.youtick.net/__health'), env);
+        expect(await health.json()).toMatchObject({ mediaProvider: { kind: 'studio' } });
+    });
+
     it.each([
         ['public-testnet', '86400', true],
         ['public-testnet', '345600', false],
@@ -1893,6 +1914,145 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(operatorFetch.mock.calls.filter(([request]) => (
             new URL(request.url).pathname === '/internal/finalize'
         ))).toHaveLength(1);
+    });
+
+    it('keeps the Studio FinalizePublication, dedup record and probe trace byte-identical', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_600_000_000);
+        const testState = createState();
+        testState.values.set('job:v1', jobRecord());
+        const operatorFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true, finalized: true }));
+        const env = createEnv({
+            ...await thumbnailPlaybackEnv(),
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'operator-id' })),
+                get: vi.fn(() => ({ fetch: operatorFetch })),
+            } as unknown as DurableObjectNamespace,
+        });
+        const control = new LivepeerControl(testState.state, env);
+        const vtt = `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/thumbnails/thumbnails.vtt`;
+        const playback = providerPlayback({ source: [
+            { type: 'html5/application/vnd.apple.mpegurl', url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/index.m3u8` },
+            { type: 'html5/application/vnd.apple.mpegurl', url: 'https://livepeercdn.studio/recordings/recording-001/index.m3u8' },
+            {
+                type: 'html5/video/mp4',
+                url: `https://asset-cdn.lp-playback.studio/hls/${PLAYBACK_ID}/static720p0.mp4`,
+                width: 1280,
+                height: 720,
+                bitrate: 3_000_000,
+            },
+            {
+                type: 'html5/video/mp4',
+                url: 'https://asset-cdn.lp-playback.com/hls/recording-001/static360p0.mp4',
+                width: 640,
+                height: 360,
+                bitrate: 449_890,
+            },
+            { type: 'text/vtt', url: vtt },
+        ] });
+        const providerFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes(`/asset/${ASSET_ID}`)) return Response.json(providerAsset());
+            if (url.includes(`/playback/${PLAYBACK_ID}`)) return Response.json(playback);
+            if (url === vtt && new Headers(init?.headers).has('Livepeer-Jwt')) {
+                return new Response(THUMBNAIL_VTT, { status: 200 });
+            }
+            return privateHls(url, init) ?? new Response(null, { status: 403 });
+        });
+        vi.stubGlobal('fetch', providerFetch);
+
+        const response = await control.fetch(internalWebhookRequest());
+
+        expect(response.status).toBe(200);
+        const job = testState.values.get('job:v1') as { publication: unknown };
+        const dedup = [...testState.values.entries()].filter(([key]) => key.startsWith('webhook:'));
+        const finalize = await operatorFetch.mock.calls
+            .find(([request]) => new URL(request.url).pathname === '/internal/finalize')![0].text();
+        const trace = providerFetch.mock.calls.map(([input, init]) => {
+            const headers = [...new Headers((init as RequestInit | undefined)?.headers).entries()]
+                .map(([name, value]) => `${name}=${name === 'livepeer-jwt' && value.split('.').length === 3
+                    && !value.endsWith('.invalid') ? '<signed>' : name === 'authorization' ? '<api-key>' : value}`);
+            return [(init as RequestInit | undefined)?.method ?? 'GET', String(input),
+                (init as RequestInit | undefined)?.redirect ?? '', ...headers].join(' ');
+        });
+        expect({
+            publication: JSON.stringify(job.publication),
+            finalize,
+            dedup: JSON.stringify(dedup),
+            trace,
+        }).toMatchInlineSnapshot(`
+          {
+            "dedup": "[["webhook:5ac83ca7efb6c651843637fc7d5509a4a8b1db71cc5b038f644df102fbdee2e5",{"state":"VERIFIED","event":"asset.ready","assetId":"asset-123","phase":"ready","receivedAtMs":1785600000000}]]",
+            "finalize": "{"idempotencyKey":"job-001:1:finalize","payloadSha256":"ac3ac7099f83706e62d67122966a4413265163a70ba55327b23b369cc3af846f","submission":{"job_id":"job-001","generation":1,"creator_id":"creator.testnet","expected_source_bytes":"20000000","profile_id":"paid-media-livepeer-v1","profile_config_sha256":"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77","asset_id_hash":"9405eb20c177bd02bf72382adff4e7f593e69d75c7853111659e7329d44f3728","playback_id":"playback-123","project_id_hash":"dfd18fdad6a077e05afa1fdf03cec12748ba2d32f4ad76742f47db3046764544","verified_source_bytes":"20000000","provider_source_fingerprint":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","ready_at_ms":"1785589200000","availability":"ACTIVE"}}",
+            "publication": "{"job_id":"job-001","generation":1,"creator_id":"creator.testnet","expected_source_bytes":"20000000","profile_id":"paid-media-livepeer-v1","profile_config_sha256":"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77","asset_id_hash":"9405eb20c177bd02bf72382adff4e7f593e69d75c7853111659e7329d44f3728","playback_id":"playback-123","project_id_hash":"dfd18fdad6a077e05afa1fdf03cec12748ba2d32f4ad76742f47db3046764544","verified_source_bytes":"20000000","provider_source_fingerprint":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","ready_at_ms":"1785589200000","availability":"ACTIVE"}",
+            "trace": [
+              "GET https://livepeer.studio/api/asset/asset-123?details=true manual authorization=<api-key>",
+              "GET https://livepeer.studio/api/playback/playback-123 manual authorization=<api-key>",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/index.m3u8 manual",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/index.m3u8 manual livepeer-jwt=invalid.invalid.invalid",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3cm9uZyJ9.invalid",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjF9.invalid",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/index.m3u8 manual livepeer-jwt=<signed>",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/360/index.m3u8 manual",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/360/index.m3u8 manual livepeer-jwt=invalid.invalid.invalid",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/360/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3cm9uZyJ9.invalid",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/360/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjF9.invalid",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/360/index.m3u8 manual livepeer-jwt=<signed>",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/360/first.ts manual range=bytes=0-0",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/360/last.ts manual range=bytes=0-0",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/720/index.m3u8 manual",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/720/index.m3u8 manual livepeer-jwt=invalid.invalid.invalid",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/720/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3cm9uZyJ9.invalid",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/720/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjF9.invalid",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/720/index.m3u8 manual livepeer-jwt=<signed>",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/720/first.ts manual range=bytes=0-0",
+              "GET https://playback.livepeer.studio/asset/hls/playback-123/720/last.ts manual range=bytes=0-0",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/index.m3u8 manual",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/index.m3u8 manual livepeer-jwt=invalid.invalid.invalid",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3cm9uZyJ9.invalid",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjF9.invalid",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/index.m3u8 manual livepeer-jwt=<signed>",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/360/index.m3u8 manual",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/360/index.m3u8 manual livepeer-jwt=invalid.invalid.invalid",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/360/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3cm9uZyJ9.invalid",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/360/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjF9.invalid",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/360/index.m3u8 manual livepeer-jwt=<signed>",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/360/first.ts manual range=bytes=0-0",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/360/last.ts manual range=bytes=0-0",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/720/index.m3u8 manual",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/720/index.m3u8 manual livepeer-jwt=invalid.invalid.invalid",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/720/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3cm9uZyJ9.invalid",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/720/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjF9.invalid",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/720/index.m3u8 manual livepeer-jwt=<signed>",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/720/first.ts manual range=bytes=0-0",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/720/last.ts manual range=bytes=0-0",
+              "GET https://livepeercdn.studio/recordings/recording-001/index.m3u8 manual",
+              "GET https://livepeercdn.studio/recordings/recording-001/index.m3u8 manual livepeer-jwt=invalid.invalid.invalid",
+              "GET https://livepeercdn.studio/recordings/recording-001/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3cm9uZyJ9.invalid",
+              "GET https://livepeercdn.studio/recordings/recording-001/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjF9.invalid",
+              "GET https://livepeercdn.studio/recordings/recording-001/index.m3u8 manual livepeer-jwt=<signed>",
+              "GET https://livepeercdn.studio/recordings/recording-001/360/index.m3u8 manual",
+              "GET https://livepeercdn.studio/recordings/recording-001/360/index.m3u8 manual livepeer-jwt=invalid.invalid.invalid",
+              "GET https://livepeercdn.studio/recordings/recording-001/360/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3cm9uZyJ9.invalid",
+              "GET https://livepeercdn.studio/recordings/recording-001/360/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjF9.invalid",
+              "GET https://livepeercdn.studio/recordings/recording-001/360/index.m3u8 manual livepeer-jwt=<signed>",
+              "GET https://livepeercdn.studio/recordings/recording-001/360/first.ts manual range=bytes=0-0",
+              "GET https://livepeercdn.studio/recordings/recording-001/360/last.ts manual range=bytes=0-0",
+              "GET https://livepeercdn.studio/recordings/recording-001/720/index.m3u8 manual",
+              "GET https://livepeercdn.studio/recordings/recording-001/720/index.m3u8 manual livepeer-jwt=invalid.invalid.invalid",
+              "GET https://livepeercdn.studio/recordings/recording-001/720/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3cm9uZyJ9.invalid",
+              "GET https://livepeercdn.studio/recordings/recording-001/720/index.m3u8 manual livepeer-jwt=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjF9.invalid",
+              "GET https://livepeercdn.studio/recordings/recording-001/720/index.m3u8 manual livepeer-jwt=<signed>",
+              "GET https://livepeercdn.studio/recordings/recording-001/720/first.ts manual range=bytes=0-0",
+              "GET https://livepeercdn.studio/recordings/recording-001/720/last.ts manual range=bytes=0-0",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/static720p0.mp4 manual range=bytes=0-0",
+              "GET https://asset-cdn.lp-playback.com/hls/recording-001/static360p0.mp4 manual range=bytes=0-0",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/thumbnails/thumbnails.vtt manual range=bytes=0-0",
+              "GET https://livepeercdn.com/asset/playback-123/video manual range=bytes=0-0",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/thumbnails/thumbnails.vtt manual livepeer-jwt=<signed>",
+              "GET https://asset-cdn.lp-playback.studio/hls/playback-123/thumbnails/keyframes_0.jpg manual range=bytes=0-0",
+            ],
+          }
+        `);
     });
 
     it('accepts one concurrent ready-event verifier', async () => {

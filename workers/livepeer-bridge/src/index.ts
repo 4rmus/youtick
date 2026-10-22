@@ -15,28 +15,44 @@ import {
 } from 'near-api-js';
 import { deserialize } from 'borsh';
 import { verifyMessage as verifyNep413Message } from 'near-api-js/nep413';
-import type { CreateUploadResult, MediaSourceType, ProviderVerificationCheckpoint, ProviderPlayback } from './media-provider';
+import type {
+    CreateUploadResult,
+    MediaProvider,
+    MediaProviderKind,
+    MediaSourceType,
+    NormalizedWebhookEvent,
+    ProviderIdentityExpectation,
+    ProviderVerificationCheckpoint,
+    ProviderPlayback,
+    SourceBytesEvidence,
+} from './media-provider';
 import { canonicalPlaybackV3Message, decideTicketPlayback, parsePlaybackV3Body } from './playback-v3';
-import { MEDIA_SOURCE_FORMATS, supportedProfile } from './media-provider';
-import { LivepeerProvider } from './livepeer-provider';
+import {
+    MEDIA_PROVIDER_HEADER,
+    MEDIA_SOURCE_FORMATS,
+    mediaProviderKind,
+} from './media-provider';
+import { LivepeerProvider, livepeerSupportsProfile } from './livepeer-provider';
 import { dependencyFetch } from './dependency-fetch';
+import {
+    MAX_PUBLICATION_COVER_BYTES,
+    publicationCoverContentType,
+    type PublicationCoverContentType,
+} from './cover-image';
 import {
     assertDurableObjectRecordCapacity,
     DURABLE_OBJECT_MAX_PERSISTENT_RECORDS,
 } from './durable-object-capacity';
 import {
     MAX_PROVIDER_PLAYBACK_OUTPUTS,
-    firstVttThumbnailUrl,
-    validPlaybackUrl,
+    playbackUrlAllowed,
 } from './provider-verification';
 import {
-    parseWebhook,
-    providerPhase,
-    webhookAsset,
-    webhookDigest,
-    webhookRoute,
+    isProcessingEvent,
+    isProviderFailureEvent,
+    isReadinessEvent,
+    synthesizedProviderEvent,
 } from './provider-webhook';
-import type { WebhookEvent } from './provider-webhook';
 import { commitUploadJobArchive, type UploadJobArchive } from './upload-job-archive';
 import {
     commitOperatorOutboxArchive,
@@ -353,7 +369,10 @@ type JobRecord = {
     createdAtMs: number;
     stateChangedAtMs?: number;
     terminalAtMs?: number;
-    apiTokenName: string;
+    // Absent on every record written before the provider boundary: absent means 'studio'.
+    provider?: MediaProviderKind;
+    // Studio jobs always record the creating API token name; other adapters do not have one.
+    apiTokenName?: string;
     leaseId?: string;
     leaseExpiresAtMs?: number;
     assetId?: string;
@@ -362,6 +381,8 @@ type JobRecord = {
     tusEndpoint?: string;
     publication?: FinalizePublication;
     providerVerification?: ProviderVerificationCheckpoint;
+    // Persisted byte proof for adapters whose sourceBytesProof capability is 'tus-offset'.
+    sourceBytesEvidence?: SourceBytesEvidence;
     finalizeRetry?: {
         attempts: number;
         lastHttpStatus: number;
@@ -595,7 +616,6 @@ const MAINNET_USDC_CONTRACT_ID = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a3
 const SPONSOR_RELAY_KEY_PREFIX = 'sponsor-relay:';
 const SPONSOR_RELAYER_LAST_NONCE_KEY = 'sponsor-relayer:last-nonce';
 const LIVEPEER_TUS_CHUNK_BYTES = 32 * 1024 * 1024;
-const MAX_PUBLICATION_COVER_BYTES = 2 * 1024 * 1024;
 const PUBLICATION_COVER_CACHE_SECONDS = 24 * 60 * 60;
 // Bounds how long a takedown can leave a cover visible: the edge visibility marker plus the browser max-age.
 const PUBLICATION_COVER_VISIBLE_SECONDS = 30;
@@ -856,6 +876,7 @@ const bridgeWorker = {
                 operatorOutboxArchiveReady: validOperatorArchiveConfig(env),
                 publicBetaRateLimitReady: (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))
                     && Boolean(env.PUBLIC_BETA_RATE_LIMITER),
+                mediaProvider: { kind: mediaProvider(env).id },
             });
         }
 
@@ -1250,11 +1271,10 @@ export class LivepeerControl {
         }
         if (!job.publication) {
             if (job.providerVerification && ['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(job.state)) {
-                await this.handleLivepeerWebhook(new Request('https://object/internal/livepeer-webhook', {
-                    method: 'POST',
-                    body: JSON.stringify({ event: 'asset.updated', timestamp: Date.now(),
-                        payload: { asset: { id: job.assetId, status: { phase: 'ready' } } } }),
-                }));
+                await this.handleProviderEvent(await synthesizedProviderEvent({
+                    provider: jobProviderKind(job), event: 'processing', assetId: job.assetId!, phase: 'ready',
+                    nowMs: Date.now(),
+                }, sha256Hex), job);
                 return;
             }
             await this.reconcileUpload(job);
@@ -1460,7 +1480,7 @@ export class LivepeerControl {
             if (!['UPLOAD_READY', 'UPLOADING'].includes(record.state) || !record.tusEndpoint) {
                 throw new Error('provider_recovery_not_ready');
             }
-            const source = await livepeerProvider(this.env).readTusOffset(record.tusEndpoint).catch((error) => {
+            const source = await mediaProvider(this.env, record).readTusOffset(record.tusEndpoint).catch((error) => {
                 if (error instanceof Error && error.message === 'provider_tus_state_invalid') throw new Error('provider_recovery_not_ready');
                 throw error;
             });
@@ -1540,7 +1560,7 @@ export class LivepeerControl {
 
         let provider: CreateUploadResult;
         try {
-            provider = await livepeerProvider(this.env).createUpload(pending);
+            provider = await mediaProvider(this.env, pending).createUpload(pending);
         } catch (error) {
             const providerError = safeErrorCode(error);
             const errorCode = providerError === 'provider_admission_closed'
@@ -1620,27 +1640,20 @@ export class LivepeerControl {
         } satisfies ReconcileRecord);
         await scheduleReconcile(this.state, nextReadAtMs);
         try {
-            const asset = await livepeerProvider(this.env).readAsset(record.assetId);
-            if (asset.id !== record.assetId
-                || asset.playbackId !== record.playbackId
-                || asset.projectId !== record.projectId
-                || asset.projectId !== this.env.LIVEPEER_PROJECT_ID
-                || asset.creatorBindingType !== 'unverified'
-                || asset.creatorBindingValue !== `${record.jobId}:${record.generation}`
-                || asset.createdByTokenName !== record.apiTokenName
-                || asset.name !== `youtick-${record.jobId}-g${record.generation}`
+            const provider = mediaProvider(this.env, record);
+            const asset = await provider.readAsset(record.assetId);
+            if (!provider.identityMatches(asset, providerIdentity(record, record.assetId, record.apiTokenName))
                 || asset.policy !== 'jwt') throw new Error('provider_identity_mismatch');
             if (!['waiting', 'processing', 'ready', 'failed'].includes(asset.phase)) {
                 throw new Error('provider_state_invalid');
             }
-            const response = await this.handleLivepeerWebhook(new Request('https://object/internal/livepeer-webhook', {
-                method: 'POST',
-                body: JSON.stringify({
-                    event: asset.phase === 'failed' ? 'asset.failed' : 'asset.updated',
-                    timestamp: Date.now(),
-                    payload: { asset: { id: asset.id, status: { phase: asset.phase } } },
-                }),
-            }));
+            const response = await this.handleProviderEvent(await synthesizedProviderEvent({
+                provider: provider.id,
+                event: asset.phase === 'failed' ? 'failed' : 'processing',
+                assetId: asset.id,
+                phase: asset.phase,
+                nowMs: Date.now(),
+            }, sha256Hex), await this.state.storage.get<JobRecord>(JOB_KEY));
             if (!response.ok) throw new Error('provider_unavailable');
             const current = (await this.state.storage.get<ReconcileRecord>(RECONCILE_KEY))!;
             const pending = (await this.state.storage.get<JobRecord>(JOB_KEY))?.providerVerification;
@@ -1807,18 +1820,17 @@ export class LivepeerControl {
             isPublicBetaPacket(this.env) || isPublicTestnetEnvironment(this.env) ? PLAYBACK_V2_TTL_SECONDS : PLAYBACK_MAX_TTL_SECONDS,
         );
         const issuedAtSeconds = Math.floor(nowMs / 1000);
-        const token = await signLivepeerJwt(
-            this.env,
+        const signed = await mediaProvider(this.env, authorization.profileConfigSha256).signPlayback(
             input.body.playback_id,
-            issuedAtSeconds,
             ttlSeconds,
+            issuedAtSeconds,
         );
         return json({
             schema: 'youtick.livepeer-playback-token.v1',
             playback_id: input.body.playback_id,
-            token,
-            expires_at_ms: String((issuedAtSeconds + ttlSeconds) * 1000),
-            hls_url: livepeerHlsUrl(input.body.playback_id),
+            token: signed.token,
+            expires_at_ms: String(signed.expiresAtSeconds * 1000),
+            hls_url: signed.hlsUrl,
         });
     }
 
@@ -1848,22 +1860,26 @@ export class LivepeerControl {
         return json({ ...result.record, created: result.created }, result.created ? 201 : 200);
     }
 
+    // Raw bodies arrive from the ingress (already authenticated) or the Queue consumer; the
+    // ingress names the adapter in MEDIA_PROVIDER_HEADER, the Queue path falls back to the job record.
     private async handleLivepeerWebhook(request: Request): Promise<Response> {
         const rawBody = new Uint8Array(await request.arrayBuffer());
         if (rawBody.byteLength > MAX_CONTROL_BODY_BYTES) throw new Error('control_body_too_large');
-        let value: unknown;
-        try {
-            value = JSON.parse(new TextDecoder().decode(rawBody));
-        } catch {
-            throw new Error('invalid_webhook');
-        }
-        const webhook = parseWebhook(requireObject(value, 'invalid_webhook'));
-        const asset = webhookAsset(webhook);
-        if (!asset) {
+        const existing = await this.state.storage.get<JobRecord>(JOB_KEY);
+        const kind = mediaProviderKind(request.headers.get(MEDIA_PROVIDER_HEADER))
+            ?? (existing ? jobProviderKind(existing) : 'studio');
+        const event = await mediaProvider(this.env, { provider: kind }).parseWebhook(rawBody);
+        return this.handleProviderEvent(event, existing);
+    }
+
+    private async handleProviderEvent(
+        event: NormalizedWebhookEvent | null,
+        existing: JobRecord | undefined,
+    ): Promise<Response> {
+        if (!event) {
             return json({ accepted: true, ignored: true }, 202);
         }
-        const existing = await this.state.storage.get<JobRecord>(JOB_KEY);
-        if (!existing || asset.id !== existing.assetId) {
+        if (!existing || event.assetId !== existing.assetId || event.provider !== jobProviderKind(existing)) {
             return json({ accepted: true, ignored: true }, 202);
         }
         if (publicBetaDeadlineExpired(existing)
@@ -1878,12 +1894,8 @@ export class LivepeerControl {
         if (['PROVIDER_FAILED', 'UPLOAD_EXPIRED', 'CANCELLED'].includes(existing.state)) {
             return json({ accepted: true, ignored: true, terminal: true }, 202);
         }
-        const phase = providerPhase(asset);
-        const providerFailed = ['asset.failed', 'asset.deleted'].includes(webhook.event);
-        const readinessEvent = webhook.event === 'asset.ready'
-            || (webhook.event === 'asset.updated'
-                && ['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(existing.state)
-                && phase === 'ready');
+        const providerFailed = isProviderFailureEvent(event);
+        const readinessEvent = isReadinessEvent(event, existing.state);
         if (existing.state === 'ONCHAIN_PUBLISHED' && readinessEvent) {
             await updateAdmission(this.env, existing, 'ONCHAIN_PUBLISHED');
             await ensureReconcileScheduled(this.state);
@@ -1911,8 +1923,7 @@ export class LivepeerControl {
                 return json({ accepted: true, provider_failed: true });
             }
             if (['UPLOAD_READY', 'UPLOADING'].includes(existing.state)
-                && webhook.event === 'asset.updated'
-                && phase === 'processing') {
+                && isProcessingEvent(event)) {
                 const processing = transitionJob(existing, 'PROCESSING');
                 await this.state.storage.put(JOB_KEY, processing);
                 logJobStateTransition(existing.state, processing.state, existing);
@@ -1921,8 +1932,7 @@ export class LivepeerControl {
             return json({ accepted: true, ignored: true }, 202);
         }
 
-        const digest = await webhookDigest(webhook, asset, await sha256BytesHex(rawBody), sha256Hex);
-        const dedupKey = `webhook:${digest}`;
+        const dedupKey = `webhook:${event.digest}`;
         const seen = await this.state.storage.transaction(async (transaction) => {
             const duplicate = await transaction.get(dedupKey);
             if (!duplicate) {
@@ -1933,9 +1943,9 @@ export class LivepeerControl {
                 );
                 await transaction.put(dedupKey, {
                     state: 'PROCESSING',
-                    event: webhook.event,
-                    assetId: asset.id,
-                    phase: providerPhase(asset),
+                    event: event.providerEvent,
+                    assetId: event.assetId,
+                    phase: event.phase,
                     receivedAtMs: Date.now(),
                 });
             }
@@ -1960,9 +1970,9 @@ export class LivepeerControl {
                 await updateAdmission(this.env, record, 'READY_VERIFIED');
                 await this.state.storage.put(dedupKey, {
                     state: 'VERIFIED',
-                    event: webhook.event,
-                    assetId: asset.id,
-                    phase: providerPhase(asset),
+                    event: event.providerEvent,
+                    assetId: event.assetId,
+                    phase: event.phase,
                     receivedAtMs: Date.now(),
                 });
             } catch (error) {
@@ -2058,21 +2068,17 @@ export class LivepeerControl {
                 ? publicUploadJobDeadline(chainJob.job, false) : Number(marker!.deadline_at_ms)) <= Date.now();
         if (!takedown && !expired) throw new Error('provider_identity_mismatch');
 
-        const asset = await livepeerProvider(this.env).readAsset(input.assetId);
-        if (asset.id !== input.assetId
-            || asset.projectId !== record.projectId
-            || asset.projectId !== this.env.LIVEPEER_PROJECT_ID
-            || asset.playbackId !== record.playbackId
-            || asset.creatorBindingType !== 'unverified'
-            || asset.creatorBindingValue !== `${record.jobId}:${record.generation}`
-            || asset.name !== `youtick-${record.jobId}-g${record.generation}`
+        const provider = mediaProvider(this.env, record);
+        const asset = await provider.readAsset(input.assetId);
+        // The creating token is not bound here: takedown and expiry deletes may run after a key rotation.
+        if (!provider.identityMatches(asset, providerIdentity(record, input.assetId, null))
             || (publication !== null
                 && (publication.playback_id !== asset.playbackId
-                    || publication.project_id_hash !== await sha256Hex(asset.projectId)))) {
+                    || publication.project_id_hash !== await sha256Hex(asset.projectId ?? '')))) {
             throw new Error('provider_identity_mismatch');
         }
         try {
-            const outcome = await livepeerProvider(this.env).deleteAsset(input.assetId);
+            const outcome = await provider.deleteAsset(input.assetId);
             const storedOutcome = outcome === 'deleted' ? 'DELETED' : 'MISSING';
             await this.state.storage.put(JOB_KEY, {
                 ...record,
@@ -3345,7 +3351,7 @@ function publicUploadJobDeadline(job: OnChainJob, requireUnexpired = true): numb
         || typeof job.created_at_ms !== 'number' || !Number.isSafeInteger(job.created_at_ms) || job.created_at_ms <= 0
         || typeof job.expected_source_bytes !== 'string' || !/^[1-9][0-9]*$/.test(job.expected_source_bytes)
         || BigInt(job.expected_source_bytes) > 5_000_000_000n
-        || job.profile_id !== 'paid-media-livepeer-v1' || !supportedProfile(job.profile_config_sha256)) {
+        || job.profile_id !== 'paid-media-livepeer-v1' || !supportedMediaProfile(job.profile_config_sha256)) {
         throw new Error('on_chain_job_mismatch');
     }
     const deadline = job.created_at_ms + PUBLIC_TESTNET_BETA_JOB_TTL_MS;
@@ -3977,7 +3983,7 @@ function parseSponsoredPaidJobRequest(
         || BigInt(value.expected_source_bytes) > MAX_SOURCE_BYTES
         || value.profile_id !== 'paid-media-livepeer-v1'
         || typeof value.profile_config_sha256 !== 'string'
-        || !supportedProfile(value.profile_config_sha256)
+        || !supportedMediaProfile(value.profile_config_sha256)
         || typeof value.upload_public_key !== 'string'
         || !SESSION_KEY_PATTERN.test(value.upload_public_key)
         || typeof value.upload_key_expires_at_ms !== 'string'
@@ -5379,12 +5385,10 @@ export async function forwardLivepeerWebhook(request: Request, env: Env): Promis
         }
         const rawBody = new Uint8Array(await request.arrayBuffer());
         if (rawBody.byteLength > MAX_CONTROL_BODY_BYTES) throw new Error('control_body_too_large');
-        const webhook = await verifyWebhookWithOverlap(
-            rawBody,
-            request.headers.get('Livepeer-Signature') || '',
-            env,
-        );
-        const route = webhookRoute(webhook, (jobId) => JOB_ID_PATTERN.test(jobId));
+        // This route is the Studio ingress; the adapter owns the signature header and scheme.
+        const provider = mediaProvider(env, { provider: 'studio' });
+        const event = await provider.verifyWebhook(rawBody, request.headers, Date.now());
+        const route = event?.route;
         if (!route) return json({ accepted: true, ignored: true }, 202);
         if (env.LIVEPEER_WEBHOOK_QUEUE_ENABLED === 'true') {
             if (!env.LIVEPEER_EVENTS || !validWebhookQueuePolicy(env)) {
@@ -5418,7 +5422,7 @@ export async function forwardLivepeerWebhook(request: Request, env: Env): Promis
         )));
         return await object.fetch(new Request('https://object/internal/livepeer-webhook', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', [MEDIA_PROVIDER_HEADER]: provider.id },
             body: rawBody,
         }));
     } catch (error) {
@@ -5927,7 +5931,7 @@ function parseUploadBody(value: unknown): UploadIntentBody {
         || !SHA256_PATTERN.test(body.source_fingerprint_sha256)
         || !isLivepeerSourceType(body.source_type)
         || body.profile_id !== 'paid-media-livepeer-v1'
-        || !supportedProfile(body.profile_config_sha256)
+        || !supportedMediaProfile(body.profile_config_sha256)
         || (body.recovery !== undefined && !['reconcile', 'resume'].includes(String(body.recovery)))) {
         throw new Error('invalid_upload_intent');
     }
@@ -6214,19 +6218,72 @@ function canonicalControlMessage(envelope: ControlEnvelope): string {
     ].join('\n');
 }
 
-function livepeerProvider(env: Env): LivepeerProvider {
+function studioProvider(env: Env): LivepeerProvider {
     return new LivepeerProvider(env.LIVEPEER_API_KEY, {
         readyVerificationEnabled: validProviderVerificationConfig(env),
         sha256: sha256Hex,
-        signPlaybackToken: validPlaybackConfig(env)
-            ? (playbackId) => signLivepeerJwt(
-                env,
-                playbackId,
-                Math.floor(Date.now() / 1_000),
-                PLAYBACK_MIN_TTL_SECONDS,
-            )
-            : undefined,
+        projectId: env.LIVEPEER_PROJECT_ID,
+        jwt: {
+            privateKey: env.LIVEPEER_JWT_PRIVATE_KEY,
+            issuer: env.LIVEPEER_JWT_ISSUER,
+            publicKey: env.LIVEPEER_JWT_PUBLIC_KEY,
+        },
+        verificationTokensEnabled: validPlaybackConfig(env),
+        verificationTokenTtlSeconds: PLAYBACK_MIN_TTL_SECONDS,
+        webhookSecrets: [env.LIVEPEER_WEBHOOK_SECRET, env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS],
+        webhookToleranceMs: WEBHOOK_TOLERANCE_MS,
+        isValidJobId: (jobId) => JOB_ID_PATTERN.test(jobId),
     });
+}
+
+const MEDIA_PROVIDER_FACTORIES: Record<MediaProviderKind, (env: Env) => MediaProvider> = {
+    studio: studioProvider,
+};
+
+/**
+ * Adapter for a job (by its recorded provider; absent means Studio) or for a publication
+ * (by its profile_config_sha256, through each adapter's supportsProfile). Default: Studio.
+ */
+function mediaProvider(
+    env: Env,
+    selector?: { provider?: MediaProviderKind } | string | null,
+): MediaProvider {
+    if (selector && typeof selector === 'object') {
+        return MEDIA_PROVIDER_FACTORIES[selector.provider ?? 'studio'](env);
+    }
+    const adapters = Object.values(MEDIA_PROVIDER_FACTORIES).map((factory) => factory(env));
+    return (typeof selector === 'string' && adapters.find((adapter) => adapter.supportsProfile(selector)))
+        || adapters[0];
+}
+
+function jobProviderKind(job: Pick<JobRecord, 'provider'>): MediaProviderKind {
+    return job.provider ?? 'studio';
+}
+
+function supportedMediaProfile(hash: unknown): hash is string {
+    return livepeerSupportsProfile(hash);
+}
+
+function providerIdentity(
+    job: JobRecord,
+    assetId: string,
+    apiTokenName: string | null | undefined,
+): ProviderIdentityExpectation {
+    return {
+        jobId: job.jobId,
+        generation: job.generation,
+        assetId,
+        playbackId: job.playbackId,
+        projectId: job.projectId,
+        apiTokenName,
+    };
+}
+
+function publicationProfileHash(publication: unknown): string | undefined {
+    return publication && typeof publication === 'object'
+        && typeof (publication as JsonObject).profile_config_sha256 === 'string'
+        ? (publication as JsonObject).profile_config_sha256 as string
+        : undefined;
 }
 
 function uploadIntentResponse(record: JobRecord, created: boolean): Response {
@@ -6345,11 +6402,10 @@ async function issueStatelessPlaybackToken(request: Request, env: Env): Promise<
         if (certificateRemainingSeconds < 1) throw new Error('playback_denied');
         const ttlSeconds = Math.min(PLAYBACK_V2_TTL_SECONDS, certificateRemainingSeconds);
         const issuedAtSeconds = Math.floor(nowMs / 1000);
-        const token = await signLivepeerJwt(
-            env,
+        const signed = await mediaProvider(env, authorization.profileConfigSha256).signPlayback(
             input.body.playback_id,
-            issuedAtSeconds,
             ttlSeconds,
+            issuedAtSeconds,
         );
         const cacheHits = [
             certificateCacheHit,
@@ -6370,9 +6426,9 @@ async function issueStatelessPlaybackToken(request: Request, env: Env): Promise<
         return json({
             schema: 'youtick.livepeer-playback-token.v2',
             playback_id: input.body.playback_id,
-            token,
-            expires_at_ms: String((issuedAtSeconds + ttlSeconds) * 1000),
-            hls_url: livepeerHlsUrl(input.body.playback_id),
+            token: signed.token,
+            expires_at_ms: String(signed.expiresAtSeconds * 1000),
+            hls_url: signed.hlsUrl,
             ...(authorization.previewVttUrl ? { preview_vtt_url: authorization.previewVttUrl } : {}),
         });
     } catch (error) {
@@ -6423,13 +6479,16 @@ async function issueTicketPlaybackToken(request: Request, env: Env): Promise<Res
                 throw new Error(failure.error === 'playback_denied' ? 'playback_denied' : 'playback_pending');
             }
         }
-        const provider = await verifyStatelessProviderPolicy(env, decision.playbackId);
+        // The publication read above carries the profile hash that selects the media adapter.
+        const profileConfigSha256 = publicationProfileHash(publication.value);
+        const provider = await verifyStatelessProviderPolicy(env, decision.playbackId, profileConfigSha256);
         const nowMs = Date.now();
         const deviceRemainingSeconds = Math.floor((decision.deviceExpiresAtMs - nowMs) / 1000);
         if (deviceRemainingSeconds < 1) throw new Error('playback_denied');
         const ttlSeconds = Math.min(PLAYBACK_V2_TTL_SECONDS, deviceRemainingSeconds);
         const issuedAtSeconds = Math.floor(nowMs / 1000);
-        const token = await signLivepeerJwt(env, decision.playbackId, issuedAtSeconds, ttlSeconds);
+        const signed = await mediaProvider(env, profileConfigSha256)
+            .signPlayback(decision.playbackId, ttlSeconds, issuedAtSeconds);
         console.info(formatLog('ticket_playback_authorization_completed', {
             markWatched: markWatchedRequired,
             latencyMs: Math.max(0, performance.now() - startedAtMs),
@@ -6437,9 +6496,9 @@ async function issueTicketPlaybackToken(request: Request, env: Env): Promise<Res
         return json({
             schema: 'youtick.livepeer-playback-token.v3',
             playback_id: decision.playbackId,
-            token,
-            expires_at_ms: String((issuedAtSeconds + ttlSeconds) * 1000),
-            hls_url: livepeerHlsUrl(decision.playbackId),
+            token: signed.token,
+            expires_at_ms: String(signed.expiresAtSeconds * 1000),
+            hls_url: signed.hlsUrl,
             ...(provider.previewVttUrl ? { preview_vtt_url: provider.previewVttUrl } : {}),
         });
     } catch (error) {
@@ -6667,6 +6726,7 @@ async function readStatelessPlaybackAuthorization(
     publicationCacheHit: boolean;
     entitlementCacheHit: boolean;
     providerCacheHit: boolean;
+    profileConfigSha256: string;
     previewVttUrl?: string;
 }> {
     const publicationCacheKey = await playbackCacheKey(
@@ -6692,7 +6752,7 @@ async function readStatelessPlaybackAuthorization(
         || publication.generation !== input.body.generation
         || publication.playback_id !== input.body.playback_id
         || publication.profile_id !== 'paid-media-livepeer-v1'
-        || !supportedProfile(publication.profile_config_sha256)
+        || !supportedMediaProfile(publication.profile_config_sha256)
         || !['ACTIVE', 'SALES_SUSPENDED'].includes(String(publication.availability))) {
         throw new Error('playback_denied');
     }
@@ -6741,17 +6801,23 @@ async function readStatelessPlaybackAuthorization(
     );
     let providerPolicy = playbackCacheGet<{ previewVttUrl?: string }>(providerCacheKey);
     const providerCacheHit = providerPolicy !== undefined;
+    const profileConfigSha256 = publication.profile_config_sha256 as string;
     if (!providerPolicy) {
-        providerPolicy = await verifyStatelessProviderPolicy(env, input.body.playback_id);
+        providerPolicy = await verifyStatelessProviderPolicy(env, input.body.playback_id, profileConfigSha256);
         playbackCachePut(providerCacheKey, providerPolicy, Date.now() + PROVIDER_POLICY_CACHE_MS);
     }
-    return { publicationCacheHit, entitlementCacheHit, providerCacheHit, ...providerPolicy };
+    return { publicationCacheHit, entitlementCacheHit, providerCacheHit, profileConfigSha256, ...providerPolicy };
 }
 
-async function verifyStatelessProviderPolicy(env: Env, playbackId: string): Promise<{ previewVttUrl?: string }> {
+async function verifyStatelessProviderPolicy(
+    env: Env,
+    playbackId: string,
+    profileConfigSha256: string | undefined,
+): Promise<{ previewVttUrl?: string }> {
+    const provider = mediaProvider(env, profileConfigSha256);
     let playback: ProviderPlayback;
     try {
-        playback = await livepeerProvider(env).readPlayback(playbackId);
+        playback = await provider.readPlayback(playbackId);
     } catch (error) {
         if (safeErrorCode(error) === 'provider_unavailable') throw error;
         throw new Error('playback_denied');
@@ -6760,7 +6826,8 @@ async function verifyStatelessProviderPolicy(env: Env, playbackId: string): Prom
     // Optional metadata from the same authorized playback lookup; never fetch it during token issuance.
     const preview = playback.sources.length <= MAX_PROVIDER_PLAYBACK_OUTPUTS
         ? playback.sources.find(source => source.kind === 'vtt' && source.url.length <= 2048
-            && validPlaybackUrl(source.url) && !new URL(source.url).search && !new URL(source.url).hash)
+            && playbackUrlAllowed(source.url, provider.hostAllowlist())
+            && !new URL(source.url).search && !new URL(source.url).hash)
         : undefined;
     return preview ? { previewVttUrl: preview.url } : {};
 }
@@ -6795,7 +6862,7 @@ function playbackCachePut(key: string, value: unknown, expiresAtMs: number): voi
 async function readPlaybackAuthorization(
     env: Env,
     input: PlaybackTokenRequest,
-): Promise<{ grantExpiresAtMs: number }> {
+): Promise<{ grantExpiresAtMs: number; profileConfigSha256?: string }> {
     if (!validPlaybackConfig(env)) throw new Error('runtime_not_configured');
     const publicationRead = await nearPlaybackView(
         env,
@@ -6844,7 +6911,10 @@ async function readPlaybackAuthorization(
         || (grant.expires_at_ms as number) <= Date.now()) {
         throw new Error('playback_denied');
     }
-    return { grantExpiresAtMs: grant.expires_at_ms as number };
+    return {
+        grantExpiresAtMs: grant.expires_at_ms as number,
+        profileConfigSha256: publicationProfileHash(publication),
+    };
 }
 
 function logTakedownPlaybackAttempt(
@@ -6904,61 +6974,6 @@ async function nearPlaybackView(
     }
 }
 
-async function signLivepeerJwt(
-    env: Env,
-    playbackId: string,
-    issuedAtSeconds: number,
-    ttlSeconds: number,
-): Promise<string> {
-    let privateKey: CryptoKey;
-    try {
-        privateKey = await crypto.subtle.importKey(
-            'pkcs8',
-            decodePkcs8(env.LIVEPEER_JWT_PRIVATE_KEY!),
-            { name: 'ECDSA', namedCurve: 'P-256' },
-            false,
-            ['sign'],
-        );
-    } catch {
-        throw new Error('runtime_not_configured');
-    }
-    const header = base64UrlJson({ alg: 'ES256', typ: 'JWT' });
-    const payload = base64UrlJson({
-        action: 'pull',
-        iss: env.LIVEPEER_JWT_ISSUER,
-        pub: env.LIVEPEER_JWT_PUBLIC_KEY,
-        sub: playbackId,
-        video: 'none',
-        exp: issuedAtSeconds + ttlSeconds,
-        iat: issuedAtSeconds,
-    });
-    const signingInput = `${header}.${payload}`;
-    const signature = await crypto.subtle.sign(
-        { name: 'ECDSA', hash: 'SHA-256' },
-        privateKey,
-        new TextEncoder().encode(signingInput),
-    );
-    return `${signingInput}.${base64UrlBytes(new Uint8Array(signature))}`;
-}
-
-function decodePkcs8(value: string): Uint8Array {
-    const decoded = value.startsWith('-----BEGIN PRIVATE KEY-----') ? value : atob(value);
-    const body = decoded.replace(/(?:-----(?:BEGIN|END) PRIVATE KEY-----|\s)/g, '');
-    return base64Decode(body);
-}
-
-function base64UrlJson(value: JsonObject): string {
-    return base64UrlBytes(new TextEncoder().encode(JSON.stringify(value)));
-}
-
-function base64UrlBytes(value: Uint8Array): string {
-    return bytesToBase64(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function livepeerHlsUrl(playbackId: string): string {
-    return `https://playback.livepeer.studio/asset/hls/${playbackId}/index.m3u8`;
-}
-
 function sameJob(left: JobRecord, right: JobRecord): boolean {
     return left.network === right.network
         && left.contractId === right.contractId
@@ -6997,63 +7012,6 @@ function sameOutbox(left: OutboxRecord, right: OutboxRecord): boolean {
         && left.payloadSha256 === right.payloadSha256;
 }
 
-async function verifyWebhookWithOverlap(
-    rawBody: Uint8Array,
-    signatureHeader: string,
-    env: Env,
-): Promise<WebhookEvent> {
-    const secrets = [env.LIVEPEER_WEBHOOK_SECRET, env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS]
-        .filter((value): value is string => Boolean(value));
-    for (const secret of secrets) {
-        try {
-            return await verifyAndParseWebhook(rawBody, signatureHeader, secret);
-        } catch (error) {
-            if (safeErrorCode(error) !== 'invalid_webhook_signature') throw error;
-        }
-    }
-    throw new Error('invalid_webhook_signature');
-}
-
-async function verifyAndParseWebhook(
-    rawBody: Uint8Array,
-    signatureHeader: string,
-    secret: string,
-): Promise<WebhookEvent> {
-    const parts = signatureHeader.split(',').map((part) => part.trim());
-    const timestampText = parts.find((part) => part.startsWith('t='))?.slice(2) || '';
-    const signatures = parts
-        .filter((part) => part.startsWith('v1='))
-        .map((part) => part.slice(3))
-        .filter((value) => /^[0-9a-f]{64}$/.test(value));
-    if (!/^[1-9][0-9]{9,15}$/.test(timestampText) || signatures.length === 0) {
-        throw new Error('invalid_webhook_signature');
-    }
-    const timestamp = Number(timestampText);
-    if (!Number.isSafeInteger(timestamp) || Math.abs(Date.now() - timestamp) > WEBHOOK_TOLERANCE_MS) {
-        throw new Error('webhook_expired');
-    }
-    const key = await crypto.subtle.importKey(
-        'raw',
-        new TextEncoder().encode(secret),
-        { name: 'HMAC', hash: 'SHA-256' },
-        false,
-        ['sign'],
-    );
-    const expected = new Uint8Array(await crypto.subtle.sign('HMAC', key, rawBody));
-    const valid = signatures.some((signature) => constantTimeEqual(expected, hexDecode(signature)));
-    if (!valid) throw new Error('invalid_webhook_signature');
-
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(new TextDecoder().decode(rawBody));
-    } catch {
-        throw new Error('invalid_webhook');
-    }
-    const webhook = parseWebhook(requireObject(parsed, 'invalid_webhook'));
-    if (webhook.timestamp !== timestamp) throw new Error('invalid_webhook_signature');
-    return webhook;
-}
-
 async function verifyReadyProviderAsset(
     state: DurableObjectState, env: Env, job: JobRecord,
 ): Promise<FinalizePublication | null> {
@@ -7065,7 +7023,7 @@ async function verifyReadyProviderAsset(
         throw new Error('provider_verification_incomplete');
     }
     try {
-        const verified = await livepeerProvider(env).verifyReadyAsset({
+        const verified = await mediaProvider(env, job).verifyReadyAsset({
             jobId: job.jobId,
             generation: job.generation,
             expectedSourceBytes: job.expectedSourceBytes,
@@ -7190,32 +7148,8 @@ async function publicationCover(
         const hit = await cachedCover();
         if (hit) return hit;
 
-        const playback = await livepeerProvider(env).readPlayback(publication.playback_id);
-        if (playback.kind !== 'vod'
-            || playback.policy !== 'jwt'
-            || playback.sources.length > MAX_PROVIDER_PLAYBACK_OUTPUTS) {
-            throw new Error('provider_playback_mismatch');
-        }
-        const vttUrls = [...new Set(playback.sources
-            .filter((source) => source.kind === 'vtt')
-            .map((source) => source.url))];
-        if (vttUrls.length === 0 || vttUrls.some((url) => !validPlaybackUrl(url))) {
-            throw new Error('provider_playback_mismatch');
-        }
-
-        const token = await signLivepeerJwt(
-            env,
-            publication.playback_id,
-            Math.floor(Date.now() / 1_000),
-            PLAYBACK_MIN_TTL_SECONDS,
-        );
-        const thumbnailUrl = await firstVttThumbnailUrl(vttUrls, token);
-        if (!thumbnailUrl) throw new Error('provider_playback_mismatch');
-        const cover = await fetchPublicationCover(thumbnailUrl, token, [
-            env.LIVEPEER_API_KEY!,
-            ...vttUrls,
-            thumbnailUrl,
-        ]);
+        const cover = await mediaProvider(env, publicationProfileHash(publication))
+            .readCover(publication.playback_id);
         const internal = new Response(cover.bytes, {
             headers: {
                 'Cache-Control': `public, max-age=${PUBLICATION_COVER_CACHE_SECONDS}`,
@@ -7242,104 +7176,6 @@ function publicationCoverCacheKey(
     const origin = new URL(request.url).origin;
     const scope = `${encodeURIComponent(env.NEAR_NETWORK!)}:${encodeURIComponent(env.MARKET_CONTRACT_ID!)}`;
     return new Request(`${origin}/__cache/publication-covers/${scope}/${encodeURIComponent(jobId)}/${generation}`);
-}
-
-async function fetchPublicationCover(
-    url: string,
-    token: string,
-    sensitiveValues: string[],
-): Promise<{ bytes: Uint8Array; contentType: PublicationCoverContentType }> {
-    let response: Response;
-    try {
-        response = await dependencyFetch('livepeer_media', 'cover_read', url, {
-            method: 'GET',
-            headers: { 'Livepeer-Jwt': token },
-            redirect: 'manual',
-            signal: AbortSignal.timeout(5_000),
-        });
-    } catch {
-        throw new Error('provider_unavailable');
-    }
-    if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
-    if ([401, 403].includes(response.status)) throw new Error('publication_cover_image_denied');
-    if (response.status >= 300 && response.status < 400) {
-        throw new Error('publication_cover_image_redirected');
-    }
-    if (response.status !== 200) throw new Error('publication_cover_image_status');
-    const contentLength = response.headers.get('Content-Length');
-    const declaredContentType = response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-    if (declaredContentType !== 'image/jpeg' && declaredContentType !== 'image/png') {
-        throw new Error('publication_cover_image_type');
-    }
-    if (contentLength !== null && (!/^[0-9]+$/.test(contentLength)
-        || Number(contentLength) > MAX_PUBLICATION_COVER_BYTES)) {
-        throw new Error('publication_cover_image_size');
-    }
-    if (!response.body) throw new Error('provider_playback_mismatch');
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        total += value.byteLength;
-        if (total > MAX_PUBLICATION_COVER_BYTES) {
-            await reader.cancel();
-            throw new Error('publication_cover_image_size');
-        }
-        chunks.push(value);
-    }
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-        bytes.set(chunk, offset);
-        offset += chunk.byteLength;
-    }
-    const contentType = publicationCoverContentType(bytes);
-    if (!contentType) throw new Error('publication_cover_image_invalid');
-    if (contentType !== declaredContentType) throw new Error('publication_cover_image_type');
-    if ([token, ...sensitiveValues].some((value) => containsBytes(bytes, new TextEncoder().encode(value)))) {
-        throw new Error('provider_playback_mismatch');
-    }
-    return { bytes, contentType };
-}
-
-function containsBytes(body: Uint8Array, needle: Uint8Array): boolean {
-    if (needle.byteLength === 0 || needle.byteLength > body.byteLength) return false;
-    outer: for (let offset = 0; offset <= body.byteLength - needle.byteLength; offset += 1) {
-        for (let index = 0; index < needle.byteLength; index += 1) {
-            if (body[offset + index] !== needle[index]) continue outer;
-        }
-        return true;
-    }
-    return false;
-}
-
-function validJpeg(bytes: Uint8Array): boolean {
-    return bytes.byteLength >= 4
-        && bytes[0] === 0xff
-        && bytes[1] === 0xd8
-        && bytes[2] === 0xff
-        && bytes[bytes.byteLength - 2] === 0xff
-        && bytes[bytes.byteLength - 1] === 0xd9;
-}
-
-type PublicationCoverContentType = 'image/jpeg' | 'image/png';
-
-function validPng(bytes: Uint8Array): boolean {
-    const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-    const ihdr = [0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52];
-    const iend = [0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
-    return bytes.byteLength >= 45
-        && signature.every((byte, index) => bytes[index] === byte)
-        && ihdr.every((byte, index) => bytes[signature.length + index] === byte)
-        && iend.every((byte, index) => bytes[bytes.byteLength - iend.length + index] === byte);
-}
-
-function publicationCoverContentType(bytes: Uint8Array): PublicationCoverContentType | null {
-    if (validJpeg(bytes)) return 'image/jpeg';
-    if (validPng(bytes)) return 'image/png';
-    return null;
 }
 
 function publicCoverResponse(body: ArrayBuffer | Uint8Array, contentType: PublicationCoverContentType): Response {
@@ -7607,7 +7443,7 @@ async function parseFinalizeInput(value: JsonObject): Promise<FinalizeInput> {
         || BigInt(submission.expected_source_bytes) > MAX_SOURCE_BYTES
         || submission.verified_source_bytes !== submission.expected_source_bytes
         || submission.profile_id !== 'paid-media-livepeer-v1'
-        || !supportedProfile(submission.profile_config_sha256)
+        || !supportedMediaProfile(submission.profile_config_sha256)
         || typeof submission.asset_id_hash !== 'string'
         || !SHA256_PATTERN.test(submission.asset_id_hash)
         || typeof submission.playback_id !== 'string'
@@ -8263,11 +8099,6 @@ function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
     let difference = 0;
     for (let index = 0; index < left.length; index += 1) difference |= left[index] ^ right[index];
     return difference === 0;
-}
-
-function hexDecode(value: string): Uint8Array {
-    if (value.length % 2 !== 0) return new Uint8Array();
-    return Uint8Array.from(value.match(/.{2}/g) || [], (byte) => Number.parseInt(byte, 16));
 }
 
 async function readJsonObject(request: Request): Promise<JsonObject> {

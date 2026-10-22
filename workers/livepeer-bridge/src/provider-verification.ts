@@ -1,6 +1,18 @@
-import { mediaProfiles } from './media-provider';
 import { dependencyFetch } from './dependency-fetch';
-import type { MediaProvider, ProviderAsset, ProviderVerificationResult, VerifyReadyAssetInput } from './media-provider';
+import type {
+    HostAllowlist,
+    MediaProvider,
+    ProviderAsset,
+    ProviderVerificationResult,
+    VerifyReadyAssetInput,
+} from './media-provider';
+import {
+    LIVEPEER_JWT_HEADER,
+    livepeerHlsUrl,
+    livepeerHostAllowlist,
+    livepeerIdentityMatches,
+    livepeerProfiles,
+} from './livepeer-provider';
 
 export const MAX_PROVIDER_PLAYBACK_OUTPUTS = 16;
 const MAX_THUMBNAIL_PROBES_PER_STEP = 64;
@@ -36,17 +48,18 @@ export async function verifyLivepeerReadyAsset(
 ): Promise<ProviderVerificationResult> {
     // The two provider metadata reads each retain their existing five-second timeout.
     const budget = { requests: 2, deadlineAtMs: Date.now() + VERIFICATION_STEP_MS };
-    const expectedProfiles = mediaProfiles(input.profileConfigSha256);
+    const expectedProfiles = livepeerProfiles(input.profileConfigSha256);
     const asset = await provider.readAsset(input.assetId);
     const playback = await provider.readPlayback(input.playbackId);
-    if (asset.id !== input.assetId
-        || asset.playbackId !== input.playbackId
-        || asset.projectId !== input.projectId
-        || asset.projectId !== input.expectedProjectId
-        || asset.createdByTokenName !== input.apiTokenName
-        || asset.creatorBindingType !== 'unverified'
-        || asset.creatorBindingValue !== `${input.jobId}:${input.generation}`
-        || asset.name !== `youtick-${input.jobId}-g${input.generation}`) {
+    if (!livepeerIdentityMatches(asset, {
+        jobId: input.jobId,
+        generation: input.generation,
+        assetId: input.assetId,
+        playbackId: input.playbackId,
+        projectId: input.projectId,
+        expectedProjectId: input.expectedProjectId,
+        apiTokenName: input.apiTokenName,
+    })) {
         throw new Error('provider_identity_mismatch');
     }
     if (asset.policy !== 'jwt'
@@ -54,7 +67,7 @@ export async function verifyLivepeerReadyAsset(
         || !Number.isSafeInteger(asset.updatedAtMs)
         || asset.updatedAtMs <= 0
         || !Number.isSafeInteger(asset.sizeBytes)
-        || BigInt(asset.sizeBytes) !== BigInt(input.expectedSourceBytes)) {
+        || BigInt(asset.sizeBytes!) !== BigInt(input.expectedSourceBytes)) {
         throw new Error('provider_state_invalid');
     }
 
@@ -113,7 +126,7 @@ export async function verifyLivepeerReadyAsset(
     for (const vttUrl of vttUrls) {
         await requireAnonymousPlaybackDenied(vttUrl, context.mediaReferences, budget);
     }
-    await requireAnonymousPlaybackDenied(asset.downloadUrl, context.mediaReferences, budget);
+    await requireAnonymousPlaybackDenied(asset.downloadUrl!, context.mediaReferences, budget);
     const vttBodies = new Map<string, string>();
     const thumbnails = await vttThumbnailUrls(vttUrls, token, budget, vttBodies);
     const { checkpoint: previous, ...identity } = input;
@@ -151,7 +164,7 @@ export async function verifyLivepeerReadyAsset(
         playbackId: input.playbackId,
         projectIdHash: await dependencies.sha256(input.projectId),
         verifiedSourceBytes: input.expectedSourceBytes,
-        sourceFingerprint: asset.sha256,
+        sourceFingerprint: asset.sha256 ?? null,
         readyAtMs: String(asset.updatedAtMs),
     };
 }
@@ -164,7 +177,8 @@ export async function firstVttThumbnailUrl(vttUrls: string[], token: string): Pr
     return null;
 }
 
-export function validPlaybackUrl(value: unknown): boolean {
+/** HTTPS, default port, no credentials, a real path, and a host the adapter allows. */
+export function playbackUrlAllowed(value: unknown, allowlist: HostAllowlist): boolean {
     if (typeof value !== 'string') return false;
     try {
         const url = new URL(value);
@@ -173,18 +187,15 @@ export function validPlaybackUrl(value: unknown): boolean {
             && !url.username
             && !url.password
             && url.pathname.length > 1
-            && (url.hostname === 'playback.livepeer.studio'
-                || url.hostname === 'livepeercdn.com'
-                || url.hostname === 'livepeercdn.studio'
-                || url.hostname === 'asset-cdn.lp-playback.com'
-                || url.hostname.endsWith('.lp-playback.studio'));
+            && (allowlist.exact.includes(url.hostname)
+                || allowlist.suffixes.some((suffix) => url.hostname.endsWith(suffix)));
     } catch {
         return false;
     }
 }
 
-function livepeerHlsUrl(playbackId: string): string {
-    return `https://playback.livepeer.studio/asset/hls/${playbackId}/index.m3u8`;
+function validPlaybackUrl(value: unknown): boolean {
+    return playbackUrlAllowed(value, livepeerHostAllowlist());
 }
 
 function hlsManifestKind(body: string): 'error' | 'playable' | 'unknown' {
@@ -220,7 +231,7 @@ async function requireHlsPlaybackDenied(url: string, budget?: VerificationBudget
     ];
     for (const token of invalidTokens) {
         const headers = new Headers();
-        if (token) headers.set('Livepeer-Jwt', token);
+        if (token) headers.set(LIVEPEER_JWT_HEADER, token);
         let response: Response;
         try {
             response = await verificationFetch(budget, 'hls_anonymous_probe', url, {
@@ -303,7 +314,7 @@ async function fetchVttReferences(vttUrl: string, token: string, budget?: Verifi
     try {
         response = await verificationFetch(budget, 'vtt_read', vttUrl, {
             method: 'GET',
-            headers: { 'Livepeer-Jwt': token },
+            headers: { [LIVEPEER_JWT_HEADER]: token },
             redirect: 'manual',
             signal: AbortSignal.timeout(5_000),
         });
@@ -460,7 +471,7 @@ async function authorizedHls(url: string, token: string, budget?: VerificationBu
     let response: Response;
     try {
         response = await verificationFetch(budget, 'hls_authorized_probe', url, {
-            headers: { 'Livepeer-Jwt': token }, redirect: 'manual', signal: AbortSignal.timeout(5_000),
+            headers: { [LIVEPEER_JWT_HEADER]: token }, redirect: 'manual', signal: AbortSignal.timeout(5_000),
         });
     } catch { throw new Error('provider_unavailable'); }
     if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');

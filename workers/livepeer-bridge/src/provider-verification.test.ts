@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { verifyAdaptiveHls, verifyLivepeerReadyAsset } from './provider-verification';
-import { mediaProfiles } from './media-provider';
+import { livepeerProfiles as mediaProfiles } from './livepeer-provider';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { LivepeerTransport, normalizeLivepeerAsset } from './livepeer-provider';
 

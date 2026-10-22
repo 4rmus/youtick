@@ -345,6 +345,25 @@ describe('Livepeer bridge PR-5 playback tokens', () => {
         expect(await replay.json()).toEqual({ error: 'device_nonce_replayed' });
     });
 
+    it('keeps the v1 token response byte-identical across the provider boundary', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_785_600_000_000);
+        const { env } = await createEnv();
+        const signed = await playbackRequest();
+        vi.stubGlobal('fetch', playbackRpc(signed));
+
+        const response = await handler.fetch(signed.request, env);
+
+        expect(response.status).toBe(200);
+        expect(boundaryTokenSnapshot(await response.text(), env.LIVEPEER_JWT_PUBLIC_KEY!)).toMatchInlineSnapshot(`
+          {
+            "body": "{"schema":"youtick.livepeer-playback-token.v1","playback_id":"playback_001","token":"<token>","expires_at_ms":"1785600180000","hls_url":"https://playback.livepeer.studio/asset/hls/playback_001/index.m3u8"}",
+            "claims": "{"action":"pull","iss":"https://youtick.net","pub":"<LIVEPEER_JWT_PUBLIC_KEY>","sub":"playback_001","video":"none","exp":1785600180,"iat":1785600000}",
+            "header": "{"alg":"ES256","typ":"JWT"}",
+            "signatureLength": 86,
+          }
+        `);
+    });
+
     it('returns the legacy result before measuring a v2 shadow mismatch', async () => {
         const { env } = await createEnv();
         env.LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED = 'true';
@@ -463,3 +482,17 @@ describe('Livepeer bridge PR-5 playback tokens', () => {
         expect(rpc).not.toHaveBeenCalled();
     });
 });
+
+// Provider-boundary snapshot (M1): the JSON bytes, key order and JWT claims must not move.
+function boundaryTokenSnapshot(raw: string, publicKey: string) {
+    const body = JSON.parse(raw) as Record<string, unknown>;
+    const [header, payload, signature] = String(body.token).split('.');
+    const claims = decodePart(payload);
+    expect(claims.pub).toBe(publicKey);
+    return {
+        body: raw.replace(String(body.token), '<token>'),
+        header: JSON.stringify(decodePart(header)),
+        claims: JSON.stringify({ ...claims, pub: '<LIVEPEER_JWT_PUBLIC_KEY>' }),
+        signatureLength: signature.length,
+    };
+}
