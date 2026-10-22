@@ -14,6 +14,8 @@ const KEYS = [
     'NEXT_PUBLIC_ENABLE_PLAYBACK_SHADOW_V2',
     'NEXT_PUBLIC_ENABLE_LIVEPEER_NEAR_CREATOR_FEE',
     'NEXT_PUBLIC_ENABLE_SPONSORED_LIVEPEER_UPLOADS',
+    'NEXT_PUBLIC_V2_MEDIA_PROFILE',
+    'NEXT_PUBLIC_STREAM_CUSTOMER_CODE',
 ] as const;
 
 function clearEnv() { for (const key of KEYS) delete process.env[key]; }
@@ -95,6 +97,32 @@ describe('Livepeer-only configuration', () => {
             .toEqual({ ok: true, sourceType: 'mp4' });
         expect(validateLivepeerSourceFile({ name: 'beta.mp4', type: 'video/mp4', size: 1_000_000_001 }))
             .toEqual({ ok: false, error: 'source_limit_exceeded' });
+    });
+
+    it('selects the V2 media profile: legacy by default, stream only with a valid customer code', async () => {
+        clearEnv();
+        process.env.NEXT_PUBLIC_MARKET_CONTRACT_ID = 'market.testnet';
+        process.env.NEXT_PUBLIC_ACCESS_CONTRACT_ID = 'access.testnet';
+        const defaults = await import('@/lib/constants');
+        expect(defaults.V2_MEDIA_CONFIG).toEqual({ profile: 'legacy', streamCustomerCode: '' });
+        vi.resetModules();
+        process.env.NEXT_PUBLIC_V2_MEDIA_PROFILE = 'stream';
+        process.env.NEXT_PUBLIC_STREAM_CUSTOMER_CODE = '7v4my51gigdqb5jn';
+        const stream = await import('@/lib/constants');
+        expect(stream.V2_MEDIA_CONFIG).toEqual({ profile: 'stream', streamCustomerCode: '7v4my51gigdqb5jn' });
+        vi.resetModules();
+        process.env.NEXT_PUBLIC_STREAM_CUSTOMER_CODE = '';
+        await expect(import('@/lib/constants')).rejects.toThrow('NEXT_PUBLIC_STREAM_CUSTOMER_CODE is required');
+
+        const { resolveV2MediaConfig } = defaults;
+        expect(resolveV2MediaConfig({ profile: ' legacy ', customerCode: undefined })).toEqual({ profile: 'legacy', streamCustomerCode: '' });
+        expect(resolveV2MediaConfig({ profile: '', customerCode: 'abcdefgh' })).toEqual({ profile: 'legacy', streamCustomerCode: 'abcdefgh' });
+        for (const profile of ['Stream', 'studio', 'cloudflare-stream']) {
+            expect(() => resolveV2MediaConfig({ profile, customerCode: 'abcdefgh' })).toThrow('must be legacy or stream');
+        }
+        for (const customerCode of ['abc', 'ABCDEFGH', 'abcd-efgh', 'customer-abcdefgh', 'a'.repeat(65), 'abcdefgh.cloudflarestream.com']) {
+            expect(() => resolveV2MediaConfig({ profile: 'stream', customerCode })).toThrow('8 to 64 lowercase letters or digits');
+        }
     });
 
     it('requires an exact HTTPS read-model origin only when its gate is enabled', async () => {

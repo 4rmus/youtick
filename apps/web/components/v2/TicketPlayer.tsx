@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, Maximize, Minimize, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { V2_MEDIA_CONFIG } from '@/lib/constants';
 import { createLivepeerHlsConfig } from '@/lib/livepeer-playback';
 import type { DeviceKey } from '@/lib/v2/device-key';
 import { DEVICE_LINK_ENABLED } from '@/lib/v2/devices';
-import { requestPlaybackV3Token, type PlaybackV3Token } from '@/lib/v2/playback';
+import { nativePlaybackSource, requestPlaybackV3Token, type PlaybackV3Token } from '@/lib/v2/playback';
+import { createStreamHlsConfig, isStreamAuthFailure, reloadStreamSource, startPlaybackRenewal } from '@/lib/v2/stream-playback';
 import { watermarkCode, watermarkPosition, watermarkSlot, WATERMARK_MOVE_MS } from '@/lib/v2/watermark';
 
 const REFRESH_BEFORE_EXPIRY_MS = 60_000;
@@ -38,8 +40,14 @@ export function TicketPlayer(props: {
     const position = watermarkPosition(props.ticketId, slot);
     const tokenRef = useRef<string | null>(null);
     const cleanup = useRef<(() => void) | null>(null);
+    const attemptRef = useRef(0);
 
-    useEffect(() => () => cleanup.current?.(), []);
+    useEffect(() => () => {
+        // Unmount: stop the running player and make any pending start() stale.
+        attemptRef.current += 1;
+        cleanup.current?.();
+        cleanup.current = null;
+    }, []);
     useEffect(() => {
         if (state !== 'playing') return;
         const timer = setInterval(() => setSlot(watermarkSlot(Date.now())), WATERMARK_MOVE_MS / 6);
@@ -58,6 +66,12 @@ export function TicketPlayer(props: {
     }
 
     async function start() {
+        // A second Play (after a failed renewal) tears the previous player down first.
+        cleanup.current?.();
+        cleanup.current = null;
+        const attempt = ++attemptRef.current;
+        // Unmounted, or superseded by a later Play, while a request or the hls.js import was pending.
+        const stale = () => attempt !== attemptRef.current;
         setState('loading');
         setError('');
         const request = () => requestPlaybackV3Token({
@@ -65,46 +79,62 @@ export function TicketPlayer(props: {
             origin: window.location.origin, device: props.device,
         });
         try {
-            let access: PlaybackV3Token = await request();
+            const access: PlaybackV3Token = await request();
+            if (stale()) return;
             tokenRef.current = access.token;
             const { default: Hls } = await import('hls.js');
+            if (stale()) return;
             const video = videoRef.current!;
+            // A Stream answer carries its token in the URL path: no header, and renewal swaps the source.
+            const stream = access.provider === 'cloudflare-stream';
             // Native HLS (iOS Safari) cannot send the Livepeer-Jwt header, so the token goes in the URL.
             const native = !Hls.isSupported();
             if (native && !video.canPlayType('application/vnd.apple.mpegurl')) throw new Error('playback_unsupported');
-            const nativeSource = (value: PlaybackV3Token) => `${value.hlsUrl}?jwt=${encodeURIComponent(value.token)}`;
-            const hls = native ? null : new Hls(createLivepeerHlsConfig(() => tokenRef.current, access.playbackId));
+            const nativeSource = nativePlaybackSource;
+            const hls = native ? null : new Hls(stream
+                ? createStreamHlsConfig(V2_MEDIA_CONFIG.streamCustomerCode)
+                : createLivepeerHlsConfig(() => tokenRef.current, access.playbackId));
             if (hls) {
                 hls.loadSource(access.hlsUrl);
                 hls.attachMedia(video);
             } else {
                 video.src = nativeSource(access);
             }
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            const schedule = () => {
-                timer = setTimeout(async () => {
-                    try {
-                        access = await request();
-                        tokenRef.current = access.token;
-                        if (!hls) {
-                            const position = video.currentTime;
-                            const playing = !video.paused;
-                            video.src = nativeSource(access);
-                            video.addEventListener('loadedmetadata', () => {
-                                video.currentTime = position;
-                                if (playing) void video.play().catch(() => undefined);
-                            }, { once: true });
-                        }
-                        schedule();
-                    } catch {
-                        setState('error');
-                        setError('Playback stopped because the viewing pass could not be renewed.');
+            // One renewal chain (lib/v2/stream-playback): expiry renewals and, for Stream, a 401/403
+            // on a playlist or segment (one immediate renewal, then back off) share one timer and
+            // one in-flight request, and nothing runs after cleanup.
+            const renewal = startPlaybackRenewal({
+                initial: access,
+                request,
+                refreshBeforeExpiryMs: REFRESH_BEFORE_EXPIRY_MS,
+                apply: (next) => {
+                    tokenRef.current = next.token;
+                    if (!hls) {
+                        const position = video.currentTime;
+                        const playing = !video.paused;
+                        video.src = nativeSource(next);
+                        video.addEventListener('loadedmetadata', () => {
+                            video.currentTime = position;
+                            if (playing) void video.play().catch(() => undefined);
+                        }, { once: true });
+                    } else if (stream) {
+                        reloadStreamSource(hls, video, next.hlsUrl, Hls.Events.MANIFEST_PARSED);
                     }
-                }, Math.max(5_000, access.expiresAtMs - Date.now() - REFRESH_BEFORE_EXPIRY_MS));
-            };
-            schedule();
+                },
+                onFailed: () => {
+                    if (stream) hls?.stopLoad();
+                    setState('error');
+                    setError('Playback stopped because the viewing pass could not be renewed.');
+                },
+            });
+            if (hls && stream) {
+                hls.on(Hls.Events.FRAG_LOADED, () => renewal.fragmentLoaded());
+                hls.on(Hls.Events.ERROR, (_event, data) => {
+                    if (isStreamAuthFailure(data)) renewal.authFailure();
+                });
+            }
             cleanup.current = () => {
-                if (timer) clearTimeout(timer);
+                renewal.stop();
                 hls?.destroy();
                 if (!hls) video.removeAttribute('src');
             };

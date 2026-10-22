@@ -879,11 +879,13 @@ only webhook slot and deletes it at cleanup, which would remove the Bridge's web
    - same file, `STREAM.signingKeyId` and `STREAM.signingPublicKey` together: done on 2026-10-22 (key
      `a9f988cd…`); for another media account replace `<create-with-post-stream-keys>` in both (one without
      the other fails `stream_signing_key_incomplete`).
-   - `scripts/v2-testnet-release.mjs`, relayer `UPLOAD_PROFILE_HASH_ALLOWLIST`: the `hash` of
-     `protocol/paid-media-v1/stream-profile.json` (`node scripts/check-paid-media-v1.mjs` prints
-     it). Empty keeps today's behaviour (any 64-hex hash). Once this allowlist is live (MC cutover
-   step 6), an upload from a web build that does not send the Stream descriptor hash is refused by
-   the relayer with `profile_not_allowed` before any fee is paid.
+   - `scripts/v2-testnet-release.mjs`, relayer `UPLOAD_PROFILE_HASH_ALLOWLIST`: done on 2026-10-22
+     (M3) with the `hash` of `protocol/paid-media-v1/stream-profile.json`
+     (`1128da32…ea5f4c64`; `node scripts/check-paid-media-v1.mjs` prints it). It takes effect with
+     the cutover's *V2 Testnet Workers* run (MC cutover step 6): from that run on, only a web build
+     with `NEXT_PUBLIC_V2_MEDIA_PROFILE=stream` (and `NEXT_PUBLIC_STREAM_CUSTOMER_CODE`,
+     docs/testing.md) can start a V2 upload; a build that sends another hash is refused by the
+     relayer with `profile_not_allowed` before any fee is paid.
 7. **Check the constants** offline: start *V2 Testnet Bridge* with `stream_enabled=true`; its
    prepare job fails on any remaining sentinel (`stream_*_unconfigured`). Reject the environment
    approval to stop there. The secret, key and webhook checks run only in the deploy job, and a

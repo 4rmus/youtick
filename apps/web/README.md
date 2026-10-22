@@ -124,6 +124,23 @@ signing would unlink a different device, nothing is signed and the page asks aga
 once `get_ticket` lists the device. The flag needs a relayer with `DAILY_DEVICE_LIMIT` and
 `TICKET_DAILY_DEVICE_LIMIT` set; without the flag the page shows a neutral notice and renews
 nothing, so a device stops playing 30 days after its last link.
+`NEXT_PUBLIC_V2_MEDIA_PROFILE` selects the media profile of new `/studio` uploads (Studio to
+Stream migration, M3): `legacy` (the default) keeps today's profile hash and the
+`origin.livepeer.com` tus origin, byte for byte; `stream` pays the job under the Stream
+descriptor hash (`protocol/paid-media-v1/stream-profile.json`) with the same `paid-media-v1`
+profile id, reads the Bridge's `/__health` before the fee and stops unless `streamConfigured` is
+`true`, and accepts only an `upload.cloudflarestream.com` tus endpoint. A resumed upload keeps the
+hash its chain job was paid under. `stream` requires `NEXT_PUBLIC_STREAM_CUSTOMER_CODE`, the
+public delivery code of the media account (lowercase letters and digits, 8 to 64; testnet
+`7v4my51gigdqb5jn`). Both are build-time values; the V1 `/upload` page never reads them.
+Playback follows the Bridge's answer, not the selector: a `/v3/playback-tokens` answer with
+`provider: 'cloudflare-stream'` is accepted only when its `hls_url` is exactly
+`https://customer-<NEXT_PUBLIC_STREAM_CUSTOMER_CODE>.cloudflarestream.com/<token>/manifest/video.m3u8`
+for the answered token. The player (`lib/v2/stream-playback.ts`) then sends no token header,
+lets hls.js request only that host (playlists without a query, `.mp4` init and media segments
+with exactly the `p` and `s` query keys), renews by loading the new URL and seeking back, renews
+once at once on a 401/403 and then backs off, and gives iOS Safari the URL as it is. Studio
+answers play as before.
 Multi-asset payments also default to `off`. `preview` is dry-quote only; `live`
 requires the Bridge to use the same mode and a positive
 `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`.

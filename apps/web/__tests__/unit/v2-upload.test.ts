@@ -15,6 +15,7 @@ const featureFlags = vi.hoisted(() => ({
     publicTestnetBeta: false,
     publicTestnetVideoV1: false,
 }));
+const mediaConfig = vi.hoisted(() => ({ profile: 'legacy' as 'legacy' | 'stream', streamCustomerCode: '' }));
 const near = vi.hoisted(() => ({ viewContract: vi.fn(), query: vi.fn() }));
 const intent = vi.hoisted(() => ({ request: vi.fn() }));
 
@@ -29,6 +30,7 @@ vi.mock('@/lib/constants', () => ({
     GAS_CONSTANTS: { mediumGas: 100_000_000_000_000n },
     NEAR_CONFIG: { marketContractId: 'market-v2.youtick.testnet', usdcContractId: 'usdc.fakes.testnet' },
     NEAR_NETWORK: 'testnet',
+    V2_MEDIA_CONFIG: mediaConfig,
 }));
 vi.mock('@/lib/livepeer-upload', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/lib/livepeer-upload')>();
@@ -38,7 +40,7 @@ vi.mock('@/lib/livepeer-upload', async (importOriginal) => {
 import { fingerprintLivepeerSource, loadLivepeerJobSessionKey, persistLivepeerJobSessionKey, writeLivepeerUploadDraft } from '@/lib/livepeer-upload';
 import {
     authorizeV2PaidJob, buildUploadMessage, prepareV2UploadResume, PROFILE_ID, UPLOAD_GAS, UPLOAD_KEY_DEPOSIT, UploadError, uploadDelegateBytes,
-    uploadKeyDelegateBytes,
+    uploadKeyDelegateBytes, processingWaitMs, v2ProfileOf, v2UploadProfileHash,
 } from '@/lib/v2/upload';
 import { KeyPair } from 'near-api-js';
 
@@ -103,8 +105,12 @@ class FakePopup implements PopupLike {
 }
 
 const UPLOAD_ID = 'cd'.repeat(32);
+const LEGACY_HASH = '96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77';
+const STREAM_PROFILE_HASH = '1128da32be3187c804326ef68a3c4c5344b47fc956a09ee88f8c0779ea5f4c64';
 
-function harness(options: { relayer?: Array<[number, unknown]>; job?: (reads: number) => unknown } = {}) {
+function harness(options: {
+    relayer?: Array<[number, unknown]>; job?: (reads: number) => unknown; health?: unknown; healthStatus?: number;
+} = {}) {
     const popup = new FakePopup();
     let listener: ((event: { origin: string; data: unknown; source?: unknown }) => void) | null = null;
     const requests: { url: string; body: Record<string, unknown> }[] = [];
@@ -112,7 +118,13 @@ function harness(options: { relayer?: Array<[number, unknown]>; job?: (reads: nu
         [202, { uploadId: UPLOAD_ID, state: 'signing', txHash: null }],
         [200, { uploadId: UPLOAD_ID, state: 'submitted', txHash: 'h' }],
     ])];
+    const health: unknown[] = [];
     const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (String(url).endsWith('/__health')) {
+            health.push(init?.method);
+            if (options.health instanceof Error) throw options.health;
+            return Response.json(options.health ?? {}, { status: options.healthStatus ?? 200 });
+        }
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         requests.push({ url: String(url), body });
         if (String(url).endsWith('/oauth/token')) return Response.json({ access_token: 'signing-token', id_token: 'id' });
@@ -129,18 +141,19 @@ function harness(options: { relayer?: Array<[number, unknown]>; job?: (reads: nu
     };
     let reads = 0;
     const view = vi.fn(async () => { reads += 1; return (options.job ? options.job(reads) : null) as never; });
-    const deps = { view, accessKey: async () => ({ nonce: 7n, blockHeight: 1_000n }), fetch: fetcher, sleep: async () => undefined, now: () => NOW, oidc, randomNonce: () => 'n' };
+    const accessKey = vi.fn(async () => ({ nonce: 7n, blockHeight: 1_000n }));
+    const deps = { view, accessKey, fetch: fetcher, sleep: async () => undefined, now: () => NOW, oidc, randomNonce: () => 'n' };
     const approve = () => void vi.waitFor(() => expect(popup.location.href).not.toBe('about:blank'), { timeout: 2_000 }).then(() => {
         const state = new URL(popup.location.href).searchParams.get('state');
         listener?.({ origin: new URL(config.auth.provider.issuer).origin, source: popup, data: { type: 'authorization_response', response: { state, code: 'code' } } });
     }, () => undefined);
-    return { popup, requests, view, deps, approve };
+    return { popup, requests, view, deps, approve, health, accessKey };
 }
 
 const file = new File([new Uint8Array(1_024)], 'clip.mp4', { type: 'video/mp4', lastModified: 1 });
 const JOB = 'lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6';
 
-beforeEach(() => { sessionStorage.clear(); localStorage.clear(); intent.request.mockReset(); });
+beforeEach(() => { sessionStorage.clear(); localStorage.clear(); intent.request.mockReset(); mediaConfig.profile = 'legacy'; });
 
 describe('NEAR Auth upload fee', () => {
     it('asks for approval of the exact delegate, relays it and confirms the job key on chain', async () => {
@@ -153,7 +166,7 @@ describe('NEAR Auth upload fee', () => {
         pending.catch(() => undefined);
         await vi.waitFor(() => { const key = loadLivepeerJobSessionKey(session.accountId, JOB); expect(key).not.toBeNull(); uploadKey = key!.keyPair.getPublicKey().toString(); });
         h.approve();
-        expect(await pending).toBe(uploadKey);
+        expect(await pending).toEqual({ publicKey: uploadKey, profileConfigSha256: LEGACY_HASH });
         const relay = h.requests.find((request) => request.url === 'https://relayer.test/v1/uploads')!;
         const args = relay.body.args as { receiver_id: string; amount: string; msg: string };
         expect(args.receiver_id).toBe(MARKET);
@@ -168,14 +181,14 @@ describe('NEAR Auth upload fee', () => {
         expect(h.popup.closed).toBe(true);
     });
 
-    it('reuses an authorized job with this key, and sends to resume when the key is lost', async () => {
+    it('reuses an authorized job with this key under its on-chain hash, and sends to resume when the key is lost', async () => {
         const keyPair = KeyPair.fromRandom('ed25519');
         persistLivepeerJobSessionKey(session.accountId, JOB, keyPair, String(NOW + 60_000));
-        const same = harness({ job: () => ({ job_id: JOB, creator_id: session.accountId, status: 'Authorized', upload_public_key: keyPair.getPublicKey().toString() }) });
+        const same = harness({ job: () => ({ job_id: JOB, creator_id: session.accountId, status: 'Authorized', upload_public_key: keyPair.getPublicKey().toString(), profile_id: 'paid-media-v1', profile_config_sha256: STREAM_PROFILE_HASH }) });
         await expect(authorizeV2PaidJob({
             config, usdcContractId: USDC, session, jobId: JOB, title: 'x', priceUsdc: '5000000', expectedSourceBytes: 1_024,
             popup: same.popup, redirectUri: 'https://youtick.test', deps: same.deps,
-        })).resolves.toBe(keyPair.getPublicKey().toString());
+        })).resolves.toEqual({ publicKey: keyPair.getPublicKey().toString(), profileConfigSha256: STREAM_PROFILE_HASH });
         expect(same.requests).toEqual([]);
         expect(same.popup.closed).toBe(true);
 
@@ -215,8 +228,104 @@ describe('NEAR Auth upload fee', () => {
         paid.catch(() => undefined);
         await vi.waitFor(() => { const stored = loadLivepeerJobSessionKey(session.accountId, JOB); expect(stored).not.toBeNull(); key = stored!.keyPair.getPublicKey().toString(); });
         exists.approve();
-        expect(await paid).toBe(key);
+        expect(await paid).toEqual({ publicKey: key, profileConfigSha256: LEGACY_HASH });
         expect(exists.requests.filter((request) => request.url.endsWith('/v1/uploads/status'))).toEqual([]);
+    });
+});
+
+describe('media profile selector', () => {
+    const STREAM_HASH = '1128da32be3187c804326ef68a3c4c5344b47fc956a09ee88f8c0779ea5f4c64';
+
+    async function pay(h: ReturnType<typeof harness>, state: { key: string }) {
+        let uploadKey = '';
+        const pending = authorizeV2PaidJob({
+            config, usdcContractId: USDC, session, jobId: JOB, title: 'Clip', priceUsdc: '5000000', expectedSourceBytes: 1_024,
+            popup: h.popup, redirectUri: 'https://youtick.test', deps: h.deps,
+        });
+        pending.catch(() => undefined);
+        await vi.waitFor(() => { const key = loadLivepeerJobSessionKey(session.accountId, JOB); expect(key).not.toBeNull(); uploadKey = key!.keyPair.getPublicKey().toString(); state.key = uploadKey; });
+        h.approve();
+        await pending;
+        const relay = h.requests.find((request) => request.url === 'https://relayer.test/v1/uploads')!;
+        return { msg: (relay.body.args as { msg: string }).msg, uploadKey };
+    }
+
+    function confirmedJob(h: { key: string }) {
+        return (reads: number) => (reads >= 3 ? { job_id: JOB, creator_id: session.accountId, status: 'Authorized', upload_public_key: h.key } : null);
+    }
+
+    it('keeps the create_paid_job message byte-identical with the selector unset, and never reads /__health', async () => {
+        const state = { key: '' };
+        const h = harness({ job: (reads) => confirmedJob(state)(reads) });
+        const run = pay(h, state);
+        const { msg, uploadKey } = await run;
+        const expiresAt = loadLivepeerJobSessionKey(session.accountId, JOB)!.uploadKeyExpiresAtMs;
+        // The exact bytes produced before the selector existed: the legacy profile under paid-media-v1.
+        expect(msg).toBe(`{"action":"create_paid_job","job_id":"${JOB}","title":"Clip","price_usdc":"5000000","expected_source_bytes":"1024",`
+            + `"profile_id":"paid-media-v1","profile_config_sha256":"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77",`
+            + `"upload_public_key":"${uploadKey}","upload_key_expires_at_ms":"${expiresAt}"}`);
+        expect(v2UploadProfileHash()).toBe('96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77');
+        expect(h.health).toEqual([]);
+    });
+
+    it('pays a stream job under the Stream descriptor hash after /__health reports Stream configured', async () => {
+        mediaConfig.profile = 'stream';
+        const state = { key: '' };
+        const h = harness({ job: (reads) => confirmedJob(state)(reads), health: { status: 'ok', streamConfigured: true } });
+        const run = pay(h, state);
+        const { msg } = await run;
+        expect(JSON.parse(msg)).toMatchObject({ profile_id: 'paid-media-v1', profile_config_sha256: STREAM_HASH });
+        expect(Object.keys(JSON.parse(msg))).toEqual(['action', 'job_id', 'title', 'price_usdc', 'expected_source_bytes', 'profile_id',
+            'profile_config_sha256', 'upload_public_key', 'upload_key_expires_at_ms']);
+        expect(v2UploadProfileHash()).toBe(STREAM_HASH);
+        expect(h.health).toEqual(['GET']);
+    });
+
+    it.each([
+        ['flag absent', { status: 'ok' }, 200],
+        ['flag false', { status: 'ok', streamConfigured: false }, 200],
+        ['flag truthy but not true', { status: 'ok', streamConfigured: 'true' }, 200],
+        ['health refused', { status: 'error', streamConfigured: true }, 503],
+        ['health unreachable', new TypeError('Failed to fetch'), 200],
+    ])('stops a stream upload before any approval or fee when %s', async (_name, health, healthStatus) => {
+        mediaConfig.profile = 'stream';
+        const h = harness({ health, healthStatus });
+        await expect(authorizeV2PaidJob({
+            config, usdcContractId: USDC, session, jobId: JOB, title: 'Clip', priceUsdc: '5000000', expectedSourceBytes: 1_024,
+            popup: h.popup, redirectUri: 'https://youtick.test', deps: h.deps,
+        })).rejects.toThrow('media_provider_not_ready');
+        expect(h.requests).toEqual([]);
+        expect(h.accessKey).not.toHaveBeenCalled();
+        expect(h.popup.location.href).toBe('about:blank');
+        expect(h.popup.closed).toBe(true);
+    });
+
+    it('keeps the legacy processing wait at 10 minutes and gives Stream 30', () => {
+        expect(processingWaitMs('legacy')).toBe(120 * 5_000);
+        expect(processingWaitMs()).toBe(120 * 5_000);
+        expect(processingWaitMs('stream')).toBe(30 * 60 * 1000);
+        mediaConfig.profile = 'stream';
+        expect(processingWaitMs()).toBe(30 * 60 * 1000);
+        expect(v2ProfileOf(STREAM_HASH)).toBe('stream');
+        expect(v2ProfileOf(LEGACY_HASH)).toBe('legacy');
+    });
+
+    it('resumes with the hash the chain job was paid under', async () => {
+        writeLivepeerUploadDraft(session.accountId, {
+            schema: 'youtick.livepeer-ui-draft.v2', stage: 'authorized', jobId: JOB, title: 'x', price: '5', sourceBytes: file.size,
+            sourceName: file.name, sourceLastModified: file.lastModified, sourceFingerprintSha256: await fingerprintLivepeerSource(file),
+        });
+        const keyPair = KeyPair.fromRandom('ed25519');
+        persistLivepeerJobSessionKey(session.accountId, JOB, keyPair, String(NOW + 60_000));
+        const h = harness({ job: () => ({
+            job_id: JOB, creator_id: session.accountId, status: 'Authorized', upload_public_key: keyPair.getPublicKey().toString(),
+            upload_key_expires_at_ms: String(NOW + 60_000), profile_id: 'paid-media-v1', profile_config_sha256: STREAM_HASH,
+        }) });
+        intent.request.mockResolvedValue({ job_id: JOB, generation: 1, state: 'PROCESSING' });
+        await prepareV2UploadResume({ config, session, jobId: JOB, file, popup: h.popup, redirectUri: 'https://youtick.test', deps: h.deps });
+        expect(intent.request).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'paid-media-v1', profileConfigSha256: STREAM_HASH }));
+        // Resuming takes no fee, so the selector and /__health play no part.
+        expect(h.health).toEqual([]);
     });
 });
 
@@ -267,5 +376,34 @@ describe('NEAR Auth upload resume', () => {
         const published = harness({ job: () => ({ job_id: JOB, creator_id: session.accountId, status: 'Published', upload_public_key: 'ed25519:old', upload_key_expires_at_ms: '1' }) });
         await expect(prepareV2UploadResume({ config, session, jobId: JOB, file, popup: published.popup, redirectUri: 'https://youtick.test', deps: published.deps }))
             .rejects.toBeInstanceOf(UploadError);
+    });
+});
+
+describe('upload refusal copy', () => {
+    it('explains the platform-wide reservation budget and capacity without naming the provider', async () => {
+        const { uploadErrorMessage } = await import('@/components/v2/UploadForm');
+        const { LivepeerAdmissionDeniedError } = await import('@/lib/livepeer-upload');
+        const copy = [
+            uploadErrorMessage(new LivepeerAdmissionDeniedError('reservation_budget', null)),
+            uploadErrorMessage(new LivepeerAdmissionDeniedError('capacity', null)),
+            uploadErrorMessage(new Error('provider_admission_closed')),
+            uploadErrorMessage(new UploadError('media_provider_not_ready')),
+            uploadErrorMessage(new Error('provider_admission_closed'), true),
+            uploadErrorMessage(new UploadError('profile_not_allowed')),
+        ];
+        expect(copy[0]).toBe('Another upload is in progress on the platform. Please try again in a few minutes. No fee was taken.');
+        expect(copy[1]).toMatch(/^Uploads are at capacity right now/);
+        // Before the fee (preflight) and after it (intent, resume) the capacity refusal reads differently.
+        expect(copy[2]).toBe('Uploads are at capacity right now. Please try again later. No fee was taken.');
+        expect(copy[3]).toBe('Uploads are not available right now. No fee was taken; please try again later.');
+        expect(copy[4]).toBe('Uploads are at capacity right now. Your fee is paid and this upload stays here; use Resume later.');
+        expect(copy[5]).toBe('This version of the app can no longer start uploads; reload or update. No fee was taken.');
+        // feePaid changes only the codes that differ after payment.
+        expect(uploadErrorMessage(new UploadError('media_provider_not_ready'), true)).toBe(copy[3]);
+        for (const text of copy) expect(text).not.toMatch(/livepeer|cloudflare|stream|studio|\(/i);
+        // Other reasons keep today's admission_denied copy.
+        const busy = 'Uploads are busy right now. Please try again in a few minutes.';
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('daily_limit', 1))).toBe(busy);
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError(null, null))).toBe(busy);
     });
 });

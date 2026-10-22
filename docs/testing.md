@@ -147,6 +147,12 @@ What each value does:
   crypto checkout from a Turkish browser (the default list is `tr`, roadmap E7); without it a
   Turkish-language browser sees "Ticket sales are not available here yet" on `/tickets/buy`.
   Leave it out to test the rule itself.
+- `NEXT_PUBLIC_V2_MEDIA_PROFILE=stream` with `NEXT_PUBLIC_STREAM_CUSTOMER_CODE=7v4my51gigdqb5jn`
+  (M3) makes `/studio` pay new jobs under the Stream descriptor hash and accept only the Stream
+  tus origin; it needs a Bridge whose `/__health` reports `streamConfigured: true`, otherwise the
+  upload stops before the fee. Leave both unset for the legacy profile (the default). From the
+  Stream cutover's *V2 Testnet Workers* run on, the relayer accepts only the Stream hash, so only a
+  `stream` build can start a V2 upload (`docs/v2-testnet-runbook.md`, "Stream cutover inputs").
 - `NEXT_PUBLIC_V2_DEVICE_LINK_ENABLED=true` shows "Watch on this device" and renews a device in
   its last seven days. It needs a relayer deployed with `DAILY_DEVICE_LIMIT` and
   `TICKET_DAILY_DEVICE_LIMIT`, which no environment has yet; leave it out until then.

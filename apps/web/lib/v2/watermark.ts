@@ -2,7 +2,7 @@
 // first 8 hex characters of the ticket id: sha256 of the ticket's public key, public on chain and
 // carrying no buyer account. It cannot be turned back into the ticket key and puts no personal data
 // on screen; the operator can match it against on-chain ticket ids. It is a deterrent overlay, not a
-// forensic mark: Livepeer serves one stream to every viewer, so nothing is burned into the video
+// forensic mark: the media provider serves one stream to every viewer, so nothing is burned into the video
 // itself, and no copy may describe it as a per-viewer watermark (claim register, claim 14).
 
 /** Seconds a watermark stays in one place; moving it makes cropping it out harder. */

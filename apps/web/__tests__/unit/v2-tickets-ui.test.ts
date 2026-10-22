@@ -306,4 +306,53 @@ describe('playback v3 client', () => {
         await expect(run([[200, { schema: 'youtick.livepeer-playback-token.v2', playback_id: 'pb', token: 't', hls_url: 'h', expires_at_ms: '1' }]]))
             .rejects.toThrow('playback_unavailable');
     });
+
+    describe('Stream answers (provider cloudflare-stream)', () => {
+        // Synthetic token: base64url of fake JSON, never a signed one.
+        const CODE = '7v4my51gigdqb5jn';
+        const TOKEN = 'eyJmYWtlIjoiaGVhZGVyIn0.eyJmYWtlIjoicGF5bG9hZCJ9.ZmFrZS1zaWduYXR1cmU';
+        const OTHER = 'eyJmYWtlIjoib3RoZXIifQ.eyJmYWtlIjoib3RoZXIifQ.b3RoZXI';
+        const HLS = `https://customer-${CODE}.cloudflarestream.com/${TOKEN}/manifest/video.m3u8`;
+        const answer = (overrides: Record<string, unknown> = {}) => ({
+            schema: 'youtick.livepeer-playback-token.v3', playback_id: '0123456789abcdef0123456789abcdef', token: TOKEN, hls_url: HLS,
+            expires_at_ms: String(NOW + 180_000), provider: 'cloudflare-stream', ...overrides,
+        });
+        const run = async (body: Record<string, unknown>, streamCustomerCode: string = CODE) => requestPlaybackV3Token({
+            bridgeUrl: BRIDGE, network: 'testnet', contractId: MARKET, ticketId: 'a'.repeat(64), origin: ORIGIN, device: await device(),
+            fetch: fakeFetch([[200, body]]).fetcher, sleep: async () => undefined, now: () => NOW, streamCustomerCode,
+        });
+
+        it('accepts the path-token URL on the configured customer host', async () => {
+            await expect(run(answer())).resolves.toEqual({
+                playbackId: '0123456789abcdef0123456789abcdef', token: TOKEN, hlsUrl: HLS, expiresAtMs: NOW + 180_000, provider: 'cloudflare-stream',
+            });
+        });
+
+        it.each([
+            ['another customer host', { hls_url: HLS.replace(CODE, 'otherotherother1') }],
+            ['a lookalike host', { hls_url: HLS.replace('.cloudflarestream.com', '.cloudflarestream.com.example.test') }],
+            ['plain http', { hls_url: HLS.replace('https:', 'http:') }],
+            ['a different path', { hls_url: HLS.replace('/manifest/video.m3u8', '/manifest/video.mpd') }],
+            ['a path token other than the token field', { hls_url: HLS.replace(TOKEN, OTHER) }],
+            ['a token field other than the path token', { token: OTHER }],
+            ['a token that is not a JWT', { token: 'jwt', hls_url: HLS.replace(TOKEN, 'jwt') }],
+            ['a query', { hls_url: `${HLS}?jwt=${TOKEN}` }],
+            ['an empty query', { hls_url: `${HLS}?` }],
+            ['a fragment', { hls_url: `${HLS}#t=1` }],
+            ['an unknown provider', { provider: 'other-provider' }],
+            ['a provider that is not a string', { provider: true }],
+        ])('refuses %s as playback_unavailable', async (_name, overrides) => {
+            await expect(run(answer(overrides))).rejects.toThrow('playback_unavailable');
+        });
+
+        it('refuses a Stream answer when the build has no customer code', async () => {
+            await expect(run(answer(), '')).rejects.toThrow('playback_unavailable');
+        });
+
+        it('keeps a Studio answer as before: no provider key, any https URL shape', async () => {
+            const studio = { schema: 'youtick.livepeer-playback-token.v3', playback_id: 'pb', token: 'jwt', hls_url: 'https://livepeercdn.studio/hls/pb/index.m3u8', expires_at_ms: String(NOW + 600_000) };
+            const access = await run(studio, '');
+            expect(access).toStrictEqual({ playbackId: 'pb', token: 'jwt', hlsUrl: studio.hls_url, expiresAtMs: NOW + 600_000 });
+        });
+    });
 });

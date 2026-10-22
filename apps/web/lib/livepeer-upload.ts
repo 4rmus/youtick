@@ -1,6 +1,7 @@
 import { preparePlaybackDevice, rememberPlaybackDelegate, type PlaybackSessionAuthorization } from './device-session';
 import { hasTitleContent } from '../../../protocol/paid-media-livepeer-v1/title';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
+import streamProfile from '../../../protocol/paid-media-v1/stream-profile.json';
 import { Upload, type DetailedError } from 'tus-js-client';
 import {
     KeyPair,
@@ -22,8 +23,26 @@ import { readLivepeerUploadProgress, waitForAuthorizedLivepeerJob } from '@/lib/
 import type { UploadRecoveryStage } from '@/lib/livepeer-upload-state';
 import { measureVideoOperation, observeVideoState } from '@/lib/video-measurements';
 
-const LIVEPEER_TUS_ORIGIN = 'https://origin.livepeer.com';
 export const PROFILE_ID = 'paid-media-livepeer-v1';
+/** Market V2 profile id (lib/v2/upload `PROFILE_ID`); only it may carry the Stream descriptor hash. */
+const MARKET_V2_PROFILE_ID = 'paid-media-v1';
+/** protocol/paid-media-v1/stream-profile.json, entry `stream`. */
+export const STREAM_PROFILE_HASH: string = streamProfile.stream.hash;
+/**
+ * Exact tus origin per media provider. As in the Bridge, the provider is fixed by the profile hash
+ * the intent body carries: the Stream descriptor hash requires the Stream upload origin, every
+ * other (V1 and legacy) hash the Studio origin, so neither origin is accepted for the other.
+ */
+const TUS_ORIGINS = {
+    studio: 'https://origin.livepeer.com',
+    stream: 'https://upload.cloudflarestream.com',
+} as const;
+type TusProvider = keyof typeof TUS_ORIGINS;
+/**
+ * Provider of each intent `parseIntent` accepted. `uploadLivepeerSource` checks the tus URL
+ * against it; an intent object that did not come from `parseIntent` falls back to Studio.
+ */
+const intentTusProviders = new WeakMap<object, TusProvider>();
 const LIVEPEER_SESSION_STORAGE_PREFIX = 'youtick:livepeer-job-session:';
 const LIVEPEER_DRAFT_STORAGE_PREFIX = 'youtick:livepeer-ui-draft:';
 const LIVEPEER_LAST_JOB_STORAGE_PREFIX = 'youtick:livepeer-last-job:';
@@ -1178,6 +1197,12 @@ type UploadIntentInput = {
      * `profile_id`. V1 omits it (`PROFILE_ID`); Market V2 passes `paid-media-v1` (lib/v2/upload).
      */
     profileId?: string;
+    /**
+     * Profile config hash sent in the intent body; the Bridge requires it to equal the chain job's
+     * and selects the media provider by it. V1 omits it (unchanged behaviour); Market V2 passes the
+     * hash its job was paid under (lib/v2/upload `v2UploadProfileHash` or the chain job's own).
+     */
+    profileConfigSha256?: string;
 };
 
 export type LivepeerUploadStatus = { job_id: string; generation: number; state: string };
@@ -1208,8 +1233,10 @@ export async function requestLivepeerUploadIntent(input: UploadIntentInput): Pro
         source_fingerprint_sha256: input.sourceFingerprintSha256,
         source_type: input.sourceType,
         profile_id: input.profileId ?? PROFILE_ID,
-        profile_config_sha256: FEATURE_FLAGS.publicTestnetVideoV1
-            ? storedProfileHash(await reconcilePaidJob(input.jobId), input.profileId) : profiles.legacy.hash,
+        profile_config_sha256: input.profileConfigSha256 !== undefined
+            ? storedProfileHash({ profile_id: input.profileId ?? PROFILE_ID, profile_config_sha256: input.profileConfigSha256 }, input.profileId)
+            : FEATURE_FLAGS.publicTestnetVideoV1
+                ? storedProfileHash(await reconcilePaidJob(input.jobId), input.profileId) : profiles.legacy.hash,
         ...(input.recovery ? { recovery: input.recovery } : {}),
     };
     const bodySha256 = await sha256Hex(canonicalJson(body));
@@ -1255,7 +1282,7 @@ export async function requestLivepeerUploadIntent(input: UploadIntentInput): Pro
         observeVideoState(value.state);
         return { job_id: input.jobId, generation: input.generation, state: value.state };
     }
-    const intent = parseIntent(value, input);
+    const intent = parseIntent(value, { ...input, tusProvider: tusProviderFor(body.profile_config_sha256) });
     if (input.recovery === 'resume' && intent.created) throw new Error('invalid_livepeer_upload_intent');
     return intent;
 }
@@ -1451,7 +1478,13 @@ export async function cancelLivepeerUpload(input: {
     }
 }
 
-export type LivepeerAdmissionReason = 'active_upload' | 'daily_limit' | 'capacity' | 'source_too_large';
+/**
+ * `reservation_budget`: the Stream-only V2 Bridge refuses a preflight while open upload
+ * reservations plus this upload's duration cap exceed its budget (a platform-wide wait, not the
+ * creator's own limit). The V1 Bridge never sends it.
+ */
+export type LivepeerAdmissionReason = 'active_upload' | 'daily_limit' | 'capacity' | 'source_too_large'
+    | 'reservation_budget';
 
 // Keeps the `admission_denied` code for existing handling and adds the Bridge's reason.
 export class LivepeerAdmissionDeniedError extends Error {
@@ -1460,7 +1493,9 @@ export class LivepeerAdmissionDeniedError extends Error {
     }
 }
 
-const ADMISSION_REASONS: readonly LivepeerAdmissionReason[] = ['active_upload', 'daily_limit', 'capacity', 'source_too_large'];
+const ADMISSION_REASONS: readonly LivepeerAdmissionReason[] = [
+    'active_upload', 'daily_limit', 'capacity', 'source_too_large', 'reservation_budget',
+];
 
 export async function preflightLivepeerUpload(input: {
     accountId: string;
@@ -1567,6 +1602,7 @@ function parseIntent(value: Record<string, unknown>, expected: {
     generation: number;
     expectedSourceBytes: number;
     sourceType: LivepeerSourceType;
+    tusProvider: TusProvider;
 }): LivepeerUploadIntent {
     if (value.schema !== 'youtick.livepeer-upload-intent.v2'
         || value.job_id !== expected.jobId
@@ -1575,7 +1611,7 @@ function parseIntent(value: Record<string, unknown>, expected: {
         || value.source_type !== expected.sourceType
         || value.chunk_bytes !== MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes
         || typeof value.tus_endpoint !== 'string'
-        || !isLivepeerTusUrl(value.tus_endpoint)
+        || !isLivepeerTusUrl(value.tus_endpoint, expected.tusProvider)
         || typeof value.lease_id !== 'string'
         || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.lease_id)
         || typeof value.lease_expires_at_ms !== 'string'
@@ -1585,6 +1621,7 @@ function parseIntent(value: Record<string, unknown>, expected: {
         || typeof value.created !== 'boolean') {
         throw new Error('invalid_livepeer_upload_intent');
     }
+    intentTusProviders.set(value, expected.tusProvider);
     return value as LivepeerUploadIntent;
 }
 
@@ -1596,7 +1633,7 @@ function validateUpload(file: File, intent: LivepeerUploadIntent): void {
         || String(file.size) !== intent.expected_source_bytes
         || sourceType !== intent.source_type
         || intent.chunk_bytes !== MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes
-        || !isLivepeerTusUrl(intent.tus_endpoint)) {
+        || !isLivepeerTusUrl(intent.tus_endpoint, intentTusProviders.get(intent) ?? 'studio')) {
         throw new Error('invalid_livepeer_upload');
     }
 }
@@ -1613,12 +1650,19 @@ function errorStatus(error: Error | DetailedError): number {
         : 0;
 }
 
-function isLivepeerTusUrl(value: string): boolean {
+function isLivepeerTusUrl(value: string, provider: TusProvider): boolean {
     try {
-        return new URL(value).origin === LIVEPEER_TUS_ORIGIN;
+        const url = new URL(value);
+        // Stream also refuses userinfo, as the Bridge does; the Studio (V1) rule stays as it was.
+        if (provider === 'stream' && (url.username || url.password)) return false;
+        return url.origin === TUS_ORIGINS[provider];
     } catch {
         return false;
     }
+}
+
+function tusProviderFor(profileConfigSha256: string): TusProvider {
+    return profileConfigSha256 === STREAM_PROFILE_HASH ? 'stream' : 'studio';
 }
 
 function requireFeature(): void {
@@ -1828,7 +1872,9 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 
 export function storedProfileHash(job: Record<string, unknown> | null, profileId: string = PROFILE_ID): string {
     const hash = job?.profile_config_sha256;
-    if (job?.profile_id !== profileId || !Object.values(profiles).some((entry) => entry.hash === hash)) {
+    const known = Object.values(profiles).some((entry) => entry.hash === hash)
+        || (profileId === MARKET_V2_PROFILE_ID && hash === STREAM_PROFILE_HASH);
+    if (job?.profile_id !== profileId || !known) {
         throw new Error('livepeer_paid_job_conflict');
     }
     return hash as string;

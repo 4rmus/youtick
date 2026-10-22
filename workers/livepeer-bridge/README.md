@@ -315,6 +315,9 @@ as the Stream configuration is present.
   reservationBudgetSeconds, storageMinutesUsed, storageMinutesCapacity,
   lastWebhookAtMs, stuckProcessingJobs, lastStuckAtMs}` (stuck jobs = stuck
   terminations in the last 24 h) and nothing else about quotas.
+- `/__health` is CORS-readable by the `ALLOWED_ORIGINS` web origins (GET and its OPTIONS
+  preflight, no credentials), because the V2 web checks `streamConfigured` before taking an
+  upload fee; other origins still get the body without a CORS header.
 
 Configuration (vars in `wrangler.toml` as placeholders, filled by the release
 tooling): `MEDIA_PROVIDER_STREAM_ENABLED`, `STREAM_ACCOUNT_ID` (32 hex),

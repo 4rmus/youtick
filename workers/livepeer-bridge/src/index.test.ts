@@ -1082,6 +1082,40 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         }
     });
 
+    it('lets the configured web origins read /__health cross-origin, GET only and without credentials', async () => {
+        const health = (headers: Record<string, string> = {}, method = 'GET') => handler.fetch(
+            new Request('https://bridge.youtick.net/__health', { method, headers }), createEnv(),
+        );
+        const plain = await health();
+        const allowed = await health({ Origin: ORIGIN });
+        expect(allowed.status).toBe(200);
+        expect(allowed.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
+        expect(allowed.headers.get('Access-Control-Allow-Methods')).toBe('GET, OPTIONS');
+        expect(allowed.headers.get('Access-Control-Allow-Credentials')).toBeNull();
+        expect(allowed.headers.get('Vary')).toBe('Origin');
+        expect(allowed.headers.get('Cache-Control')).toBe('no-store');
+        // The body is the same with or without an Origin.
+        expect(await allowed.json()).toEqual(await plain.json());
+
+        const preflight = await health({ Origin: ORIGIN, 'Access-Control-Request-Method': 'GET' }, 'OPTIONS');
+        expect(preflight.status).toBe(204);
+        expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
+        expect(preflight.headers.get('Access-Control-Allow-Methods')).toBe('GET, OPTIONS');
+        expect(preflight.headers.get('Access-Control-Allow-Headers')).toBeNull();
+        expect(preflight.headers.get('Access-Control-Allow-Credentials')).toBeNull();
+
+        // Another origin still gets the body, with no CORS header; its preflight is refused.
+        const foreign = await health({ Origin: 'https://evil.example' });
+        expect(foreign.status).toBe(200);
+        expect(foreign.headers.get('Access-Control-Allow-Origin')).toBeNull();
+        expect(foreign.headers.get('Access-Control-Allow-Methods')).toBeNull();
+        expect(await foreign.json()).toMatchObject({ status: 'ok', streamConfigured: false });
+        const foreignPreflight = await health({ Origin: 'https://evil.example' }, 'OPTIONS');
+        expect(foreignPreflight.status).toBe(403);
+        expect(foreignPreflight.headers.get('Access-Control-Allow-Origin')).toBeNull();
+        expect(plain.headers.get('Access-Control-Allow-Origin')).toBeNull();
+    });
+
     it('keeps sponsored quote and relay mutations disabled by default', async () => {
         const env = createEnv();
         const health = await handler.fetch(new Request('https://bridge.youtick.net/__health'), env);
