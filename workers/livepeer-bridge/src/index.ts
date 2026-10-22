@@ -961,7 +961,10 @@ const bridgeWorker = {
                 operatorOutboxArchiveReady: validOperatorArchiveConfig(env),
                 publicBetaRateLimitReady: (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))
                     && Boolean(env.PUBLIC_BETA_RATE_LIMITER),
-                mediaProvider: { kind: mediaProvider(env).id },
+                mediaProvider: { kind: studioActive(env) ? mediaProvider(env).id : 'stream' },
+                // Never true with the flag off: empty STREAM_* values then mean "not configured".
+                streamConfigured: streamEnabled(env) && validStreamConfig(env),
+                stream: await streamHealthBlock(env),
             });
         }
 
@@ -2010,6 +2013,10 @@ export class LivepeerControl {
         await scheduleAlarmNoLaterThan(this.state, Number(input.envelope.expires_at_ms));
 
         const authorization = await readPlaybackAuthorization(this.env, input);
+        // The V1 session-grant path is Studio-only: a Stream publication never gets a /v1 token.
+        if (mediaProfileFamily(authorization.profileConfigSha256) === 'stream' || jobProviderKind(job) === 'stream') {
+            throw new Error('playback_denied');
+        }
         const nowMs = Date.now();
         const remainingSeconds = Math.floor((authorization.grantExpiresAtMs - nowMs) / 1000);
         if (remainingSeconds < 1) throw new Error('playback_denied');
@@ -2400,6 +2407,39 @@ async function recordStreamSignal(state: DurableObjectState, input: JsonObject):
         } satisfies StreamSignalRecord);
     });
     return json({ accepted: true });
+}
+
+/** The public Stream block: only these six numbers, from the admission object (no quotas beyond them). */
+async function streamHealthBlock(env: Env): Promise<StreamHealthBlock> {
+    const configured: StreamHealthBlock = {
+        openReservedSeconds: null,
+        reservationBudgetSeconds: positiveIntegerVar(env.STREAM_RESERVATION_SECONDS_BUDGET),
+        storageMinutesUsed: null,
+        storageMinutesCapacity: positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY),
+        lastWebhookAtMs: null,
+        stuckProcessingJobs: null,
+    };
+    if (!streamEnabled(env) || !env.LIVEPEER_CONTROL || !env.NEAR_NETWORK || !env.MARKET_CONTRACT_ID) return configured;
+    try {
+        const object = env.LIVEPEER_CONTROL.get(env.LIVEPEER_CONTROL.idFromName(
+            admissionObjectName(env.NEAR_NETWORK, env.MARKET_CONTRACT_ID),
+        ));
+        const response = await object.fetch(new Request('https://object/internal/admission/stream-status'));
+        if (!response.ok) return configured;
+        const value = await response.json() as Record<string, unknown>;
+        const number = (key: keyof StreamHealthBlock) => typeof value[key] === 'number' && Number.isFinite(value[key])
+            ? value[key] as number : null;
+        return {
+            openReservedSeconds: number('openReservedSeconds'),
+            reservationBudgetSeconds: configured.reservationBudgetSeconds,
+            storageMinutesUsed: number('storageMinutesUsed'),
+            storageMinutesCapacity: configured.storageMinutesCapacity,
+            lastWebhookAtMs: number('lastWebhookAtMs'),
+            stuckProcessingJobs: number('stuckProcessingJobs'),
+        };
+    } catch {
+        return configured;
+    }
 }
 
 type StreamHealthBlock = {
@@ -7036,6 +7076,8 @@ async function issueStatelessPlaybackToken(request: Request, env: Env): Promise<
         await requireActivePublicTestnetBetaForPlayback(env);
         const certificateCacheHit = await verifyPlaybackV2Proofs(env, input);
         const authorization = await readStatelessPlaybackAuthorization(env, input);
+        // The /v2 device-certificate path is Studio-only: a Stream publication plays through /v3.
+        if (mediaProfileFamily(authorization.profileConfigSha256) === 'stream') throw new Error('playback_denied');
         const nowMs = Date.now();
         const certificateRemainingSeconds = Math.floor(
             ((input.certificate.version === '3' ? input.deviceExpiresAtMs! : Number(input.certificate.expires_at_ms)) - nowMs) / 1000,
@@ -7128,19 +7170,22 @@ async function issueTicketPlaybackToken(request: Request, env: Env): Promise<Res
         if (deviceRemainingSeconds < 1) throw new Error('playback_denied');
         const ttlSeconds = Math.min(PLAYBACK_V2_TTL_SECONDS, deviceRemainingSeconds);
         const issuedAtSeconds = Math.floor(nowMs / 1000);
-        const signed = await mediaProvider(env, profileConfigSha256)
-            .signPlayback(decision.playbackId, ttlSeconds, issuedAtSeconds);
+        const adapter = mediaProvider(env, profileConfigSha256);
+        const signed = await adapter.signPlayback(decision.playbackId, ttlSeconds, issuedAtSeconds);
         console.info(formatLog('ticket_playback_authorization_completed', {
             markWatched: markWatchedRequired,
             latencyMs: Math.max(0, performance.now() - startedAtMs),
         }));
+        // Studio responses stay byte-identical; Stream adds `provider` and never a preview VTT.
         return json({
             schema: 'youtick.livepeer-playback-token.v3',
             playback_id: decision.playbackId,
             token: signed.token,
             expires_at_ms: String(signed.expiresAtSeconds * 1000),
             hls_url: signed.hlsUrl,
-            ...(provider.previewVttUrl ? { preview_vtt_url: provider.previewVttUrl } : {}),
+            ...(adapter.id === 'stream'
+                ? { provider: 'cloudflare-stream' }
+                : provider.previewVttUrl ? { preview_vtt_url: provider.previewVttUrl } : {}),
         });
     } catch (error) {
         const code = safeErrorCode(error);
@@ -7443,6 +7488,7 @@ async function readStatelessPlaybackAuthorization(
     let providerPolicy = playbackCacheGet<{ previewVttUrl?: string }>(providerCacheKey);
     const providerCacheHit = providerPolicy !== undefined;
     const profileConfigSha256 = publication.profile_config_sha256 as string;
+    if (mediaProfileFamily(profileConfigSha256) === 'stream') throw new Error('playback_denied');
     if (!providerPolicy) {
         providerPolicy = await verifyStatelessProviderPolicy(env, input.body.playback_id, profileConfigSha256);
         playbackCachePut(providerCacheKey, providerPolicy, Date.now() + PROVIDER_POLICY_CACHE_MS);

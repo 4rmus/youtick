@@ -345,6 +345,20 @@ describe('Livepeer bridge PR-5 playback tokens', () => {
         expect(await replay.json()).toEqual({ error: 'device_nonce_replayed' });
     });
 
+    it('fails closed for a Cloudflare Stream publication on the V1 session-grant path', async () => {
+        const { env } = await createEnv();
+        const signed = await playbackRequest();
+        vi.stubGlobal('fetch', playbackRpc({
+            ...signed,
+            publication: { profile_config_sha256: '1128da32be3187c804326ef68a3c4c5344b47fc956a09ee88f8c0779ea5f4c64' },
+        }));
+
+        const response = await handler.fetch(signed.request, env);
+
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: 'playback_denied' });
+    });
+
     it('keeps the v1 token response byte-identical across the provider boundary', async () => {
         vi.spyOn(Date, 'now').mockReturnValue(1_785_600_000_000);
         const { env } = await createEnv();

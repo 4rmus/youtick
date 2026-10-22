@@ -565,6 +565,22 @@ describe('stateless playback v2', () => {
         expect(idFromName).not.toHaveBeenCalled();
     });
 
+    it('fails closed for a Cloudflare Stream publication without any provider read (Stream plays through /v3)', async () => {
+        const { env, idFromName } = await createEnv();
+        const signed = await playbackRequest();
+        const dependencies = playbackDependencies({
+            ...signed, profileHash: '1128da32be3187c804326ef68a3c4c5344b47fc956a09ee88f8c0779ea5f4c64',
+        });
+        vi.stubGlobal('fetch', dependencies.fetcher);
+
+        const response = await handler.fetch(signed.request, env);
+
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: 'playback_denied' });
+        expect(dependencies.provider).not.toHaveBeenCalled();
+        expect(idFromName).not.toHaveBeenCalled();
+    });
+
     it('classifies playback dependency outages as internal SLO failures', async () => {
         const { env } = await createEnv();
         const signed = await playbackRequest();
