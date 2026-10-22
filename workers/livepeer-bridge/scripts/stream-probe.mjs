@@ -16,7 +16,8 @@ import {
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -24,6 +25,19 @@ export const API_BASE = 'https://api.cloudflare.com/client/v4';
 export const TUS_VERSION = '1.0.0';
 export const HLS_JS_VERSION = '1.6.16';
 export const HLS_JS_URL = `https://cdn.jsdelivr.net/npm/hls.js@${HLS_JS_VERSION}/dist/hls.min.js`;
+// sha384 of dist/hls.min.js from the hls.js@1.6.16 npm tarball (apps/web pins the
+// same version); jsDelivr /npm/ serves the published file unmodified.
+export const HLS_JS_INTEGRITY = 'sha384-5E8B0pTlZZJMabWpC0fyYf6OUpe15jJij34BqBAh4NXoHAlLNOjCPRrwtOXOQFAn';
+export const MUTATION_GATE = 'STREAM_PROBE_MUTATIONS';
+const FILETYPES = {
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+    avi: 'video/x-msvideo',
+    webm: 'video/webm',
+    wmv: 'video/x-ms-wmv',
+    mkv: 'video/x-matroska',
+    flv: 'video/x-flv',
+};
 export const CONTAINERS = ['mp4', 'mov', 'avi', 'webm', 'wmv', 'mkv', 'flv'];
 export const CHUNK_BYTES = 32 * 1024 * 1024; // multiple of 256 KiB, inside 5 MiB..200 MiB
 export const MID_UPLOAD_BYTES = 5 * 1024 * 1024; // smallest legal non-final tus chunk
@@ -318,7 +332,8 @@ export function loadSigningKey({ id, pem }, scrubber) {
 export function mintToken(key, { uid, ttlSeconds, nowMs, claims = {}, header = {}, omit = [] }) {
     const issuedAt = Math.floor(nowMs / 1000);
     const jwtHeader = { alg: 'RS256', kid: key.id, ...header };
-    const payload = { sub: uid, kid: key.id, exp: issuedAt + ttlSeconds, ...claims };
+    // Default claims match the planned production token: nbf = iat - 60.
+    const payload = { sub: uid, kid: key.id, exp: issuedAt + ttlSeconds, nbf: issuedAt - 60, ...claims };
     for (const name of omit) delete payload[name];
     const input = `${b64url(JSON.stringify(jwtHeader))}.${b64url(JSON.stringify(payload))}`;
     const signature = cryptoSign('sha256', Buffer.from(input), key.keyObject);
@@ -360,15 +375,26 @@ export function verifyWebhookSignature(rawBody, header, secret) {
 export function createWebhookReceiver({ now, sleep, onDelivery = async () => {} }) {
     const secrets = [];
     const deliveries = [];
+    const bodies = new Map();
+    const rejected = { non_post: 0, unsigned: 0 };
     let responder = () => 200;
+    // Only signed POST deliveries are recorded; anything else on the tunnel is
+    // counted, never parsed into the evidence or logged.
     async function handle({ method, path, headers = {}, body = '' }) {
-        if (method !== 'POST') return { status: 405 };
+        if (method !== 'POST') {
+            rejected.non_post += 1;
+            return { status: 405 };
+        }
         const receivedMs = now();
         const header = headers['webhook-signature'] ?? '';
         const { time } = parseSignatureHeader(header);
         const verifiedWith = secrets
             .filter((entry) => verifyWebhookSignature(body, header, entry.value))
             .map((entry) => entry.label);
+        if (verifiedWith.length === 0) {
+            rejected.unsigned += 1;
+            return { status: 401 };
+        }
         let parsed = null;
         try {
             parsed = JSON.parse(body);
@@ -383,6 +409,7 @@ export function createWebhookReceiver({ now, sleep, onDelivery = async () => {} 
             header_time: time,
             skew_s: time === null ? null : Math.round(receivedMs / 1000 - time),
             verified_with: verifiedWith,
+            body_sha256: sha256(body),
             uid: parsed?.uid ?? null,
             state: parsed?.status?.state ?? null,
             pct_complete: parsed?.status?.pctComplete ?? null,
@@ -390,8 +417,9 @@ export function createWebhookReceiver({ now, sleep, onDelivery = async () => {} 
             error_reason_code: parsed?.status?.errorReasonCode ?? null,
             user_agent: headers['user-agent'] ?? null,
         };
-        record.answered = verifiedWith.length === 0 ? 401 : responder(record);
+        record.answered = responder(record);
         deliveries.push(record);
+        bodies.set(record.n, parsed);
         await onDelivery(record, parsed);
         return { status: record.answered };
     }
@@ -408,6 +436,8 @@ export function createWebhookReceiver({ now, sleep, onDelivery = async () => {} 
         handle,
         waitFor,
         deliveries,
+        rejected,
+        body: (n) => bodies.get(n) ?? null,
         addSecret: (label, value) => secrets.push({ label, value }),
         setResponder: (fn) => {
             responder = fn;
@@ -566,6 +596,23 @@ function requirePath(ctx, name) {
     return resolve(value);
 }
 
+// realpath of the longest existing prefix, so a symlinked or not yet created
+// --out cannot hide a path inside the repository.
+export function realpathExisting(path) {
+    let current = resolve(path);
+    const rest = [];
+    for (;;) {
+        try {
+            return join(realpathSync(current), ...rest);
+        } catch {
+            const parent = dirname(current);
+            if (parent === current) return resolve(path);
+            rest.unshift(basename(current));
+            current = parent;
+        }
+    }
+}
+
 export function isInside(child, parent) {
     const rel = relative(parent, child);
     return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
@@ -593,11 +640,14 @@ function rfc3339(ms) {
     return new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
-function buildMetadata({ maxDuration, name, expiry, extra = [] }) {
+function buildMetadata({ maxDuration, name, expiry, file, extra = [] }) {
+    const extension = file ? basename(file).split('.').pop().toLowerCase() : null;
     return [
         ['maxDurationSeconds', String(maxDuration)],
         ['requiresignedurls', null],
         ['name', name],
+        // filename/filetype as the M2-G2 web uploader sends them.
+        ...(file ? [['filename', basename(file)], ['filetype', FILETYPES[extension] ?? 'application/octet-stream']] : []),
         ...(expiry ? [['expiry', expiry]] : []),
         ...extra,
     ];
@@ -645,33 +695,54 @@ function baseReceipt(ctx, proof, unlocks) {
     };
 }
 
+// The receipt is registered on the context as soon as a proof starts, so a
+// failure still leaves everything gathered so far with status "aborted".
+function startReceipt(ctx, proof, unlocks) {
+    ctx.receipt = { ...baseReceipt(ctx, proof, unlocks), status: 'running' };
+    return ctx.receipt;
+}
+
 async function finish(ctx, receipt) {
+    receipt.status = 'completed';
     receipt.finished_at = iso(ctx.now());
     const path = await ctx.out.json(`${ctx.proofDir}/receipt.json`, receipt);
     ctx.log(`receipt: ${path}`);
     return receipt;
 }
 
+async function writeAbortedReceipt(ctx, error) {
+    if (!ctx.receipt || ctx.receipt.status === 'completed') return;
+    ctx.receipt.status = 'aborted';
+    ctx.receipt.error = error?.message ?? String(error);
+    ctx.receipt.finished_at = iso(ctx.now());
+    await ctx.out.json(`${ctx.proofDir}/receipt.json`, ctx.receipt);
+}
+
 // ---------------------------------------------------------------- ledger
 
 async function loadLedger(out) {
+    let text;
     try {
-        const raw = JSON.parse(await readFile(join(out.dir, 'ledger.json'), 'utf8'));
-        return {
-            videos: new Set(raw.videos ?? []),
-            keys: new Set(raw.keys ?? []),
-            webhook: raw.webhook === true,
-        };
-    } catch {
-        return { videos: new Set(), keys: new Set(), webhook: false };
+        text = await readFile(join(out.dir, 'ledger.json'), 'utf8');
+    } catch (error) {
+        if (error?.code === 'ENOENT') return { videos: new Set(), keys: new Set(), ownerKeys: new Set(), webhook: false };
+        throw error;
     }
+    const raw = JSON.parse(text);
+    return {
+        videos: new Set(raw.videos ?? []),
+        keys: new Set(raw.keys ?? []),
+        ownerKeys: new Set(raw.owner_keys ?? []),
+        webhook: raw.webhook === true,
+    };
 }
 
 async function saveLedger(ctx) {
     await ctx.out.json('ledger.json', {
-        note: 'Provider resources created by stream-probe and not yet deleted. `stream-probe cleanup --out <dir>` deletes them.',
+        note: 'Provider resources created by stream-probe and not yet deleted. `stream-probe cleanup --out <dir>` deletes videos, keys and the webhook; owner_keys are deleted only by `signing-key --delete`.',
         videos: [...ctx.ledger.videos],
         keys: [...ctx.ledger.keys],
+        owner_keys: [...ctx.ledger.ownerKeys],
         webhook: ctx.ledger.webhook,
     });
 }
@@ -697,35 +768,51 @@ async function deleteVideo(ctx, uid) {
 
 async function cleanupCreated(ctx) {
     const keep = Boolean(ctx.opts.keep);
-    const report = { keep, videos: [], keys: [], webhook: null };
+    const report = { keep, videos: [], keys: [], webhook: null, failures: [] };
+    const attempt = async (kind, id, action) => {
+        try {
+            return await action();
+        } catch (error) {
+            report.failures.push({ kind, id, error: error?.message ?? String(error) });
+            return null;
+        }
+    };
     for (const uid of [...ctx.created.videos]) {
         if (keep || ctx.retained.has(uid)) report.videos.push({ uid, action: 'kept' });
-        else report.videos.push({ uid, status: await deleteVideo(ctx, uid) });
+        else report.videos.push({ uid, status: await attempt('video', uid, () => deleteVideo(ctx, uid)) });
     }
     for (const id of [...ctx.created.keys]) {
         if (keep || ctx.retained.has(id)) {
             report.keys.push({ id, action: 'kept' });
             continue;
         }
-        const response = await ctx.api.deleteKey(id);
-        if ([200, 204, 404].includes(response.status)) await trackDelete(ctx, 'keys', id);
-        report.keys.push({ id, status: response.status });
+        const status = await attempt('key', id, async () => {
+            const response = await ctx.api.deleteKey(id);
+            if ([200, 204, 404].includes(response.status)) await trackDelete(ctx, 'keys', id);
+            return response.status;
+        });
+        report.keys.push({ id, status });
     }
     if (ctx.created.webhook) {
         if (keep) report.webhook = { action: 'kept' };
         else {
-            const response = await ctx.api.deleteWebhook();
-            report.webhook = { status: response.status };
-            if ([200, 204, 404].includes(response.status)) {
-                ctx.created.webhook = false;
-                ctx.ledger.webhook = false;
-                await saveLedger(ctx);
-            }
+            report.webhook = {
+                status: await attempt('webhook', 'account', async () => {
+                    const response = await ctx.api.deleteWebhook();
+                    if ([200, 204, 404].includes(response.status)) {
+                        ctx.created.webhook = false;
+                        ctx.ledger.webhook = false;
+                        await saveLedger(ctx);
+                    }
+                    return response.status;
+                }),
+            };
         }
     }
     report.left_on_provider = {
         videos: [...ctx.ledger.videos],
         keys: [...ctx.ledger.keys],
+        owner_keys: [...ctx.ledger.ownerKeys],
         webhook: ctx.ledger.webhook,
     };
     return report;
@@ -747,15 +834,18 @@ async function createUpload(ctx, { length, metadata, allowConcurrent = false }) 
         sent_metadata_keys: metadata.map(([key]) => key),
         body: response.body,
     };
-    if (response.status !== 201) return result;
+    if (response.status < 200 || response.status > 299) return result;
+    // Track the reservation before anything else can fail, so cleanup deletes it.
     const uid = response.headers.get('stream-media-id');
+    if (!uid || !/^[0-9a-f]{32}$/.test(uid)) throw new Error('stream_upload_create_without_uid_check_dashboard');
+    await trackCreate(ctx, 'videos', uid);
+    if (response.status !== 201) throw new Error(`stream_upload_create_unexpected_${response.status}`);
     const location = response.headers.get('location');
-    if (!uid || !/^[0-9a-f]{32}$/.test(uid) || !location) throw new Error('stream_upload_create_response_invalid');
+    if (!location) throw new Error('stream_upload_create_without_location');
     const uploadUrl = new URL(location, API_BASE).toString();
-    if (!isCloudflareHost(uploadUrl)) throw new Error('stream_upload_location_unexpected_host');
     ctx.scrubber.register(location, '<TUS_URL>');
     ctx.scrubber.register(uploadUrl, '<TUS_URL>');
-    await trackCreate(ctx, 'videos', uid);
+    if (!isCloudflareHost(uploadUrl)) throw new Error('stream_upload_location_unexpected_host');
     ctx.log(`created upload ${uid} (${metadata.find(([key]) => key === 'name')?.[1] ?? ''})`);
     return { ...result, uid, upload_url: uploadUrl, upload_host: new URL(uploadUrl).host, created_ms: ctx.now() };
 }
@@ -764,38 +854,72 @@ async function uploadFile(ctx, { file, name, maxDuration, expiry, extraMetadata 
     const { size } = await stat(file);
     const created = await createUpload(ctx, {
         length: size,
-        metadata: buildMetadata({ maxDuration: maxDuration ?? ctx.maxDuration, name, expiry, extra: extraMetadata }),
+        metadata: buildMetadata({ maxDuration: maxDuration ?? ctx.maxDuration, name, expiry, file, extra: extraMetadata }),
     });
     if (created.status !== 201) throw new Error(`stream_upload_create_failed_${created.status}`);
     const limit = Math.min(size, bytesLimit ?? size);
     const handle = await open(file, 'r');
     let offset = 0;
     let patches = 0;
+    let resumes = 0;
     try {
         while (offset < limit) {
             const length = Math.min(CHUNK_BYTES, limit - offset);
             const buffer = Buffer.alloc(length);
             const { bytesRead } = await handle.read(buffer, 0, length, offset);
-            const response = await ctx.api.tus(created.upload_url, {
-                method: 'PATCH',
-                headers: {
-                    'Upload-Offset': String(offset),
-                    'Content-Type': 'application/offset+octet-stream',
-                },
-                body: buffer.subarray(0, bytesRead),
-                timeoutMs: 15 * 60_000,
-            });
-            if (response.status !== 204) throw new Error(`tus_patch_failed_${response.status}`);
-            const next = Number(response.headers.get('upload-offset'));
-            if (!Number.isSafeInteger(next) || next <= offset) throw new Error('tus_patch_offset_invalid');
-            offset = next;
+            const result = await patchChunk(ctx, created.upload_url, offset, buffer.subarray(0, bytesRead));
+            if (result.resumed) resumes += 1;
+            offset = result.offset;
             patches += 1;
         }
     } finally {
         await handle.close();
     }
-    ctx.log(`uploaded ${offset}/${size} bytes to ${created.uid} in ${patches} PATCH`);
-    return { ...created, file_bytes: size, sent_bytes: offset, patches, last_patch_ms: ctx.now() };
+    ctx.log(`uploaded ${offset}/${size} bytes to ${created.uid} in ${patches} PATCH (${resumes} HEAD resume)`);
+    return { ...created, file_bytes: size, sent_bytes: offset, patches, head_resumes: resumes, last_patch_ms: ctx.now() };
+}
+
+async function sendPatch(ctx, uploadUrl, offset, bytes) {
+    return ctx.api.tus(uploadUrl, {
+        method: 'PATCH',
+        headers: {
+            'Upload-Offset': String(offset),
+            'Content-Type': 'application/offset+octet-stream',
+        },
+        body: bytes,
+        timeoutMs: 15 * 60_000,
+    });
+}
+
+// One PATCH; on a transport error or a 5xx/409, read the offset with HEAD and
+// resend the rest of the chunk once from there.
+async function patchChunk(ctx, uploadUrl, offset, bytes) {
+    let response = null;
+    let transportError = null;
+    try {
+        response = await sendPatch(ctx, uploadUrl, offset, bytes);
+    } catch (error) {
+        if (ctx.signal.aborted) throw error;
+        transportError = error;
+    }
+    const retryable = transportError || response.status >= 500 || response.status === 409;
+    if (!retryable) {
+        if (response.status !== 204) throw new Error(`tus_patch_failed_${response.status}`);
+        const next = Number(response.headers.get('upload-offset'));
+        if (!Number.isSafeInteger(next) || next <= offset) throw new Error('tus_patch_offset_invalid');
+        return { offset: next, resumed: false };
+    }
+    const head = await tusHead(ctx, uploadUrl);
+    const serverOffset = Number(head.upload_offset);
+    if (head.status !== 200 || !Number.isSafeInteger(serverOffset) || serverOffset < offset || serverOffset > offset + bytes.length) {
+        throw new Error(`tus_patch_failed_${response?.status ?? 'transport'}_resume_impossible`);
+    }
+    if (serverOffset === offset + bytes.length) return { offset: serverOffset, resumed: true };
+    const retry = await sendPatch(ctx, uploadUrl, serverOffset, bytes.subarray(serverOffset - offset));
+    if (retry.status !== 204) throw new Error(`tus_patch_failed_${retry.status}_after_resume`);
+    const next = Number(retry.headers.get('upload-offset'));
+    if (!Number.isSafeInteger(next) || next <= serverOffset) throw new Error('tus_patch_offset_invalid');
+    return { offset: next, resumed: true };
 }
 
 async function tusHead(ctx, uploadUrl) {
@@ -893,11 +1017,13 @@ function keyShape(response, key) {
 async function createSigningKey(ctx) {
     const response = await ctx.api.createKey();
     const result = response.body?.result;
+    if (typeof result?.pem === 'string') ctx.scrubber.register(result.pem, '<PRIVATE_KEY>');
+    if (typeof result?.jwk === 'string') ctx.scrubber.register(result.jwk, '<JWK>');
+    // Track the key as soon as the provider reports an id, before validating the rest.
+    if (response.status >= 200 && response.status <= 299 && typeof result?.id === 'string') await trackCreate(ctx, 'keys', result.id);
     if (response.status !== 200 || typeof result?.id !== 'string' || typeof result?.pem !== 'string') {
         throw new Error(`stream_key_create_failed_${response.status}`);
     }
-    if (typeof result.jwk === 'string') ctx.scrubber.register(result.jwk, '<JWK>');
-    await trackCreate(ctx, 'keys', result.id);
     const key = loadSigningKey(result, ctx.scrubber);
     return { ...key, shape: keyShape(response, key) };
 }
@@ -945,19 +1071,6 @@ async function startWebhook(ctx) {
             ctx.log(`webhook #${record.n} ${record.uid ?? '?'} state=${record.state} pct=${record.pct_complete} answered=${record.answered}`);
         },
     });
-    const bodies = [];
-    const handle = receiver.handle;
-    receiver.handle = async (request) => {
-        let parsed = null;
-        try {
-            parsed = JSON.parse(request.body);
-        } catch {
-            parsed = null;
-        }
-        bodies.push(parsed);
-        return handle(request);
-    };
-    receiver.body = (n) => bodies[n - 1] ?? null;
     const server = await ctx.listen(intOption(ctx.opts['listen-port'], 8788, 'listen-port'), receiver.handle);
     ctx.servers.push(server);
     ctx.log(`webhook listener on 127.0.0.1:${server.port}; tunnel must forward ${notificationUrl} to it`);
@@ -968,12 +1081,15 @@ async function startWebhook(ctx) {
     }
     const put = await ctx.api.putWebhook(notificationUrl);
     const secret = put.body?.result?.secret;
+    if (typeof secret === 'string') ctx.scrubber.register(secret, '<WEBHOOK_SECRET_A>');
+    // Any 2xx means the slot is now ours: track it before validating the body.
+    if (put.status >= 200 && put.status <= 299) {
+        ctx.created.webhook = true;
+        ctx.ledger.webhook = true;
+        await saveLedger(ctx);
+    }
     if (put.status !== 200 || typeof secret !== 'string') throw new Error(`stream_webhook_put_failed_${put.status}`);
-    ctx.scrubber.register(secret, '<WEBHOOK_SECRET_A>');
     receiver.addSecret('A', secret);
-    ctx.created.webhook = true;
-    ctx.ledger.webhook = true;
-    await saveLedger(ctx);
     return {
         receiver,
         notificationUrl,
@@ -1193,10 +1309,12 @@ function collectHosts(samples) {
 async function cmdManifests(ctx) {
     const files = [['landscape', requirePath(ctx, 'landscape')], ['portrait', requirePath(ctx, 'portrait')]];
     for (const [, file] of files) await stat(file);
+    const receipt = startReceipt(ctx, 'M0-P1', ['M1-G2', 'M2-G3']);
+    receipt.samples = [];
     const webhook = await startWebhook(ctx);
+    receipt.webhook = { before: webhook.before, put: webhook.put };
     const { key, source } = await ensureSigningKey(ctx);
-    const receipt = baseReceipt(ctx, 'M0-P1', ['M1-G2', 'M2-G3']);
-    Object.assign(receipt, { signing_key_source: source, webhook: { before: webhook.before, put: webhook.put }, samples: [] });
+    receipt.signing_key_source = source;
     for (const [label, file] of files) {
         const upload = await uploadFile(ctx, { file, name: `youtick-m0-p1-${label}` });
         const observed = await observeProcessing(ctx, {
@@ -1338,6 +1456,8 @@ async function pollStorage(ctx, predicate, { timeoutMs, intervalMs }) {
 }
 
 const RESERVATION_BYTES = 10 * 1024 * 1024;
+const STARTER_TIER_MINUTES = 1000;
+const P3_RESERVATION_SECONDS = 600;
 
 async function cmdStorage(ctx) {
     if (!ctx.opts['allow-quota-fill']) {
@@ -1346,27 +1466,31 @@ async function cmdStorage(ctx) {
     if (ctx.ledger.videos.size > 0 && !ctx.opts['allow-existing-video']) {
         throw new Error('ledger_has_live_video_run_cleanup_or_pass_allow_existing_video');
     }
-    const receipt = baseReceipt(ctx, 'M0-P3', ['M2-G4', 'OD3']);
+    const receipt = startReceipt(ctx, 'M0-P3', ['M2-G4', 'OD3']);
     const baseline = await storageUsage(ctx);
     receipt.baseline = baseline;
     if (baseline.minutes === null || baseline.limit === null) throw new Error('storage_usage_shape_unknown');
     if ((baseline.video_count ?? 0) > 0 && !ctx.opts['allow-existing-video']) throw new Error('library_not_empty');
+    const reservedMinutes = P3_RESERVATION_SECONDS / 60;
+    // A reservation only counts as "released" or "dropped" after it was seen.
+    const visible = () => pollStorage(ctx, (usage) => usage.minutes !== null && usage.minutes >= baseline.minutes + reservedMinutes / 2, { timeoutMs: 60_000, intervalMs: 5000 });
     const released = (usage) => usage.minutes !== null && usage.minutes <= baseline.minutes + 0.5;
     const pollRelease = (minutes) => pollStorage(ctx, released, { timeoutMs: minutes * 60_000, intervalMs: 5000 });
 
     // A. Reservation booked at creation, released by DELETE.
     const reservation = await createUpload(ctx, {
         length: RESERVATION_BYTES,
-        metadata: buildMetadata({ maxDuration: 600, name: 'youtick-m0-p3-release' }),
+        metadata: buildMetadata({ maxDuration: P3_RESERVATION_SECONDS, name: 'youtick-m0-p3-release' }),
     });
     if (reservation.status !== 201) throw new Error(`stream_upload_create_failed_${reservation.status}`);
-    const afterCreate = await storageUsage(ctx);
+    const seenA = await visible();
     const deleteStatus = await deleteVideo(ctx, reservation.uid);
     receipt.delete_release = {
-        reserved_seconds: 600,
-        minutes_after_create: afterCreate.minutes,
+        reserved_seconds: P3_RESERVATION_SECONDS,
+        reservation_visible: seenA.reached,
+        visible_samples: seenA.samples,
         delete_status: deleteStatus,
-        release: await pollRelease(15),
+        release: seenA.reached ? await pollRelease(15) : null,
     };
 
     // B. DELETE of a mid-upload UID (needs a sample larger than one 5 MiB chunk).
@@ -1374,7 +1498,7 @@ async function cmdStorage(ctx) {
         const file = requirePath(ctx, 'sample');
         const { size } = await stat(file);
         if (size > MID_UPLOAD_BYTES) {
-            const partial = await uploadFile(ctx, { file, name: 'youtick-m0-p3-mid-upload', maxDuration: 600, bytesLimit: MID_UPLOAD_BYTES });
+            const partial = await uploadFile(ctx, { file, name: 'youtick-m0-p3-mid-upload', maxDuration: P3_RESERVATION_SECONDS, bytesLimit: MID_UPLOAD_BYTES });
             const head = await tusHead(ctx, partial.upload_url);
             const status = await deleteVideo(ctx, partial.uid);
             receipt.mid_upload_delete = { sent_bytes: partial.sent_bytes, head, delete_status: status, release: await pollRelease(15) };
@@ -1390,27 +1514,43 @@ async function cmdStorage(ctx) {
     const expiry = rfc3339(ctx.now() + expiryMinutes * 60_000);
     const expiring = await createUpload(ctx, {
         length: RESERVATION_BYTES,
-        metadata: buildMetadata({ maxDuration: 600, name: 'youtick-m0-p3-expiry', expiry }),
+        metadata: buildMetadata({ maxDuration: P3_RESERVATION_SECONDS, name: 'youtick-m0-p3-expiry', expiry }),
     });
     if (expiring.status !== 201) throw new Error(`stream_upload_create_failed_${expiring.status}`);
-    const expiringVideo = await ctx.api.getVideo(expiring.uid);
     const createdMs = ctx.now();
-    const drop = await pollStorage(ctx, released, { timeoutMs: (expiryMinutes + 20) * 60_000, intervalMs: 30_000 });
-    const afterExpiry = await ctx.api.getVideo(expiring.uid);
+    const expiringVideo = await ctx.api.getVideo(expiring.uid);
+    const seenC = await visible();
     receipt.expiry_without_delete = {
         sent_expiry: expiry,
         upload_expiry_echoed: expiringVideo.body?.result?.uploadExpiry ?? null,
         max_duration_echoed: expiringVideo.body?.result?.maxDurationSeconds ?? null,
-        dropped_without_delete: drop.reached,
-        drop_after_create_ms: drop.reached ? drop.elapsed_ms : null,
-        drop_relative_to_expiry_ms: drop.reached ? createdMs + drop.elapsed_ms - Date.parse(expiry) : null,
-        samples: drop.samples,
-        get_after_window: { status: afterExpiry.status, video: summarizeVideo(afterExpiry.body?.result) },
-        cleanup_delete_status: await deleteVideo(ctx, expiring.uid),
+        reservation_visible: seenC.reached,
+        visible_samples: seenC.samples,
     };
+    if (seenC.reached) {
+        const drop = await pollStorage(ctx, released, { timeoutMs: (expiryMinutes + 20) * 60_000, intervalMs: 30_000 });
+        Object.assign(receipt.expiry_without_delete, {
+            dropped_without_delete: drop.reached,
+            drop_after_create_ms: drop.reached ? ctx.now() - createdMs : null,
+            drop_relative_to_expiry_ms: drop.reached ? ctx.now() - Date.parse(expiry) : null,
+            samples: drop.samples,
+        });
+    } else {
+        receipt.expiry_without_delete.dropped_without_delete = null;
+    }
+    const afterExpiry = await ctx.api.getVideo(expiring.uid);
+    receipt.expiry_without_delete.get_after_window = { status: afterExpiry.status, video: summarizeVideo(afterExpiry.body?.result) };
+    receipt.expiry_without_delete.cleanup_delete_status = await deleteVideo(ctx, expiring.uid);
 
     // D. Exhaustion: fill only up to the tier, then one reservation past it.
+    const tier = await storageUsage(ctx);
+    if (tier.limit === null || tier.limit > STARTER_TIER_MINUTES) {
+        receipt.exhaustion = { skipped: `limit ${tier.limit} is not the ${STARTER_TIER_MINUTES}-minute Starter tier; fill refused` };
+        receipt.final_usage = tier;
+        return finish(ctx, receipt);
+    }
     const fill = [];
+    receipt.exhaustion = { attempts: fill };
     let exhaustion = null;
     try {
         for (let attempt = 0; attempt < 6 && !exhaustion; attempt += 1) {
@@ -1437,6 +1577,10 @@ async function cmdStorage(ctx) {
             if (created.status !== 201) {
                 exhaustion = entry;
             } else if (overshoot) {
+                // The API accepted the over-tier reservation: does the upload itself fail?
+                const patch = await sendPatch(ctx, created.upload_url, 0, Buffer.alloc(MID_UPLOAD_BYTES));
+                entry.over_tier_patch = { status: patch.status, upload_offset: patch.headers.get('upload-offset') };
+                if (patch.status !== 204) exhaustion = { ...entry, refused_at: 'patch' };
                 const extra = await createUpload(ctx, {
                     length: RESERVATION_BYTES,
                     metadata: buildMetadata({ maxDuration: 60, name: 'youtick-m0-p3-fill-extra' }),
@@ -1451,20 +1595,20 @@ async function cmdStorage(ctx) {
                     uid: extra.uid ?? null,
                 };
                 fill.push(extraEntry);
-                if (extra.status !== 201) exhaustion = extraEntry;
+                if (!exhaustion && extra.status !== 201) exhaustion = extraEntry;
                 break;
             }
         }
     } finally {
         for (const entry of fill) if (entry.uid) entry.delete_status = await deleteVideo(ctx, entry.uid);
     }
-    receipt.exhaustion = {
+    Object.assign(receipt.exhaustion, {
         observed: Boolean(exhaustion),
-        response: exhaustion ? { status: exhaustion.status, body: exhaustion.body } : null,
+        refused_at: exhaustion ? (exhaustion.refused_at ?? 'create') : null,
+        response: exhaustion ? { status: exhaustion.refused_at === 'patch' ? exhaustion.over_tier_patch.status : exhaustion.status, body: exhaustion.body } : null,
         over_tier_reservation_accepted_at_creation: fill.some((entry) => entry.exceeds_tier && entry.status === 201),
-        attempts: fill,
         release_after_delete: await pollRelease(15),
-    };
+    });
     receipt.final_usage = await storageUsage(ctx);
     return finish(ctx, receipt);
 }
@@ -1485,48 +1629,107 @@ function findMetaKey(meta, value) {
 
 const isReadyDelivery = (delivery) => delivery.ready_to_stream === true || delivery.state === 'ready' || delivery.state === 'error';
 
+function deliveryEvidence(delivery) {
+    return {
+        n: delivery.n,
+        received_at: delivery.received_at,
+        header_time: delivery.header_time,
+        state: delivery.state,
+        pct_complete: delivery.pct_complete,
+        body_sha256: delivery.body_sha256,
+        verified_with: delivery.verified_with,
+        answered: delivery.answered,
+    };
+}
+
+async function readBackSecret(ctx, receiver, known, label) {
+    const response = await ctx.api.getWebhook();
+    const value = response.body?.result?.secret;
+    const shape = { ...webhookShape(response), equals: null };
+    if (typeof value === 'string') {
+        const match = Object.entries(known).find(([, secret]) => secret === value);
+        shape.equals = match ? match[0] : 'neither';
+        if (!match) {
+            // A GET secret that differs from every PUT secret may be the signing one.
+            ctx.scrubber.register(value, `<WEBHOOK_SECRET_${label}>`);
+            receiver.addSecret(label, value);
+            known[label] = value;
+        }
+    }
+    return shape;
+}
+
 async function cmdWebhooks(ctx) {
     const file = requirePath(ctx, 'sample');
     await stat(file);
     const failFirst = intOption(ctx.opts['fail-first'], 2, 'fail-first');
     const windowMs = minutesOption(ctx, 'retry-window-minutes', 30);
+    const readyTimeout = minutesOption(ctx, 'ready-timeout-minutes', 30);
+    const receipt = startReceipt(ctx, 'M0-P4', ['M2-G2', 'M2-G6']);
     const webhook = await startWebhook(ctx);
-    const receipt = baseReceipt(ctx, 'M0-P4', ['M2-G2', 'M2-G6']);
+    const receiver = webhook.receiver;
+    const known = { A: webhook.secret };
     receipt.get_before = webhook.before;
     receipt.put_first = webhook.put;
-    const getAfterPut = await ctx.api.getWebhook();
-    receipt.get_after_put = {
-        ...webhookShape(getAfterPut),
-        secret_equals_put: typeof getAfterPut.body?.result?.secret === 'string' ? getAfterPut.body.result.secret === webhook.secret : null,
-    };
-    const second = await ctx.api.putWebhook(webhook.notificationUrl);
-    const secretB = second.body?.result?.secret;
-    if (typeof secretB === 'string' && secretB !== webhook.secret) {
-        ctx.scrubber.register(secretB, '<WEBHOOK_SECRET_B>');
-        webhook.receiver.addSecret('B', secretB);
-    }
-    receipt.rotation = {
-        second_put: webhookShape(second),
-        same_url_put_rotates_secret: typeof secretB === 'string' ? secretB !== webhook.secret : null,
-    };
-    const getAfterRotate = await ctx.api.getWebhook();
-    const readBack = getAfterRotate.body?.result?.secret;
-    receipt.get_after_rotate = {
-        ...webhookShape(getAfterRotate),
-        secret_equals_first: typeof readBack === 'string' ? readBack === webhook.secret : null,
-        secret_equals_second: typeof readBack === 'string' ? readBack === secretB : null,
-    };
+    receipt.get_after_put = await readBackSecret(ctx, receiver, known, 'GET1');
 
-    let failed = 0;
+    let rotationUid = null;
+    let rotationFailed = false;
     let targetUid = null;
-    webhook.receiver.setResponder((delivery) => {
+    let failed = 0;
+    receiver.setResponder((delivery) => {
+        if (delivery.uid === rotationUid && !rotationFailed) {
+            rotationFailed = true;
+            return 503;
+        }
         if (delivery.uid === targetUid && isReadyDelivery(delivery) && failed < failFirst) {
             failed += 1;
             return 503;
         }
         return 200;
     });
-    const expiry = rfc3339(ctx.now() + 6 * 3_600_000);
+
+    // 1. Rotation while a retry is pending: a tiny non-video upload produces a
+    //    quick delivery, which is answered 503; the secret is rotated by a PUT
+    //    with the same URL before the retry arrives.
+    const nonVideo = join(ctx.out.dir, 'p4', 'non-video.bin');
+    await mkdir(dirname(nonVideo), { recursive: true });
+    await writeFile(nonVideo, Buffer.alloc(64 * 1024, 0x5a));
+    const rotationUpload = await uploadFile(ctx, { file: nonVideo, name: 'youtick-m0-p4-rotation', maxDuration: 60 });
+    rotationUid = rotationUpload.uid;
+    receipt.rotation = { upload_uid: rotationUid };
+    try {
+        const first = await receiver.waitFor((delivery) => delivery.uid === rotationUid, { timeoutMs: readyTimeout, label: 'rotation_first_delivery' });
+        receipt.rotation.first_delivery = deliveryEvidence(first);
+        const second = await ctx.api.putWebhook(webhook.notificationUrl);
+        const secretB = second.body?.result?.secret;
+        receipt.rotation.second_put = webhookShape(second);
+        receipt.rotation.same_url_put_rotates_secret = typeof secretB === 'string' ? secretB !== webhook.secret : null;
+        if (typeof secretB === 'string' && secretB !== webhook.secret) {
+            ctx.scrubber.register(secretB, '<WEBHOOK_SECRET_B>');
+            receiver.addSecret('B', secretB);
+            known.B = secretB;
+        }
+        receipt.rotation.get_after_rotate = await readBackSecret(ctx, receiver, known, 'GET2');
+        // A retry resends the same body; a later distinct event (e.g. error after
+        // inprogress) is not a retry and stays only in `deliveries`.
+        const retry = await receiver.waitFor(
+            (delivery) => delivery.uid === rotationUid && delivery.n > first.n && delivery.body_sha256 === first.body_sha256,
+            { timeoutMs: windowMs, label: 'rotation_retry' },
+        );
+        receipt.rotation.retry_delivery = deliveryEvidence(retry);
+        receipt.rotation.retry_same_body = retry.body_sha256 === first.body_sha256;
+        receipt.rotation.retry_after_s = Math.round((retry.received_ms - first.received_ms) / 1000);
+        receipt.rotation.old_secret_verifies_retry = retry.verified_with.includes('A');
+        receipt.rotation.new_secret_verifies_retry = retry.verified_with.includes('B');
+    } catch (error) {
+        receipt.rotation.wait_result = error.message;
+    }
+    receipt.rotation.deliveries = receiver.deliveries.filter((delivery) => delivery.uid === rotationUid).map(deliveryEvidence);
+    receipt.rotation.delete_status = await deleteVideo(ctx, rotationUid);
+
+    // 2. Retry schedule, inprogress cadence, skew and meta routing on a real video.
+    const expiry = rfc3339(ctx.now() + (5 * 60 + 55) * 60_000);
     const routing = ROUTING_CANDIDATE_KEYS.map((key) => [key, `probe-${key}`]);
     const upload = await uploadFile(ctx, { file, name: 'youtick-m0-p4-webhooks', expiry, extraMetadata: routing });
     targetUid = upload.uid;
@@ -1541,31 +1744,31 @@ async function cmdWebhooks(ctx) {
         echoed_require_signed_urls: created?.requireSignedURLs ?? null,
         meta_after_create: created?.meta ?? null,
     };
-
-    const readyTimeout = minutesOption(ctx, 'ready-timeout-minutes', 30);
     let firstReady = null;
     try {
-        firstReady = await webhook.receiver.waitFor(
+        firstReady = await receiver.waitFor(
             (delivery) => delivery.uid === upload.uid && isReadyDelivery(delivery),
             { timeoutMs: readyTimeout, label: 'ready_webhook' },
         );
-        await webhook.receiver.waitFor(
+        await receiver.waitFor(
             (delivery) => delivery.uid === upload.uid && isReadyDelivery(delivery) && delivery.answered === 200,
             { timeoutMs: windowMs, label: 'retry' },
         );
     } catch (error) {
         receipt.wait_result = error.message;
     }
-    const mine = webhook.receiver.deliveries.filter((delivery) => delivery.uid === upload.uid);
+    const mine = receiver.deliveries.filter((delivery) => delivery.uid === upload.uid);
     const readyDeliveries = mine.filter(isReadyDelivery);
     const inprogress = mine.filter((delivery) => delivery.state === 'inprogress');
-    const firstReadyBody = firstReady ? webhook.receiver.body(firstReady.n) : null;
-    const skews = webhook.receiver.deliveries.map((delivery) => delivery.skew_s).filter((value) => value !== null);
-    const verifiedWith = (labels) => webhook.receiver.deliveries.filter((delivery) => delivery.verified_with.join(',') === labels).length;
+    const firstReadyBody = firstReady ? receiver.body(firstReady.n) : null;
+    const skews = receiver.deliveries.map((delivery) => delivery.skew_s).filter((value) => value !== null);
     receipt.retry = {
         fail_first: failFirst,
         window_minutes: windowMs / 60_000,
-        ready_deliveries: readyDeliveries.map((delivery) => ({ n: delivery.n, received_at: delivery.received_at, answered: delivery.answered })),
+        ready_deliveries: readyDeliveries.map((delivery) => ({
+            ...deliveryEvidence(delivery),
+            same_body_as_first: firstReady ? delivery.body_sha256 === firstReady.body_sha256 : null,
+        })),
         intervals_s: diffsSeconds(readyDeliveries),
         outcome: readyDeliveries.length === 0
             ? 'no_ready_delivery'
@@ -1578,13 +1781,12 @@ async function cmdWebhooks(ctx) {
     };
     receipt.skew_s = { min: skews.length ? Math.min(...skews) : null, max: skews.length ? Math.max(...skews) : null, values: skews };
     receipt.signature = {
-        deliveries: webhook.receiver.deliveries.length,
-        verified_with_first_secret_only: verifiedWith('A'),
-        verified_with_second_secret_only: verifiedWith('B'),
-        verified_with_none: verifiedWith(''),
-        old_secret_still_verifies_after_rotation: receipt.rotation.same_url_put_rotates_secret
-            ? webhook.receiver.deliveries.some((delivery) => delivery.verified_with.includes('A'))
-            : null,
+        signed_deliveries: receiver.deliveries.length,
+        rejected: receiver.rejected,
+        verified_with: receiver.deliveries.reduce((counts, delivery) => {
+            const key = delivery.verified_with.join('+');
+            return { ...counts, [key]: (counts[key] ?? 0) + 1 };
+        }, {}),
     };
     const after = (await ctx.api.getVideo(upload.uid)).body?.result;
     receipt.meta_routing = {
@@ -1609,7 +1811,7 @@ export function renderRenewalPage({ ttlSeconds, renewBeforeSeconds }) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Stream renewal probe</title>
-<script src="${HLS_JS_URL}" crossorigin="anonymous"></script>
+<script src="${HLS_JS_URL}" integrity="${HLS_JS_INTEGRITY}" crossorigin="anonymous"></script>
 <style>
 :root { color-scheme: light dark; }
 body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; }
@@ -1622,13 +1824,14 @@ button { font-size: 14px; margin: 0 8px 8px 0; }
 <h1>Stream renewal probe (M0-P5)</h1>
 <p>Player: <b id="mode"></b>. Token lifetime ${ttlSeconds} s, renewal ${renewBeforeSeconds} s before exp. Add <code>?mode=native</code> or <code>?mode=hlsjs</code> to force a player.</p>
 <p><button id="start">Start</button><button id="renew">Renew now</button></p>
-<video id="video" controls playsinline muted></video>
+<video id="video" controls playsinline muted loop></video>
 <pre id="log"></pre>
 <script>
 (() => {
   const RENEW_BEFORE = ${renewBeforeSeconds};
   const forced = new URLSearchParams(location.search).get('mode');
   const video = document.getElementById('video');
+  video.loop = true; // short clips keep playing across several renewals
   const hlsSupported = typeof window.Hls !== 'undefined' && window.Hls.isSupported();
   const mode = forced === 'native' ? 'native' : forced === 'hlsjs' ? 'hlsjs' : hlsSupported ? 'hlsjs' : 'native';
   document.getElementById('mode').textContent = mode + (window.Hls ? ' (hls.js ' + window.Hls.version + ')' : ' (hls.js not loaded)');
@@ -1711,6 +1914,7 @@ button { font-size: 14px; margin: 0 8px 8px 0; }
     if (mode === 'hlsjs') {
       hls.once(window.Hls.Events.MANIFEST_PARSED, () => {
         video.currentTime = position;
+        video.play().catch((error) => send('play_rejected', { renewal: renewals, error: String(error) }));
         send('renewal_manifest_parsed', { renewal: renewals, since_renewal_ms: Math.round(performance.now() - started) });
       });
       hls.loadSource(current.url);
@@ -1740,15 +1944,60 @@ button { font-size: 14px; margin: 0 8px 8px 0; }
 `;
 }
 
+export function summarizeBrowserLog(entries) {
+    const byType = (type) => entries.filter((entry) => entry.type === type);
+    const renewals = byType('renewal_start').map((start) => {
+        const match = (type) => entries.find((entry) => entry.type === type && entry.renewal === start.renewal);
+        return {
+            renewal: start.renewal,
+            mode: start.mode ?? null,
+            reason: start.reason ?? null,
+            position_before: start.position_before ?? null,
+            manifest_or_metadata_ms: (match('renewal_manifest_parsed') ?? match('renewal_loadedmetadata'))?.since_renewal_ms ?? null,
+            playing_after_ms: match('renewal_playing')?.since_renewal_ms ?? null,
+        };
+    });
+    const stalls = byType('stall_end').map((entry) => entry.stall_ms).filter((value) => Number.isFinite(value));
+    const hlsErrors = {};
+    for (const entry of byType('hls_error')) {
+        const key = `${entry.error_type}/${entry.details}/fatal=${entry.fatal}/http=${entry.response_code}`;
+        hlsErrors[key] = (hlsErrors[key] ?? 0) + 1;
+    }
+    const statuses = (type) => byType(type).map((entry) => entry.status);
+    return {
+        modes: [...new Set(entries.map((entry) => entry.mode).filter(Boolean))],
+        user_agents: [...new Set(entries.map((entry) => entry.user_agent).filter(Boolean))],
+        renewals,
+        stall_ms: { count: stalls.length, max: stalls.length ? Math.max(...stalls) : null, values: stalls },
+        hls_errors: hlsErrors,
+        media_errors: byType('media_error').map((entry) => entry.code),
+        play_rejected: byType('play_rejected').length,
+        old_segment_after_old_exp: statuses('old_segment_after_old_exp'),
+        segment_query_stripped: statuses('segment_query_stripped'),
+    };
+}
+
 async function cmdRenewalPage(ctx) {
+    const renewBefore = intOption(ctx.opts['renew-before'], 30, 'renew-before');
+    if (renewBefore >= ctx.tokenTtl) throw new Error('renew_before_must_be_shorter_than_token_ttl');
+    const receipt = startReceipt(ctx, 'M0-P5', ['M3-G2', 'OD4']);
     const { key, source: keySource } = await ensureSigningKey(ctx);
     const { uid, video, source } = await resolveTestVideo(ctx, { name: 'youtick-m0-p5-renewal', waitForPct100: true });
-    const renewBefore = intOption(ctx.opts['renew-before'], 30, 'renew-before');
+    Object.assign(receipt, { hls_js: HLS_JS_URL, hls_js_integrity: HLS_JS_INTEGRITY, signing_key_source: keySource, video_source: source, uid, renew_before_seconds: renewBefore });
     const html = renderRenewalPage({ ttlSeconds: ctx.tokenTtl, renewBeforeSeconds: renewBefore });
     await ctx.out.write('p5/renewal.html', html);
+    // The listener binds 127.0.0.1; the Host check also refuses DNS-rebinding
+    // style requests. A tunnel host must be named with --allow-host.
+    const allowedHosts = new Set(['localhost', '127.0.0.1', ...(ctx.opts['allow-host'] ? [ctx.opts['allow-host'].toLowerCase()] : [])]);
+    const entries = [];
     let minted = 0;
-    let logged = 0;
-    const handler = async ({ method, path, body }) => {
+    let refused = 0;
+    const handler = async ({ method, path, headers = {}, body }) => {
+        const host = String(headers.host ?? '').toLowerCase().replace(/:\d+$/, '');
+        if (!allowedHosts.has(host)) {
+            refused += 1;
+            return { status: 403 };
+        }
         const pathname = new URL(path, 'http://127.0.0.1').pathname;
         if (method === 'GET' && (pathname === '/' || pathname === '/renewal.html')) {
             return { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, body: html };
@@ -1769,7 +2018,8 @@ async function cmdRenewalPage(ctx) {
             } catch {
                 return { status: 400 };
             }
-            logged += 1;
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { status: 400 };
+            entries.push(entry);
             await ctx.out.append('p5/browser-log.jsonl', JSON.stringify({ received_at: iso(ctx.now()), ...entry }));
             return { status: 204 };
         }
@@ -1777,23 +2027,18 @@ async function cmdRenewalPage(ctx) {
     };
     const server = await ctx.listen(intOption(ctx.opts.port, 8790, 'port'), handler);
     ctx.servers.push(server);
-    ctx.handler = handler;
-    ctx.log(`P5 page: http://localhost:${server.port}/ (hls.js) and http://localhost:${server.port}/?mode=native (iOS Safari native)`);
-    ctx.log(`iPhone: cloudflared tunnel --url http://localhost:${server.port}  (stop it when done; it mints tokens for this test video)`);
+    ctx.log(`P5 page: http://127.0.0.1:${server.port}/ (hls.js) and http://127.0.0.1:${server.port}/?mode=native (iOS Safari native)`);
+    ctx.log(`iPhone: cloudflared tunnel --url http://127.0.0.1:${server.port} and re-run with --allow-host <tunnel host>; stop the tunnel when done (it mints tokens for this test video)`);
     try {
         await ctx.sleep(minutesOption(ctx, 'duration-minutes', 30));
     } catch (error) {
         if (!ctx.signal.aborted) throw error;
     }
-    const receipt = baseReceipt(ctx, 'M0-P5', ['M3-G2', 'OD4']);
     Object.assign(receipt, {
-        hls_js: HLS_JS_URL,
-        signing_key_source: keySource,
-        video_source: source,
-        uid,
-        renew_before_seconds: renewBefore,
         tokens_minted: minted,
-        browser_log_entries: logged,
+        refused_host_requests: refused,
+        browser_log_entries: entries.length,
+        summary: summarizeBrowserLog(entries),
         page: 'p5/renewal.html',
         browser_log: 'p5/browser-log.jsonl',
     });
@@ -1802,10 +2047,34 @@ async function cmdRenewalPage(ctx) {
 
 // ---------------------------------------------------------------- P6 containers
 
+// Poll GET and, when a webhook listener runs, accept a signed ready/error
+// delivery as the outcome (the error webhook carries errorReasonCode while the
+// API state can lag, see the 2026-10-21 follow-up spike F4).
+async function waitOutcome(ctx, uid, receiver, timeoutMs) {
+    const started = ctx.now();
+    let last = null;
+    for (;;) {
+        const delivery = receiver?.deliveries.find((entry) => entry.uid === uid && isReadyDelivery(entry));
+        if (delivery) {
+            const body = receiver.body(delivery.n);
+            return { source: 'webhook', at_ms: delivery.received_ms, state: delivery.state, video: body };
+        }
+        const response = await ctx.api.getVideo(uid);
+        if (response.status === 200) {
+            last = response.body?.result ?? null;
+            if (isReadyOrError(last)) return { source: 'GET', at_ms: ctx.now(), state: last?.status?.state ?? null, video: last };
+        }
+        if (ctx.now() - started > timeoutMs) return { source: 'timeout', at_ms: ctx.now(), state: last?.status?.state ?? null, video: last };
+        await ctx.sleep(5000);
+    }
+}
+
 async function cmdContainers(ctx) {
     const dir = requirePath(ctx, 'samples-dir');
-    const receipt = baseReceipt(ctx, 'M0-P6', ['M3-G1']);
+    const receipt = startReceipt(ctx, 'M0-P6', ['M3-G1']);
     receipt.results = [];
+    const receiver = ctx.opts['webhook-url'] ? (await startWebhook(ctx)).receiver : null;
+    receipt.webhook_listener = Boolean(receiver);
     for (const container of CONTAINERS) {
         const file = join(dir, `container-10s.${container}`);
         try {
@@ -1814,24 +2083,26 @@ async function cmdContainers(ctx) {
             receipt.results.push({ container, outcome: 'sample_missing' });
             continue;
         }
-        const upload = await uploadFile(ctx, { file, name: `youtick-m0-p6-${container}` });
-        const entry = { container, file_bytes: upload.file_bytes };
+        const entry = { container };
+        receipt.results.push(entry);
+        let uid = null;
         try {
-            const done = await waitVideo(ctx, upload.uid, isReadyOrError, {
-                timeoutMs: minutesOption(ctx, 'ready-timeout-minutes', 15),
-                label: 'container',
-            });
-            entry.outcome = done.video?.status?.state === 'error' ? 'error' : 'ready';
+            const upload = await uploadFile(ctx, { file, name: `youtick-m0-p6-${container}` });
+            uid = upload.uid;
+            entry.file_bytes = upload.file_bytes;
+            const done = await waitOutcome(ctx, uid, receiver, minutesOption(ctx, 'ready-timeout-minutes', 15));
+            entry.outcome = done.source === 'timeout' ? 'timeout' : done.state === 'error' ? 'error' : 'ready';
+            entry.outcome_source = done.source;
             entry.elapsed_after_upload_ms = done.at_ms - upload.last_patch_ms;
             entry.video = summarizeVideo(done.video);
         } catch (error) {
-            entry.outcome = 'timeout';
-            entry.video = summarizeVideo(error.lastVideo);
+            entry.outcome = 'upload_failed';
+            entry.error = error?.message ?? String(error);
+            uid = uid ?? [...ctx.created.videos].at(-1) ?? null;
         }
         // One video at a time: always deleted before the next container.
-        entry.delete_status = await deleteVideo(ctx, upload.uid);
-        receipt.results.push(entry);
-        ctx.log(`P6 ${container}: ${entry.outcome} ${entry.video?.error_reason_code ?? ''}`);
+        if (uid && ctx.created.videos.has(uid)) entry.delete_status = await deleteVideo(ctx, uid);
+        ctx.log(`P6 ${container}: ${entry.outcome} ${entry.video?.error_reason_code ?? entry.error ?? ''}`);
     }
     return finish(ctx, receipt);
 }
@@ -1841,9 +2112,11 @@ async function cmdContainers(ctx) {
 async function cmdReadyTiming(ctx) {
     const file = requirePath(ctx, 'sample');
     await stat(file);
+    const receipt = startReceipt(ctx, 'M0-P7', ['M2-G3', 'M3-G1']);
     const webhook = await startWebhook(ctx);
     const { key, source } = await ensureSigningKey(ctx);
     const upload = await uploadFile(ctx, { file, name: 'youtick-m0-p7-ready-timing' });
+    Object.assign(receipt, { uid: upload.uid, file_bytes: upload.file_bytes, patches: upload.patches, last_patch_at: iso(upload.last_patch_ms) });
     const observed = await observeProcessing(ctx, {
         receiver: webhook.receiver,
         key,
@@ -1857,11 +2130,8 @@ async function cmdReadyTiming(ctx) {
         observed.timeline?.pct100_after_last_patch_ms ?? 0,
         observed.timeline?.all_renditions_complete_after_last_patch_ms ?? 0,
     );
-    const receipt = baseReceipt(ctx, 'M0-P7', ['M2-G3', 'M3-G1']);
     Object.assign(receipt, {
         signing_key_source: source,
-        file_bytes: upload.file_bytes,
-        patches: upload.patches,
         ...observed,
         inprogress_webhooks: inprogress.map((delivery) => ({ received_at: delivery.received_at, pct_complete: delivery.pct_complete })),
         exceeds_verification_cycle_10_min: slowest > VERIFICATION_CYCLE_MS,
@@ -1872,8 +2142,8 @@ async function cmdReadyTiming(ctx) {
 // ---------------------------------------------------------------- P8 keys
 
 async function cmdKeys(ctx) {
+    const receipt = startReceipt(ctx, 'M0-P8', ['M2-G6']);
     const { uid, video, source } = await resolveTestVideo(ctx, { name: 'youtick-m0-p8-keys' });
-    const receipt = baseReceipt(ctx, 'M0-P8', ['M2-G6']);
     receipt.video_source = source;
     const listBefore = await ctx.api.listKeys();
     receipt.list_before = { status: listBefore.status, count: Array.isArray(listBefore.body?.result) ? listBefore.body.result.length : null };
@@ -1896,8 +2166,8 @@ async function cmdKeys(ctx) {
     receipt.overlap = { key_a_master: await master(keyA), key_b_master: await master(keyB) };
     const nowSeconds = () => Math.floor(ctx.now() / 1000);
     receipt.claims_with_key_b = {
-        default_sub_kid_exp: await master(keyB),
-        with_nbf_past: await master(keyB, { claims: { nbf: nowSeconds() - 60 } }),
+        default_sub_kid_exp_nbf_minus_60: await master(keyB),
+        without_nbf: await master(keyB, { omit: ['nbf'] }),
         without_payload_kid: await master(keyB, { omit: ['kid'] }),
         header_typ_jwt: await master(keyB, { header: { typ: 'JWT' } }),
         nbf_in_future: await master(keyB, { claims: { nbf: nowSeconds() + 600 } }),
@@ -1946,29 +2216,34 @@ function tally(statuses) {
 async function cmdThumbnails(ctx) {
     const phase = ctx.opts['billing-phase'] ?? 'none';
     if (!['none', 'thumbnails', 'range'].includes(phase)) throw new Error('billing_phase_must_be_none_thumbnails_or_range');
+    const receipt = startReceipt(ctx, 'M0-P9', ['M2-G3']);
     const { key, source: keySource } = await ensureSigningKey(ctx);
     const { uid, video, source } = await resolveTestVideo(ctx, { name: 'youtick-m0-p9-thumbnails', waitForPct100: true });
-    const receipt = baseReceipt(ctx, 'M0-P9', ['M2-G3']);
     Object.assign(receipt, { signing_key_source: keySource, video_source: source, uid });
     const thumbnailBase = video.thumbnail ?? `${new URL(video.playback.hls).origin}/${uid}/thumbnails/thumbnail.jpg`;
     const signedThumbnail = (query) => {
         const { token } = mintToken(key, { uid, ttlSeconds: ctx.tokenTtl, nowMs: ctx.now() });
         return `${credentialUrl(thumbnailBase.split('?')[0], uid, token)}${query}`;
     };
-    receipt.matrix = [];
-    for (const [name, query] of THUMBNAIL_QUERIES) {
-        const response = await ctx.api.playback(signedThumbnail(query), { binary: true });
-        receipt.matrix.push({
-            name,
-            query,
-            status: response.status,
-            content_type: response.content_type,
-            bytes: response.bytes.length,
-            jpeg_dimensions: jpegDimensions(response.bytes),
-        });
+    if (ctx.opts['skip-matrix']) {
+        // Billing phases run alone so the dashboard delta holds only their requests.
+        receipt.matrix = 'skipped (--skip-matrix)';
+    } else {
+        receipt.matrix = [];
+        for (const [name, query] of THUMBNAIL_QUERIES) {
+            const response = await ctx.api.playback(signedThumbnail(query), { binary: true });
+            receipt.matrix.push({
+                name,
+                query,
+                status: response.status,
+                content_type: response.content_type,
+                bytes: response.bytes.length,
+                jpeg_dimensions: jpegDimensions(response.bytes),
+            });
+        }
+        const unsigned = await ctx.api.playback(`${thumbnailBase.split('?')[0]}?time=5s`, { binary: true });
+        receipt.unsigned_with_query = { status: unsigned.status };
     }
-    const unsigned = await ctx.api.playback(`${thumbnailBase.split('?')[0]}?time=5s`, { binary: true });
-    receipt.unsigned_with_query = { status: unsigned.status };
 
     if (phase !== 'none') {
         const repeats = intOption(ctx.opts.repeats, 50, 'repeats');
@@ -2010,24 +2285,40 @@ async function cmdThumbnails(ctx) {
 
 async function cmdSigningKey(ctx) {
     const target = requirePath(ctx, 'signing-key-file');
-    if (isInside(target, REPO_ROOT) || isInside(target, ctx.out.dir)) {
+    const realTarget = realpathExisting(target);
+    if (isInside(realTarget, realpathExisting(REPO_ROOT)) || isInside(realTarget, realpathExisting(ctx.out.dir))) {
         throw new Error('signing_key_file_must_be_outside_the_repository_and_the_out_dir');
     }
     if (ctx.opts.delete) {
         const raw = JSON.parse(await readFile(target, 'utf8'));
         const response = await ctx.api.deleteKey(raw.id);
-        if ([200, 204, 404].includes(response.status)) await trackDelete(ctx, 'keys', raw.id);
+        if ([200, 204, 404].includes(response.status)) {
+            ctx.ledger.ownerKeys.delete(raw.id);
+            await saveLedger(ctx);
+        }
         ctx.log(`deleted key ${raw.id}: ${response.status}; remove the file yourself: rm ${target}`);
         return;
     }
+    // Refuse before creating anything on the provider.
+    const exists = await stat(target).then(() => true, (error) => {
+        if (error?.code === 'ENOENT') return false;
+        throw error;
+    });
+    if (exists) throw new Error('signing_key_file_exists');
+    await stat(dirname(target));
     const response = await ctx.api.createKey();
     const result = response.body?.result;
+    if (typeof result?.pem === 'string') ctx.scrubber.register(result.pem, '<PRIVATE_KEY>');
+    if (typeof result?.jwk === 'string') ctx.scrubber.register(result.jwk, '<JWK>');
+    // An owner key is recorded apart from probe keys: `cleanup` never deletes it.
+    if (response.status >= 200 && response.status <= 299 && typeof result?.id === 'string') {
+        ctx.ledger.ownerKeys.add(result.id);
+        await saveLedger(ctx);
+    }
     if (response.status !== 200 || typeof result?.id !== 'string' || typeof result?.pem !== 'string') {
         throw new Error(`stream_key_create_failed_${response.status}`);
     }
     const key = loadSigningKey(result, ctx.scrubber);
-    await trackCreate(ctx, 'keys', result.id);
-    ctx.retained.add(result.id);
     await writeFile(target, `${JSON.stringify({ id: result.id, pem: result.pem })}\n`, { mode: 0o600, flag: 'wx' });
     await ctx.out.json('keys-file/receipt.json', { ...baseReceipt(ctx, 'M0-P5-key', ['M3-G2']), key_id: result.id, shape: keyShape(response, key) });
     ctx.log(`signing key ${result.id} written to ${target} (0600). Delete later with: npm run probe:stream -- signing-key --out ${ctx.out.dir} --signing-key-file ${target} --delete`);
@@ -2075,7 +2366,9 @@ async function cmdSamples(ctx) {
         ctx.log(`# ${sample.proofs}\nffmpeg ${sample.args.map(shellQuote).join(' ')} ${shellQuote(target)}`);
         if (ctx.opts.generate) {
             await new Promise((resolvePromise, reject) => {
-                const child = ctx.spawnImpl('ffmpeg', [...sample.args, target], { stdio: ['ignore', 'ignore', 'inherit'] });
+                // Minimal environment: ffmpeg never sees the Stream credentials.
+                const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '' };
+                const child = ctx.spawnImpl('ffmpeg', [...sample.args, target], { stdio: ['ignore', 'ignore', 'inherit'], env });
                 child.on('error', reject);
                 child.on('exit', (code) => (code === 0 ? resolvePromise() : reject(new Error(`ffmpeg_failed_${sample.file}_${code}`))));
             });
@@ -2134,12 +2427,16 @@ const OPTIONS = {
     'billing-phase': { type: 'string' },
     repeats: { type: 'string' },
     generate: { type: 'boolean' },
+    'allow-host': { type: 'string' },
+    'skip-matrix': { type: 'boolean' },
 };
 
 export const USAGE = `Usage: npm run probe:stream -- <subcommand> --out <dir> [options]
 
-Owner-run M0 proof round against the second Cloudflare account. Reads
-STREAM_ACCOUNT_ID and STREAM_API_TOKEN from this shell's environment only.
+Owner-run M0 proof round against the second Cloudflare account. Every live
+subcommand writes to the provider and needs ${MUTATION_GATE}=true plus
+STREAM_ACCOUNT_ID and STREAM_API_TOKEN in this shell's environment (never read
+from files). --dry-run and --help need none of them.
 
 Subcommands:
 ${Object.entries(COMMANDS).map(([name, command]) => `  ${name.padEnd(14)} ${command.summary}`).join('\n')}
@@ -2148,14 +2445,34 @@ Common options:
   --out <dir>            required; receipts and verbatim (scrubbed) playlists go here
   --dry-run              print the request plan, no network calls
   --keep                 do not delete what this run created (multi-video proofs still delete between videos)
-  --webhook-url <url>    public https URL of: cloudflared tunnel --url http://localhost:<listen-port>
+  --webhook-url <url>    public https URL of: cloudflared tunnel --url http://127.0.0.1:<listen-port>
   --listen-port <n>      local webhook listener port (default 8788)
   --signing-key-file <f> JSON {"id","pem"} outside the repository; otherwise an ephemeral key is created and deleted
   --max-duration <s>     maxDurationSeconds for uploads (default ${DEFAULT_MAX_DURATION_SECONDS})
   --token-ttl <s>        viewer token lifetime (default ${DEFAULT_TOKEN_TTL_SECONDS})
   --uid <uid>            reuse an existing video (renewal-page, keys, thumbnails); it is not deleted
   --allow-existing-video proceed although <out>/ledger.json lists a live video
+  --allow-host <host>    renewal-page: also accept this Host header (the tunnel host for iOS)
+  --skip-matrix          thumbnails: billing phase only, no status matrix
 `;
+
+// Options a live run would refuse without; the dry run checks them too.
+export function missingOptions(sub, opts) {
+    const missing = [];
+    const need = (name) => {
+        if (!opts[name]) missing.push(`--${name}`);
+    };
+    if (sub === 'manifests') ['landscape', 'portrait', 'webhook-url'].forEach(need);
+    if (sub === 'head-lifetime' && !opts['resume-at']) need('sample');
+    if (sub === 'head-lifetime' && opts['resume-at'] && !P2_CHECKPOINTS.includes(opts['resume-at'])) missing.push(`--resume-at ${P2_CHECKPOINTS.join('|')}`);
+    if (sub === 'storage') need('allow-quota-fill');
+    if (sub === 'webhooks') ['sample', 'webhook-url'].forEach(need);
+    if (sub === 'ready-timing') ['sample', 'webhook-url'].forEach(need);
+    if (sub === 'containers') need('samples-dir');
+    if (['renewal-page', 'keys', 'thumbnails'].includes(sub) && !opts.uid) need('sample');
+    if (sub === 'signing-key') need('signing-key-file');
+    return missing;
+}
 
 const W = 'WRITE';
 
@@ -2170,7 +2487,7 @@ export function planFor(sub, opts) {
     const deleteVideoStep = ['DELETE', `${api}/<UID>`, 'delete the video', W];
     const poll = (what) => ['GET', `${api}/<UID>`, `poll every 5 s until ${what}`];
     const webhook = [
-        ['LISTEN', `127.0.0.1:${opts['listen-port'] ?? 8788}`, 'local signed listener; owner runs cloudflared tunnel --url http://localhost:<port>'],
+        ['LISTEN', `127.0.0.1:${opts['listen-port'] ?? 8788}`, `local signed listener; owner runs cloudflared tunnel --url http://127.0.0.1:${opts['listen-port'] ?? 8788}`],
         ['GET', `${api}/webhook`, 'read the account webhook slot (refuses if another URL is set, unless --replace-webhook)'],
         ['PUT', `${api}/webhook`, '{notificationUrl: --webhook-url}', W],
     ];
@@ -2209,16 +2526,22 @@ export function planFor(sub, opts) {
             ['POST', `${api}?direct_user=true`, `reservation with tus expiry = now + ${opts['expiry-minutes'] ?? 10} min`, W],
             ['GET', `${api}/storage-usage`, 'every 30 s until the reservation drops or expiry + 20 min (no DELETE before that)'],
             ['DELETE', `${api}/<UID>`, 'the expiry reservation after the observation window', W],
+            ['CHECK', `${api}/storage-usage`, 'refuses the fill when the limit is not the 1,000-minute Starter tier'],
             ['POST', `${api}?direct_user=true`, 'reservations of 36000 s up to the Starter tier, then one past it (records the exhaustion status/body)', W],
+            ['PATCH', 'upload.cloudflarestream.com/<TUS_URL>', 'one 5 MiB chunk on an over-tier reservation the API accepted', W],
             ['DELETE', `${api}/<UID>`, 'every fill reservation immediately after the exhaustion response', W],
         ];
     case 'webhooks':
         return [
             ...webhook,
             ['GET', `${api}/webhook`, 'does it return the secret?'],
-            ['PUT', `${api}/webhook`, 'same URL again: does the secret rotate?', W],
+            ...upload('youtick-m0-p4-rotation', ' (64 KiB non-video, maxDurationSeconds=60)'),
+            ['WAIT', 'first delivery for it', 'answered 503 so a retry is pending'],
+            ['PUT', `${api}/webhook`, 'same URL again while the retry is pending: does the secret rotate?', W],
             ['GET', `${api}/webhook`, 'read back after rotation'],
-            ...upload('youtick-m0-p4-webhooks', ` expiry=now+6h + ${ROUTING_CANDIDATE_KEYS.join(' ')}`),
+            ['WAIT', 'retry delivery', 'which secret signs it (old, new)'],
+            deleteVideoStep,
+            ...upload('youtick-m0-p4-webhooks', ` expiry=now+5h55m + ${ROUTING_CANDIDATE_KEYS.join(' ')}`),
             ['WAIT', 'ready webhook', `answer 503 to the first ${opts['fail-first'] ?? 2} ready deliveries, then 200; wait up to ${opts['retry-window-minutes'] ?? 30} min for retries`],
             ['GET', `${api}/<UID>`, 'meta and echoed maxDurationSeconds/uploadExpiry'],
             deleteVideoStep,
@@ -2228,13 +2551,17 @@ export function planFor(sub, opts) {
         return [
             ...key,
             ...testVideo('youtick-m0-p5-renewal'),
-            ['LISTEN', `127.0.0.1:${opts.port ?? 8790}`, 'serves the page, /token (mints from the key in memory) and /log'],
+            ['LISTEN', `127.0.0.1:${opts.port ?? 8790}`, `serves the page, /token (mints from the key in memory) and /log; Host must be localhost/127.0.0.1${opts['allow-host'] ? ` or ${opts['allow-host']}` : ''}`],
             ['BROWSER', `${playback}/manifest/video.m3u8`, 'played by hls.js or native HLS; renewal by loadSource(newUrl) + seek'],
             ...(opts.uid ? [] : [deleteVideoStep]),
             ...keyDelete,
         ];
     case 'containers':
-        return CONTAINERS.flatMap((container) => [...upload(`youtick-m0-p6-${container}`), poll('ready or error'), deleteVideoStep]);
+        return [
+            ...(opts['webhook-url'] ? webhook : []),
+            ...CONTAINERS.flatMap((container) => [...upload(`youtick-m0-p6-${container}`), poll(`ready or error${opts['webhook-url'] ? ' (or the signed webhook)' : ''}`), deleteVideoStep]),
+            ...(opts['webhook-url'] ? [webhookDelete] : []),
+        ];
     case 'ready-timing':
         return [...webhook, ...key, ...upload('youtick-m0-p7-ready-timing'), ['WAIT', 'ready webhook', ''], ...manifests('the ready webhook'), poll('pctComplete 100'), ...manifests('pctComplete 100 and every 15 s'), deleteVideoStep, ...keyDelete, webhookDelete];
     case 'keys':
@@ -2252,8 +2579,10 @@ export function planFor(sub, opts) {
         return [
             ...key,
             ...testVideo('youtick-m0-p9-thumbnails'),
-            ['GET', `${playback}/thumbnails/thumbnail.jpg`, THUMBNAIL_QUERIES.map(([, query]) => query || '(plain)').join(' ')],
-            ['GET', 'customer-<CUSTOMER_CODE>.cloudflarestream.com/<UID>/thumbnails/thumbnail.jpg?time=5s', 'unsigned (expect 401)'],
+            ...(opts['skip-matrix'] ? [] : [
+                ['GET', `${playback}/thumbnails/thumbnail.jpg`, THUMBNAIL_QUERIES.map(([, query]) => query || '(plain)').join(' ')],
+                ['GET', 'customer-<CUSTOMER_CODE>.cloudflarestream.com/<UID>/thumbnails/thumbnail.jpg?time=5s', 'unsigned (expect 401)'],
+            ]),
             ...(opts['billing-phase'] === 'thumbnails' ? [['GET', `${playback}/thumbnails/thumbnail.jpg?time=5s&width=320`, `${opts.repeats ?? 50} times, fresh token each`]] : []),
             ...(opts['billing-phase'] === 'range' ? [['GET', '<segment URL as listed>', `Range: bytes=0-0, ${opts.repeats ?? 50} times`]] : []),
             ...(opts.uid ? [] : [deleteVideoStep]),
@@ -2315,9 +2644,13 @@ export async function runCli(argv, deps = {}) {
     if (!command || rest.length) return fail(`unknown or missing subcommand\n\n${USAGE}`);
     if (!opts.out) return fail('--out <dir> is required (use a directory outside the repository)');
     const outDir = resolve(opts.out);
-    if (isInside(outDir, REPO_ROOT) && !isInside(outDir, join(REPO_ROOT, 'claudedocs'))) {
+    const realOut = realpathExisting(outDir);
+    const realRepo = realpathExisting(REPO_ROOT);
+    if (isInside(realOut, realRepo) && !isInside(realOut, join(realRepo, 'claudedocs'))) {
         return fail('--out must be outside the repository (claudedocs/ is allowed)');
     }
+    const missing = missingOptions(sub, opts);
+    if (missing.length) return fail(`${sub} needs ${missing.join(', ')}`);
     if (opts['dry-run']) {
         stdout.write(renderPlan(sub, opts));
         return 0;
@@ -2325,6 +2658,9 @@ export async function runCli(argv, deps = {}) {
     const accountId = env.STREAM_ACCOUNT_ID;
     const apiToken = env.STREAM_API_TOKEN;
     if (command.needsApi) {
+        if (env[MUTATION_GATE] !== 'true') {
+            return fail(`${sub} writes to Cloudflare Stream; set ${MUTATION_GATE}=true in this shell after the per-gate approval (or use --dry-run)`);
+        }
         if (!accountId || !apiToken) {
             return fail('STREAM_ACCOUNT_ID and STREAM_API_TOKEN must be set in this shell\'s environment (the probe never reads them from files)');
         }
@@ -2377,6 +2713,11 @@ export async function runCli(argv, deps = {}) {
     } catch (error) {
         code = 1;
         stderr.write(`stream-probe: ${scrubber.scrubString(error?.message ?? String(error))}\n`);
+        try {
+            await writeAbortedReceipt(ctx, error);
+        } catch (writeError) {
+            stderr.write(`stream-probe: aborted_receipt_failed ${scrubber.scrubString(writeError?.message ?? String(writeError))}\n`);
+        }
     } finally {
         signalState.current = undefined;
         for (const server of ctx.servers) await server.close().catch(() => {});
