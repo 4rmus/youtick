@@ -447,8 +447,7 @@ methods and profile checks. A Bridge built before M2-G0 calls `finalize_livepeer
 `suspend_livepeer_sales` and checks `paid-media-livepeer-v1`; against the upgraded Market every
 finalize and suspension would fail. The commit deployed in step 7 must therefore contain M2-G0.
 The Bridge instance is the media-account one (owner decision 2026-10-22, after milestone M1.5,
-gate M1.5-G3, with fresh Durable Object state); it moves to that account before the cutover on a
-pre-MC commit, and only step 7 deploys the M2-G0 commit to it. An M2-G0 Bridge started before
+gate M1.5-G3, with fresh Durable Object state); it moves to that account before the cutover from a post-MC `main` commit that predates M2-G0 (the Bridge code still signs the legacy method names; the release preflight accepts the legacy operator-key set during the transition, `OPERATOR_KEY_SET=any`, see "Media account (2026-10-22)"), and only step 7 deploys the M2-G0 commit to it. An M2-G0 Bridge started before
 step 5 fails its preflight with `operator_key_not_on_chain` and, at runtime, with
 `runtime_not_configured`. The pre-MC publications keep playing because the M2-G0 Bridge accepts
 both profile ids on stored publications (the contract never rewrites a stored `profile_id`).
@@ -484,6 +483,8 @@ Bridge lockstep as implemented in M2-G0 (`workers/livepeer-bridge/src/index.ts`,
 would ship a relayer that sends `paid-media-v1` to the old contract (every upload refused and
 refunded), and a *V2 Testnet Bridge* run stops at `operator_key_not_on_chain`. Until the cutover
 a hotfix waits, or is deployed from a pre-MC commit with the fix cherry-picked onto it.
+
+Exception for the move (M1.5-G3): the Bridge and the read model may be deployed from a post-MC `main` commit that predates M2-G0, because the Bridge release preflight accepts the legacy operator-key set during the transition. The *V2 Testnet Workers* run of that move also redeploys the relayer with `paid-media-v1`, so V2 uploads are refused (fee returned by the relayer) from that run until the cutover completes: schedule the move and the cutover back to back.
 
 The bootstrap is single-use and is never re-run.
 `workers/livepeer-bridge/scripts/v2-testnet-bootstrap-policy.json` is now a template for a fresh
