@@ -303,7 +303,7 @@
       "title": "Stüdyo kaydı: açılış gecesi",
       "price_usdc": "5000000",
       "expected_source_bytes": "734003200",
-      "profile_id": "paid-media-livepeer-v1",
+      "profile_id": "paid-media-v1",
       "profile_config_sha256": "96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77",
       "upload_public_key": "ed25519:9sC7pDVZeDhwwoFvBxvsD76VRUuj8UgqHR3AAws6Z8Sn",
       "upload_key_expires_at_ms": "1791446400000"
@@ -311,7 +311,7 @@
     "ft_transfer_call_args": {
       "receiver_id": "market-v2.youtick.testnet",
       "amount": "500000",
-      "msg": "{\"action\":\"create_paid_job\",\"job_id\":\"lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6\",\"title\":\"Stüdyo kaydı: açılış gecesi\",\"price_usdc\":\"5000000\",\"expected_source_bytes\":\"734003200\",\"profile_id\":\"paid-media-livepeer-v1\",\"profile_config_sha256\":\"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77\",\"upload_public_key\":\"ed25519:9sC7pDVZeDhwwoFvBxvsD76VRUuj8UgqHR3AAws6Z8Sn\",\"upload_key_expires_at_ms\":\"1791446400000\"}"
+      "msg": "{\"action\":\"create_paid_job\",\"job_id\":\"lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6\",\"title\":\"Stüdyo kaydı: açılış gecesi\",\"price_usdc\":\"5000000\",\"expected_source_bytes\":\"734003200\",\"profile_id\":\"paid-media-v1\",\"profile_config_sha256\":\"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77\",\"upload_public_key\":\"ed25519:9sC7pDVZeDhwwoFvBxvsD76VRUuj8UgqHR3AAws6Z8Sn\",\"upload_key_expires_at_ms\":\"1791446400000\"}"
     },
     "delegate": {
       "sender_id": "a3f1c0b2d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f",
@@ -325,11 +325,11 @@
       "args": {
         "receiver_id": "market-v2.youtick.testnet",
         "amount": "500000",
-        "msg": "{\"action\":\"create_paid_job\",\"job_id\":\"lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6\",\"title\":\"Stüdyo kaydı: açılış gecesi\",\"price_usdc\":\"5000000\",\"expected_source_bytes\":\"734003200\",\"profile_id\":\"paid-media-livepeer-v1\",\"profile_config_sha256\":\"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77\",\"upload_public_key\":\"ed25519:9sC7pDVZeDhwwoFvBxvsD76VRUuj8UgqHR3AAws6Z8Sn\",\"upload_key_expires_at_ms\":\"1791446400000\"}"
+        "msg": "{\"action\":\"create_paid_job\",\"job_id\":\"lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6\",\"title\":\"Stüdyo kaydı: açılış gecesi\",\"price_usdc\":\"5000000\",\"expected_source_bytes\":\"734003200\",\"profile_id\":\"paid-media-v1\",\"profile_config_sha256\":\"96197f502ab9777df0e1c1360803461c3f7e2809495ad575bfe338bc69f5bf77\",\"upload_public_key\":\"ed25519:9sC7pDVZeDhwwoFvBxvsD76VRUuj8UgqHR3AAws6Z8Sn\",\"upload_key_expires_at_ms\":\"1791446400000\"}"
       },
-      "byte_length": 731,
-      "bytes_base64": "bgEAQEAAAABhM2YxYzBiMmQ0ZTVmNjA3MTgyOTNhNGI1YzZkN2U4ZjkwYTFiMmMzZDRlNWY2MDcxODI5M2E0YjVjNmQ3ZThmEgAAAHVzZGMuZmFrZXMudGVzdG5ldAEAAAACEAAAAGZ0X3RyYW5zZmVyX2NhbGwXAgAAeyJyZWNlaXZlcl9pZCI6Im1hcmtldC12Mi55b3V0aWNrLnRlc3RuZXQiLCJhbW91bnQiOiI1MDAwMDAiLCJtc2ciOiJ7XCJhY3Rpb25cIjpcImNyZWF0ZV9wYWlkX2pvYlwiLFwiam9iX2lkXCI6XCJscC0wZjhjMmE0ZS01YjZkLTRjN2UtOGY5MC1hMWIyYzNkNGU1ZjZcIixcInRpdGxlXCI6XCJTdMO8ZHlvIGtheWTEsTogYcOnxLFsxLHFnyBnZWNlc2lcIixcInByaWNlX3VzZGNcIjpcIjUwMDAwMDBcIixcImV4cGVjdGVkX3NvdXJjZV9ieXRlc1wiOlwiNzM0MDAzMjAwXCIsXCJwcm9maWxlX2lkXCI6XCJwYWlkLW1lZGlhLWxpdmVwZWVyLXYxXCIsXCJwcm9maWxlX2NvbmZpZ19zaGEyNTZcIjpcIjk2MTk3ZjUwMmFiOTc3N2RmMGUxYzEzNjA4MDM0NjFjM2Y3ZTI4MDk0OTVhZDU3NWJmZTMzOGJjNjlmNWJmNzdcIixcInVwbG9hZF9wdWJsaWNfa2V5XCI6XCJlZDI1NTE5OjlzQzdwRFZaZURod3dvRnZCeHZzRDc2VlJVdWo4VWdxSFIzQUF3czZaOFNuXCIsXCJ1cGxvYWRfa2V5X2V4cGlyZXNfYXRfbXNcIjpcIjE3OTE0NDY0MDAwMDBcIn0ifQBAehDzWgAAAQAAAAAAAAAAAAAAAAAAAAGwklQTqgAAcGklCwAAAAAAHO/VwHLWMeJGjVClmyZyeodyPh5iZUGKr6k6cH/A2jU=",
-      "sha256_hex": "f045250d81ce5007d452a2081e96fa9e2fab3d268afd26f1367537eb4481293a"
+      "byte_length": 722,
+      "bytes_base64": "bgEAQEAAAABhM2YxYzBiMmQ0ZTVmNjA3MTgyOTNhNGI1YzZkN2U4ZjkwYTFiMmMzZDRlNWY2MDcxODI5M2E0YjVjNmQ3ZThmEgAAAHVzZGMuZmFrZXMudGVzdG5ldAEAAAACEAAAAGZ0X3RyYW5zZmVyX2NhbGwOAgAAeyJyZWNlaXZlcl9pZCI6Im1hcmtldC12Mi55b3V0aWNrLnRlc3RuZXQiLCJhbW91bnQiOiI1MDAwMDAiLCJtc2ciOiJ7XCJhY3Rpb25cIjpcImNyZWF0ZV9wYWlkX2pvYlwiLFwiam9iX2lkXCI6XCJscC0wZjhjMmE0ZS01YjZkLTRjN2UtOGY5MC1hMWIyYzNkNGU1ZjZcIixcInRpdGxlXCI6XCJTdMO8ZHlvIGtheWTEsTogYcOnxLFsxLHFnyBnZWNlc2lcIixcInByaWNlX3VzZGNcIjpcIjUwMDAwMDBcIixcImV4cGVjdGVkX3NvdXJjZV9ieXRlc1wiOlwiNzM0MDAzMjAwXCIsXCJwcm9maWxlX2lkXCI6XCJwYWlkLW1lZGlhLXYxXCIsXCJwcm9maWxlX2NvbmZpZ19zaGEyNTZcIjpcIjk2MTk3ZjUwMmFiOTc3N2RmMGUxYzEzNjA4MDM0NjFjM2Y3ZTI4MDk0OTVhZDU3NWJmZTMzOGJjNjlmNWJmNzdcIixcInVwbG9hZF9wdWJsaWNfa2V5XCI6XCJlZDI1NTE5OjlzQzdwRFZaZURod3dvRnZCeHZzRDc2VlJVdWo4VWdxSFIzQUF3czZaOFNuXCIsXCJ1cGxvYWRfa2V5X2V4cGlyZXNfYXRfbXNcIjpcIjE3OTE0NDY0MDAwMDBcIn0ifQBAehDzWgAAAQAAAAAAAAAAAAAAAAAAAAGwklQTqgAAcGklCwAAAAAAHO/VwHLWMeJGjVClmyZyeodyPh5iZUGKr6k6cH/A2jU=",
+      "sha256_hex": "f33f539e99ecf243988624cb85288b28f4c95dfc9a9fc0f9485ec2f4b16e49e1"
     },
     "replace_upload_key": {
       "args": {
@@ -509,22 +509,22 @@
       "typical": {
         "job_id_chars": 39,
         "title_bytes": 40,
-        "upload_msg_bytes": 443,
-        "ft_transfer_call_args_bytes": 552,
-        "delegate_bytes": 794,
-        "fatxn_json_bytes": 2700,
-        "token_bytes_estimate": 4570,
-        "prompt_bytes_estimate": 9628
+        "upload_msg_bytes": 434,
+        "ft_transfer_call_args_bytes": 543,
+        "delegate_bytes": 785,
+        "fatxn_json_bytes": 2665,
+        "token_bytes_estimate": 4524,
+        "prompt_bytes_estimate": 9519
       },
       "worst": {
         "job_id_chars": 128,
         "title_bytes": 200,
-        "upload_msg_bytes": 692,
-        "ft_transfer_call_args_bytes": 801,
-        "delegate_bytes": 1043,
-        "fatxn_json_bytes": 3733,
-        "token_bytes_estimate": 5948,
-        "prompt_bytes_estimate": 12648
+        "upload_msg_bytes": 683,
+        "ft_transfer_call_args_bytes": 792,
+        "delegate_bytes": 1034,
+        "fatxn_json_bytes": 3698,
+        "token_bytes_estimate": 5901,
+        "prompt_bytes_estimate": 12539
       }
     },
     "replace_upload_key": {

@@ -609,6 +609,53 @@ test('D1 operator archive keeps a bounded confirmed summary and 90 day boundary'
     db.sqlite.close();
 });
 
+test('D1 0011 keeps operator archive rows and accepts the neutral Market V2 method names', async () => {
+    const db = await database();
+    const confirmedAtMs = 1_785_600_000_000;
+    const cleanupEligibleAtMs = confirmedAtMs + 90 * 24 * 60 * 60 * 1000;
+    const insertSql = `
+        INSERT INTO operator_outbox_archives (
+            network, contract_id, operator_account_id, operator_key_epoch,
+            idempotency_key, method, payload_sha256, tx_hash, created_at_ms,
+            confirmed_at_ms, archive_requested_at_ms, cleanup_eligible_at_ms,
+            archive_sha256
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    const row = (key, method, cleanup = cleanupEligibleAtMs) => [
+        'testnet', 'market.testnet', 'operator.testnet', 1, key, method,
+        'a'.repeat(64), null, confirmedAtMs - 1, confirmedAtMs,
+        confirmedAtMs, cleanup, 'b'.repeat(64),
+    ];
+    db.sqlite.prepare(insertSql).run(...row('v1:finalize', 'finalize_livepeer_publication'));
+    db.sqlite.prepare(insertSql).run(...row('v1:suspend', 'suspend_livepeer_sales'));
+    // Before 0011 the neutral names are refused.
+    assert.throws(() => db.sqlite.prepare(insertSql).run(...row('v2:finalize', 'finalize_publication')),
+        /CHECK constraint failed/);
+    const before = db.sqlite.prepare('SELECT * FROM operator_outbox_archives ORDER BY idempotency_key').all()
+        .map((value) => ({ ...value }));
+    db.sqlite.exec(await readFile(new URL('../read-model/d1/0011_operator_outbox_neutral_methods.sql', import.meta.url), 'utf8'));
+    assert.deepEqual(
+        db.sqlite.prepare('SELECT * FROM operator_outbox_archives ORDER BY idempotency_key').all().map((value) => ({ ...value })),
+        before,
+    );
+    const insert = db.sqlite.prepare(insertSql);
+    insert.run(...row('v2:finalize', 'finalize_publication'));
+    insert.run(...row('v2:suspend', 'suspend_sales'));
+    insert.run(...row('v1:finalize:2', 'finalize_livepeer_publication'));
+    assert.throws(() => insert.run(...row('v2:takedown', 'takedown_publication')), /CHECK constraint failed/);
+    assert.throws(() => insert.run(...row('v2:watched', 'mark_watched')), /CHECK constraint failed/);
+    assert.throws(() => insert.run(...row('v2:early', 'finalize_publication', cleanupEligibleAtMs - 1)),
+        /CHECK constraint failed/);
+    assert.throws(() => insert.run(...row('v2:finalize', 'suspend_sales')), /UNIQUE constraint failed/);
+    assert.deepEqual(
+        db.sqlite.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'operator_outbox_archives'
+            AND sql IS NOT NULL`).all().map(({ name }) => name),
+        ['operator_outbox_archives_cleanup'],
+    );
+    assert.equal(db.sqlite.prepare(`SELECT count(*) AS count FROM sqlite_master WHERE name = 'operator_outbox_archives_v2'`).get().count, 0);
+    db.sqlite.close();
+});
+
 const authorized = event(100, 'media_job_authorized', 'job:job-1:1:authorized', {
     account_id: 'creator.testnet', job_id: 'job-1', generation: 1,
     expected_source_bytes: '1000000', asset: 'USDC', amount: '500000',

@@ -1150,8 +1150,10 @@ function samePaidJob(
     job: Record<string, unknown>,
     request: Record<string, string>,
     asset: CreatorFeeAsset,
+    profileId: string = PROFILE_ID,
 ): boolean {
-    return job.job_id === request.job_id
+    return request.profile_id === profileId
+        && job.job_id === request.job_id
         && job.creator_id === request.creator_id
         && job.title === request.title
         && job.price_usdc === request.price_usdc
@@ -1171,6 +1173,11 @@ type UploadIntentInput = {
     sourceType: LivepeerSourceType;
     recovery?: 'reconcile' | 'resume';
     signal?: AbortSignal;
+    /**
+     * Market profile id sent in the intent body; the Bridge requires it to equal the chain job's
+     * `profile_id`. V1 omits it (`PROFILE_ID`); Market V2 passes `paid-media-v1` (lib/v2/upload).
+     */
+    profileId?: string;
 };
 
 export type LivepeerUploadStatus = { job_id: string; generation: number; state: string };
@@ -1200,9 +1207,9 @@ export async function requestLivepeerUploadIntent(input: UploadIntentInput): Pro
         expected_source_bytes: String(input.expectedSourceBytes),
         source_fingerprint_sha256: input.sourceFingerprintSha256,
         source_type: input.sourceType,
-        profile_id: PROFILE_ID,
+        profile_id: input.profileId ?? PROFILE_ID,
         profile_config_sha256: FEATURE_FLAGS.publicTestnetVideoV1
-            ? storedProfileHash(await reconcilePaidJob(input.jobId)) : profiles.legacy.hash,
+            ? storedProfileHash(await reconcilePaidJob(input.jobId), input.profileId) : profiles.legacy.hash,
         ...(input.recovery ? { recovery: input.recovery } : {}),
     };
     const bodySha256 = await sha256Hex(canonicalJson(body));
@@ -1819,15 +1826,15 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
     throw new Error('invalid_livepeer_control_response');
 }
 
-export function storedProfileHash(job: Record<string, unknown> | null): string {
+export function storedProfileHash(job: Record<string, unknown> | null, profileId: string = PROFILE_ID): string {
     const hash = job?.profile_config_sha256;
-    if (job?.profile_id !== PROFILE_ID || !Object.values(profiles).some((entry) => entry.hash === hash)) {
+    if (job?.profile_id !== profileId || !Object.values(profiles).some((entry) => entry.hash === hash)) {
         throw new Error('livepeer_paid_job_conflict');
     }
     return hash as string;
 }
 
-async function currentPublicProfile(): Promise<string> {
+async function currentPublicProfile(profileId: string = PROFILE_ID): Promise<string> {
     const policy = await viewContract<Record<string, unknown>>(getProvider(), NEAR_CONFIG.marketContractId, 'get_public_upload_policy');
     const entries = policy?.profiles;
     const expected = Array.isArray(entries) && entries.length === 1 ? [profiles.legacy]
@@ -1837,7 +1844,7 @@ async function currentPublicProfile(): Promise<string> {
         || policy.market_contract_id !== NEAR_CONFIG.marketContractId || policy.version !== 1
         || policy.max_source_bytes !== '5000000000' || policy.job_ttl_ms !== '86400000'
         || policy.signed_quote_required !== true || !Array.isArray(entries) || entries.length !== expected.length
-        || entries.some((entry, index) => entry?.profile_id !== PROFILE_ID || entry?.profile_config_sha256 !== expected[index].hash)) {
+        || entries.some((entry, index) => entry?.profile_id !== profileId || entry?.profile_config_sha256 !== expected[index].hash)) {
         throw new Error('deployment_binding_mismatch');
     }
     return expected[0].hash;

@@ -685,7 +685,7 @@ describe('NEAR Auth uploads', () => {
         const uploadKey = KeyPair.fromRandom('ed25519').getPublicKey().toString();
         return JSON.stringify({
             action: 'create_paid_job', job_id: 'lp-0f8c2a4e-5b6d-4c7e-8f90-a1b2c3d4e5f6', title: 'Stüdyo kaydı', price_usdc: '5000000',
-            expected_source_bytes: '2000000000', profile_id: 'paid-media-livepeer-v1', profile_config_sha256: PROFILE_HASH,
+            expected_source_bytes: '2000000000', profile_id: 'paid-media-v1', profile_config_sha256: PROFILE_HASH,
             upload_public_key: uploadKey, upload_key_expires_at_ms: String(clock + DAY), ...overrides,
         });
     }
@@ -754,6 +754,8 @@ describe('NEAR Auth uploads', () => {
         const base = await upload('buyer-u2');
         const expired = uploadMessage({ upload_key_expires_at_ms: String(clock + 30_000) });
         const longTitle = uploadMessage({ title: 'ş'.repeat(101) });
+        // Market V2 rejects the provider-named V1 profile id.
+        const v1Profile = uploadMessage({ profile_id: 'paid-media-livepeer-v1' });
         const unordered = JSON.stringify({ job_id: base.msg.job_id, ...base.msg });
         const cases: [Parameters<typeof upload>[1], number, string][] = [
             [{ receiver: 'other-market.testnet' }, 400, 'invalid_request'],
@@ -762,6 +764,7 @@ describe('NEAR Auth uploads', () => {
             [{ amount: '500000' }, 409, 'fee_mismatch'],
             [{ msg: expired }, 409, 'upload_key_expired'],
             [{ msg: longTitle }, 400, 'upload_invalid'],
+            [{ msg: v1Profile }, 400, 'upload_invalid'],
             [{ msg: unordered }, 400, 'upload_invalid'],
         ];
         for (const [overrides, status, error] of cases) {

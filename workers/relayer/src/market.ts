@@ -174,7 +174,7 @@ export async function checkPurchaseMessage(near: NearClient, input: {
 
 /** `upload_msg` keys in protocol order (protocol/youtick-market-v2, "Upload through NEAR Auth"). */
 const UPLOAD_KEYS = 'action,job_id,title,price_usdc,expected_source_bytes,profile_id,profile_config_sha256,upload_public_key,upload_key_expires_at_ms';
-const UPLOAD_PROFILE_ID = 'paid-media-livepeer-v1';
+const UPLOAD_PROFILE_ID = 'paid-media-v1';
 const IDENTIFIER = /^[A-Za-z0-9._:-]{1,128}$/;
 /** Market V2: PAID_SOURCE_MAX_BYTES, title 1-200 bytes, fee 3/10,000 per byte, at least 0.5 USDC. */
 const MAX_SOURCE_BYTES = 20_000_000_000n;
@@ -324,7 +324,7 @@ const MAX_TICKET_DEVICES = 3;
 export const DEVICE_RENEW_WITHIN_MS = 7 * 86_400_000;
 /** `add_device` asserts a 25,000-byte storage runway after every call, renewals included; plus room for one device. */
 const DEVICE_MIN_RUNWAY_BYTES = 26_000n;
-/** The Bridge only plays keys of 43-44 base58 characters (workers/livepeer-bridge `playback-v3.ts`). */
+/** The Bridge only plays keys of 43-44 base58 characters (Bridge `src/playback-v3.ts`). */
 const SESSION_KEY = /^ed25519:[1-9A-HJ-NP-Za-km-z]{43,44}$/;
 const U32 = /^(0|[1-9][0-9]{0,9})$/;
 const PLAYABLE_STATUSES = new Set(['purchased', 'watched', 'watched_in_escrow', 'released']);

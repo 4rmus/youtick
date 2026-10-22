@@ -30,7 +30,7 @@ export const MAX_REFUND_SIGNATURE_TTL_MS = 604_800_000n;
 // no playback session: the relayer sponsors gas, and Market V2 has no public beta or public
 // upload policy. Values mirror contracts/market-v2 (fee 3/10,000 per byte, minimum 0.5 USDC).
 export const UPLOAD_ACTION = "create_paid_job";
-export const UPLOAD_PROFILE_ID = "paid-media-livepeer-v1";
+export const UPLOAD_PROFILE_ID = "paid-media-v1";
 export const UPLOAD_FEE = { numerator: 3n, denominator: 10_000n, minimum_usdc_micro: 500_000n };
 export const MAX_SOURCE_BYTES = 20_000_000_000n;
 export const MAX_TITLE_BYTES = 200;

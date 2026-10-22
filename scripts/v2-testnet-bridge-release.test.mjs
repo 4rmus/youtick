@@ -250,6 +250,8 @@ test('preflight refuses a chain without the exact operator key or quote key vers
     for (const [options, error] of [
         [{ methods: [...OPERATOR_METHODS, 'withdraw_creator_balance'] }, /operator_key_not_on_chain/],
         [{ methods: OPERATOR_METHODS.slice(1) }, /operator_key_not_on_chain/],
+        // The pre-MC key lists the provider-named methods that Market V2 no longer exports.
+        [{ methods: ['finalize_livepeer_publication', 'suspend_livepeer_sales', 'mark_watched', 'release_expired'] }, /operator_key_not_on_chain/],
         [{ receiver: 'other.testnet' }, /operator_key_not_on_chain/],
         [{ quoteVersion: 2 }, /quote_key_version_mismatch/],
         [{ chainId: 'mainnet' }, /rpc_network/],

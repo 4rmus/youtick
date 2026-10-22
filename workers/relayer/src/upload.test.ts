@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import vectors from '../../../protocol/youtick-market-v2/golden-vectors.json';
-import { parseUploadFields, parseUploadKeyFields, uploadDelegate, uploadKeyDelegate } from './upload';
+import { parseUploadFields, parseUploadKeyFields, UPLOAD_PROFILE_ID, uploadDelegate, uploadKeyDelegate } from './upload';
 
 const upload = vectors.upload;
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64');
@@ -10,6 +10,9 @@ describe('upload delegates against the protocol vectors', () => {
         const vector = upload.delegate;
         const fields = parseUploadFields({ args: vector.args, nonce: vector.nonce, max_block_height: vector.max_block_height }, vectors.fixture.contract_id);
         expect(fields.jobId).toBe(vectors.fixture.upload_job_id);
+        // Market V2 uses the provider-neutral profile id.
+        expect(UPLOAD_PROFILE_ID).toBe('paid-media-v1');
+        expect(upload.msg.profile_id).toBe(UPLOAD_PROFILE_ID);
         const { bytes } = uploadDelegate({ senderId: vector.sender_id, publicKey: vector.public_key, usdcContractId: vector.receiver_id, fields });
         expect(bytes.length).toBe(vector.byte_length);
         expect(b64(bytes)).toBe(vector.bytes_base64);

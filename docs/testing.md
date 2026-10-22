@@ -275,8 +275,8 @@ prose files runs no component jobs; `CI Gate` still runs.
 
 ## Market v2 protocol
 
-The V2 byte formats in `protocol/youtick-market-v2` have no runtime consumer yet. The checker
-rebuilds every golden vector, verifies signatures and the NEAR Auth size budget:
+The V2 byte formats live in `protocol/youtick-market-v2`. The checker rebuilds every golden
+vector, verifies signatures and the NEAR Auth size budget:
 
 ```bash
 node scripts/check-youtick-market-v2.mjs
@@ -284,9 +284,16 @@ node scripts/check-youtick-market-v2.mjs
 node scripts/check-youtick-market-v2.mjs --write
 ```
 
+After `--write`, rerun the consumers that reproduce the vectors byte for byte: the Market v2
+contract tests below, `workers/relayer` (`npm test -- --run`) and `apps/web`
+(`npm test -- --run`, `__tests__/unit/v2-upload.test.ts`). The upload profile id is
+`paid-media-v1` (gate MC, 2026-10-22); V1 keeps `paid-media-livepeer-v1`.
+
 ## Market v2 contract
 
-`contracts/market-v2` is not deployed. Same toolchain as the other contracts:
+`contracts/market-v2` runs on V2 testnet only (`v2-market-261007.youtick-dev-v3.testnet`);
+code upgrades are owner-signed (`docs/v2-testnet-runbook.md`). Same toolchain as the other
+contracts:
 
 ```bash
 cd contracts/market-v2
@@ -298,8 +305,11 @@ cargo +1.86.0 clippy --all-targets -- -D warnings
 cargo +1.86.0 near build non-reproducible-wasm
 ```
 
-`market_v2` includes `protocol_golden_vectors_are_accepted_byte_for_byte`, which reads
-`protocol/youtick-market-v2/golden-vectors.json`.
+`market_v2` includes `protocol_golden_vectors_are_accepted_byte_for_byte` and
+`protocol_upload_vector_creates_a_job_under_the_neutral_profile`, which read
+`protocol/youtick-market-v2/golden-vectors.json`. `sandbox` also asserts that the WASM no longer
+exports the V1 method names (`finalize_livepeer_publication`, `suspend_livepeer_sales`,
+`takedown_livepeer_publication`).
 
 ## ckd-gate
 

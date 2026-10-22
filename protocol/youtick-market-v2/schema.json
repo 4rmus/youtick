@@ -660,7 +660,7 @@
           "$ref": "#/$defs/source_bytes"
         },
         "profile_id": {
-          "const": "paid-media-livepeer-v1"
+          "const": "paid-media-v1"
         },
         "profile_config_sha256": {
           "$ref": "#/$defs/sha256"

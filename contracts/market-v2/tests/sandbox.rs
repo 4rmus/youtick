@@ -71,8 +71,8 @@ async fn init_with_worker() -> anyhow::Result<(
     let worker = near_workspaces::sandbox().await?;
     let wasm = load_contract_wasm().await?;
     let mock_ft_wasm = load_mock_ft_wasm().await?;
-    let market_id = "paid-media-livepeer-v1.testnet".parse()?;
-    let market_key = SecretKey::from_seed(KeyType::ED25519, "paid-media-livepeer-v1.testnet");
+    let market_id = "paid-media-v1.testnet".parse()?;
+    let market_key = SecretKey::from_seed(KeyType::ED25519, "paid-media-v1.testnet");
     worker
         .patch(&market_id)
         .account(AccountDetailsPatch::default().balance(NearToken::from_near(100)))
@@ -203,7 +203,7 @@ async fn is_final_canonical(worker: &Worker<Sandbox>, hash: CryptoHash, final_he
 }
 
 #[tokio::test]
-async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
+async fn exact_publication_publishes_once() -> anyhow::Result<()> {
     let (worker, contract, bridge, guardian, creator, usdc, _admin) = init_with_worker().await?;
     let storage_before: Option<serde_json::Value> = usdc
         .view("storage_balance_of")
@@ -240,7 +240,7 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
         "title": "Paid video",
         "price_usdc": "5000000",
         "expected_source_bytes": "1000000",
-        "profile_id": "paid-media-livepeer-v1",
+        "profile_id": "paid-media-v1",
         "profile_config_sha256": PROFILE_HASH,
         "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
         "upload_key_expires_at_ms": "9999999999999",
@@ -251,7 +251,7 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
         .args_json(json!({
             "receiver_id": contract.id(),
             "amount": "500000",
-            "memo": "paid-media-livepeer-v1 sandbox",
+            "memo": "paid-media-v1 sandbox",
             "msg": create_message,
         }))
         .deposit(NearToken::from_yoctonear(1))
@@ -285,14 +285,14 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
         .args_json(json!({
             "receiver_id": contract.id(),
             "amount": "500000",
-            "memo": "paid-media-livepeer-v1 replay",
+            "memo": "paid-media-v1 replay",
             "msg": json!({
                 "action": "create_paid_job",
                 "job_id": "job-1",
                 "title": "Paid video",
                 "price_usdc": "5000000",
                 "expected_source_bytes": "1000000",
-                "profile_id": "paid-media-livepeer-v1",
+                "profile_id": "paid-media-v1",
                 "profile_config_sha256": PROFILE_HASH,
                 "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
                 "upload_key_expires_at_ms": "9999999999999",
@@ -327,14 +327,14 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
         .args_json(json!({
             "receiver_id": contract.id(),
             "amount": "500000",
-            "memo": "paid-media-livepeer-v1 paused",
+            "memo": "paid-media-v1 paused",
             "msg": json!({
                 "action": "create_paid_job",
                 "job_id": "job-paused",
                 "title": "Paused video",
                 "price_usdc": "5000000",
                 "expected_source_bytes": "1000000",
-                "profile_id": "paid-media-livepeer-v1",
+                "profile_id": "paid-media-v1",
                 "profile_config_sha256": PROFILE_HASH,
                 "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
                 "upload_key_expires_at_ms": "9999999999999",
@@ -371,7 +371,7 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
             "generation": 1,
             "creator_id": creator.id(),
             "expected_source_bytes": "1000000",
-            "profile_id": "paid-media-livepeer-v1",
+            "profile_id": "paid-media-v1",
             "profile_config_sha256": PROFILE_HASH,
             "asset_id_hash": ASSET_HASH,
             "playback_id": "playback_001",
@@ -382,10 +382,34 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
             "availability": "ACTIVE",
         },
     });
+    // The provider-named V1 methods are not exported by Market V2.
+    for (method, method_args) in [
+        ("finalize_livepeer_publication", args.clone()),
+        (
+            "suspend_livepeer_sales",
+            json!({ "publication_id": "job-1" }),
+        ),
+        (
+            "takedown_livepeer_publication",
+            json!({ "publication_id": "job-1" }),
+        ),
+    ] {
+        let removed = bridge
+            .call(contract.id(), method)
+            .args_json(method_args)
+            .transact()
+            .await?;
+        assert!(removed.is_failure(), "{method} must not exist");
+        assert!(
+            format!("{:?}", removed.failures()).contains("MethodNotFound"),
+            "{method}: {:?}",
+            removed.failures()
+        );
+    }
     let first_outcome = transact_final(
         &worker,
         bridge
-            .call(contract.id(), "finalize_livepeer_publication")
+            .call(contract.id(), "finalize_publication")
             .args_json(args.clone()),
     )
     .await?;
@@ -408,7 +432,7 @@ async fn exact_livepeer_publication_publishes_once() -> anyhow::Result<()> {
     let second: serde_json::Value = transact_final(
         &worker,
         bridge
-            .call(contract.id(), "finalize_livepeer_publication")
+            .call(contract.id(), "finalize_publication")
             .args_json(args),
     )
     .await?
@@ -490,7 +514,7 @@ async fn ticket_purchase_escrows_usdc_on_chain_and_credits_no_balance() -> anyho
                 "title": "Exit video",
                 "price_usdc": "5000000",
                 "expected_source_bytes": "1000000",
-                "profile_id": "paid-media-livepeer-v1",
+                "profile_id": "paid-media-v1",
                 "profile_config_sha256": PROFILE_HASH,
                 "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
                 "upload_key_expires_at_ms": "9999999999999",
@@ -503,14 +527,14 @@ async fn ticket_purchase_escrows_usdc_on_chain_and_credits_no_balance() -> anyho
         .await?
         .into_result()?;
     bridge
-        .call(contract.id(), "finalize_livepeer_publication")
+        .call(contract.id(), "finalize_publication")
         .args_json(json!({
             "submission": {
                 "job_id": "job-exit",
                 "generation": 1,
                 "creator_id": creator.id(),
                 "expected_source_bytes": "1000000",
-                "profile_id": "paid-media-livepeer-v1",
+                "profile_id": "paid-media-v1",
                 "profile_config_sha256": PROFILE_HASH,
                 "asset_id_hash": ASSET_HASH,
                 "playback_id": "playback_exit",
@@ -822,7 +846,7 @@ async fn watched_ticket_stays_in_escrow_and_the_operator_refunds_gross_on_chain(
                 "title": "Settle video",
                 "price_usdc": "5000000",
                 "expected_source_bytes": "1000000",
-                "profile_id": "paid-media-livepeer-v1",
+                "profile_id": "paid-media-v1",
                 "profile_config_sha256": PROFILE_HASH,
                 "upload_public_key": "ed25519:4nSjNY5gSbA4AExMyWg2ErPAwn2X4Vdo4nBNmxyZ9kzF",
                 "upload_key_expires_at_ms": "9999999999999",
@@ -835,14 +859,14 @@ async fn watched_ticket_stays_in_escrow_and_the_operator_refunds_gross_on_chain(
         .await?
         .into_result()?;
     bridge
-        .call(contract.id(), "finalize_livepeer_publication")
+        .call(contract.id(), "finalize_publication")
         .args_json(json!({
             "submission": {
                 "job_id": "job-settle",
                 "generation": 1,
                 "creator_id": creator.id(),
                 "expected_source_bytes": "1000000",
-                "profile_id": "paid-media-livepeer-v1",
+                "profile_id": "paid-media-v1",
                 "profile_config_sha256": PROFILE_HASH,
                 "asset_id_hash": ASSET_HASH,
                 "playback_id": "playback_settle",

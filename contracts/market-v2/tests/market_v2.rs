@@ -2,11 +2,11 @@ use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::test_utils::{get_logs, VMContextBuilder};
 use near_sdk::{testing_env, AccountId, PromiseOrValue};
 use youtick_market_v2::{
-    Contract, CreatorFeeQuote, FeeAsset, GovernanceRole, LivepeerPublicationSubmission,
-    MarketInitConfig, PaidJobRequest, PublicationAvailability, SponsoredUploadQuote,
+    Contract, CreatorFeeQuote, FeeAsset, GovernanceRole, MarketInitConfig, PaidJobRequest,
+    PublicationAvailability, PublicationSubmission, SponsoredUploadQuote,
 };
 
-const PROFILE: &str = "paid-media-livepeer-v1";
+const PROFILE: &str = "paid-media-v1";
 const PROFILE_HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const ASSET_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const PROJECT_HASH: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -367,7 +367,7 @@ fn public_upload_starts_closed_and_accepts_only_an_exact_signed_five_gb_job() {
     publication.expected_source_bytes = request.expected_source_bytes;
     publication.verified_source_bytes = request.expected_source_bytes;
     publication.profile_config_sha256 = request.profile_config_sha256;
-    contract.finalize_livepeer_publication(publication);
+    contract.finalize_publication(publication);
     let mut later = context("creator.testnet");
     later.block_timestamp((1_785_589_300_000 + 15 * 86_400_000) * 1_000_000);
     testing_env!(later.build());
@@ -428,7 +428,7 @@ fn public_upload_key_and_finalize_cannot_extend_the_original_deadline() {
     publication.verified_source_bytes = request.expected_source_bytes;
     publication.profile_config_sha256 = request.profile_config_sha256;
     must_fail(|| {
-        contract.finalize_livepeer_publication(publication);
+        contract.finalize_publication(publication);
     });
     assert_eq!(
         contract
@@ -769,7 +769,7 @@ fn public_beta_rejects_native_upload_and_expired_finalize() {
     expired.block_timestamp(1_785_675_700_001_000_000);
     testing_env!(expired.build());
     must_fail(|| {
-        contract.finalize_livepeer_publication(submission(
+        contract.finalize_publication(submission(
             "job-sponsored",
             1,
             "creator.testnet",
@@ -799,7 +799,7 @@ fn public_beta_operator_rejects_an_unmarked_legacy_job() {
     start_public_beta(&mut contract);
     testing_env!(context("bridge.testnet").build());
     must_fail(|| {
-        contract.finalize_livepeer_publication(submission(
+        contract.finalize_publication(submission(
             "legacy-job",
             1,
             "creator.testnet",
@@ -949,6 +949,37 @@ fn create_job_with(
         })
         .to_string(),
     )
+}
+
+#[test]
+fn paid_job_creation_requires_the_neutral_profile_id() {
+    for profile_id in ["paid-media-livepeer-v1", "unsupported-profile", ""] {
+        let mut contract = contract();
+        testing_env!(context(TESTNET_USDC).build());
+        must_fail(|| {
+            contract.ft_on_transfer(
+                account("creator.testnet"),
+                U128(upload_fee(1_000_000)),
+                near_sdk::serde_json::json!({
+                    "action": "create_paid_job",
+                    "job_id": "job-profile",
+                    "title": "Paid video",
+                    "price_usdc": "5000000",
+                    "expected_source_bytes": "1000000",
+                    "profile_id": profile_id,
+                    "profile_config_sha256": PROFILE_HASH,
+                    "upload_public_key": UPLOAD_KEY,
+                    "upload_key_expires_at_ms": "1785589900000",
+                })
+                .to_string(),
+            );
+        });
+        assert!(contract.get_media_job("job-profile".to_string()).is_none());
+    }
+    let mut contract = contract();
+    create_job(&mut contract, "job-profile", "creator.testnet");
+    let job = contract.get_media_job("job-profile".to_string()).unwrap();
+    assert_eq!(job.profile_id, "paid-media-v1");
 }
 
 #[test]
@@ -1206,7 +1237,7 @@ fn finalize(
     playback_id: &str,
 ) -> youtick_market_v2::Publication {
     testing_env!(context("bridge.testnet").build());
-    contract.finalize_livepeer_publication(submission(
+    contract.finalize_publication(submission(
         job_id,
         generation,
         creator,
@@ -1221,8 +1252,8 @@ fn submission(
     creator: &str,
     asset_hash: &str,
     playback_id: &str,
-) -> LivepeerPublicationSubmission {
-    LivepeerPublicationSubmission {
+) -> PublicationSubmission {
+    PublicationSubmission {
         job_id: job_id.to_string(),
         generation,
         creator_id: account(creator),
@@ -1298,7 +1329,7 @@ fn economic_lifecycle_emits_rebuildable_events_without_upload_capabilities() {
         1_785_589_300_000u64
     );
     testing_env!(context("bridge.testnet").build());
-    contract.finalize_livepeer_publication(submission(
+    contract.finalize_publication(submission(
         "job-events",
         1,
         "creator.testnet",
@@ -1308,15 +1339,15 @@ fn economic_lifecycle_emits_rebuildable_events_without_upload_capabilities() {
     assert!(get_logs().is_empty());
 
     testing_env!(context("bridge.testnet").build());
-    contract.suspend_livepeer_sales("job-events".to_string());
+    contract.suspend_sales("job-events".to_string());
     let suspended = governance_event();
     assert_eq!(suspended["event"], "publication_sales_suspended");
     testing_env!(context("bridge.testnet").build());
-    contract.suspend_livepeer_sales("job-events".to_string());
+    contract.suspend_sales("job-events".to_string());
     assert!(get_logs().is_empty());
 
     testing_env!(context("governance.testnet").build());
-    contract.takedown_livepeer_publication(
+    contract.takedown_publication(
         "job-events".to_string(),
         "GOVERNANCE_DECISION".to_string(),
         "incident-events".to_string(),
@@ -1327,7 +1358,7 @@ fn economic_lifecycle_emits_rebuildable_events_without_upload_capabilities() {
     assert_eq!(takedown["event"], "publication_takedown");
     assert_eq!(takedown["data"][0]["reason_code"], "GOVERNANCE_DECISION");
     testing_env!(context("governance.testnet").build());
-    contract.takedown_livepeer_publication(
+    contract.takedown_publication(
         "job-events".to_string(),
         "GOVERNANCE_DECISION".to_string(),
         "incident-events".to_string(),
@@ -1402,7 +1433,7 @@ fn guardian_freeze_blocks_bridge_and_admin_alone_unfreezes() {
 
     testing_env!(context("bridge.testnet").build());
     must_fail(|| {
-        contract.finalize_livepeer_publication(submission(
+        contract.finalize_publication(submission(
             "job-freeze",
             1,
             "creator.testnet",
@@ -1433,7 +1464,7 @@ fn guardian_freeze_blocks_bridge_and_admin_alone_unfreezes() {
     contract.freeze_bridge();
     testing_env!(context("bridge.testnet").build());
     must_fail(|| {
-        contract.suspend_livepeer_sales("job-freeze".to_string());
+        contract.suspend_sales("job-freeze".to_string());
     });
 }
 
@@ -1711,7 +1742,7 @@ fn admin_rotates_bridge_through_auditable_pending_state() {
 
     testing_env!(context("bridge.testnet").build());
     must_fail(|| {
-        contract.finalize_livepeer_publication(submission(
+        contract.finalize_publication(submission(
             "job-rotation",
             1,
             "creator.testnet",
@@ -1720,7 +1751,7 @@ fn admin_rotates_bridge_through_auditable_pending_state() {
         ));
     });
     testing_env!(context("next-bridge.testnet").build());
-    contract.finalize_livepeer_publication(submission(
+    contract.finalize_publication(submission(
         "job-rotation",
         1,
         "creator.testnet",
@@ -1757,7 +1788,7 @@ fn only_bridge_can_finalize_exact_job_tuple() {
 
     testing_env!(context("attacker.testnet").build());
     must_fail(|| {
-        contract.finalize_livepeer_publication(submission(
+        contract.finalize_publication(submission(
             "job-1",
             1,
             "creator.testnet",
@@ -1768,7 +1799,7 @@ fn only_bridge_can_finalize_exact_job_tuple() {
 
     testing_env!(context("bridge.testnet").build());
     must_fail(|| {
-        contract.finalize_livepeer_publication(submission(
+        contract.finalize_publication(submission(
             "job-1",
             1,
             "wrong-creator.testnet",
@@ -1779,17 +1810,23 @@ fn only_bridge_can_finalize_exact_job_tuple() {
     must_fail(|| {
         let mut value = submission("job-1", 1, "creator.testnet", ASSET_HASH, "playback_001");
         value.expected_source_bytes = U128(1_000_001);
-        contract.finalize_livepeer_publication(value);
+        contract.finalize_publication(value);
     });
     must_fail(|| {
         let mut value = submission("job-1", 1, "creator.testnet", ASSET_HASH, "playback_001");
         value.verified_source_bytes = U128(1_000_001);
-        contract.finalize_livepeer_publication(value);
+        contract.finalize_publication(value);
     });
     must_fail(|| {
         let mut value = submission("job-1", 1, "creator.testnet", ASSET_HASH, "playback_001");
         value.profile_id = "unsupported-profile".to_string();
-        contract.finalize_livepeer_publication(value);
+        contract.finalize_publication(value);
+    });
+    // The provider-named V1 profile id is not accepted by Market V2.
+    must_fail(|| {
+        let mut value = submission("job-1", 1, "creator.testnet", ASSET_HASH, "playback_001");
+        value.profile_id = "paid-media-livepeer-v1".to_string();
+        contract.finalize_publication(value);
     });
 }
 
@@ -1809,7 +1846,7 @@ fn initial_finalize_requires_active_availability() {
         must_fail(|| {
             let mut value = submission(&job_id, 1, "creator.testnet", ASSET_HASH, "playback_001");
             value.availability = availability;
-            contract.finalize_livepeer_publication(value);
+            contract.finalize_publication(value);
         });
     }
 }
@@ -1864,7 +1901,7 @@ fn exact_finalize_replay_is_idempotent_and_conflict_fails() {
 
     testing_env!(context("bridge.testnet").build());
     must_fail(|| {
-        contract.finalize_livepeer_publication(submission(
+        contract.finalize_publication(submission(
             "job-1",
             1,
             "creator.testnet",
@@ -1991,7 +2028,7 @@ fn rejected_ticket_payments_refund_without_mutating_ledger() {
     assert_eq!(contract.get_platform_balance(), upload_balance);
 
     testing_env!(context("bridge.testnet").build());
-    contract.suspend_livepeer_sales("job-1".to_string());
+    contract.suspend_sales("job-1".to_string());
     let replayed = finalize(
         &mut contract,
         "job-1",
@@ -2041,7 +2078,7 @@ fn governance_takedown_is_one_way_and_preserves_ticket_history() {
 
     testing_env!(context("bridge.testnet").build());
     must_fail(|| {
-        contract.takedown_livepeer_publication(
+        contract.takedown_publication(
             "job-takedown".to_string(),
             "PUBLIC_MEDIA_EXPOSURE".to_string(),
             "incident-001".to_string(),
@@ -2051,7 +2088,7 @@ fn governance_takedown_is_one_way_and_preserves_ticket_history() {
     });
 
     testing_env!(context("governance.testnet").build());
-    let takedown = contract.takedown_livepeer_publication(
+    let takedown = contract.takedown_publication(
         "job-takedown".to_string(),
         "PUBLIC_MEDIA_EXPOSURE".to_string(),
         "incident-001".to_string(),
@@ -2066,7 +2103,7 @@ fn governance_takedown_is_one_way_and_preserves_ticket_history() {
             .incident_id,
         "incident-001"
     );
-    let replay = contract.takedown_livepeer_publication(
+    let replay = contract.takedown_publication(
         "job-takedown".to_string(),
         "PUBLIC_MEDIA_EXPOSURE".to_string(),
         "incident-001".to_string(),
@@ -2075,7 +2112,7 @@ fn governance_takedown_is_one_way_and_preserves_ticket_history() {
     );
     assert_eq!(replay, takedown);
     must_fail(|| {
-        contract.takedown_livepeer_publication(
+        contract.takedown_publication(
             "job-takedown".to_string(),
             "LEGAL_REQUIREMENT".to_string(),
             "incident-002".to_string(),
@@ -2086,7 +2123,7 @@ fn governance_takedown_is_one_way_and_preserves_ticket_history() {
 
     testing_env!(context("bridge.testnet").build());
     must_fail(|| {
-        contract.suspend_livepeer_sales("job-takedown".to_string());
+        contract.suspend_sales("job-takedown".to_string());
     });
     testing_env!(context(TESTNET_USDC).build());
     let late = v2::purchase("job-takedown", "late", 5_000_000, NOW_MS);
@@ -2114,10 +2151,10 @@ fn governance_can_move_sales_suspended_publication_to_takedown() {
         "playback_suspended",
     );
     testing_env!(context("bridge.testnet").build());
-    contract.suspend_livepeer_sales("job-suspended".to_string());
+    contract.suspend_sales("job-suspended".to_string());
 
     testing_env!(context("governance.testnet").build());
-    let publication = contract.takedown_livepeer_publication(
+    let publication = contract.takedown_publication(
         "job-suspended".to_string(),
         "GOVERNANCE_DECISION".to_string(),
         "incident-suspended".to_string(),
@@ -2239,7 +2276,7 @@ fn creator_device_activation_keeps_three_devices_during_suspended_sales() {
     let mut market = device_sale_contract();
     activate_device(&mut market, "creator.testnet", 1, 0, UPLOAD_KEY);
     testing_env!(context("bridge.testnet").build());
-    market.suspend_livepeer_sales("device-job-0".to_string());
+    market.suspend_sales("device-job-0".to_string());
     testing_env!(context("guardian.testnet").build());
     market.pause_new_purchases();
     for device in 2..=4 {
@@ -2321,7 +2358,7 @@ fn creator_device_activation_rejects_wrong_authority_deposit_or_certificate() {
     market.request_bridge_unfreeze();
     market.unfreeze_bridge();
     testing_env!(context("governance.testnet").build());
-    market.takedown_livepeer_publication(
+    market.takedown_publication(
         "device-job-0".to_string(),
         "GOVERNANCE_DECISION".to_string(),
         "incident-device".to_string(),
@@ -2635,6 +2672,32 @@ fn sponsored_upload_authorizes_creator_device_without_using_relayer_key() {
     );
 }
 
+/// The frozen V1 compact vectors bind the V1 profile id inside the signed
+/// sponsored quote. Market V2 derives `paid-media-v1` instead, so the Borsh
+/// payload is kept and only the quote is re-bound and re-signed in-test.
+fn resign_compact_vector(
+    vector: &serde_json::Value,
+) -> (PaidJobRequest, SponsoredUploadQuote, String) {
+    let mut request: PaidJobRequest = serde_json::from_value(vector["request"].clone()).unwrap();
+    assert_eq!(request.profile_id, "paid-media-livepeer-v1");
+    request.profile_id = PROFILE.to_string();
+    let quote = bind_sponsored_quote(
+        &request,
+        serde_json::from_value(vector["quote"].clone()).unwrap(),
+    );
+    let encoded = vector["compact_message"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("yt:u1:")
+        .unwrap();
+    let mut bytes: Base64VecU8 = serde_json::from_value(encoded.into()).unwrap();
+    let signature_offset = bytes.0.len() - 64;
+    bytes.0[signature_offset..].copy_from_slice(&sign_quote(&sponsored_quote_message(&quote)));
+    let encoded = serde_json::to_value(bytes).unwrap();
+    let message = format!("yt:u1:{}", encoded.as_str().unwrap());
+    (request, quote, message)
+}
+
 #[test]
 fn compact_upload_cross_language_vectors_preserve_payment_and_device() {
     let vectors: serde_json::Value = serde_json::from_str(include_str!(
@@ -2652,7 +2715,7 @@ fn compact_upload_cross_language_vectors_preserve_payment_and_device() {
             takedown_authority_id: account("governance.testnet"),
             admin_account_id: account("admin.testnet"),
             guardian_account_id: account("guardian.testnet"),
-            quote_public_key: serde_json::from_value(vector["public_key"].clone()).unwrap(),
+            quote_public_key: Base64VecU8(quote_public_key()),
             quote_key_version: 1,
             near_operational_reserve: U128(1_000_000_000_000_000_000_000_000),
             tax_account_id: account("tax.testnet"),
@@ -2663,9 +2726,7 @@ fn compact_upload_cross_language_vectors_preserve_payment_and_device() {
         testing_env!(context("admin.testnet").build());
         market.request_new_purchases_unpause();
         market.unpause_new_purchases();
-        let request: PaidJobRequest = serde_json::from_value(vector["request"].clone()).unwrap();
-        let quote: SponsoredUploadQuote = serde_json::from_value(vector["quote"].clone()).unwrap();
-        let message = vector["compact_message"].as_str().unwrap().to_string();
+        let (request, quote, message) = resign_compact_vector(vector);
         let device = vector["normal_message"]["playback_session"]["session_public_key"]
             .as_str()
             .unwrap()
@@ -3291,6 +3352,35 @@ fn testnet_code_upgrade_has_no_delay() {
 }
 
 #[test]
+fn protocol_upload_vector_creates_a_job_under_the_neutral_profile() {
+    let vectors: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../protocol/youtick-market-v2/golden-vectors.json"
+    ))
+    .unwrap();
+    let upload = &vectors["upload"];
+    assert_eq!(upload["msg"]["profile_id"], PROFILE);
+    let args = &upload["ft_transfer_call_args"];
+    let mut contract = contract();
+    testing_env!(context(TESTNET_USDC).build());
+    assert!(matches!(
+        contract.ft_on_transfer(
+            account(upload["creator_id"].as_str().unwrap()),
+            U128(args["amount"].as_str().unwrap().parse().unwrap()),
+            args["msg"].as_str().unwrap().to_string(),
+        ),
+        PromiseOrValue::Value(U128(0))
+    ));
+    let job = contract
+        .get_media_job(upload["msg"]["job_id"].as_str().unwrap().to_string())
+        .unwrap();
+    assert_eq!(job.profile_id, PROFILE);
+    assert_eq!(
+        job.profile_config_sha256,
+        upload["msg"]["profile_config_sha256"].as_str().unwrap()
+    );
+}
+
+#[test]
 fn protocol_golden_vectors_are_accepted_byte_for_byte() {
     let vectors: serde_json::Value = serde_json::from_str(include_str!(
         "../../../protocol/youtick-market-v2/golden-vectors.json"
@@ -3666,7 +3756,7 @@ fn only_an_unfrozen_bridge_marks_watched_and_never_after_takedown() {
     market.request_bridge_unfreeze();
     market.unfreeze_bridge();
     testing_env!(context("governance.testnet").build());
-    market.takedown_livepeer_publication(
+    market.takedown_publication(
         "job-watch-rules".to_string(),
         "GOVERNANCE_DECISION".to_string(),
         "incident-watch".to_string(),
@@ -3872,7 +3962,7 @@ fn after_a_takedown_the_buyer_refunds_without_the_operator_and_without_a_time_li
     testing_env!(context("bridge.testnet").build());
     assert!(market.mark_watched(watched.ticket_id.clone()));
     testing_env!(context("governance.testnet").build());
-    market.takedown_livepeer_publication(
+    market.takedown_publication(
         "job-refund-rules".to_string(),
         "LEGAL_REQUIREMENT".to_string(),
         "incident-refund".to_string(),
@@ -4033,7 +4123,7 @@ fn the_purchase_pause_stops_operator_refunds_but_not_takedown_refunds() {
     });
     assert_eq!(market.get_escrow_balance(), U128(GROSS));
     testing_env!(context("governance.testnet").build());
-    market.takedown_livepeer_publication(
+    market.takedown_publication(
         "job-refund-pause".to_string(),
         "LEGAL_REQUIREMENT".to_string(),
         "incident-refund-pause".to_string(),
@@ -4356,7 +4446,7 @@ fn released_tickets_accept_devices_but_taken_down_publications_do_not() {
         signature.clone(),
     );
     testing_env!(context("governance.testnet").build());
-    market.takedown_livepeer_publication(
+    market.takedown_publication(
         "job-device-release".to_string(),
         "GOVERNANCE_DECISION".to_string(),
         "incident-device-release".to_string(),
@@ -4679,7 +4769,7 @@ fn card_issue_follows_the_purchase_pause_and_publication_availability() {
     market.request_new_purchases_unpause();
     market.unpause_new_purchases();
     testing_env!(context("bridge.testnet").build());
-    market.suspend_livepeer_sales("job-card-pause".to_string());
+    market.suspend_sales("job-card-pause".to_string());
     operator_env();
     must_fail(|| {
         issue(&mut market, "job-card-pause", &sale, "500", "USD");

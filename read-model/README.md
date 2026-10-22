@@ -12,7 +12,10 @@ skipped/older block or a different hash at the current height while permitting
 an exact replay. `d1/0003_upload_job_archives.sql` adds the separate bounded
 terminal UploadJob summary, and `d1/0004_operator_outbox_archives.sql` adds the
 bounded confirmed operator summary used by their independent Bridge archive
-gates. The dedicated testnet D1 and dark Preview binding are recorded below;
+gates. `d1/0011_operator_outbox_neutral_methods.sql` rebuilds that table so its
+`method` CHECK also accepts the provider-neutral Market V2 names
+`finalize_publication` and `suspend_sales` (gate MC, 2026-10-22); every row is
+kept and the V1 names stay accepted. The dedicated testnet D1 and dark Preview binding are recorded below;
 no ingestion or API activation is claimed. Platform/SRE owns the pilot
 path: NEAR is the `RPO 0` source, the
 rebuild target is `RTO 4h`, and derived data is retained through pilot end plus
