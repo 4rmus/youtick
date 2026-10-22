@@ -2,6 +2,9 @@ name: V2 Testnet Bridge
 
 # Deploys the Livepeer Bridge on Market V2 to the separate V2 testnet environment.
 # Runbook: docs/v2-testnet-runbook.md (Bridge). The relayer and payment service deploy from deploy-v2-testnet.yml.
+# M1.5: the Bridge deploys to the media Cloudflare account (V2_MEDIA_CLOUDFLARE_*) and serves from its
+# workers.dev host (docs/v2-testnet-runbook.md, Media account). The Bridge is no longer in the youtick.net
+# zone and cannot affect the root origin, so this workflow does not fingerprint it; deploy-v2-testnet.yml still does.
 on:
   workflow_dispatch:
     inputs:
@@ -18,6 +21,11 @@ on:
         type: choice
         default: closed
         options: [closed, acceptance]
+      operator_key_set:
+        description: Operator key method set the preflight accepts; any during the MC transition, neutral on the cutover run
+        type: choice
+        default: any
+        options: [any, neutral, legacy]
       confirmation:
         description: Type DEPLOY_V2_TESTNET_BRIDGE_closed or DEPLOY_V2_TESTNET_BRIDGE_acceptance
         required: true
@@ -50,6 +58,8 @@ jobs:
       id-token: write
     outputs:
       sha: ${{ steps.authorize.outputs.sha }}
+      # The Bridge's workers.dev /__health, derived by bridgeHost() in the summary step.
+      health_url: ${{ steps.summary.outputs.health_url }}
     steps:
       - name: Authorize exact main source and CI before checkout
         id: authorize
@@ -58,12 +68,14 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
           CI_RUN_ID: ${{ inputs.ci_run_id }}
           RELEASE_MODE: ${{ inputs.mode }}
+          OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
           [[ "$REQUESTED_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$CI_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$RELEASE_MODE" =~ ^(closed|acceptance)$ ]]
+          [[ "$OPERATOR_KEY_SET" =~ ^(any|neutral|legacy)$ ]]
           [[ "$CONFIRMATION" == "DEPLOY_V2_TESTNET_BRIDGE_${RELEASE_MODE}" ]]
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$RUNNER_TEMP/ci.json"
           jq -e --arg sha "$REQUESTED_SHA" --arg repo "$GITHUB_REPOSITORY" '
@@ -87,6 +99,7 @@ jobs:
         env:
           SHA: ${{ steps.authorize.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
+          OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
           READ_MODEL_D1_ID: ${{ vars.V2_READ_MODEL_D1_ID }}
         run: |
           set -euo pipefail
@@ -95,18 +108,24 @@ jobs:
           install -m 0644 "$RUNNER_TEMP/build/index.js" "$RUNNER_TEMP/release/index.js"
           node scripts/v2-testnet-bridge-release.mjs write-config "$RUNNER_TEMP/release"
           node scripts/v2-testnet-bridge-release.mjs check "$RUNNER_TEMP/release" "$SHA" "$RELEASE_MODE"
-          jq -n --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg run "$(jq -r .id "$RUNNER_TEMP/ci.json")" \
-            '{schema:"youtick.v2-testnet-bridge-release.v1", sha:$sha, mode:$mode, ci_run_id:$run}' > "$RUNNER_TEMP/release/manifest.json"
+          jq -n --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg keyset "$OPERATOR_KEY_SET" --arg run "$(jq -r .id "$RUNNER_TEMP/ci.json")" \
+            '{schema:"youtick.v2-testnet-bridge-release.v1", sha:$sha, mode:$mode, operator_key_set:$keyset, ci_run_id:$run}' > "$RUNNER_TEMP/release/manifest.json"
           (cd "$RUNNER_TEMP/release" && find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
       - name: Summarize the exact packet for environment approval
+        id: summary
         env:
           SHA: ${{ steps.authorize.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
+          OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
         run: |
           node --input-type=module <<'JS'
           import { appendFileSync, readFileSync } from 'node:fs';
-          import { BRIDGE, FIXED_VARS, releaseVars } from './scripts/v2-testnet-bridge-release.mjs';
-          const packet = { worker: BRIDGE.worker, domain: BRIDGE.domain, flags: releaseVars(process.env.RELEASE_MODE), vars: FIXED_VARS };
+          import { BRIDGE, FIXED_VARS, bridgeHost, releaseVars } from './scripts/v2-testnet-bridge-release.mjs';
+          const packet = {
+            worker: BRIDGE.worker, account: 'media', host: bridgeHost(), operator_key_set: process.env.OPERATOR_KEY_SET,
+            flags: releaseVars(process.env.RELEASE_MODE), vars: FIXED_VARS,
+          };
+          appendFileSync(process.env.GITHUB_OUTPUT, `health_url=https://${bridgeHost()}/__health\n`);
           const sums = readFileSync(`${process.env.RUNNER_TEMP}/release/SHA256SUMS`, 'utf8');
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `V2 testnet Bridge, ${process.env.RELEASE_MODE}, ${process.env.SHA} (no NEAR transaction in this workflow):\n\n` +
             '```json\n' + JSON.stringify(packet, null, 2) + '\n```\n\n```\n' + sums + '```\n');
@@ -131,7 +150,7 @@ jobs:
     timeout-minutes: 20
     environment:
       name: v2-testnet
-      url: https://bridge-v2-testnet.youtick.net/__health
+      url: ${{ needs.prepare.outputs.health_url }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -151,6 +170,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.prepare.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
+          OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
         run: |
           set -euo pipefail
           gh api "repos/${GITHUB_REPOSITORY}/environments/v2-testnet" | jq -e '.protection_rules | any(.type == "required_reviewers" and (.reviewers | length) > 0)'
@@ -161,15 +181,13 @@ jobs:
             gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/deploy-v2-testnet-bridge.yml" --source-digest "$SHA"
           done < SHA256SUMS
-          jq -e --arg sha "$SHA" --arg mode "$RELEASE_MODE" '.sha == $sha and .mode == $mode' manifest.json
+          jq -e --arg sha "$SHA" --arg mode "$RELEASE_MODE" --arg keyset "$OPERATOR_KEY_SET" '.sha == $sha and .mode == $mode and .operator_key_set == $keyset' manifest.json
       - run: npm ci --no-audit --no-fund --prefer-offline
         working-directory: workers/livepeer-bridge
-      - name: Fingerprint unrelated root origin
-        run: node scripts/release-smoke.mjs fingerprint https://youtick.net > "$RUNNER_TEMP/root-before.json"
       - name: Preflight keys on chain, deploy the Bridge and smoke it
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.V2_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.V2_MEDIA_CLOUDFLARE_API_TOKEN }}
           NEAR_RPC_URL: ${{ secrets.V2_NEAR_RPC_URL }}
           LIVEPEER_API_KEY: ${{ secrets.V2_LIVEPEER_API_KEY }}
           LIVEPEER_WEBHOOK_SECRET: ${{ secrets.V2_LIVEPEER_WEBHOOK_SECRET }}
@@ -179,11 +197,8 @@ jobs:
           CREATOR_FEE_QUOTE_PRIVATE_KEY: ${{ secrets.V2_CREATOR_FEE_QUOTE_PRIVATE_KEY }}
           SHA: ${{ needs.prepare.outputs.sha }}
           RELEASE_MODE: ${{ inputs.mode }}
+          OPERATOR_KEY_SET: ${{ inputs.operator_key_set }}
         run: node scripts/v2-testnet-bridge-release.mjs deploy "$SHA" "$RUNNER_TEMP/release" "$RUNNER_TEMP/v2-testnet-bridge-receipt.json" "$RELEASE_MODE"
-      - name: Verify unrelated root origin
-        run: |
-          node scripts/release-smoke.mjs fingerprint https://youtick.net > "$RUNNER_TEMP/root-after.json"
-          node scripts/release-smoke.mjs compare "$RUNNER_TEMP/root-before.json" "$RUNNER_TEMP/root-after.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

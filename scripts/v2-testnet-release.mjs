@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// V2 testnet release for the relayer and payment-service Workers (docs/v2-testnet-runbook.md, Workers).
+// V2 testnet release for the relayer, payment-service and read-model Workers (docs/v2-testnet-runbook.md, Workers).
+// The relayer and the payment service deploy to the default V2 Cloudflare account on custom domains; the read
+// model deploys to the media account on its workers.dev host (M1.5, docs/v2-testnet-runbook.md, Media account).
 // Run only by .github/workflows/deploy-v2-testnet.yml:
 //   write-config <component> <dry-run-outdir>              prepare job, no secrets
 //   check <release-dir> <sha> <mode> [card]                prepare job, dry run
@@ -7,7 +9,7 @@
 // The Worker bytes come from `wrangler deploy --dry-run --outdir` in the prepare job; this script never bundles.
 import { createPrivateKey, createPublicKey, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
@@ -38,6 +40,50 @@ export const READ_MODEL_D1_NAME = 'youtick-market-read-model-v2-testnet';
 export const READ_MODEL_D1_BINDING = 'MARKET_READ_MODEL';
 const V1_READ_MODEL_D1_ID = '50b1e14f-2b06-444b-98cf-b828f11277ef';
 const D1_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// M1.5 (owner decisions OD2, OD14, OD16 of 2026-10-22): the read model and the Bridge move to a separate
+// Cloudflare account, "media", and serve from its workers.dev subdomain; the relayer and the payment service
+// stay in the default V2 account. The account id is not secret. The owner registers the workers.dev
+// subdomain and replaces the sentinel below in one commit (docs/v2-testnet-runbook.md, Media account);
+// until then every path that needs a media host fails with media_account_unconfigured.
+export const MEDIA_ACCOUNT = Object.freeze({
+    accountId: '6caaaf27c430b5da0ce18f68f35c1dcb',
+    workersSubdomain: 'kocoinci',
+});
+const WORKERS_SUBDOMAIN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+let mediaAccountOverride = null;
+
+/**
+ * Tests only: replaces fields of MEDIA_ACCOUNT for this process (null restores it). The release commands
+ * never call it, and the result is validated like MEDIA_ACCOUNT itself.
+ */
+export function setMediaAccountOverride(fields) {
+    mediaAccountOverride = fields ? Object.freeze({ ...MEDIA_ACCOUNT, ...fields }) : null;
+}
+
+/** The media account id alone, checked: 32 hex digits, not all zeros. It does not need the subdomain. */
+export function mediaAccountId() {
+    const { accountId } = mediaAccountOverride ?? MEDIA_ACCOUNT;
+    if (!/^[a-f0-9]{32}$/.test(accountId ?? '') || /^0+$/.test(accountId)) fail('media_account_unconfigured');
+    return accountId;
+}
+
+/** The media account, checked: a valid account id and a registered workers.dev subdomain. */
+export function mediaAccount() {
+    const account = mediaAccountOverride ?? MEDIA_ACCOUNT;
+    mediaAccountId();
+    if (!WORKERS_SUBDOMAIN.test(account.workersSubdomain ?? '')) fail('media_account_unconfigured');
+    return account;
+}
+
+export function workersDevHost(worker) {
+    return `${worker}.${mediaAccount().workersSubdomain}.workers.dev`;
+}
+
+/** Where a component answers: its custom domain, or its workers.dev host in the media account. */
+export function componentHost(spec) {
+    return spec.domain ?? workersDevHost(spec.worker);
+}
 
 export function readModelD1Id(value) {
     if (!D1_ID.test(value ?? '')) fail('read_model_d1_id_invalid');
@@ -95,10 +141,12 @@ export const COMPONENTS = Object.freeze({
         d1: Object.freeze({ binding: PAYMENTS_D1_BINDING, name: PAYMENTS_D1_NAME, idEnv: 'PAYMENTS_D1_ID', validate: paymentsD1Id }),
     }),
     // W3: the derived read model of Market V2; the Bridge's 30-day release job reads its D1 directly.
+    // M1.5: it lives in the media account with the Bridge and its D1, and serves from workers.dev.
     'read-model': Object.freeze({
         dir: 'read-model',
         worker: 'youtick-market-read-model-v2-testnet',
-        domain: 'read-v2-testnet.youtick.net',
+        account: 'media',
+        workersDev: true,
         flags: Object.freeze(['READ_MODEL_ENABLED', 'READ_MODEL_INGESTION_ENABLED']),
         vars: Object.freeze({
             VIDEO_ENVIRONMENT: 'v2-testnet',
@@ -125,8 +173,9 @@ function fail(message) {
 
 /**
  * The deployed config is the repository wrangler.toml with three changes: the bundled `index.js` as entry,
- * no workers.dev or preview URLs (only the custom domain serves), and NEAR_RPC_URL removed from [vars]
- * because it is uploaded as a secret. Every remaining placeholder must be overridden by the release vars.
+ * no preview URLs and workers.dev only for a `workersDev` component (the others serve from their custom
+ * domain alone), and NEAR_RPC_URL removed from [vars] because it is uploaded as a secret. Every remaining
+ * placeholder must be overridden by the release vars.
  */
 export function sanitizeWranglerConfig(source, component, { d1Id } = {}) {
     const spec = COMPONENTS[component] ?? fail('component_unknown');
@@ -139,12 +188,13 @@ export function sanitizeWranglerConfig(source, component, { d1Id } = {}) {
         const header = /^\s*\[+([^\]]+)\]+\s*$/.exec(line);
         if (header) section = header[1].trim();
         if (!section && /^main\s*=/.test(line)) {
-            out.push('main = "index.js"', 'workers_dev = false', 'preview_urls = false');
+            out.push('main = "index.js"', `workers_dev = ${spec.workersDev ? 'true' : 'false'}`, 'preview_urls = false');
             mainSeen = true;
             continue;
         }
         // The read model's config already turns these off; the sanitizer writes them next to `main`.
         if (!section && /^(workers_dev|preview_urls)\s*=\s*false\s*$/.test(line)) continue;
+        if (!section && spec.workersDev && /^workers_dev\s*=\s*true\s*$/.test(line)) continue;
         if (!section && /^(workers_dev|preview_urls|routes|route)\s*=/.test(line)) fail('config_routing_unexpected');
         if (section === 'd1_databases') {
             // Each V2 component has its own database; the repository config names a V1 or placeholder one.
@@ -247,9 +297,14 @@ export function validateRpcUrl(value) {
     return value;
 }
 
-/** Reads and checks the deploy job's environment; nothing here is echoed. */
+/**
+ * Reads and checks the deploy job's environment; nothing here is echoed. The media account's credentials
+ * are only read here; deployRelease checks them with mediaCredentials() before the preflight, because
+ * every release deploys the read model.
+ */
 export function releaseSecrets(env, card = 'off') {
     if (!/^[a-f0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID ?? '') || !env.CLOUDFLARE_API_TOKEN?.trim()) fail('cloudflare_credentials_invalid');
+    if (env.CLOUDFLARE_ACCOUNT_ID === mediaAccountId()) fail('cloudflare_default_account_is_media');
     if (!/^[A-Za-z0-9_-]{32,256}$/.test(env.RELAYER_ADMIN_TOKEN ?? '')) fail('relayer_admin_token_invalid');
     if (!/^[A-Za-z0-9_-]{32,256}$/.test(env.REFUND_ADMIN_TOKEN ?? '')) fail('refund_admin_token_invalid');
     if (env.REFUND_ADMIN_TOKEN === env.RELAYER_ADMIN_TOKEN) fail('admin_tokens_must_differ');
@@ -268,6 +323,7 @@ export function releaseSecrets(env, card = 'off') {
     }
     return {
         cloudflare: { accountId: env.CLOUDFLARE_ACCOUNT_ID, apiToken: env.CLOUDFLARE_API_TOKEN },
+        mediaCloudflare: { accountId: env.MEDIA_CLOUDFLARE_ACCOUNT_ID, apiToken: env.MEDIA_CLOUDFLARE_API_TOKEN },
         rpc,
         relayerPublicKey: nearPublicKey(env.RELAYER_PRIVATE_KEY),
         vatPublicKey: nearPublicKey(env.VAT_SIGNER_PRIVATE_KEY),
@@ -327,7 +383,7 @@ export function wranglerArgs(component, releaseDir, sha, mode, card = 'off') {
     const dir = join(releaseDir, component);
     return [
         'deploy', join(dir, 'index.js'), '--no-bundle', '--config', join(dir, 'wrangler.toml'),
-        '--name', spec.worker, '--domain', spec.domain,
+        '--name', spec.worker, ...(spec.domain ? ['--domain', spec.domain] : []),
         ...Object.entries(releaseVars(component, mode, card)).flatMap(([key, value]) => ['--var', `${key}:${value}`]),
         '--tag', sha, '--message', `YouTick v2-testnet ${mode}${card === 'off' ? '' : ` card-${card}`} ${sha}`,
     ];
@@ -390,7 +446,8 @@ export async function request(fetchImpl, url, init) {
  */
 export async function smoke(component, mode, fetchImpl, card = 'off') {
     const spec = COMPONENTS[component];
-    const url = `https://${spec.domain}${spec.smokePath}`;
+    const host = componentHost(spec);
+    const url = `https://${host}${spec.smokePath}`;
     if (component === 'read-model') {
         // The read model has no POST route to probe; its health names the instance it serves.
         const health = await request(fetchImpl, url, { method: 'GET' });
@@ -416,7 +473,7 @@ export async function smoke(component, mode, fetchImpl, card = 'off') {
     const result = { allowed_origin_status: allowed.status, denied_origin_status: denied.status };
     if (component === 'relayer') {
         // The device routes are on: an unknown link id is 404, not 503 devices_disabled. Nothing is signed.
-        const device = await request(fetchImpl, `https://${spec.domain}/v1/devices/status`, {
+        const device = await request(fetchImpl, `https://${host}/v1/devices/status`, {
             method: 'POST', headers: { Origin: ACCEPTANCE_ORIGIN, 'Content-Type': 'application/json' },
             body: JSON.stringify({ device_request_id: randomBytes(32).toString('hex') }),
         });
@@ -431,7 +488,7 @@ export async function smoke(component, mode, fetchImpl, card = 'off') {
         if (vat.status !== 404 || vat.body?.error !== 'publication_not_found') fail(`payment-service_smoke_vat_${vat.status}`);
         result.unknown_publication_status = vat.status;
         // An unsigned webhook: 503 while the card path is off, 401 from the Cleeng adapter once it is on.
-        const webhook = await request(fetchImpl, `https://${spec.domain}/webhooks/card`, {
+        const webhook = await request(fetchImpl, `https://${host}/webhooks/card`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
         });
         const expected = card === 'sandbox' ? [401, 'invalid_webhook'] : [503, 'card_path_disabled'];
@@ -454,8 +511,18 @@ export async function retry(fn, delays, sleep) {
     throw last;
 }
 
-// A new custom domain needs DNS and a certificate before it answers.
+// A new custom domain needs DNS and a certificate before it answers. A new workers.dev host needs no
+// certificate of its own; how long its first deploy takes to answer is UNPROVEN (M1.5-G3 measures it).
 export const SMOKE_DELAYS_MS = [0, 5_000, 10_000, 15_000, 30_000, 30_000, 60_000];
+
+/** The media account's credentials: a registered media account and a pair for exactly that account. */
+function mediaCredentials(secrets) {
+    const { accountId } = mediaAccount();
+    const media = secrets.mediaCloudflare;
+    if (!media?.accountId || !media.apiToken?.trim()) fail('media_credentials_missing');
+    if (media.accountId !== accountId) fail('cloudflare_account_not_media');
+    return media;
+}
 
 export async function deployRelease({
     sha, releaseDir, receiptPath, mode, card = 'off', env = process.env, fetchImpl = fetch,
@@ -465,17 +532,32 @@ export async function deployRelease({
     if (!MODES.includes(mode)) fail('mode_invalid');
     cardPath(mode, card);
     const secrets = releaseSecrets(env, card);
+    // Every release deploys the read model, so the media account and its pair are checked before the
+    // preflight and before any Worker deploys: a wrong pair never leaves a half-done release.
+    const credentials = { default: secrets.cloudflare, media: mediaCredentials(secrets) };
     await preflight(secrets, fetchImpl);
     const receipt = { schema: 'youtick.v2-testnet-workers-receipt.v1', sha, mode, card, status: 'IN_PROGRESS', workers: [] };
     const save = () => writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o644 });
     const tempRoot = await mkdtemp(join(tmpdir(), 'youtick-v2-testnet-release-'));
+    // One runner per Cloudflare account, each with its own output directory, created when first needed.
+    const runners = new Map();
+    const runnerFor = async (account) => {
+        if (!runners.has(account)) {
+            const cloudflare = credentials[account] ?? fail('component_account_unknown');
+            const root = join(tempRoot, account);
+            await mkdir(root, { mode: 0o700 });
+            runners.set(account, makeRunner ? makeRunner(cloudflare, root) : wranglerRunner(
+                resolve('workers/relayer/node_modules/.bin/wrangler'), cloudflare, root,
+            ));
+        }
+        return runners.get(account);
+    };
     try {
-        const run = makeRunner ? makeRunner(secrets.cloudflare, tempRoot) : wranglerRunner(
-            resolve('workers/relayer/node_modules/.bin/wrangler'), secrets.cloudflare, tempRoot,
-        );
         for (const component of Object.keys(COMPONENTS)) {
             const spec = COMPONENTS[component];
-            const entry = { component, worker: spec.worker, domain: spec.domain, status: 'DEPLOYING' };
+            const account = spec.account ?? 'default';
+            const run = await runnerFor(account);
+            const entry = { component, worker: spec.worker, account, host: componentHost(spec), status: 'DEPLOYING' };
             receipt.workers.push(entry);
             await save();
             const secretsFile = join(tempRoot, `${component}-secrets.json`);
@@ -524,6 +606,8 @@ async function main(argv) {
         // Prepare job: the exact deploy invocation, as a dry run with no Cloudflare credentials.
         const [releaseDir, sha, mode, card = 'off'] = args;
         cardPath(mode, card);
+        // The read model's host needs the registered workers.dev subdomain; stop the prepare job here.
+        mediaAccount();
         const binary = resolve('workers/relayer/node_modules/.bin/wrangler');
         for (const component of Object.keys(COMPONENTS)) {
             const result = await runProcess(binary, [...wranglerArgs(component, resolve(releaseDir), sha, mode, card), '--dry-run'], {
