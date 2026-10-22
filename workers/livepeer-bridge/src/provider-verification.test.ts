@@ -19,7 +19,6 @@ const pathTokenSpec: ProviderProbeSpec = {
         allowAlternateMedia: true,
         allowedQueryKeys: ['p', 's'],
         requireEndList: false,
-        tokenPlacement: 'path',
         initSegment: 'required',
         deniedStatuses: { manifest: [401], media: [401, 403, 404] },
     },
@@ -63,12 +62,16 @@ it('keeps the neutral verification core and webhook module free of Studio hosts,
     const fs = await import(/* @vite-ignore */ ['node', 'fs/promises'].join(':')) as {
         readFile(path: URL, encoding: 'utf8'): Promise<string>;
     };
+    const read = (name: string) => fs.readFile(new URL(`./${name}`, (import.meta as unknown as { url: string }).url), 'utf8');
     for (const name of ['provider-verification.ts', 'provider-webhook.ts', 'cover-image.ts']) {
-        const source = await fs.readFile(new URL(`./${name}`, (import.meta as unknown as { url: string }).url), 'utf8');
-        expect(source, name).not.toMatch(
+        expect(await read(name), name).not.toMatch(
             /livepeer|lp-playback|origin\.livepeer|Livepeer-Jwt|Livepeer-Signature|html5\/|text\/vtt|application\/vnd\.apple/i,
         );
     }
+    // index.ts keeps its deploy identities (LIVEPEER_* names, queue schema) but no Studio host, header or MIME.
+    expect(await read('index.ts'), 'index.ts').not.toMatch(
+        /livepeer\.studio|livepeercdn|lp-playback|origin\.livepeer\.com|Livepeer-Jwt|Livepeer-Signature|html5\/|text\/vtt|application\/vnd\.apple/i,
+    );
 });
 
 it('verifies path-token manifests, alternates and query-stripped denials without replaying signed URLs', async () => {
@@ -106,11 +109,11 @@ it('fails closed when an anonymous segment is served under the adapter denial st
         .rejects.toThrow('provider_playback_exposed');
 });
 
-function tusOffsetAdapter(tus = { offsetBytes: '10', lengthBytes: '10' }) {
+function tusOffsetAdapter(tus = { offsetBytes: '10', lengthBytes: '10' }, spec = pathTokenSpec) {
     const readTusOffset = vi.fn(async (_uploadUrl: string) => tus);
     const adapter: VerificationAdapter = {
-        capabilities: { sourceBytesProof: 'tus-offset' },
-        spec: pathTokenSpec,
+        capabilities: { sourceBytesProof: 'tus-offset', tokenPlacement: 'path' },
+        spec,
         surfaces: { declaredUrls: () => [], probe: async () => ({ bindingParts: [], deferredDenials: [] }) },
         readAsset: async (id) => ({ id, playbackId: PLAYBACK, policy: 'signed', phase: 'ready', updatedAtMs: 1_000 }),
         readPlayback: async () => ({ kind: 'vod', policy: 'signed', sources: [{
@@ -155,16 +158,45 @@ it.each([
         .rejects.toThrow('provider_state_invalid');
 });
 
-it('reuses stored evidence in published mode and never reads the upload again', async () => {
+it('re-verifies a published asset from the evidence persisted at readiness without reading the upload again', async () => {
     vi.stubGlobal('fetch', pathTokenBackend());
     const { adapter, readTusOffset } = tusOffsetAdapter();
-    const storedEvidence = { method: 'tus-offset' as const, offsetBytes: '10', lengthBytes: '10', observedAtMs: 1 };
+    const ready = await verifyReadyProviderAsset(adapter, {
+        ...tusInput, mode: 'ready', tusEndpoint: 'https://upload.test/tus/1',
+    }, dependencies);
+    if ('pending' in ready || !ready.sourceBytesEvidence) throw new Error('expected readiness evidence');
+    readTusOffset.mockClear();
 
-    const result = await verifyReadyProviderAsset(adapter, { ...tusInput, mode: 'published', storedEvidence }, dependencies);
+    const published = await verifyReadyProviderAsset(adapter, {
+        ...tusInput, mode: 'published', storedEvidence: ready.sourceBytesEvidence,
+    }, dependencies);
 
     expect(readTusOffset).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ verifiedSourceBytes: '10' });
-    expect(result).not.toHaveProperty('sourceBytesEvidence');
+    expect(published).toMatchObject({ verifiedSourceBytes: '10' });
+    expect(published).not.toHaveProperty('sourceBytesEvidence');
+    const { sourceBytesEvidence: _evidence, ...readyPublication } = ready;
+    expect(published).toEqual(readyPublication);
+});
+
+it('reports missing published evidence as a non-drift code and tampered evidence as invalid state', async () => {
+    vi.stubGlobal('fetch', pathTokenBackend());
+    const { adapter, readTusOffset } = tusOffsetAdapter();
+
     await expect(verifyReadyProviderAsset(adapter, { ...tusInput, mode: 'published' }, dependencies))
-        .rejects.toThrow('provider_state_invalid');
+        .rejects.toThrow('verification_evidence_missing');
+    await expect(verifyReadyProviderAsset(adapter, { ...tusInput, mode: 'published', storedEvidence: {
+        method: 'tus-offset', offsetBytes: '9', lengthBytes: '10', observedAtMs: 1,
+    } }, dependencies)).rejects.toThrow('provider_state_invalid');
+    expect(readTusOffset).not.toHaveBeenCalled();
+});
+
+it('refuses a path-token adapter whose authorized request also carries a credential header', async () => {
+    vi.stubGlobal('fetch', pathTokenBackend());
+    const { adapter } = tusOffsetAdapter(undefined, {
+        ...pathTokenSpec,
+        authorizedRequest: (url, token) => ({ ...pathTokenSpec.authorizedRequest(url, token), headers: { 'X-Token': token } }),
+    });
+    await expect(verifyReadyProviderAsset(adapter, {
+        ...tusInput, mode: 'ready', tusEndpoint: 'https://upload.test/tus/1',
+    }, dependencies)).rejects.toThrow('runtime_not_configured');
 });

@@ -37,6 +37,8 @@ export type HlsContext = {
     mediaReferences: Set<string>;
     reference?: Dimensions;
     budget?: VerificationBudget;
+    // The adapter's declared capability; authorized requests must match it (header XOR path token).
+    tokenPlacement?: MediaProviderCapabilities['tokenPlacement'];
 };
 
 /** HLS shape an adapter's delivery is held to. */
@@ -46,7 +48,6 @@ export type ManifestPolicy = {
     // Query keys a playlist or segment reference may carry; empty rejects any query string.
     allowedQueryKeys: readonly string[];
     requireEndList: boolean;
-    tokenPlacement: 'header' | 'path';
     initSegment: 'optional' | 'required';
     // Statuses that count as "denied" for anonymous or forged requests, per surface.
     deniedStatuses: { manifest: readonly number[]; media: readonly number[] };
@@ -86,7 +87,7 @@ export type ProviderSurfaces = {
 };
 
 export type VerificationAdapter = {
-    capabilities: Pick<MediaProviderCapabilities, 'sourceBytesProof'>;
+    capabilities: Pick<MediaProviderCapabilities, 'sourceBytesProof' | 'tokenPlacement'>;
     spec: ProviderProbeSpec;
     surfaces: ProviderSurfaces;
     readAsset(assetId: string): Promise<ProviderAsset>;
@@ -152,7 +153,9 @@ export async function verifyReadyProviderAsset(
     }
     if (!dependencies.signPlaybackToken) throw new Error('runtime_not_configured');
     const token = await dependencies.signPlaybackToken(input.playbackId);
-    const context: HlsContext = { manifests: new Map(), mediaReferences: new Set(), budget };
+    const context: HlsContext = {
+        manifests: new Map(), mediaReferences: new Set(), budget, tokenPlacement: adapter.capabilities.tokenPlacement,
+    };
     const verifiedHls: HlsVerification[] = [];
     for (const hlsUrl of new Set([spec.canonicalHlsUrl(input.playbackId), ...hlsUrls])) {
         verifiedHls.push(await verifyAdaptiveHlsWith(spec, hlsUrl, token, expectedProfiles, asset.sourceVideo, context));
@@ -213,7 +216,9 @@ async function tusOffsetSourceBytes(
         && state.offsetBytes === input.expectedSourceBytes
         && state.lengthBytes === input.expectedSourceBytes);
     if (input.mode === 'published') {
-        if (input.storedEvidence?.method !== 'tus-offset' || !exact(input.storedEvidence)) {
+        // A missing Bridge-side record is not provider drift: keep the job blocked, never suspend sales.
+        if (!input.storedEvidence) throw new Error('verification_evidence_missing');
+        if (input.storedEvidence.method !== 'tus-offset' || !exact(input.storedEvidence)) {
             throw new Error('provider_state_invalid');
         }
         return { verifiedSourceBytes: input.storedEvidence.offsetBytes };
@@ -477,7 +482,7 @@ async function verifiedHlsManifest(spec: ProviderProbeSpec, url: string, token: 
     if (previous) return previous;
     if (context.manifests.size >= MAX_HLS_MANIFESTS) throw new Error('provider_playback_mismatch');
     await requireHlsPlaybackDenied(spec, url, context.budget);
-    const lines = await authorizedHls(spec, url, token, context.budget);
+    const lines = await authorizedHls(spec, url, token, context);
     context.manifests.set(url, lines);
     return lines;
 }
@@ -492,12 +497,17 @@ function hlsReference(spec: ProviderProbeSpec, parent: string, reference: string
     return url.toString();
 }
 
-async function authorizedHls(spec: ProviderProbeSpec, url: string, token: string, budget?: VerificationBudget): Promise<string[]> {
+async function authorizedHls(spec: ProviderProbeSpec, url: string, token: string, context: HlsContext): Promise<string[]> {
     if (!playbackUrlAllowed(url, spec.hosts)) throw new Error('provider_playback_mismatch');
     const authorized = spec.authorizedRequest(url, token);
+    // A path-token adapter never sends a credential header; a header adapter never rewrites the URL.
+    if (context.tokenPlacement === 'path' && Object.keys(authorized.headers).length > 0
+        || context.tokenPlacement === 'header' && authorized.url !== url) {
+        throw new Error('runtime_not_configured');
+    }
     let response: Response;
     try {
-        response = await verificationFetch(spec, budget, 'hls_authorized_probe', authorized.url, {
+        response = await verificationFetch(spec, context.budget, 'hls_authorized_probe', authorized.url, {
             headers: authorized.headers, redirect: 'manual', signal: AbortSignal.timeout(5_000),
         });
     } catch { throw new Error('provider_unavailable'); }

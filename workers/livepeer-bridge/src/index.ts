@@ -770,6 +770,7 @@ const SAFE_ERROR_CODES = new Set([
     'provider_playback_mismatch',
     'publication_cover_image_denied',
     'provider_verification_incomplete',
+    'verification_evidence_missing',
     'publication_cover_image_redirected',
     'publication_cover_image_status',
     'publication_cover_image_type',
@@ -1272,10 +1273,11 @@ export class LivepeerControl {
         }
         if (!job.publication) {
             if (job.providerVerification && ['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(job.state)) {
-                await this.handleProviderEvent(await synthesizedProviderEvent({
+                const event = await synthesizedProviderEvent({
                     provider: jobProviderKind(job), event: 'processing', assetId: job.assetId!, phase: 'ready',
                     nowMs: Date.now(),
-                }, sha256Hex), job);
+                }, sha256Hex);
+                await this.handleProviderEvent(event, await this.state.storage.get<JobRecord>(JOB_KEY));
                 return;
             }
             await this.reconcileUpload(job);
@@ -1955,15 +1957,17 @@ export class LivepeerControl {
         let record = existing;
         if (!seen) {
             try {
-                const publication = await verifyReadyProviderAsset(this.state, this.env, record, 'ready');
-                if (!publication) {
+                const verified = await verifyReadyProviderAsset(this.state, this.env, record, 'ready');
+                if (!verified) {
                     await this.state.storage.delete(dedupKey);
                     return json({ accepted: true, processing: true }, 202);
                 }
                 const { tusEndpoint: _clearedTusEndpoint, providerVerification: _checkpoint, ...withoutTusEndpoint } = record;
                 record = {
                     ...transitionJob(withoutTusEndpoint, 'READY_VERIFIED'),
-                    publication,
+                    publication: verified.publication,
+                    // The upload URL is cleared here, so the byte proof must be stored no later than this write.
+                    ...(verified.sourceBytesEvidence ? { sourceBytesEvidence: verified.sourceBytesEvidence } : {}),
                 };
                 await this.state.storage.put(JOB_KEY, record);
                 await persistUploadVerificationResult(this.state);
@@ -3490,7 +3494,7 @@ async function reconcilePublishedJob(
     try {
         const verified = await verifyReadyProviderAsset(state, env, job, 'published');
         if (!verified) return;
-        if (canonicalJson(verified) !== canonicalJson(job.publication)) {
+        if (canonicalJson(verified.publication) !== canonicalJson(job.publication)) {
             await persistDriftReconcile(state, env, job, 'provider_publication_mismatch');
             return;
         }
@@ -6237,24 +6241,33 @@ function studioProvider(env: Env): LivepeerProvider {
     });
 }
 
-const MEDIA_PROVIDER_FACTORIES: Record<MediaProviderKind, (env: Env) => MediaProvider> = {
-    studio: studioProvider,
+// Adapter registry: registering a provider here is the only change the call sites need.
+// supportsProfile is static so request parsers can check a hash without building an adapter.
+const MEDIA_PROVIDER_REGISTRY: Record<MediaProviderKind, {
+    create(env: Env): MediaProvider;
+    supportsProfile(profileConfigSha256: unknown): boolean;
+}> = {
+    studio: { create: studioProvider, supportsProfile: livepeerSupportsProfile },
 };
+const DEFAULT_MEDIA_PROVIDER: MediaProviderKind = 'studio';
 
 /**
  * Adapter for a job (by its recorded provider; absent means Studio) or for a publication
- * (by its profile_config_sha256, through each adapter's supportsProfile). Default: Studio.
+ * (by its profile_config_sha256, through each registered supportsProfile). Default: Studio.
  */
 function mediaProvider(
     env: Env,
     selector?: { provider?: MediaProviderKind } | string | null,
 ): MediaProvider {
-    if (selector && typeof selector === 'object') {
-        return MEDIA_PROVIDER_FACTORIES[selector.provider ?? 'studio'](env);
-    }
-    const adapters = Object.values(MEDIA_PROVIDER_FACTORIES).map((factory) => factory(env));
-    return (typeof selector === 'string' && adapters.find((adapter) => adapter.supportsProfile(selector)))
-        || adapters[0];
+    const kind = selector && typeof selector === 'object'
+        ? selector.provider ?? DEFAULT_MEDIA_PROVIDER
+        : (typeof selector === 'string'
+            && (Object.keys(MEDIA_PROVIDER_REGISTRY) as MediaProviderKind[])
+                .find((candidate) => MEDIA_PROVIDER_REGISTRY[candidate].supportsProfile(selector)))
+            || DEFAULT_MEDIA_PROVIDER;
+    // A record written by a newer build (unknown provider) fails closed with a coded error.
+    if (!Object.hasOwn(MEDIA_PROVIDER_REGISTRY, kind)) throw new Error('runtime_not_configured');
+    return MEDIA_PROVIDER_REGISTRY[kind].create(env);
 }
 
 function jobProviderKind(job: Pick<JobRecord, 'provider'>): MediaProviderKind {
@@ -6262,7 +6275,8 @@ function jobProviderKind(job: Pick<JobRecord, 'provider'>): MediaProviderKind {
 }
 
 function supportedMediaProfile(hash: unknown): hash is string {
-    return livepeerSupportsProfile(hash);
+    return typeof hash === 'string'
+        && Object.values(MEDIA_PROVIDER_REGISTRY).some((entry) => entry.supportsProfile(hash));
 }
 
 function providerIdentity(
@@ -7013,9 +7027,15 @@ function sameOutbox(left: OutboxRecord, right: OutboxRecord): boolean {
         && left.payloadSha256 === right.payloadSha256;
 }
 
+type VerifiedPublication = {
+    publication: FinalizePublication;
+    // Byte proof to persist with READY_VERIFIED; only 'tus-offset' adapters return one.
+    sourceBytesEvidence?: SourceBytesEvidence;
+};
+
 async function verifyReadyProviderAsset(
     state: DurableObjectState, env: Env, job: JobRecord, mode: VerificationMode,
-): Promise<FinalizePublication | null> {
+): Promise<VerifiedPublication | null> {
     if (!validProviderVerificationConfig(env)
         || !job.assetId || !job.playbackId || !job.projectId) {
         throw new Error('runtime_not_configured');
@@ -7057,16 +7077,17 @@ async function verifyReadyProviderAsset(
                     consecutiveErrors: previous?.consecutiveErrors || 0, nextReconcileAtMs: nextAtMs,
                     uploadReadFailed: false, uploadErrorCode: undefined,
                 } satisfies ReconcileRecord);
-            } else if (current.providerVerification) {
+            } else if (current.providerVerification || verified.sourceBytesEvidence) {
                 const { providerVerification: _checkpoint, ...completed } = current;
-                await transaction.put(JOB_KEY, completed);
+                await transaction.put(JOB_KEY, verified.sourceBytesEvidence
+                    ? { ...completed, sourceBytesEvidence: verified.sourceBytesEvidence } : completed);
             }
         });
         if ('pending' in verified) {
             await scheduleReconcile(state, nextAtMs);
             return null;
         }
-        return {
+        const publication: FinalizePublication = {
             job_id: job.jobId,
             generation: job.generation,
             creator_id: job.creator,
@@ -7081,6 +7102,8 @@ async function verifyReadyProviderAsset(
             ready_at_ms: verified.readyAtMs,
             availability: 'ACTIVE',
         };
+        return verified.sourceBytesEvidence
+            ? { publication, sourceBytesEvidence: verified.sourceBytesEvidence } : { publication };
     } catch (error) {
         if (safeErrorCode(error) !== 'provider_unavailable') {
             await state.storage.transaction(async (transaction) => {
@@ -8225,6 +8248,7 @@ function errorStatus(code: string): number {
         || code === 'provider_playback_exposed'
         || code === 'provider_playback_mismatch'
         || code === 'provider_verification_incomplete'
+        || code === 'verification_evidence_missing'
         || code === 'provider_state_invalid'
         || code === 'device_nonce_replayed'
         || code === 'provider_create_pending'

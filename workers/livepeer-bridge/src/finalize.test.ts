@@ -573,6 +573,76 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         expect(objectFetch).toHaveBeenCalledTimes(2);
     });
 
+    it('ignores non-lifecycle events, non-string asset ids and provider mismatches at the job object', async () => {
+        const testState = createState();
+        testState.values.set('job:v1', jobRecord());
+        const providerFetch = vi.fn();
+        vi.stubGlobal('fetch', providerFetch);
+        const control = new LivepeerControl(testState.state, createEnv());
+        const ignored = { accepted: true, ignored: true };
+
+        const created = await control.fetch(internalWebhookRequest(webhook('asset.created')));
+        expect(created.status).toBe(202);
+        expect(await created.json()).toEqual(ignored);
+
+        const numericAsset = webhook();
+        const numeric = await control.fetch(internalWebhookRequest({
+            ...numericAsset,
+            payload: { asset: { ...numericAsset.payload.asset, id: 123 as unknown as string } },
+        }));
+        expect(numeric.status).toBe(202);
+        expect(await numeric.json()).toEqual(ignored);
+
+        // A record written for another adapter is never advanced by a Studio-normalized event.
+        const otherProvider = { ...jobRecord(), provider: 'stream' };
+        testState.values.set('job:v1', otherProvider);
+        const mismatched = await control.fetch(new Request('https://object/internal/livepeer-webhook', {
+            method: 'POST',
+            headers: { 'X-YouTick-Provider': 'studio' },
+            body: JSON.stringify(webhook()),
+        }));
+        expect(mismatched.status).toBe(202);
+        expect(await mismatched.json()).toEqual(ignored);
+        // Without the header the record's unknown provider fails closed with a coded error.
+        const unknownProvider = await control.fetch(internalWebhookRequest());
+        expect(await unknownProvider.json()).toEqual({ error: 'runtime_not_configured' });
+
+        expect(providerFetch).not.toHaveBeenCalled();
+        expect(testState.values.get('job:v1')).toEqual(otherProvider);
+    });
+
+    it('never lets an inbound X-YouTick-Provider header reach or steer the job object', async () => {
+        const objectFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true }));
+        const env = createEnv({
+            LIVEPEER_CONTROL: {
+                idFromName: vi.fn(() => ({ toString: () => 'id' })),
+                get: vi.fn(() => ({ fetch: objectFetch })),
+            } as unknown as DurableObjectNamespace,
+        });
+
+        const internalRoute = await handler.fetch(new Request('https://bridge.youtick.net/internal/livepeer-webhook', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-YouTick-Provider': 'studio' },
+            body: JSON.stringify(webhook()),
+        }), env);
+        expect(internalRoute.status).toBeGreaterThanOrEqual(400);
+        const unsigned = await handler.fetch(new Request('https://bridge.youtick.net/v1/livepeer-webhooks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-YouTick-Provider': 'studio' },
+            body: JSON.stringify(webhook()),
+        }), env);
+        expect(unsigned.status).toBe(403);
+        expect(objectFetch).not.toHaveBeenCalled();
+
+        const signed = await signedWebhookRequest(webhook());
+        const spoofed = new Request(signed, {
+            headers: { ...Object.fromEntries(signed.headers), 'X-YouTick-Provider': 'stream' },
+        });
+        expect((await handler.fetch(spoofed, env)).status).toBe(200);
+        expect(objectFetch).toHaveBeenCalledOnce();
+        expect(objectFetch.mock.calls[0][0].headers.get('X-YouTick-Provider')).toBe('studio');
+    });
+
     it('forwards the exact raw body with the internal provider header and reports the Studio adapter', async () => {
         const objectFetch = vi.fn(async (_request: Request) => Response.json({ accepted: true }));
         const env = createEnv({

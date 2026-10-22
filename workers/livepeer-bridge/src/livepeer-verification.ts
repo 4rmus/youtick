@@ -41,7 +41,6 @@ export const LIVEPEER_MANIFEST_POLICY: ManifestPolicy = Object.freeze({
     allowAlternateMedia: false,
     allowedQueryKeys: [],
     requireEndList: true,
-    tokenPlacement: 'header',
     initSegment: 'optional',
     deniedStatuses: { manifest: [401, 403], media: [401, 403] },
 });

@@ -90,7 +90,8 @@ it('ready verification binds the required renditions to the stored job profile',
         }] }),
     };
     const input = { jobId: 'job', generation: 1, expectedSourceBytes: '10', assetId: 'asset',
-        playbackId: 'video', projectId: 'project', expectedProjectId: 'project', apiTokenName: 'token' };
+        playbackId: 'video', projectId: 'project', expectedProjectId: 'project', apiTokenName: 'token',
+        mode: 'ready' as const };
     vi.stubGlobal('fetch', backend('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720\n720/index.m3u8\n'));
     const dependencies = { sha256: async () => 'a'.repeat(64), signPlaybackToken: async () => 'authorized' };
     await expect(verifyLivepeerReadyAsset(provider, { ...input, profileConfigSha256: profiles.legacy.hash }, dependencies))
@@ -201,7 +202,7 @@ it.each(['network', 'syntax'])('distinguishes a body read failure from malformed
 
 const readyInput = { jobId: 'job', generation: 1, expectedSourceBytes: '10', assetId: 'asset',
     playbackId: 'video', projectId: 'project', expectedProjectId: 'project', apiTokenName: 'token',
-    profileConfigSha256: profiles.adaptive.hash };
+    profileConfigSha256: profiles.adaptive.hash, mode: 'ready' as const };
 const dependencies = { sha256: async () => 'a'.repeat(64), signPlaybackToken: async () => 'authorized' };
 function readyProvider(mp4: number[][] = [], additionalHls: string[] = []) {
     return {

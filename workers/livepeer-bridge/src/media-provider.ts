@@ -88,15 +88,18 @@ export type VerifyReadyAssetInput = {
     expectedProjectId: string;
     apiTokenName?: string;
     checkpoint?: ProviderVerificationCheckpoint;
-    // Byte-proof inputs for 'tus-offset' adapters (absent mode means 'ready'); Studio ignores all three.
+    // Byte-proof inputs for 'tus-offset' adapters; the Studio adapter ignores all three.
     tusEndpoint?: string;
-    mode?: VerificationMode;
+    mode: VerificationMode;
     storedEvidence?: SourceBytesEvidence;
 };
 
 export type VerificationMode = 'ready' | 'published';
 
-/** Byte proof persisted on the job record by adapters whose capability is 'tus-offset'. */
+/**
+ * Canonical byte proof for adapters whose capability is 'tus-offset': taken from the resumable
+ * upload at readiness (offset == length == expected bytes) and persisted on the job record.
+ */
 export type SourceBytesEvidence = {
     method: 'tus-offset';
     offsetBytes: string;
