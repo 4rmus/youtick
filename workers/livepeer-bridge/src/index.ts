@@ -31,9 +31,17 @@ import { canonicalPlaybackV3Message, decideTicketPlayback, parsePlaybackV3Body }
 import {
     MEDIA_PROVIDER_HEADER,
     MEDIA_SOURCE_FORMATS,
+    MEDIA_WEBHOOK_TIME_HEADER,
+    STREAM_PROFILE_MAX_DURATION_SECONDS,
+    mediaProfileFamily,
     mediaProviderKind,
+    streamSupportsProfile,
 } from './media-provider';
 import { LivepeerProvider, livepeerSupportsProfile } from './livepeer-provider';
+import {
+    CloudflareStreamProvider,
+    STREAM_TUS_URL_LIFETIME_MS,
+} from './cloudflare-stream-provider';
 import { dependencyFetch } from './dependency-fetch';
 import {
     MAX_PUBLICATION_COVER_BYTES,
@@ -129,6 +137,26 @@ export interface Env {
     OPERATOR_OUTBOX_ARCHIVE_ENABLED?: string;
     MARKET_READ_MODEL?: D1Database;
     PUBLIC_BETA_RATE_LIMITER?: RateLimit;
+    // Cloudflare Stream adapter (M2). New intents select it only with the flag on and the
+    // paid-media-v1 Stream descriptor hash; with the flag on, Market V2 is Stream-only (OD19).
+    MEDIA_PROVIDER_STREAM_ENABLED?: string;
+    STREAM_ACCOUNT_ID?: string;
+    STREAM_API_TOKEN?: string;
+    STREAM_CUSTOMER_CODE?: string;
+    STREAM_SIGNING_KEY_ID?: string;
+    STREAM_SIGNING_PUBLIC_KEY?: string;
+    STREAM_SIGNING_KEY_PEM?: string;
+    STREAM_WEBHOOK_SECRET?: string;
+    STREAM_WEBHOOK_SECRET_PREVIOUS?: string;
+    STREAM_MAX_DURATION_SECONDS?: string;
+    STREAM_STORAGE_MINUTES_CAPACITY?: string;
+    STREAM_RESERVATION_SECONDS_BUDGET?: string;
+    STREAM_STUCK_TIMEOUT_MS?: string;
+    // M0 switches (optional; absent = the documented default, see README "M0 switches").
+    STREAM_SIGNING_KEY_FORMAT?: string;
+    STREAM_PLAYBACK_EXTRA_HOSTS?: string;
+    STREAM_REQUIRE_END_LIST?: string;
+    STREAM_READY_SEGMENT_PROBE_ENABLED?: string;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -631,6 +659,7 @@ const LIFECYCLE_DELETE_BATCH = 128;
 const PLAYBACK_MIN_TTL_SECONDS = 120;
 const PLAYBACK_MAX_TTL_SECONDS = 300;
 const PLAYBACK_V2_TTL_SECONDS = 180;
+const STREAM_DEFAULT_STUCK_TIMEOUT_MS = 30 * 60 * 1000;
 const DEVICE_CERTIFICATE_MAX_LIFETIME_MS = 8 * 60 * 60 * 1000;
 const MARKET_DEVICE_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 const PLAYBACK_CACHE_MAX_RECORDS = 1024;
@@ -964,6 +993,16 @@ const bridgeWorker = {
                 return json({ error: 'runtime_not_configured' }, 503);
             }
             return forwardLivepeerWebhook(request, env);
+        }
+
+        if (request.method === 'POST' && url.pathname === '/v1/stream-webhooks') {
+            if (env.LIVEPEER_BRIDGE_ENABLED !== 'true') {
+                return json({ error: 'control_plane_disabled' }, 503);
+            }
+            if (!env.LIVEPEER_CONTROL || !validStreamWebhookConfig(env)) {
+                return json({ error: 'runtime_not_configured' }, 503);
+            }
+            return forwardProviderWebhook(request, env, 'stream');
         }
 
         if (request.method === 'POST' && url.pathname === '/v1/operations/admission-reopen') {
@@ -1597,7 +1636,10 @@ export class LivepeerControl {
 
         let provider: CreateUploadResult;
         try {
-            provider = await mediaProvider(this.env, pending).createUpload(pending);
+            provider = await mediaProvider(this.env, pending).createUpload({
+                ...pending,
+                uploadExpiresAtMs: pending.leaseExpiresAtMs,
+            });
         } catch (error) {
             const providerError = safeErrorCode(error);
             const errorCode = providerError === 'provider_admission_closed'
@@ -1905,7 +1947,11 @@ export class LivepeerControl {
         const existing = await this.state.storage.get<JobRecord>(JOB_KEY);
         const kind = mediaProviderKind(request.headers.get(MEDIA_PROVIDER_HEADER))
             ?? (existing ? jobProviderKind(existing) : 'studio');
-        const event = await mediaProvider(this.env, { provider: kind }).parseWebhook(rawBody);
+        const signedTime = request.headers.get(MEDIA_WEBHOOK_TIME_HEADER);
+        const event = await mediaProvider(this.env, { provider: kind }).parseWebhook(
+            rawBody,
+            signedTime && /^[1-9][0-9]{0,15}$/.test(signedTime) ? { timestampMs: Number(signedTime) } : undefined,
+        );
         return this.handleProviderEvent(event, existing);
     }
 
@@ -3462,7 +3508,7 @@ function publicUploadJobDeadline(job: OnChainJob, requireUnexpired = true): numb
         || typeof job.created_at_ms !== 'number' || !Number.isSafeInteger(job.created_at_ms) || job.created_at_ms <= 0
         || typeof job.expected_source_bytes !== 'string' || !/^[1-9][0-9]*$/.test(job.expected_source_bytes)
         || BigInt(job.expected_source_bytes) > 5_000_000_000n
-        || job.profile_id !== 'paid-media-livepeer-v1' || !supportedMediaProfile(job.profile_config_sha256)) {
+        || job.profile_id !== 'paid-media-livepeer-v1' || !livepeerSupportsProfile(job.profile_config_sha256)) {
         throw new Error('on_chain_job_mismatch');
     }
     const deadline = job.created_at_ms + PUBLIC_TESTNET_BETA_JOB_TTL_MS;
@@ -5490,16 +5536,29 @@ async function requireOperatorAuthorization(request: Request, env: Env): Promise
     }
 }
 
-export async function forwardLivepeerWebhook(request: Request, env: Env): Promise<Response> {
+export function forwardLivepeerWebhook(request: Request, env: Env): Promise<Response> {
+    return forwardProviderWebhook(request, env, 'studio');
+}
+
+/**
+ * One ingress pipeline per adapter route: the adapter authenticates and routes the raw body
+ * before any Queue send or job-object call; the job object re-parses the same bytes.
+ */
+export async function forwardProviderWebhook(
+    request: Request,
+    env: Env,
+    kind: MediaProviderKind,
+): Promise<Response> {
     const startedAtMs = Date.now();
     try {
-        if (!env.LIVEPEER_CONTROL || !validWebhookConfig(env)) {
+        if (!env.LIVEPEER_CONTROL
+            || !(kind === 'stream' ? validStreamWebhookConfig(env) : validWebhookConfig(env))) {
             throw new Error('runtime_not_configured');
         }
         const rawBody = new Uint8Array(await request.arrayBuffer());
         if (rawBody.byteLength > MAX_CONTROL_BODY_BYTES) throw new Error('control_body_too_large');
-        // This route is the Studio ingress; the adapter owns the signature header and scheme.
-        const provider = mediaProvider(env, { provider: 'studio' });
+        // Each route names its adapter; the adapter owns the signature header and scheme.
+        const provider = mediaProvider(env, { provider: kind });
         const event = await provider.verifyWebhook(rawBody, request.headers, Date.now());
         const route = event?.route;
         if (!route) return json({ accepted: true, ignored: true }, 202);
@@ -5535,12 +5594,17 @@ export async function forwardLivepeerWebhook(request: Request, env: Env): Promis
         )));
         return await object.fetch(new Request('https://object/internal/livepeer-webhook', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', [MEDIA_PROVIDER_HEADER]: provider.id },
+            headers: {
+                'Content-Type': 'application/json',
+                [MEDIA_PROVIDER_HEADER]: provider.id,
+                // Stream signs the time outside the body; the job object folds it into the digest.
+                ...(kind === 'stream' && event ? { [MEDIA_WEBHOOK_TIME_HEADER]: String(event.timestampMs) } : {}),
+            },
             body: rawBody,
         }));
     } catch (error) {
         const code = safeErrorCode(error);
-        console.error(formatLog('livepeer_webhook_failed', { code }));
+        console.error(formatLog(kind === 'stream' ? 'stream_webhook_rejected' : 'livepeer_webhook_failed', { code }));
         return json({ error: code }, errorStatus(code));
     }
 }
@@ -6044,7 +6108,7 @@ function parseUploadBody(value: unknown, env: Env): UploadIntentBody {
         || !SHA256_PATTERN.test(body.source_fingerprint_sha256)
         || !isLivepeerSourceType(body.source_type)
         || body.profile_id !== marketProfileId(env)
-        || !supportedMediaProfile(body.profile_config_sha256)
+        || !uploadProfileAccepted(env, body.profile_config_sha256)
         || (body.recovery !== undefined && !['reconcile', 'resume'].includes(String(body.recovery)))) {
         throw new Error('invalid_upload_intent');
     }
@@ -6349,6 +6413,28 @@ function studioProvider(env: Env): LivepeerProvider {
     });
 }
 
+function streamProvider(env: Env): CloudflareStreamProvider {
+    return new CloudflareStreamProvider({
+        accountId: env.STREAM_ACCOUNT_ID,
+        apiToken: env.STREAM_API_TOKEN,
+        customerCode: env.STREAM_CUSTOMER_CODE,
+        signingKeyId: env.STREAM_SIGNING_KEY_ID,
+        signingKey: env.STREAM_SIGNING_KEY_PEM,
+        signingKeyFormat: env.STREAM_SIGNING_KEY_FORMAT === 'jwk' ? 'jwk' : 'pkcs8',
+        webhookSecrets: [env.STREAM_WEBHOOK_SECRET, env.STREAM_WEBHOOK_SECRET_PREVIOUS],
+        webhookToleranceMs: WEBHOOK_TOLERANCE_MS,
+        maxDurationSeconds: streamMaxDurationSeconds(env) ?? undefined,
+        extraPlaybackHosts: streamExtraPlaybackHosts(env),
+        requireEndList: env.STREAM_REQUIRE_END_LIST !== 'false',
+        readySegmentProbe: env.STREAM_READY_SEGMENT_PROBE_ENABLED === 'true',
+        readyPendingWindowMs: streamStuckTimeoutMs(env) ?? STREAM_DEFAULT_STUCK_TIMEOUT_MS,
+        verificationTokenTtlSeconds: PLAYBACK_MIN_TTL_SECONDS,
+        sha256: sha256Hex,
+        isValidJobId: (jobId) => JOB_ID_PATTERN.test(jobId),
+        readyVerificationEnabled: validStreamConfig(env),
+    });
+}
+
 // Adapter registry: registering a provider here is the only change the call sites need.
 // supportsProfile is static so request parsers can check a hash without building an adapter.
 const MEDIA_PROVIDER_REGISTRY: Record<MediaProviderKind, {
@@ -6356,6 +6442,7 @@ const MEDIA_PROVIDER_REGISTRY: Record<MediaProviderKind, {
     supportsProfile(profileConfigSha256: unknown): boolean;
 }> = {
     studio: { create: studioProvider, supportsProfile: livepeerSupportsProfile },
+    stream: { create: streamProvider, supportsProfile: streamSupportsProfile },
 };
 const DEFAULT_MEDIA_PROVIDER: MediaProviderKind = 'studio';
 
@@ -6380,6 +6467,12 @@ function mediaProvider(
 
 function jobProviderKind(job: Pick<JobRecord, 'provider'>): MediaProviderKind {
     return job.provider ?? 'studio';
+}
+
+// New intents: the Stream hash needs the flag; Studio hashes stay open unless V2 is Stream-only.
+function uploadProfileAccepted(env: Env, hash: unknown): boolean {
+    const family = mediaProfileFamily(hash);
+    return family === 'stream' ? streamEnabled(env) : family === 'studio' && studioActive(env);
 }
 
 function supportedMediaProfile(hash: unknown): hash is string {
@@ -6478,9 +6571,11 @@ function jobRecord(
     env: Env,
     absoluteDeadlineAtMs?: string,
 ): JobRecord {
-    if (typeof env.LIVEPEER_API_TOKEN_NAME !== 'string'
+    // The adapter is fixed at creation from the profile hash and never re-derived later.
+    const stream = mediaProfileFamily(input.body.profile_config_sha256) === 'stream';
+    if (!stream && (typeof env.LIVEPEER_API_TOKEN_NAME !== 'string'
         || env.LIVEPEER_API_TOKEN_NAME.length < 1
-        || env.LIVEPEER_API_TOKEN_NAME.length > 128) {
+        || env.LIVEPEER_API_TOKEN_NAME.length > 128)) {
         throw new Error('runtime_not_configured');
     }
     const createdAtMs = Date.now();
@@ -6499,7 +6594,7 @@ function jobRecord(
         profileConfigSha256: input.body.profile_config_sha256,
         createdAtMs,
         stateChangedAtMs: createdAtMs,
-        apiTokenName: env.LIVEPEER_API_TOKEN_NAME,
+        ...(stream ? { provider: 'stream' as const } : { apiTokenName: env.LIVEPEER_API_TOKEN_NAME }),
         ...(absoluteDeadlineAtMs === undefined
             ? {}
             : { absoluteDeadlineAtMs: Number(absoluteDeadlineAtMs) }),
@@ -8089,6 +8184,60 @@ async function persistConfirmedOperatorRecord(
     return confirmed;
 }
 
+// Stream adapter switches. With the flag on, Market V2 runs Stream-only (OD19): the Studio
+// configuration is not required and new Studio-hash intents are refused. V1 is unchanged.
+function streamEnabled(env: Env): boolean {
+    return env.MEDIA_PROVIDER_STREAM_ENABLED === 'true';
+}
+
+function studioActive(env: Env): boolean {
+    return !(isMarketV2(env) && streamEnabled(env));
+}
+
+function positiveIntegerVar(value: string | undefined, max = Number.MAX_SAFE_INTEGER): number | null {
+    if (typeof value !== 'string' || !/^[1-9][0-9]{0,15}$/.test(value)) return null;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed <= max ? parsed : null;
+}
+
+function streamMaxDurationSeconds(env: Env): number | null {
+    // 1..36000 is Stream's documented range; the descriptor cap (7200) binds this deployment.
+    const value = positiveIntegerVar(env.STREAM_MAX_DURATION_SECONDS, 36_000);
+    return value !== null && value <= STREAM_PROFILE_MAX_DURATION_SECONDS ? value : null;
+}
+
+function streamStuckTimeoutMs(env: Env): number | null {
+    return positiveIntegerVar(env.STREAM_STUCK_TIMEOUT_MS);
+}
+
+function streamExtraPlaybackHosts(env: Env): string[] {
+    return (env.STREAM_PLAYBACK_EXTRA_HOSTS || '').split(',').map((host) => host.trim().toLowerCase())
+        .filter((host) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host));
+}
+
+function validStreamConfig(env: Env): boolean {
+    return /^[0-9a-f]{32}$/.test(env.STREAM_ACCOUNT_ID || '')
+        && typeof env.STREAM_API_TOKEN === 'string'
+        && env.STREAM_API_TOKEN.length >= 16
+        && !/[\s]/.test(env.STREAM_API_TOKEN)
+        && /^[a-z0-9]{1,64}$/.test(env.STREAM_CUSTOMER_CODE || '')
+        && /^[0-9a-f]{32}$/.test(env.STREAM_SIGNING_KEY_ID || '')
+        && typeof env.STREAM_SIGNING_PUBLIC_KEY === 'string'
+        && env.STREAM_SIGNING_PUBLIC_KEY.length >= 64
+        && !env.STREAM_SIGNING_PUBLIC_KEY.startsWith('<')
+        && typeof env.STREAM_SIGNING_KEY_PEM === 'string'
+        && env.STREAM_SIGNING_KEY_PEM.length >= 64
+        && [undefined, 'pkcs8', 'jwk'].includes(env.STREAM_SIGNING_KEY_FORMAT)
+        && typeof env.STREAM_WEBHOOK_SECRET === 'string'
+        && env.STREAM_WEBHOOK_SECRET.length >= 16
+        && (env.STREAM_WEBHOOK_SECRET_PREVIOUS === undefined || env.STREAM_WEBHOOK_SECRET_PREVIOUS === ''
+            || env.STREAM_WEBHOOK_SECRET_PREVIOUS.length >= 16)
+        && streamMaxDurationSeconds(env) !== null
+        && positiveIntegerVar(env.STREAM_STORAGE_MINUTES_CAPACITY) !== null
+        && positiveIntegerVar(env.STREAM_RESERVATION_SECONDS_BUDGET) !== null
+        && streamStuckTimeoutMs(env) !== null;
+}
+
 function validWebhookConfig(env: Env): boolean {
     return typeof env.LIVEPEER_WEBHOOK_SECRET === 'string'
         && env.LIVEPEER_WEBHOOK_SECRET.length >= 16
@@ -8096,6 +8245,10 @@ function validWebhookConfig(env: Env): boolean {
             || env.LIVEPEER_WEBHOOK_SECRET_PREVIOUS.length >= 16)
         && validProviderVerificationConfig(env)
         && validOperatorConfig(env);
+}
+
+function validStreamWebhookConfig(env: Env): boolean {
+    return validStreamConfig(env) && validOperatorConfig(env);
 }
 
 function validWebhookQueuePolicy(env: Env): boolean {

@@ -607,12 +607,18 @@ describe('Livepeer bridge PR-4 finalize flow', () => {
         }));
         expect(mismatched.status).toBe(202);
         expect(await mismatched.json()).toEqual(ignored);
-        // Without the header the record's unknown provider fails closed with a coded error.
+        // Without the header the Stream adapter parses the Studio body and refuses it (M2: 'stream' is registered).
+        const streamParsed = await control.fetch(internalWebhookRequest());
+        expect(await streamParsed.json()).toEqual({ error: 'invalid_webhook' });
+        expect(testState.values.get('job:v1')).toEqual(otherProvider);
+        // A record written by a newer build (unknown provider) fails closed with a coded error.
+        const futureProvider = { ...jobRecord(), provider: 'future-adapter' };
+        testState.values.set('job:v1', futureProvider);
         const unknownProvider = await control.fetch(internalWebhookRequest());
         expect(await unknownProvider.json()).toEqual({ error: 'runtime_not_configured' });
 
         expect(providerFetch).not.toHaveBeenCalled();
-        expect(testState.values.get('job:v1')).toEqual(otherProvider);
+        expect(testState.values.get('job:v1')).toEqual(futureProvider);
     });
 
     it('never lets an inbound X-YouTick-Provider header reach or steer the job object', async () => {

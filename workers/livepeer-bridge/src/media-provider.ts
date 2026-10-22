@@ -4,12 +4,14 @@
 import studioProfiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import streamProfiles from '../../../protocol/paid-media-v1/stream-profile.json';
 
-export type MediaProviderKind = 'studio';
+export type MediaProviderKind = 'studio' | 'stream';
 
-export const MEDIA_PROVIDER_KINDS: readonly MediaProviderKind[] = ['studio'];
+export const MEDIA_PROVIDER_KINDS: readonly MediaProviderKind[] = ['studio', 'stream'];
 
 /** Internal header the ingress adds when it forwards a verified webhook body to a job object. */
 export const MEDIA_PROVIDER_HEADER = 'X-YouTick-Provider';
+/** Internal header carrying the signed webhook time (ms) when the signature holds it outside the body. */
+export const MEDIA_WEBHOOK_TIME_HEADER = 'X-YouTick-Webhook-Time';
 
 export function mediaProviderKind(value: unknown): MediaProviderKind | null {
     return MEDIA_PROVIDER_KINDS.find((kind) => kind === value) ?? null;
@@ -77,6 +79,8 @@ export type CreateUploadInput = {
     expectedSourceBytes: string;
     profileConfigSha256: string;
     sourceType: MediaSourceType;
+    // Stream: the admission lease deadline, sent as the tus `expiry` metadata. Studio ignores it.
+    uploadExpiresAtMs?: number;
 };
 
 export type CreateUploadResult = {
@@ -107,7 +111,21 @@ export type ProviderAsset = {
     sizeBytes?: number;
     downloadUrl?: string;
     sha256?: string | null;
+    // Stream-only lifecycle fields read from the same video object; Studio leaves this undefined.
+    stream?: {
+        state: StreamVideoState;
+        pctComplete: number;
+        readyToStream: boolean;
+        errorReasonCode: string;
+        durationSeconds: number;
+        route: WebhookRoute | null;
+        createdAtMs: number;
+    };
 };
+
+/** Cloudflare Stream `status.state` values (docs 2). */
+export type StreamVideoState = 'pendingupload' | 'downloading' | 'queued' | 'inprogress' | 'ready' | 'error'
+    | 'live-inprogress' | '';
 
 export type ProviderPlaybackSource = {
     kind: 'hls' | 'mp4' | 'vtt' | 'unknown';
@@ -138,6 +156,8 @@ export type VerifyReadyAssetInput = {
     tusEndpoint?: string;
     mode: VerificationMode;
     storedEvidence?: SourceBytesEvidence;
+    // When the upload URL was created; 'tus-offset' adapters refuse a HEAD past the URL's life.
+    uploadCreatedAtMs?: number;
 };
 
 export type VerificationMode = 'ready' | 'published';
@@ -151,6 +171,8 @@ export type SourceBytesEvidence = {
     offsetBytes: string;
     lengthBytes: string;
     observedAtMs: number;
+    // The ready_at_ms the publication was built with; published re-verification returns it as is.
+    readyAtMs?: string;
 };
 
 export type ProviderVerificationCheckpoint = {
@@ -162,6 +184,8 @@ export type ProviderVerificationCheckpoint = {
 export type ProviderVerificationResult = VerifiedAsset | {
     pending: true;
     checkpoint: ProviderVerificationCheckpoint;
+    // When to look again; absent means the core's immediate continuation (1 s).
+    retryAfterMs?: number;
 };
 
 export type VerifiedAsset = {
@@ -193,6 +217,9 @@ export type SignedPlayback = {
 };
 
 export type WebhookRoute = { jobId: string; generation: number };
+
+/** What the ingress learned while authenticating a body (for example the signed time). */
+export type WebhookParseContext = { timestampMs?: number };
 
 /**
  * One provider webhook (or a synthesized reconcile observation) in provider-neutral form.
@@ -252,7 +279,7 @@ export interface MediaProvider {
     /** Authenticates an ingress webhook; null means authentic but not a media lifecycle event. */
     verifyWebhook(rawBody: Uint8Array, headers: Headers, nowMs: number): Promise<NormalizedWebhookEvent | null>;
     /** Normalizes a body the ingress already authenticated (job object and Queue paths). */
-    parseWebhook(rawBody: Uint8Array): Promise<NormalizedWebhookEvent | null>;
+    parseWebhook(rawBody: Uint8Array, context?: WebhookParseContext): Promise<NormalizedWebhookEvent | null>;
     identityMatches(asset: ProviderAsset, expected: ProviderIdentityExpectation): boolean;
     hostAllowlist(): HostAllowlist;
     supportsProfile(profileConfigSha256: unknown): boolean;

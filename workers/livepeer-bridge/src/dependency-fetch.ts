@@ -1,5 +1,6 @@
 // Studio keeps its livepeer_* labels so existing dashboards and log queries do not move;
-// the provider-neutral media_* labels are for adapters added behind the MediaProvider seam.
+// the provider-neutral media_* labels are for adapters added behind the MediaProvider seam;
+// Cloudflare Stream reports stream_api (REST), stream_tus (upload HEAD) and stream_media (delivery).
 export type DependencyLabel =
     | 'near_rpc'
     | 'livepeer_api'
@@ -7,7 +8,10 @@ export type DependencyLabel =
     | 'livepeer_media'
     | 'media_api'
     | 'media_tus'
-    | 'media_cdn';
+    | 'media_cdn'
+    | 'stream_api'
+    | 'stream_tus'
+    | 'stream_media';
 
 export async function dependencyFetch(
     dependency: DependencyLabel,
