@@ -177,10 +177,22 @@ variables and secrets, schema literals) and the on-chain method names are
 unchanged.
 
 UploadJob state stores only normalized asset, playback, project and
-resumable-upload identifiers. Ready-asset identity, exact-size, output and
-private-media verification is invoked through `MediaProvider.verifyReadyAsset`
-and returns only normalized publication evidence; `src/provider-verification.ts`
-owns the fail-closed HLS, MP4, VTT, thumbnail and download probes.
+resumable-upload identifiers. Ready-asset verification is invoked through
+`MediaProvider.verifyReadyAsset` and returns only normalized publication
+evidence. `src/provider-verification.ts` is the provider-neutral core: identity
+through the adapter's `identityMatches`, ready state, the byte proof chosen by
+the `sourceBytesProof` capability (Studio keeps `declared-size`; `tus-offset`
+reads the upload offset at readiness and reuses stored evidence in `published`
+mode), the HLS invariants of an adapter-declared `ManifestPolicy` (alternate
+media, allowed query keys, `EXT-X-ENDLIST`, token placement, init segment,
+denied statuses per surface), anonymous denial probes, the request/time budget
+and the pending/checkpoint contract, all unchanged for Studio. A unit test keeps
+Studio hosts, headers and MIME types out of it. `src/livepeer-verification.ts`
+holds the Studio probes: `Livepeer-Jwt` header credentials, forged ES256
+shapes, the MP4 cross-check with the portrait transpose quirk, the VTT
+storyboard and the download URL. Published-mode reconciliation passes
+`mode: 'published'`; the Studio adapter ignores mode, upload URL and stored
+evidence.
 
 Webhook Queue transport is source-complete behind
 `LIVEPEER_WEBHOOK_QUEUE_ENABLED=false`. When enabled with a `LIVEPEER_EVENTS`

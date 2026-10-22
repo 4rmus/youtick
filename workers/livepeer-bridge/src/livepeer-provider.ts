@@ -21,12 +21,8 @@ import type {
 import { MEDIA_SOURCE_FORMATS } from './media-provider';
 import { dependencyFetch } from './dependency-fetch';
 import { fetchCoverImage } from './cover-image';
-import {
-    MAX_PROVIDER_PLAYBACK_OUTPUTS,
-    firstVttThumbnailUrl,
-    playbackUrlAllowed,
-    verifyLivepeerReadyAsset,
-} from './provider-verification';
+import { MAX_PROVIDER_PLAYBACK_OUTPUTS, playbackUrlAllowed } from './provider-verification';
+import { firstVttThumbnailUrl, verifyLivepeerReadyAsset } from './livepeer-verification';
 
 type JsonObject = Record<string, unknown>;
 

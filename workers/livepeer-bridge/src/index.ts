@@ -25,6 +25,7 @@ import type {
     ProviderVerificationCheckpoint,
     ProviderPlayback,
     SourceBytesEvidence,
+    VerificationMode,
 } from './media-provider';
 import { canonicalPlaybackV3Message, decideTicketPlayback, parsePlaybackV3Body } from './playback-v3';
 import {
@@ -1954,7 +1955,7 @@ export class LivepeerControl {
         let record = existing;
         if (!seen) {
             try {
-                const publication = await verifyReadyProviderAsset(this.state, this.env, record);
+                const publication = await verifyReadyProviderAsset(this.state, this.env, record, 'ready');
                 if (!publication) {
                     await this.state.storage.delete(dedupKey);
                     return json({ accepted: true, processing: true }, 202);
@@ -3487,7 +3488,7 @@ async function reconcilePublishedJob(
 ): Promise<void> {
     await tryProcessSalesSuspension(state, env, job);
     try {
-        const verified = await verifyReadyProviderAsset(state, env, job);
+        const verified = await verifyReadyProviderAsset(state, env, job, 'published');
         if (!verified) return;
         if (canonicalJson(verified) !== canonicalJson(job.publication)) {
             await persistDriftReconcile(state, env, job, 'provider_publication_mismatch');
@@ -7013,7 +7014,7 @@ function sameOutbox(left: OutboxRecord, right: OutboxRecord): boolean {
 }
 
 async function verifyReadyProviderAsset(
-    state: DurableObjectState, env: Env, job: JobRecord,
+    state: DurableObjectState, env: Env, job: JobRecord, mode: VerificationMode,
 ): Promise<FinalizePublication | null> {
     if (!validProviderVerificationConfig(env)
         || !job.assetId || !job.playbackId || !job.projectId) {
@@ -7034,6 +7035,9 @@ async function verifyReadyProviderAsset(
             expectedProjectId: env.LIVEPEER_PROJECT_ID!,
             apiTokenName: job.apiTokenName,
             checkpoint: job.providerVerification,
+            tusEndpoint: job.tusEndpoint,
+            mode,
+            storedEvidence: job.sourceBytesEvidence,
         });
         const nextAtMs = job.state === 'ONCHAIN_PUBLISHED' ? Date.now() + 1_000
             : Math.min(Date.now() + 1_000, job.absoluteDeadlineAtMs ?? Number.MAX_SAFE_INTEGER);

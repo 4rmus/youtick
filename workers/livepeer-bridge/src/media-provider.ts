@@ -88,7 +88,7 @@ export type VerifyReadyAssetInput = {
     expectedProjectId: string;
     apiTokenName?: string;
     checkpoint?: ProviderVerificationCheckpoint;
-    // Optional until M1-G2 wires every call site; the Studio adapter ignores all three.
+    // Byte-proof inputs for 'tus-offset' adapters (absent mode means 'ready'); Studio ignores all three.
     tusEndpoint?: string;
     mode?: VerificationMode;
     storedEvidence?: SourceBytesEvidence;
@@ -122,6 +122,8 @@ export type VerifiedAsset = {
     verifiedSourceBytes: string;
     sourceFingerprint: string | null;
     readyAtMs: string;
+    // Present only for 'tus-offset' adapters at readiness; the job record persists it (M2).
+    sourceBytesEvidence?: SourceBytesEvidence;
 };
 
 export type MediaProviderCapabilities = {
