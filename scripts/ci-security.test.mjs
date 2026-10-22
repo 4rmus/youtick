@@ -5,6 +5,10 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+    BASE_SECRETS, BRIDGE, DEFAULT_OPERATOR_KEY_SET, OPERATOR_KEY_SETS, OPTIONAL_STREAM_SECRETS, RETIRED_SECRETS, STREAM_SECRETS, bridgeHost,
+} from './v2-testnet-bridge-release.mjs';
+import { MEDIA_ACCOUNT } from './v2-testnet-release.mjs';
 
 const workflows = [
     'ci.yml',
@@ -12,6 +16,7 @@ const workflows = [
     'deploy-preview.yml',
     'deploy-public-testnet.yml',
     'deploy-v2-testnet.yml',
+    'deploy-v2-testnet-bridge.yml',
     'bootstrap-v2-testnet.yml',
     'bootstrap-public-testnet.yml',
     'preview-market-code-update.yml',
@@ -233,6 +238,11 @@ printf '%s %s %s %s %s' "$web" "$bridge" "$contracts" "$protocol" "$docs"`;
     for (const [path, expected] of [
         ['protocol/paid-media-livepeer-v1/compact-upload.ts', 'true true true true false'],
         ['protocol/paid-media-livepeer-v1/compact-upload-vectors.json', 'true true true true false'],
+        // V2 media descriptors (OD19, M2-G1): no contract reads them, so the contract jobs stay off.
+        ['protocol/paid-media-v1/stream-profile.json', 'true true false true false'],
+        ['scripts/check-paid-media-v1.mjs', 'true true false true false'],
+        ['scripts/check-paid-media-v1.test.mjs', 'true true false true false'],
+        ['protocol/paid-media-v1-extra/x.json', 'true true true true true'],
         ['docs/testing.md', 'false false false false true'],
         ['.claude/rules/web.md', 'false false false false false'],
         ['AGENTS.md', 'false false false false false'],
@@ -243,6 +253,19 @@ printf '%s %s %s %s %s' "$web" "$bridge" "$contracts" "$protocol" "$docs"`;
             env: { ...process.env, path }, encoding: 'utf8',
         }), expected, path);
     }
+});
+
+test('the Protocol job checks both media descriptor directories', async () => {
+    const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const protocol = ci.slice(ci.indexOf('\n  protocol:\n'), ci.indexOf('\n  docs:\n'));
+    assert.match(protocol, /if: needs\.detect-changes\.outputs\.protocol == 'true'/);
+    // V1 stays frozen and checked; the V2 descriptor checker and its own tests run beside it.
+    assert.deepEqual([...protocol.matchAll(/\n      - run: (.+)/g)].map((match) => match[1]), [
+        'node scripts/check-paid-media-livepeer-v1.mjs',
+        'node scripts/check-paid-media-v1.mjs',
+        'node --test scripts/check-paid-media-v1.test.mjs',
+        'node scripts/check-youtick-market-v2.mjs',
+    ]);
 });
 
 test('web CI verifies the immutable sponsored-wallet executor', async () => {
@@ -535,4 +558,112 @@ test('public-testnet pilot alerts are scheduled, closed by default, least-privil
     assert.doesNotMatch(script, /query: '\s*mutation|method: '(PUT|PATCH|DELETE)'/);
     assert.match(script, /query: 'query DlqBacklog\(/);
     assert.equal((script.match(/method: 'POST'/g) ?? []).length, 3);
+});
+
+/** The steps of a workflow job as `{ name, text }`, split on the six-space step indentation. */
+function workflowSteps(source) {
+    return source.split(/\n(?=      - )/).slice(1).map((text) => ({ name: /^      - (?:name: (.+)|uses: (\S+))/.exec(text)?.slice(1).find(Boolean), text }));
+}
+
+test('V2 testnet Bridge is Stream-only (OD19): V2_STREAM_* secrets, no Studio trio, the Stream flag bound into the attested packet', async () => {
+    const bridge = await readFile(new URL('../.github/workflows/deploy-v2-testnet-bridge.yml', import.meta.url), 'utf8');
+    const steps = workflowSteps(bridge);
+    const deploy = steps.find((entry) => entry.name === 'Preflight keys on chain, deploy the Bridge and smoke it').text;
+    // Every secret the release can deploy is mapped from its V2_ name, and nothing else is.
+    const mapped = [...deploy.matchAll(/\n          ([A-Z0-9_]+): \$\{\{ secrets\.([A-Z0-9_]+) \}\}/g)].map((match) => [match[1], match[2]]);
+    const workerSecrets = mapped.filter(([name]) => !name.startsWith('CLOUDFLARE_'));
+    assert.deepEqual(workerSecrets.map(([name]) => name).sort(), [...BASE_SECRETS, ...STREAM_SECRETS, ...OPTIONAL_STREAM_SECRETS].sort());
+    for (const name of [...STREAM_SECRETS, ...OPTIONAL_STREAM_SECRETS]) {
+        assert.deepEqual(workerSecrets.find(([env]) => env === name), [name, `V2_${name}`], name);
+    }
+    // The Studio trio is gone from the V2 Bridge workflow entirely; V1 workflows keep their own names.
+    for (const name of RETIRED_SECRETS) {
+        assert.doesNotMatch(bridge, new RegExp(`\\b${name}\\b`), name);
+        assert.doesNotMatch(bridge, new RegExp(`V2_${name}`), name);
+    }
+    // The per-release Stream flag is a reviewed choice input, checked, attested in the manifest and passed to every step that needs it.
+    const input = /\n      stream_enabled:\n        description: .+\n        type: choice\n        default: '(\w+)'\n        options: \[([^\]]+)\]\n/.exec(bridge);
+    assert.equal(input?.[1], 'false');
+    assert.deepEqual(input[2].split(', '), ["'false'", "'true'"]);
+    assert.match(bridge, /\[\[ "\$STREAM_ENABLED" =~ \^\(true\|false\)\$ \]\]/);
+    assert.equal((bridge.match(/MEDIA_PROVIDER_STREAM_ENABLED: \$\{\{ inputs\.stream_enabled \}\}/g) ?? []).length, 3);
+    assert.match(deploy, /\n          MEDIA_PROVIDER_STREAM_ENABLED: \$\{\{ inputs\.stream_enabled \}\}\n/);
+    // The prepare job (no environment) never sees a Stream secret.
+    const prepare = bridge.slice(bridge.indexOf('\n  prepare:\n'), bridge.indexOf('\n  deploy:\n'));
+    assert.ok(prepare.length > 0);
+    assert.doesNotMatch(prepare, /V2_STREAM_|secrets\.V2_/);
+    // The secret-preflight override is a reviewed choice input, checked, attested in the manifest and
+    // re-checked at deploy; never a repository variable or a secret.
+    const preflightInput = /\n      stream_webhook_secret_preflight:\n        description: .*M0-P4.*\n        type: choice\n        default: (\w+)\n        options: \[([^\]]+)\]\n/.exec(bridge);
+    assert.equal(preflightInput?.[1], 'compare');
+    assert.deepEqual(preflightInput[2].split(', '), ['compare', 'skip']);
+    assert.match(bridge, /\[\[ "\$SECRET_PREFLIGHT" =~ \^\(compare\|skip\)\$ \]\]/);
+    assert.match(bridge, /stream_enabled:\$stream, stream_webhook_secret_preflight:\$preflight, ci_run_id:\$run\}/);
+    assert.match(bridge, /\.stream_enabled == \$stream and \.stream_webhook_secret_preflight == \$preflight' manifest\.json/);
+    assert.match(deploy, /\n          STREAM_WEBHOOK_SECRET_PREFLIGHT: \$\{\{ inputs\.stream_webhook_secret_preflight \}\}\n/);
+    assert.doesNotMatch(bridge, /V2_STREAM_WEBHOOK_SECRET_PREFLIGHT/);
+    const summary = steps.find((entry) => entry.name === 'Summarize the exact packet for environment approval').text;
+    assert.ok(summary.includes('vars: bridgeVars({ streamEnabled })'));
+    assert.doesNotMatch(summary, /FIXED_VARS/);
+});
+
+test('V2 testnet media account (M1.5): the Bridge and the read model use V2_MEDIA_CLOUDFLARE_*, nothing else does', async () => {
+    const [bridge, workers] = await Promise.all([
+        readFile(new URL('../.github/workflows/deploy-v2-testnet-bridge.yml', import.meta.url), 'utf8'),
+        readFile(new URL('../.github/workflows/deploy-v2-testnet.yml', import.meta.url), 'utf8'),
+    ]);
+    // The Bridge deploys only with the media pair, in its deploy step. It is no longer in the youtick.net
+    // zone and cannot affect the root origin, so the Bridge workflow does not fingerprint it.
+    const bridgeSteps = workflowSteps(bridge);
+    assert.deepEqual(bridgeSteps.filter((entry) => entry.text.includes('V2_MEDIA_')).map((entry) => entry.name),
+        ['Preflight keys on chain, deploy the Bridge and smoke it']);
+    const bridgeDeploy = bridgeSteps.find((entry) => entry.name === 'Preflight keys on chain, deploy the Bridge and smoke it').text;
+    assert.match(bridgeDeploy, /\n          CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID \}\}\n/);
+    assert.match(bridgeDeploy, /\n          CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_API_TOKEN \}\}\n/);
+    // The operator key set the preflight accepts is a reviewed input, bound into the attested manifest.
+    const keySetInput = /\n      operator_key_set:\n        description: .+\n        type: choice\n        default: (\S+)\n        options: \[([^\]]+)\]\n/.exec(bridge);
+    assert.equal(keySetInput?.[1], DEFAULT_OPERATOR_KEY_SET);
+    assert.deepEqual(keySetInput[2].split(', '), [...OPERATOR_KEY_SETS]);
+    assert.match(bridgeDeploy, /\n          OPERATOR_KEY_SET: \$\{\{ inputs\.operator_key_set \}\}\n/);
+    assert.match(bridge, /operator_key_set:\$keyset, stream_enabled:\$stream, stream_webhook_secret_preflight:\$preflight, ci_run_id:\$run\}/);
+    assert.match(bridge, /\.operator_key_set == \$keyset and \.stream_enabled == \$stream and /);
+    assert.doesNotMatch(bridge, /V2_CLOUDFLARE_/);
+    assert.doesNotMatch(bridge, /release-smoke\.mjs/);
+    assert.match(bridge, /READ_MODEL_D1_ID: \$\{\{ vars\.V2_READ_MODEL_D1_ID \}\}/);
+    // environment.url comes from the prepare job, which derives it with bridgeHost(): no literal host.
+    assert.match(bridge, /\n    environment:\n      name: v2-testnet\n      url: \$\{\{ needs\.prepare\.outputs\.health_url \}\}\n/);
+    assert.match(bridge, /\n      health_url: \$\{\{ steps\.summary\.outputs\.health_url \}\}\n/);
+    const summary = bridgeSteps.find((entry) => entry.name === 'Summarize the exact packet for environment approval').text;
+    assert.match(summary, /\n        id: summary\n/);
+    assert.ok(summary.includes('appendFileSync(process.env.GITHUB_OUTPUT, `health_url=https://${bridgeHost()}/__health\\n`);'));
+    assert.doesNotMatch(bridge, /[a-z0-9>-]\.workers\.dev/);
+    // The committed subdomain is either the exact sentinel or a valid one that bridgeHost() resolves.
+    if (MEDIA_ACCOUNT.workersSubdomain === '<register-on-the-media-account>') {
+        assert.throws(() => bridgeHost(), /media_account_unconfigured/);
+    } else {
+        assert.equal(bridgeHost(), `${BRIDGE.worker}.${MEDIA_ACCOUNT.workersSubdomain}.workers.dev`);
+    }
+
+    // The Workers workflow: only the read-model D1 step and the release step see the media pair.
+    const steps = workflowSteps(workers);
+    assert.deepEqual(steps.filter((step) => step.text.includes('V2_MEDIA_')).map((step) => step.name), [
+        'Apply the V2 read-model D1 migrations', 'Preflight keys on chain, deploy the three Workers and smoke them',
+    ]);
+    const step = (name) => steps.find((entry) => entry.name === name).text;
+    const readModelD1 = step('Apply the V2 read-model D1 migrations');
+    assert.match(readModelD1, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID \}\}/);
+    assert.match(readModelD1, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_API_TOKEN \}\}/);
+    assert.doesNotMatch(readModelD1, /V2_CLOUDFLARE_/);
+    const payments = step('Apply the V2 payments D1 migrations (refund request inbox, card orders)');
+    assert.match(payments, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_CLOUDFLARE_ACCOUNT_ID \}\}/);
+    assert.doesNotMatch(payments, /V2_MEDIA_/);
+    const release = step('Preflight keys on chain, deploy the three Workers and smoke them');
+    assert.match(release, /\n          CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_CLOUDFLARE_ACCOUNT_ID \}\}/);
+    assert.match(release, /\n          CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_CLOUDFLARE_API_TOKEN \}\}/);
+    assert.match(release, /\n          MEDIA_CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_ACCOUNT_ID \}\}/);
+    assert.match(release, /\n          MEDIA_CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.V2_MEDIA_CLOUDFLARE_API_TOKEN \}\}/);
+    // The relayer's custom domain stays the environment URL, and the root origin is still fingerprinted around the deploy.
+    assert.match(workers, /\n      url: https:\/\/relayer-v2-testnet\.youtick\.net\n/);
+    assert.deepEqual(steps.filter((entry) => /release-smoke\.mjs/.test(entry.text)).map((entry) => entry.name),
+        ['Fingerprint unrelated root origin', 'Verify unrelated root origin']);
 });

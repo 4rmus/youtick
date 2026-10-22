@@ -191,6 +191,12 @@ jobs:
                   protocol=true
                   bridge=true
                   ;;
+                protocol/paid-media-v1/*|scripts/check-paid-media-v1.mjs|scripts/check-paid-media-v1.test.mjs)
+                  # V2 media descriptors (OD19): read by the Bridge, and by the web upload path from M3.
+                  web=true
+                  protocol=true
+                  bridge=true
+                  ;;
                 protocol/youtick-market-v2/*|scripts/check-youtick-market-v2.mjs)
                   protocol=true
                   payments=true
@@ -712,6 +718,9 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: node scripts/check-paid-media-livepeer-v1.mjs
+      # protocol/paid-media-v1/stream-profile.json is committed by the M2 Bridge gate; it lands in the same push as this step.
+      - run: node scripts/check-paid-media-v1.mjs
+      - run: node --test scripts/check-paid-media-v1.test.mjs
       - run: node scripts/check-youtick-market-v2.mjs
 
   docs:
