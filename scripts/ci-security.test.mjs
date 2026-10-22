@@ -236,6 +236,11 @@ printf '%s %s %s %s %s' "$web" "$bridge" "$contracts" "$protocol" "$docs"`;
     for (const [path, expected] of [
         ['protocol/paid-media-livepeer-v1/compact-upload.ts', 'true true true true false'],
         ['protocol/paid-media-livepeer-v1/compact-upload-vectors.json', 'true true true true false'],
+        // V2 media descriptors (OD19, M2-G1): no contract reads them, so the contract jobs stay off.
+        ['protocol/paid-media-v1/stream-profile.json', 'true true false true false'],
+        ['scripts/check-paid-media-v1.mjs', 'true true false true false'],
+        ['scripts/check-paid-media-v1.test.mjs', 'true true false true false'],
+        ['protocol/paid-media-v1-extra/x.json', 'true true true true true'],
         ['docs/testing.md', 'false false false false true'],
         ['.claude/rules/web.md', 'false false false false false'],
         ['AGENTS.md', 'false false false false false'],
@@ -246,6 +251,19 @@ printf '%s %s %s %s %s' "$web" "$bridge" "$contracts" "$protocol" "$docs"`;
             env: { ...process.env, path }, encoding: 'utf8',
         }), expected, path);
     }
+});
+
+test('the Protocol job checks both media descriptor directories', async () => {
+    const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const protocol = ci.slice(ci.indexOf('\n  protocol:\n'), ci.indexOf('\n  docs:\n'));
+    assert.match(protocol, /if: needs\.detect-changes\.outputs\.protocol == 'true'/);
+    // V1 stays frozen and checked; the V2 descriptor checker and its own tests run beside it.
+    assert.deepEqual([...protocol.matchAll(/\n      - run: (.+)/g)].map((match) => match[1]), [
+        'node scripts/check-paid-media-livepeer-v1.mjs',
+        'node scripts/check-paid-media-v1.mjs',
+        'node --test scripts/check-paid-media-v1.test.mjs',
+        'node scripts/check-youtick-market-v2.mjs',
+    ]);
 });
 
 test('web CI verifies the immutable sponsored-wallet executor', async () => {

@@ -297,6 +297,21 @@ contract tests below, `workers/relayer` (`npm test -- --run`) and `apps/web`
 (`npm test -- --run`, `__tests__/unit/v2-upload.test.ts`). The upload profile id is
 `paid-media-v1` (gate MC, 2026-10-22); V1 keeps `paid-media-livepeer-v1`.
 
+## V2 media descriptors
+
+`protocol/paid-media-v1/stream-profile.json` holds the Cloudflare Stream profile (owner decision
+OD19): provider, container, codec, signed-URL policy, duration cap and the five-rung ladder. Its
+`hash` is the SHA-256 of the entry without `hash`, keys sorted recursively, no whitespace (the
+`sortedJson` rule of the V1 checker). `protocol/paid-media-livepeer-v1` stays frozen.
+
+```bash
+node scripts/check-paid-media-v1.mjs
+node --test scripts/check-paid-media-v1.test.mjs
+```
+
+The CI `Livepeer Protocol` job runs both next to the V1 checker whenever
+`protocol/paid-media-v1/**` or the checker changes; that path also runs the Bridge and web jobs.
+
 ## Market v2 contract
 
 `contracts/market-v2` runs on V2 testnet only (`v2-market-261007.youtick-dev-v3.testnet`);
