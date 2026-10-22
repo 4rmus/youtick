@@ -10,6 +10,7 @@ import {
     createHash,
     createHmac,
     createPrivateKey,
+    randomBytes,
     sign as cryptoSign,
     timingSafeEqual,
 } from 'node:crypto';
@@ -446,17 +447,38 @@ export function createWebhookReceiver({ now, sleep, onDelivery = async () => {} 
 }
 
 export function listenHttp(port, handler) {
+    // Anything a tunnel visitor sends (aborted bodies, malformed requests) is
+    // counted and dropped; it must never take the probe down before cleanup.
+    const stats = { aborted_requests: 0, oversized_requests: 0, client_errors: 0 };
     return new Promise((resolvePromise, reject) => {
         const server = createServer(async (request, response) => {
+            request.on('error', () => {});
+            response.on('error', () => {});
+            const reply = (status, headers = {}, body = '') => {
+                if (response.destroyed || response.headersSent) return;
+                response.writeHead(status, headers);
+                response.end(body);
+            };
             const chunks = [];
             let size = 0;
-            for await (const chunk of request) {
-                size += chunk.length;
-                if (size > 5 * 1024 * 1024) {
-                    response.writeHead(413).end();
-                    return;
+            try {
+                for await (const chunk of request) {
+                    size += chunk.length;
+                    if (size > 5 * 1024 * 1024) {
+                        stats.oversized_requests += 1;
+                        reply(413);
+                        request.destroy();
+                        return;
+                    }
+                    chunks.push(chunk);
                 }
-                chunks.push(chunk);
+            } catch {
+                stats.aborted_requests += 1;
+                return;
+            }
+            if (!request.complete) {
+                stats.aborted_requests += 1;
+                return;
             }
             let result;
             try {
@@ -469,12 +491,16 @@ export function listenHttp(port, handler) {
             } catch {
                 result = { status: 500 };
             }
-            response.writeHead(result.status, result.headers ?? {});
-            response.end(result.body ?? '');
+            reply(result.status, result.headers ?? {}, result.body ?? '');
+        });
+        server.on('clientError', (_error, socket) => {
+            stats.client_errors += 1;
+            socket.destroy();
         });
         server.once('error', reject);
         server.listen(port, '127.0.0.1', () => resolvePromise({
             port: server.address().port,
+            stats,
             close: () => new Promise((done) => {
                 server.closeAllConnections?.();
                 server.close(() => done());
@@ -560,8 +586,11 @@ export function createStreamApi({ accountId, apiToken, fetchImpl, scrubber, getS
                 body,
                 signal: withTimeout(getSignal(), timeoutMs),
             });
-            await response.arrayBuffer().catch(() => null);
-            return { status: response.status, headers: response.headers };
+            // Keep the error body (code/message) of a refused tus request for the receipt.
+            let errorBody = null;
+            if (response.status >= 300) errorBody = await readBody(response).catch(() => null);
+            else await response.arrayBuffer().catch(() => null);
+            return { status: response.status, headers: response.headers, body: errorBody };
         },
         async playback(url, { headers = {}, binary = false, timeoutMs = 30_000 } = {}) {
             const response = await fetchImpl(url, { headers, signal: withTimeout(getSignal(), timeoutMs) });
@@ -904,7 +933,10 @@ async function patchChunk(ctx, uploadUrl, offset, bytes) {
     }
     const retryable = transportError || response.status >= 500 || response.status === 409;
     if (!retryable) {
-        if (response.status !== 204) throw new Error(`tus_patch_failed_${response.status}`);
+        if (response.status !== 204) {
+            const code = response.body?.errors?.[0]?.code;
+            throw new Error(`tus_patch_failed_${response.status}${code ? `_code_${code}` : ''}`);
+        }
         const next = Number(response.headers.get('upload-offset'));
         if (!Number.isSafeInteger(next) || next <= offset) throw new Error('tus_patch_offset_invalid');
         return { offset: next, resumed: false };
@@ -1355,20 +1387,27 @@ async function readP2State(ctx) {
     return state;
 }
 
+// The P2 receipt is the registered run receipt plus the persisted state, so an
+// aborted run still carries every checkpoint recorded so far.
 async function writeP2(ctx, state) {
     await ctx.out.writeState('p2/state.json', state);
     const { upload_url: _uploadUrl, ...publicState } = state;
-    await ctx.out.json('p2/receipt.json', {
-        ...baseReceipt(ctx, 'M0-P2', ['M2-G3', 'M2-G4']),
-        ...publicState,
+    Object.assign(ctx.receipt, publicState, {
         ready_at: iso(state.ready_ms),
         checkpoint_due: Object.fromEntries(P2_CHECKPOINTS.map((checkpoint) => [checkpoint, iso(checkpointDueMs(state, checkpoint))])),
     });
+    await ctx.out.json('p2/receipt.json', ctx.receipt);
+}
+
+function assertP2Due(ctx, state, checkpoint) {
+    const due = checkpointDueMs(state, checkpoint);
+    if (ctx.now() < due && !ctx.opts['force-early']) throw new Error(`p2_checkpoint_${checkpoint}_not_due_until_${iso(due)}`);
+    return due;
 }
 
 async function runP2Checkpoint(ctx, state, checkpoint) {
-    const due = checkpointDueMs(state, checkpoint);
-    if (ctx.now() < due && !ctx.opts['force-early']) throw new Error(`p2_checkpoint_${checkpoint}_not_due_until_${iso(due)}`);
+    const due = assertP2Due(ctx, state, checkpoint);
+    ctx.receipt.last_checkpoint = checkpoint;
     const head = await tusHead(ctx, state.upload_url);
     const video = await ctx.api.getVideo(state.uid);
     const entry = {
@@ -1394,10 +1433,16 @@ async function cmdHeadLifetime(ctx) {
     if (resumeAt) {
         if (!P2_CHECKPOINTS.includes(resumeAt)) throw new Error(`resume_at_must_be_one_of_${P2_CHECKPOINTS.join('_')}`);
         const state = await readP2State(ctx);
+        // A checkpoint that is not due is refused before the receipt is touched.
+        assertP2Due(ctx, state, resumeAt);
+        startReceipt(ctx, 'M0-P2', ['M2-G3', 'M2-G4']);
         await runP2Checkpoint(ctx, state, resumeAt);
-        return;
+        return finish(ctx, ctx.receipt);
     }
+    startReceipt(ctx, 'M0-P2', ['M2-G3', 'M2-G4']);
+    ctx.receipt.last_checkpoint = 'at-ready';
     const upload = await uploadFile(ctx, { file: requirePath(ctx, 'sample'), name: 'youtick-m0-p2-head' });
+    ctx.receipt.uid = upload.uid;
     const ready = await waitVideo(ctx, upload.uid, isReadyOrError, {
         timeoutMs: minutesOption(ctx, 'ready-timeout-minutes', 30),
         label: 'ready',
@@ -1419,13 +1464,14 @@ async function cmdHeadLifetime(ctx) {
         for (const checkpoint of P2_CHECKPOINTS) {
             ctx.log(`P2 next: at ${iso(checkpointDueMs(state, checkpoint))} run: npm run probe:stream -- head-lifetime --out ${ctx.out.dir} --resume-at ${checkpoint}`);
         }
-        return;
+        return finish(ctx, ctx.receipt);
     }
     for (const checkpoint of P2_CHECKPOINTS) {
         const wait = checkpointDueMs(state, checkpoint) - ctx.now();
         if (wait > 0) await ctx.sleep(wait);
         await runP2Checkpoint(ctx, state, checkpoint);
     }
+    return finish(ctx, ctx.receipt);
 }
 
 // ---------------------------------------------------------------- P3 storage
@@ -1500,8 +1546,16 @@ async function cmdStorage(ctx) {
         if (size > MID_UPLOAD_BYTES) {
             const partial = await uploadFile(ctx, { file, name: 'youtick-m0-p3-mid-upload', maxDuration: P3_RESERVATION_SECONDS, bytesLimit: MID_UPLOAD_BYTES });
             const head = await tusHead(ctx, partial.upload_url);
+            const seenB = await visible();
             const status = await deleteVideo(ctx, partial.uid);
-            receipt.mid_upload_delete = { sent_bytes: partial.sent_bytes, head, delete_status: status, release: await pollRelease(15) };
+            receipt.mid_upload_delete = {
+                sent_bytes: partial.sent_bytes,
+                head,
+                reservation_visible: seenB.reached,
+                visible_samples: seenB.samples,
+                delete_status: status,
+                release: seenB.reached ? await pollRelease(15) : null,
+            };
         } else {
             receipt.mid_upload_delete = { skipped: 'sample not larger than 5 MiB' };
         }
@@ -1552,6 +1606,7 @@ async function cmdStorage(ctx) {
     const fill = [];
     receipt.exhaustion = { attempts: fill };
     let exhaustion = null;
+    let fillVisible = false;
     try {
         for (let attempt = 0; attempt < 6 && !exhaustion; attempt += 1) {
             const usage = await storageUsage(ctx);
@@ -1579,7 +1634,7 @@ async function cmdStorage(ctx) {
             } else if (overshoot) {
                 // The API accepted the over-tier reservation: does the upload itself fail?
                 const patch = await sendPatch(ctx, created.upload_url, 0, Buffer.alloc(MID_UPLOAD_BYTES));
-                entry.over_tier_patch = { status: patch.status, upload_offset: patch.headers.get('upload-offset') };
+                entry.over_tier_patch = { status: patch.status, upload_offset: patch.headers.get('upload-offset'), body: patch.body };
                 if (patch.status !== 204) exhaustion = { ...entry, refused_at: 'patch' };
                 const extra = await createUpload(ctx, {
                     length: RESERVATION_BYTES,
@@ -1600,14 +1655,24 @@ async function cmdStorage(ctx) {
             }
         }
     } finally {
+        // Release is only measured if the fill was visible before the deletes.
+        const beforeDelete = await storageUsage(ctx).catch(() => null);
+        fillVisible = beforeDelete?.minutes !== null && beforeDelete?.minutes !== undefined
+            && beforeDelete.minutes >= baseline.minutes + reservedMinutes / 2;
+        receipt.exhaustion.minutes_before_delete = beforeDelete?.minutes ?? null;
         for (const entry of fill) if (entry.uid) entry.delete_status = await deleteVideo(ctx, entry.uid);
     }
     Object.assign(receipt.exhaustion, {
         observed: Boolean(exhaustion),
         refused_at: exhaustion ? (exhaustion.refused_at ?? 'create') : null,
-        response: exhaustion ? { status: exhaustion.refused_at === 'patch' ? exhaustion.over_tier_patch.status : exhaustion.status, body: exhaustion.body } : null,
+        response: exhaustion
+            ? (exhaustion.refused_at === 'patch'
+                ? { status: exhaustion.over_tier_patch.status, body: exhaustion.over_tier_patch.body }
+                : { status: exhaustion.status, body: exhaustion.body })
+            : null,
         over_tier_reservation_accepted_at_creation: fill.some((entry) => entry.exceeds_tier && entry.status === 201),
-        release_after_delete: await pollRelease(15),
+        reservation_visible: fillVisible,
+        release_after_delete: fillVisible ? await pollRelease(15) : null,
     });
     receipt.final_usage = await storageUsage(ctx);
     return finish(ctx, receipt);
@@ -1710,11 +1775,22 @@ async function cmdWebhooks(ctx) {
             receiver.addSecret('B', secretB);
             known.B = secretB;
         }
+        // Only deliveries received after the rotating PUT returned can say which
+        // secret signs a retry; one that arrived earlier is recorded apart.
+        // Deliveries are numbered in arrival order; everything that arrived before
+        // or while the PUT was in flight counts as "before rotation".
+        const rotatedAtMs = ctx.now();
+        const lastBeforeRotation = receiver.deliveries.length;
+        receipt.rotation.rotated_at = iso(rotatedAtMs);
+        const sameBodyRetry = (delivery) => delivery.uid === rotationUid && delivery.n > first.n && delivery.body_sha256 === first.body_sha256;
+        receipt.rotation.retry_before_rotation = receiver.deliveries
+            .filter((delivery) => sameBodyRetry(delivery) && delivery.n <= lastBeforeRotation)
+            .map(deliveryEvidence);
         receipt.rotation.get_after_rotate = await readBackSecret(ctx, receiver, known, 'GET2');
         // A retry resends the same body; a later distinct event (e.g. error after
         // inprogress) is not a retry and stays only in `deliveries`.
         const retry = await receiver.waitFor(
-            (delivery) => delivery.uid === rotationUid && delivery.n > first.n && delivery.body_sha256 === first.body_sha256,
+            (delivery) => sameBodyRetry(delivery) && delivery.n > lastBeforeRotation,
             { timeoutMs: windowMs, label: 'rotation_retry' },
         );
         receipt.rotation.retry_delivery = deliveryEvidence(retry);
@@ -1847,10 +1923,13 @@ button { font-size: 14px; margin: 0 8px 8px 0; }
   function send(type, data) {
     const entry = Object.assign({ type, mode, t_ms: Math.round(performance.now() - started0), position: Number(video.currentTime.toFixed(3)), user_agent: navigator.userAgent }, data || {});
     logElement.textContent = JSON.stringify(entry) + '\\n' + logElement.textContent;
-    fetch('/log', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(entry) }).catch(() => {});
+    fetch('/log', { method: 'POST', headers: { 'content-type': 'application/json', 'x-probe-key': pageKey }, body: JSON.stringify(entry) }).catch(() => {});
   }
+  // The per-run page key arrives in the URL hash (never sent to a server by
+  // the browser) and goes to /token in a header.
+  const pageKey = new URLSearchParams(location.hash.slice(1)).get('k') || '';
   async function token() {
-    const response = await fetch('/token', { cache: 'no-store' });
+    const response = await fetch('/token', { cache: 'no-store', headers: { 'x-probe-key': pageKey } });
     if (!response.ok) throw new Error('token ' + response.status);
     return response.json();
   }
@@ -1876,7 +1955,7 @@ button { font-size: 14px; margin: 0 8px 8px 0; }
   ['waiting', 'stalled', 'playing', 'seeking', 'seeked', 'ended', 'pause', 'loadedmetadata'].forEach((name) => video.addEventListener(name, () => {
     if (name === 'waiting') waitingAt = performance.now();
     if (name === 'playing' && waitingAt !== null) {
-      send('stall_end', { stall_ms: Math.round(performance.now() - waitingAt) });
+      send('stall_end', { stall_ms: Math.round(performance.now() - waitingAt), renewal: renewals });
       waitingAt = null;
     }
     if (name === 'playing' && pendingRenewal) {
@@ -1955,9 +2034,16 @@ export function summarizeBrowserLog(entries) {
             position_before: start.position_before ?? null,
             manifest_or_metadata_ms: (match('renewal_manifest_parsed') ?? match('renewal_loadedmetadata'))?.since_renewal_ms ?? null,
             playing_after_ms: match('renewal_playing')?.since_renewal_ms ?? null,
+            // stall_end carries the index of the renewal in effect when it ended.
+            stall_ms: entries
+                .filter((entry) => entry.type === 'stall_end' && entry.renewal === start.renewal && Number.isFinite(entry.stall_ms))
+                .map((entry) => entry.stall_ms),
         };
     });
     const stalls = byType('stall_end').map((entry) => entry.stall_ms).filter((value) => Number.isFinite(value));
+    const beforeFirstRenewal = byType('stall_end')
+        .filter((entry) => (entry.renewal ?? 0) === 0 && Number.isFinite(entry.stall_ms))
+        .map((entry) => entry.stall_ms);
     const hlsErrors = {};
     for (const entry of byType('hls_error')) {
         const key = `${entry.error_type}/${entry.details}/fatal=${entry.fatal}/http=${entry.response_code}`;
@@ -1968,7 +2054,7 @@ export function summarizeBrowserLog(entries) {
         modes: [...new Set(entries.map((entry) => entry.mode).filter(Boolean))],
         user_agents: [...new Set(entries.map((entry) => entry.user_agent).filter(Boolean))],
         renewals,
-        stall_ms: { count: stalls.length, max: stalls.length ? Math.max(...stalls) : null, values: stalls },
+        stall_ms: { count: stalls.length, max: stalls.length ? Math.max(...stalls) : null, values: stalls, before_first_renewal: beforeFirstRenewal },
         hls_errors: hlsErrors,
         media_errors: byType('media_error').map((entry) => entry.code),
         play_rejected: byType('play_rejected').length,
@@ -1989,6 +2075,15 @@ async function cmdRenewalPage(ctx) {
     // The listener binds 127.0.0.1; the Host check also refuses DNS-rebinding
     // style requests. A tunnel host must be named with --allow-host.
     const allowedHosts = new Set(['localhost', '127.0.0.1', ...(ctx.opts['allow-host'] ? [ctx.opts['allow-host'].toLowerCase()] : [])]);
+    // Per-run page key: printed once to the owner's terminal, carried by the page
+    // in its URL hash, required by /token and /log, never written to $OUT.
+    const pageKey = randomBytes(16).toString('hex');
+    ctx.scrubber.register(pageKey, '<PAGE_KEY>');
+    const keyMatches = (value) => {
+        const given = Buffer.from(String(value ?? ''));
+        const expected = Buffer.from(pageKey);
+        return given.length === expected.length && timingSafeEqual(given, expected);
+    };
     const entries = [];
     let minted = 0;
     let refused = 0;
@@ -2001,6 +2096,10 @@ async function cmdRenewalPage(ctx) {
         const pathname = new URL(path, 'http://127.0.0.1').pathname;
         if (method === 'GET' && (pathname === '/' || pathname === '/renewal.html')) {
             return { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }, body: html };
+        }
+        if ((pathname === '/token' || pathname === '/log') && !keyMatches(headers['x-probe-key'])) {
+            refused += 1;
+            return { status: 403 };
         }
         if (method === 'GET' && pathname === '/token') {
             const { token, exp } = mintToken(key, { uid, ttlSeconds: ctx.tokenTtl, nowMs: ctx.now() });
@@ -2027,8 +2126,10 @@ async function cmdRenewalPage(ctx) {
     };
     const server = await ctx.listen(intOption(ctx.opts.port, 8790, 'port'), handler);
     ctx.servers.push(server);
-    ctx.log(`P5 page: http://127.0.0.1:${server.port}/ (hls.js) and http://127.0.0.1:${server.port}/?mode=native (iOS Safari native)`);
-    ctx.log(`iPhone: cloudflared tunnel --url http://127.0.0.1:${server.port} and re-run with --allow-host <tunnel host>; stop the tunnel when done (it mints tokens for this test video)`);
+    // The only unscrubbed line this probe prints: the page URLs with the key.
+    ctx.printUnscrubbed(`P5 page (hls.js): http://127.0.0.1:${server.port}/#k=${pageKey}`);
+    ctx.printUnscrubbed(`P5 page (iOS Safari native): <tunnel URL>/?mode=native#k=${pageKey}`);
+    ctx.log(`iPhone: cloudflared tunnel --url http://127.0.0.1:${server.port} and re-run with --allow-host <tunnel host>; stop the tunnel when done. /token needs the page key above.`);
     try {
         await ctx.sleep(minutesOption(ctx, 'duration-minutes', 30));
     } catch (error) {
@@ -2096,6 +2197,7 @@ async function cmdContainers(ctx) {
             entry.elapsed_after_upload_ms = done.at_ms - upload.last_patch_ms;
             entry.video = summarizeVideo(done.video);
         } catch (error) {
+            if (ctx.signal.aborted) throw error; // Ctrl-C ends the run as aborted
             entry.outcome = 'upload_failed';
             entry.error = error?.message ?? String(error);
             uid = uid ?? [...ctx.created.videos].at(-1) ?? null;
@@ -2289,15 +2391,19 @@ async function cmdSigningKey(ctx) {
     if (isInside(realTarget, realpathExisting(REPO_ROOT)) || isInside(realTarget, realpathExisting(ctx.out.dir))) {
         throw new Error('signing_key_file_must_be_outside_the_repository_and_the_out_dir');
     }
+    const receipt = startReceipt(ctx, 'M0-P5-key', ['M3-G2']);
+    receipt.action = ctx.opts.delete ? 'delete' : 'create';
     if (ctx.opts.delete) {
         const raw = JSON.parse(await readFile(target, 'utf8'));
+        receipt.key_id = raw.id;
         const response = await ctx.api.deleteKey(raw.id);
+        receipt.delete_status = response.status;
         if ([200, 204, 404].includes(response.status)) {
             ctx.ledger.ownerKeys.delete(raw.id);
             await saveLedger(ctx);
         }
         ctx.log(`deleted key ${raw.id}: ${response.status}; remove the file yourself: rm ${target}`);
-        return;
+        return finish(ctx, receipt);
     }
     // Refuse before creating anything on the provider.
     const exists = await stat(target).then(() => true, (error) => {
@@ -2311,17 +2417,41 @@ async function cmdSigningKey(ctx) {
     if (typeof result?.pem === 'string') ctx.scrubber.register(result.pem, '<PRIVATE_KEY>');
     if (typeof result?.jwk === 'string') ctx.scrubber.register(result.jwk, '<JWK>');
     // An owner key is recorded apart from probe keys: `cleanup` never deletes it.
-    if (response.status >= 200 && response.status <= 299 && typeof result?.id === 'string') {
+    const created = response.status >= 200 && response.status <= 299 && typeof result?.id === 'string';
+    if (created) {
+        receipt.key_id = result.id;
         ctx.ledger.ownerKeys.add(result.id);
         await saveLedger(ctx);
     }
-    if (response.status !== 200 || typeof result?.id !== 'string' || typeof result?.pem !== 'string') {
-        throw new Error(`stream_key_create_failed_${response.status}`);
+    let key;
+    try {
+        if (response.status !== 200 || typeof result?.id !== 'string' || typeof result?.pem !== 'string') {
+            throw new Error(`stream_key_create_failed_${response.status}`);
+        }
+        key = loadSigningKey(result, ctx.scrubber);
+        await writeFile(target, `${JSON.stringify({ id: result.id, pem: result.pem })}\n`, { mode: 0o600, flag: 'wx' });
+    } catch (error) {
+        // Nobody holds the private half now: the key is ours and unusable, delete it.
+        if (created) {
+            let status = null;
+            try {
+                status = (await ctx.api.deleteKey(result.id)).status;
+            } catch {
+                status = null;
+            }
+            receipt.rollback_delete_status = status;
+            if ([200, 204, 404].includes(status)) {
+                ctx.ledger.ownerKeys.delete(result.id);
+                await saveLedger(ctx);
+            } else {
+                ctx.log(`signing key ${result.id} could not be deleted (${status ?? 'network error'}); remove it by hand in the dashboard (Stream → Signing keys) or with DELETE /stream/keys/${result.id}`);
+            }
+        }
+        throw error;
     }
-    const key = loadSigningKey(result, ctx.scrubber);
-    await writeFile(target, `${JSON.stringify({ id: result.id, pem: result.pem })}\n`, { mode: 0o600, flag: 'wx' });
-    await ctx.out.json('keys-file/receipt.json', { ...baseReceipt(ctx, 'M0-P5-key', ['M3-G2']), key_id: result.id, shape: keyShape(response, key) });
+    receipt.shape = keyShape(response, key);
     ctx.log(`signing key ${result.id} written to ${target} (0600). Delete later with: npm run probe:stream -- signing-key --out ${ctx.out.dir} --signing-key-file ${target} --delete`);
+    return finish(ctx, receipt);
 }
 
 async function cmdCleanup(ctx) {
@@ -2480,8 +2610,8 @@ export function planFor(sub, opts) {
     const api = '/client/v4/accounts/<ACCOUNT_ID>/stream';
     const cap = opts['max-duration'] ?? DEFAULT_MAX_DURATION_SECONDS;
     const playback = 'customer-<CUSTOMER_CODE>.cloudflarestream.com/<JWT>';
-    const upload = (name, extra = '') => [
-        ['POST', `${api}?direct_user=true`, `tus create "${name}" maxDurationSeconds=${cap} requiresignedurls${extra}`, W],
+    const upload = (name, extra = '', maxDuration = cap) => [
+        ['POST', `${api}?direct_user=true`, `tus create "${name}" maxDurationSeconds=${maxDuration} requiresignedurls${extra}`, W],
         ['PATCH', 'upload.cloudflarestream.com/<TUS_URL>', '32 MiB chunks until Upload-Length', W],
     ];
     const deleteVideoStep = ['DELETE', `${api}/<UID>`, 'delete the video', W];
@@ -2535,7 +2665,7 @@ export function planFor(sub, opts) {
         return [
             ...webhook,
             ['GET', `${api}/webhook`, 'does it return the secret?'],
-            ...upload('youtick-m0-p4-rotation', ' (64 KiB non-video, maxDurationSeconds=60)'),
+            ...upload('youtick-m0-p4-rotation', ' (64 KiB non-video)', 60),
             ['WAIT', 'first delivery for it', 'answered 503 so a retry is pending'],
             ['PUT', `${api}/webhook`, 'same URL again while the retry is pending: does the secret rotate?', W],
             ['GET', `${api}/webhook`, 'read back after rotation'],
@@ -2692,6 +2822,8 @@ export async function runCli(argv, deps = {}) {
             maxDuration: intOption(opts['max-duration'], DEFAULT_MAX_DURATION_SECONDS, 'max-duration'),
             tokenTtl: intOption(opts['token-ttl'], DEFAULT_TOKEN_TTL_SECONDS, 'token-ttl'),
             log: (line) => stdout.write(`${scrubber.scrubString(line)}\n`),
+            // Terminal only, never a file: used once for the P5 page key.
+            printUnscrubbed: (line) => stdout.write(`${line}\n`),
             ledger: await loadLedger(out),
         };
     } catch (error) {
@@ -2726,6 +2858,13 @@ export async function runCli(argv, deps = {}) {
                 const report = await cleanupCreated(ctx);
                 await out.json(`${ctx.proofDir}/cleanup.json`, report);
                 ctx.log(`cleanup: left on provider ${JSON.stringify(report.left_on_provider)}`);
+                if (report.failures.length > 0) {
+                    code = 1;
+                    for (const failure of report.failures) {
+                        stderr.write(`stream-probe: cleanup_failed ${failure.kind} ${failure.id}: ${scrubber.scrubString(failure.error)}\n`);
+                    }
+                    stderr.write(`stream-probe: cleanup_failed; re-run: npm run probe:stream -- cleanup --out ${outDir}\n`);
+                }
             } catch (error) {
                 code = 1;
                 stderr.write(`stream-probe: cleanup_failed ${scrubber.scrubString(error?.message ?? String(error))}; run: npm run probe:stream -- cleanup --out ${outDir}\n`);

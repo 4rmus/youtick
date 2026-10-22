@@ -189,20 +189,29 @@ function createFakeStream({ clock, deliver, behaviour = {} }) {
         pending.push({ at: clock.t + 2000, uid: video.uid, attempt: 0, body: null });
     }
 
-    // Retries resend the same body, signed with whatever secret is current.
+    // Retries resend the same body. They are signed with the secret current at
+    // send time, or with the first attempt's secret when `retryWithOld` is set;
+    // `getSecret` makes the provider sign with the GET-returned secret instead.
     async function tick() {
-        const due = pending.filter((event) => event.at <= clock.t);
-        pending = pending.filter((event) => event.at > clock.t);
-        for (const event of due) {
-            const video = videos.get(event.uid);
-            if (!video || !webhook) continue;
-            const body = event.body ?? JSON.stringify(videoObject(video));
-            const headers = {
-                'webhook-signature': signWebhook(body, webhook.secret, Math.floor(clock.t / 1000)),
-                'user-agent': 'Cloudflare Stream Webhook',
-            };
-            const status = await deliver(body, headers);
-            if (status !== 200 && event.attempt < 4) pending.push({ ...event, body, at: clock.t + 60_000, attempt: event.attempt + 1 });
+        for (;;) {
+            const due = pending.filter((event) => event.at <= clock.t);
+            if (due.length === 0) return;
+            pending = pending.filter((event) => event.at > clock.t);
+            for (const event of due) {
+                const video = videos.get(event.uid);
+                if (!video || !webhook) continue;
+                const body = event.body ?? JSON.stringify(videoObject(video));
+                const current = behaviour.getSecret ?? webhook.secret;
+                const secret = behaviour.retryWithOld && event.secret ? event.secret : current;
+                const headers = {
+                    'webhook-signature': signWebhook(body, secret, Math.floor(clock.t / 1000)),
+                    'user-agent': 'Cloudflare Stream Webhook',
+                };
+                const status = await deliver(body, headers);
+                if (status !== 200 && event.attempt < 4) {
+                    pending.push({ ...event, body, secret: event.secret ?? secret, at: clock.t + (behaviour.retryDelayMs ?? 60_000), attempt: event.attempt + 1 });
+                }
+            }
         }
     }
 
@@ -304,7 +313,12 @@ function createFakeStream({ clock, deliver, behaviour = {} }) {
                 webhook = null;
                 return json(200, null);
             }
-            return webhook ? json(200, { notificationUrl: webhook.notificationUrl }) : json(404, null);
+            if (!webhook) return json(404, null);
+            if (behaviour.getSecret) {
+                secretsSeen.push(behaviour.getSecret);
+                return json(200, { notificationUrl: webhook.notificationUrl, secret: behaviour.getSecret });
+            }
+            return json(200, { notificationUrl: webhook.notificationUrl });
         }
         if (path === '/keys' && method === 'POST') {
             const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -481,17 +495,18 @@ test('playlist, DASH, segment URI and JPEG parsers record the shape', () => {
 
 test('browser log summary reports stall ms per renewal and hls.js error codes', () => {
     const summary = summarizeBrowserLog([
+        { type: 'stall_end', stall_ms: 90, renewal: 0 },
         { type: 'renewal_start', renewal: 1, mode: 'hlsjs', reason: 'scheduled', position_before: 150 },
         { type: 'renewal_manifest_parsed', renewal: 1, since_renewal_ms: 120 },
         { type: 'renewal_playing', renewal: 1, since_renewal_ms: 480 },
-        { type: 'stall_end', stall_ms: 360 },
+        { type: 'stall_end', stall_ms: 360, renewal: 1 },
         { type: 'hls_error', error_type: 'networkError', details: 'fragLoadError', fatal: false, response_code: 401 },
         { type: 'hls_error', error_type: 'networkError', details: 'fragLoadError', fatal: false, response_code: 401 },
         { type: 'old_segment_after_old_exp', status: 401 },
         { type: 'segment_query_stripped', status: 404 },
     ]);
-    assert.deepEqual(summary.renewals, [{ renewal: 1, mode: 'hlsjs', reason: 'scheduled', position_before: 150, manifest_or_metadata_ms: 120, playing_after_ms: 480 }]);
-    assert.deepEqual(summary.stall_ms, { count: 1, max: 360, values: [360] });
+    assert.deepEqual(summary.renewals, [{ renewal: 1, mode: 'hlsjs', reason: 'scheduled', position_before: 150, manifest_or_metadata_ms: 120, playing_after_ms: 480, stall_ms: [360] }]);
+    assert.deepEqual(summary.stall_ms, { count: 2, max: 360, values: [90, 360], before_first_renewal: [90] });
     assert.deepEqual(summary.hls_errors, { 'networkError/fragLoadError/fatal=false/http=401': 2 });
     assert.deepEqual([summary.old_segment_after_old_exp, summary.segment_query_stripped], [[401], [404]]);
 });
@@ -881,17 +896,21 @@ test('a live video in the ledger blocks a second upload (one video at a time)', 
     assert.match(output().stderr, /ledger_has_live_video/);
 });
 
-test('renewal page (P5) checks Host, mints path tokens with nbf, and writes a renewal summary', async () => {
+test('renewal page (P5) checks Host and the page key, mints path tokens with nbf, and writes a renewal summary', async () => {
     const { dir, files } = await setup(['clip.mp4']);
     let page = null;
+    let pageKey = null;
     const local = { host: '127.0.0.1:8790' };
     const bound = harness({}, {
         onSleep: async (milliseconds) => {
             if (milliseconds !== 60_000 || !page) return;
-            const post = (entry) => page({ method: 'POST', path: '/log', headers: local, body: JSON.stringify(entry) });
+            pageKey = bound.output().stdout.match(/#k=([0-9a-f]{32})/)[1];
+            const withKey = { ...local, 'x-probe-key': pageKey };
+            assert.equal((await page({ method: 'POST', path: '/log', headers: local, body: '{}' })).status, 403);
+            const post = (entry) => page({ method: 'POST', path: '/log', headers: withKey, body: JSON.stringify(entry) });
             await post({ type: 'renewal_start', renewal: 1, mode: 'hlsjs', reason: 'scheduled', position_before: 12 });
             await post({ type: 'renewal_playing', renewal: 1, since_renewal_ms: 300 });
-            await post({ type: 'stall_end', stall_ms: 250 });
+            await post({ type: 'stall_end', stall_ms: 250, renewal: 1 });
             await post({ type: 'hls_error', error_type: 'networkError', details: 'fragLoadError', fatal: false, response_code: 401 });
         },
     });
@@ -903,10 +922,14 @@ test('renewal page (P5) checks Host, mints path tokens with nbf, and writes a re
     };
     assert.equal(await runCli(['renewal-page', '--out', dir, '--sample', files['clip.mp4'], '--duration-minutes', '1', '--token-ttl', '20', '--renew-before', '5'], deps), 0, output().stderr);
     const handler = servers[8790];
-    assert.equal((await handler({ method: 'GET', path: '/token', headers: { host: 'evil.example' }, body: '' })).status, 403);
+    assert.ok(pageKey, 'the page key is printed to the terminal');
+    assert.equal((await handler({ method: 'GET', path: '/token', headers: { host: 'evil.example', 'x-probe-key': pageKey }, body: '' })).status, 403);
+    assert.equal((await handler({ method: 'GET', path: '/token', headers: local, body: '' })).status, 403);
+    assert.equal((await handler({ method: 'GET', path: '/token', headers: { ...local, 'x-probe-key': 'f'.repeat(32) }, body: '' })).status, 403);
     const served = await handler({ method: 'GET', path: '/', headers: local, body: '' });
     assert.match(served.body, /Stream renewal probe/);
-    const minted = JSON.parse((await handler({ method: 'GET', path: '/token', headers: { host: 'localhost:8790' }, body: '' })).body);
+    assert.ok(!served.body.includes(pageKey));
+    const minted = JSON.parse((await handler({ method: 'GET', path: '/token', headers: { host: 'localhost:8790', 'x-probe-key': pageKey }, body: '' })).body);
     const token = new URL(minted.url).pathname.split('/')[1];
     const [header, payload, signature] = token.split('.');
     const kid = JSON.parse(Buffer.from(header, 'base64url').toString()).kid;
@@ -915,12 +938,12 @@ test('renewal page (P5) checks Host, mints path tokens with nbf, and writes a re
     const nowSeconds = Math.floor(deps.now() / 1000);
     assert.deepEqual([claims.exp - nowSeconds, nowSeconds - claims.nbf], [20, 60]);
     const receipt = await readJson(dir, 'p5/receipt.json');
-    assert.deepEqual(receipt.summary.renewals[0], { renewal: 1, mode: 'hlsjs', reason: 'scheduled', position_before: 12, manifest_or_metadata_ms: null, playing_after_ms: 300 });
-    assert.deepEqual(receipt.summary.stall_ms.values, [250]);
+    assert.deepEqual(receipt.summary.renewals[0], { renewal: 1, mode: 'hlsjs', reason: 'scheduled', position_before: 12, manifest_or_metadata_ms: null, playing_after_ms: 300, stall_ms: [250] });
     assert.deepEqual(receipt.summary.hls_errors, { 'networkError/fragLoadError/fatal=false/http=401': 1 });
     assert.equal(receipt.renew_before_seconds, 5);
     assert.deepEqual([fake.state().videos, fake.state().keys], [0, 0]);
     await assertNoLeaks(dir, fake, { output: output() });
+    for (const { file, text } of await readAll(dir)) assert.ok(!text.includes(pageKey), `${file} holds the page key`);
 
     const tooLate = harness();
     assert.equal(await runCli(['renewal-page', '--out', await tempDir(), '--sample', files['clip.mp4'], '--token-ttl', '20', '--renew-before', '20'], tooLate.deps), 1);
@@ -949,6 +972,120 @@ test('signing-key checks the path first, keeps the owner key out of cleanup, del
     assert.equal(fake.state().keys, 0);
     assert.deepEqual((await readJson(dir, 'ledger.json')).owner_keys, []);
     await assertNoLeaks(dir, fake, { output: output() });
+});
+
+test('cleanup failures are reported on stderr and exit 1', async () => {
+    const { dir, files } = await setup(['clip.mp4']);
+    const { deps, output } = harness();
+    assert.equal(await runCli(['head-lifetime', '--out', dir, '--sample', files['clip.mp4']], deps), 0);
+    const failing = harness();
+    failing.deps.fetchImpl = async () => {
+        throw new Error('network down');
+    };
+    assert.equal(await runCli(['cleanup', '--out', dir], failing.deps), 1);
+    const { stderr } = failing.output();
+    assert.match(stderr, /cleanup_failed video [0-9a-f]{32}: network down/);
+    assert.match(stderr, /re-run: npm run probe:stream -- cleanup/);
+    assert.equal((await readJson(dir, 'cleanup/cleanup.json')).failures.length, 1);
+    assert.equal((await readJson(dir, 'ledger.json')).videos.length, 1, 'the ledger keeps what was not deleted');
+    assert.equal(output().stderr, '');
+});
+
+test('a client aborting mid-body does not take the listener down', async () => {
+    const { connect } = await import('node:net');
+    const receiver = createWebhookReceiver({ now: Date.now, sleep: async () => {} });
+    receiver.addSecret('A', 'listener-secret');
+    const server = await listenHttp(0, receiver.handle);
+    try {
+        await new Promise((resolvePromise, reject) => {
+            const socket = connect(server.port, '127.0.0.1', () => {
+                socket.write('POST /stream-webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 10000\r\n\r\n{"uid":"partial');
+                setTimeout(() => {
+                    socket.destroy();
+                    resolvePromise();
+                }, 50);
+            });
+            socket.on('error', reject);
+        });
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+        const body = JSON.stringify({ uid: 'u', readyToStream: true });
+        const after = await fetch(`http://127.0.0.1:${server.port}/stream-webhook`, {
+            method: 'POST',
+            headers: { 'webhook-signature': signWebhook(body, 'listener-secret', Math.floor(Date.now() / 1000)) },
+            body,
+        });
+        assert.equal(after.status, 200);
+        assert.equal(server.stats.aborted_requests, 1);
+        assert.equal(receiver.deliveries.length, 1);
+    } finally {
+        await server.close();
+    }
+});
+
+test('webhooks (P4): a GET secret different from both PUTs becomes a verifier', async () => {
+    const { dir, files } = await setup(['clip.mp4']);
+    const { deps, fake, output } = harness({ failName: '-rotation', getSecret: 'get-returned-secret-0123456789' });
+    assert.equal(await runCli(['webhooks', '--out', dir, '--sample', files['clip.mp4'], '--webhook-url', WEBHOOK], deps), 0, output().stderr);
+    const receipt = await readJson(dir, 'p4/receipt.json');
+    assert.deepEqual([receipt.get_after_put.secret_present, receipt.get_after_put.equals], [true, 'neither']);
+    assert.deepEqual(receipt.rotation.retry_delivery.verified_with, ['GET1']);
+    assert.deepEqual([receipt.rotation.old_secret_verifies_retry, receipt.rotation.new_secret_verifies_retry], [false, false]);
+    assert.ok(receipt.signature.verified_with.GET1 > 0);
+    await assertNoLeaks(dir, fake, { output: output() });
+});
+
+test('webhooks (P4): a retry signed with the old secret is recorded as old-secret survival', async () => {
+    const { dir, files } = await setup(['clip.mp4']);
+    const { deps, output } = harness({ failName: '-rotation', retryWithOld: true });
+    assert.equal(await runCli(['webhooks', '--out', dir, '--sample', files['clip.mp4'], '--webhook-url', WEBHOOK], deps), 0, output().stderr);
+    const receipt = await readJson(dir, 'p4/receipt.json');
+    assert.equal(receipt.rotation.same_url_put_rotates_secret, true);
+    assert.deepEqual(receipt.rotation.retry_delivery.verified_with, ['A']);
+    assert.deepEqual([receipt.rotation.old_secret_verifies_retry, receipt.rotation.new_secret_verifies_retry], [true, false]);
+    assert.deepEqual(receipt.rotation.retry_before_rotation, []);
+});
+
+test('webhooks (P4): a retry that lands before the rotating PUT is not taken as rotation evidence', async () => {
+    const { dir, files } = await setup(['clip.mp4']);
+    const { deps, output } = harness({ failName: '-rotation', retryDelayMs: 0 });
+    assert.equal(await runCli(['webhooks', '--out', dir, '--sample', files['clip.mp4'], '--webhook-url', WEBHOOK, '--retry-window-minutes', '2'], deps), 0, output().stderr);
+    const receipt = await readJson(dir, 'p4/receipt.json');
+    assert.equal(receipt.rotation.retry_before_rotation.length, 1);
+    assert.equal(receipt.rotation.retry_delivery, undefined);
+    assert.equal(receipt.rotation.old_secret_verifies_retry, undefined);
+    assert.equal(receipt.rotation.wait_result, 'rotation_retry_wait_timeout');
+});
+
+test('containers (P6): Ctrl-C ends the run as aborted instead of recording upload_failed', async () => {
+    const dir = await tempDir();
+    const media = await tempDir();
+    for (const container of CONTAINERS) await sample(media, `container-10s.${container}`);
+    const controller = new AbortController();
+    const { deps, fake, output } = harness({}, {
+        onSleep: async () => {
+            controller.abort(new Error('interrupted'));
+            throw new Error('interrupted');
+        },
+    });
+    deps.signal = controller.signal;
+    assert.equal(await runCli(['containers', '--out', dir, '--samples-dir', media], deps), 1);
+    assert.match(output().stderr, /interrupted/);
+    const receipt = await readJson(dir, 'p6/receipt.json');
+    assert.equal(receipt.status, 'aborted');
+    assert.ok(!receipt.results.some((entry) => entry.outcome === 'upload_failed'));
+    assert.equal(fake.state().videos, 0);
+});
+
+test('signing-key deletes the just-created key when it cannot be stored', async () => {
+    const dir = await tempDir();
+    const { deps, fake, output } = harness({ brokenKey: true });
+    const target = join(await tempDir(), 'key.json');
+    assert.equal(await runCli(['signing-key', '--out', dir, '--signing-key-file', target], deps), 1);
+    assert.match(output().stderr, /stream_key_create_failed_200/);
+    assert.equal(fake.state().keys, 0);
+    const receipt = await readJson(dir, 'keys-file/receipt.json');
+    assert.deepEqual([receipt.status, receipt.rollback_delete_status], ['aborted', 200]);
+    assert.deepEqual((await readJson(dir, 'ledger.json')).owner_keys, []);
 });
 
 test('package.json exposes probe:stream and the provider-canary glob picks up this test', async () => {
