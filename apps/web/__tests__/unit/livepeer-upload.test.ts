@@ -1,5 +1,6 @@
 import profiles from '../../../../protocol/paid-media-livepeer-v1/profiles.json';
 import titleVectors from '../../../../protocol/paid-media-livepeer-v1/upload-title-vectors.json';
+import marketV2Vectors from '../../../../protocol/youtick-market-v2/golden-vectors.json';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const tus = vi.hoisted(() => ({
@@ -101,6 +102,7 @@ import {
     validateLivepeerSourceFile,
     writeLivepeerUploadDraft,
     selectCreatorFeeAsset,
+    storedProfileHash,
     type LivepeerUploadIntent,
 } from '@/lib/livepeer-upload';
 
@@ -793,6 +795,37 @@ describe('Livepeer browser upload', () => {
             sourceType: 'mp4',
         })).resolves.toEqual(INTENT);
         expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('sends the chain job profile id in the intent body: V2 passes paid-media-v1, V1 is unchanged', async () => {
+        const wallet = createWallet();
+        await provisionJobSession(wallet);
+        const fetchMock = vi.fn<(
+            input: RequestInfo | URL,
+            init?: RequestInit,
+        ) => Promise<Response>>().mockImplementation(async () => Response.json(INTENT, { status: 201 }));
+        vi.stubGlobal('fetch', fetchMock);
+        const input = {
+            accountId: 'creator.testnet', jobId: 'job-001', generation: 1,
+            expectedSourceBytes: SOURCE_BYTES, sourceFingerprintSha256: SOURCE_FINGERPRINT, sourceType: 'mp4' as const,
+        };
+        const sentBody = (call: number) => (JSON.parse(String(fetchMock.mock.calls[call][1]?.body)) as {
+            body: Record<string, unknown>;
+        }).body;
+        // A Market V2 job as the contract stores it (protocol/youtick-market-v2 upload vector).
+        const v2ChainJob = { profile_id: marketV2Vectors.upload.msg.profile_id, profile_config_sha256: profiles.legacy.hash };
+        expect(v2ChainJob.profile_id).toBe('paid-media-v1');
+
+        await expect(requestLivepeerUploadIntent({ ...input, profileId: v2ChainJob.profile_id })).resolves.toEqual(INTENT);
+        expect(sentBody(0).profile_id).toBe(v2ChainJob.profile_id);
+        expect(sentBody(0).profile_config_sha256).toBe(v2ChainJob.profile_config_sha256);
+
+        await expect(requestLivepeerUploadIntent(input)).resolves.toEqual(INTENT);
+        expect(sentBody(1).profile_id).toBe('paid-media-livepeer-v1');
+
+        expect(storedProfileHash(v2ChainJob, 'paid-media-v1')).toBe(profiles.legacy.hash);
+        expect(() => storedProfileHash(v2ChainJob)).toThrow('livepeer_paid_job_conflict');
+        expect(storedProfileHash({ ...v2ChainJob, profile_id: 'paid-media-livepeer-v1' })).toBe(profiles.legacy.hash);
     });
 
     it('reads only bounded status for the same signed job without wallet or payment calls', async () => {

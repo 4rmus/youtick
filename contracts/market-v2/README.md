@@ -59,8 +59,10 @@ keeps its names.
 
 - Arguments, return values, events and checks are unchanged. `create_paid_job`, `restart_paid_job`
   and `finalize_publication` accept only `paid-media-v1`. An unpublished job stored under the V1
-  id cannot be finalized as it is; its creator can `restart_paid_job` it under `paid-media-v1`
-  (new generation) like any retry. Published records keep their stored V1 id; nothing re-checks it.
+  id cannot be finalized as it is. The contract lets its creator `restart_paid_job` it under
+  `paid-media-v1` (new generation), but the web and relayer do not implement that call and a NEAR
+  Auth creator has no wallet to sign it, so on testnet such jobs are effectively abandoned.
+  Published records keep their stored V1 id; the contract never re-checks it.
 - The `livepeer-v1:*` storage prefixes, the Borsh layout and `MARKET_STATE_VERSION` (3) are
   unchanged, so a same-layout code upgrade (`migrate`) keeps the existing testnet state.
 - The compact `yt:u1:` wire keeps its three profile hash IDs; it now binds `paid-media-v1` into

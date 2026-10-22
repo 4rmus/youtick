@@ -450,17 +450,43 @@ accepting `paid-media-livepeer-v1` on publications that are already stored, or t
 publications finalized before the cutover stop playing (the contract never rewrites a stored
 `profile_id`).
 
-The bootstrap is single-use and is never re-run. Its policy file now lists the new method names
-as the template for a fresh environment; the 2026-10-08 run used the file as merged in #303
-(`9592674`, sha256 `1607887c0af91217abc09ac8c0aa809d11da4fdca9504ddb6f44537646db4a96`).
+Minimum Bridge lockstep set for M2-G0 (reviewer list, 2026-10-22; line numbers of
+`workers/livepeer-bridge/src/index.ts` at `bf4fb3a`), each switched on `isMarketV2(env)` so V1
+keeps its names:
+- Profile literals: :125, :243, :351, :435, :3978 and :5929 accept only `paid-media-v1` on V2;
+  :6694 (playback of a stored publication) accepts both ids on V2; :7609 (finalize submission)
+  only the new id.
+- Method names: the `OutboxMethod` type (:417), `OUTBOX_METHODS` (:661-664), the suspension
+  record (:3660, :3676), the call sites (:7663, :7683) and `operator-outbox-archive.ts:7`.
+- Sponsored and compact quote hashing (:4686, `unpackCompactUpload`) if V2 still signs quotes:
+  the quote's `request_sha256` now binds `paid-media-v1`, and a JS-generated compact vector with
+  the new id belongs in `protocol/youtick-market-v2`.
+- Durable Object jobs stored under the old id (an `Authorized` job, or an outbox record for
+  `finalize_livepeer_publication` / `suspend_livepeer_sales`) get a terminal state, not a retry
+  loop against a contract that no longer accepts them.
+
+**Do not deploy post-MC `main` to V2 testnet before the cutover.** A *V2 Testnet Workers* run
+would ship a relayer that sends `paid-media-v1` to the old contract (every upload refused and
+refunded), and a *V2 Testnet Bridge* run stops at `operator_key_not_on_chain`. Until the cutover
+a hotfix waits, or is deployed from a pre-MC commit with the fix cherry-picked onto it.
+
+The bootstrap is single-use and is never re-run.
+`workers/livepeer-bridge/scripts/v2-testnet-bootstrap-policy.json` is now a template for a fresh
+environment with the new method names, not the executed policy: the 2026-10-08 run used the file
+as merged in #303 (`9592674`, sha256
+`1607887c0af91217abc09ac8c0aa809d11da4fdca9504ddb6f44537646db4a96`).
+
+Migration `0011` lives in the shared `read-model/d1` directory, so the Preview and V1 read-model
+databases also apply it on their next release. That is harmless: it keeps every row and still
+accepts the V1 method names their Bridges write.
 
 Order, each step with its approval class (project rules: NEAR transactions, deploys and
 live-data writes need the owner):
 
 | # | Step | Approval |
 |---|---|---|
-| 1 | Pick the merged `main` commit that holds MC and M2-G0. From its CI run take the V2 runtime artifact, check `SHA256SUMS` and `gh attestation verify` (`ci.yml@refs/heads/main`), and note the `youtick_market_v2.wasm` sha256 | none (read-only) |
-| 2 | Guardian `freeze_bridge`; check `bridge_frozen: true`. Every Bridge method (`finalize_*`, `suspend_*`, `mark_watched`, `release_expired`) now fails, so no first play settles during the window | NEAR transaction (owner-signed) |
+| 1 | Pick the merged `main` commit that holds MC and M2-G0. From its CI run take the V2 runtime artifact, check `SHA256SUMS` and `gh attestation verify` (`ci.yml@refs/heads/main`), and note the `youtick_market_v2.wasm` sha256. Also confirm that the rollback WASM is still retrievable: the E8.0 artifact of CI run 38746374767 (`647f2bb`), `youtick_market_v2.wasm` sha256 `f64a5d37f86a71c4cab6e6fd394b8127a387c23bddea91c7f185d9d010161c3d`, downloaded and hash-checked. Do not start if it has expired | none (read-only) |
+| 2 | First require an empty operator outbox: `GET https://bridge-v2-testnet.youtick.net/v1/operations/operator-outbox-status` with the Bridge operator bearer token (the `operator-outbox-status.yml` workflow targets Preview only) must show `invalidRecords: 0` and `confirmedRecords` equal to `totalRecords`, so no record is `PENDING`, `RESERVED`, `SIGNED` or `BROADCAST`. An in-flight `finalize_livepeer_publication` would be replayed against a contract that no longer exports it; wait until it confirms. Then guardian `freeze_bridge`; check `bridge_frozen: true`. Every Bridge method (`finalize_*`, `suspend_*`, `mark_watched`, `release_expired`) now fails, so no first play settles during the window | NEAR transaction (owner-signed) |
 | 3 | Admin `propose_code_upgrade { code_sha256 }` with the step 1 hash; testnet timelock 0 | NEAR transaction (owner-signed) |
 | 4 | `execute_code_upgrade` with the raw WASM as input (as in E8.0, signed by `youtick-dev-v3.testnet` if the admin lacks NEAR). Check: code hash equals step 1, `get_pending_code_upgrade` is `null`, `get_governance_state` unchanged apart from the freeze, `get_publications_count` unchanged, `get_publication` of `lp-bcc8f530…` still `ACTIVE` | NEAR transaction (owner-signed) |
 | 5 | On `v2-bridge-261007…`, signed with its management full-access key, one transaction with `DeleteKey ed25519:BDyHUFs1wbkaQJQ2Tq4AcyJWHanaC8j4spLQRwAKiYed` then `AddKey` of the same public key as `FunctionCall` to `v2-market-261007…` with `finalize_publication`, `suspend_sales`, `mark_watched`, `release_expired` and allowance 0.5 NEAR. Re-adding the same public key keeps `V2_BRIDGE_NEAR_OPERATOR_PRIVATE_KEY` unchanged (no secret write); the key's nonce restarts, and the Bridge reads it from chain | NEAR transaction (owner-signed) |
@@ -470,15 +496,21 @@ live-data writes need the owner):
 | 9 | Acceptance: a new upload from the local web at the step 1 commit (job `profile_id` `paid-media-v1`), Bridge `finalize_publication`, purchase, first play (`mark_watched`); and playback of `lp-bcc8f530…` (stored V1 id) | testnet NEAR transactions and Livepeer writes (owner) |
 
 Effects to expect:
-- A job still `Authorized` under `paid-media-livepeer-v1` cannot be finalized. Its creator can
-  `restart_paid_job` it with `paid-media-v1` (new generation), or the job is abandoned (owner
-  accepted for testnet content).
+- A job still `Authorized` under `paid-media-livepeer-v1` cannot be finalized. The contract
+  would let its creator `restart_paid_job` it under `paid-media-v1`, but neither the web nor the
+  relayer implements that call, and a NEAR Auth creator has no wallet to sign it. Such jobs are
+  therefore abandoned (owner accepted for testnet content); their upload fee is not returned.
 - Between steps 4 and 6 the deployed relayer still sends `paid-media-livepeer-v1`; the Market
   rejects it and the USDC transfer is returned. Keep the window short or run step 6 right after
   step 4.
 - Rollback: the same steps 2-4 with the previous WASM (E8.0, sha256 `f64a5d37…1c3d`) and step 5
   with the old method names, then the previous Workers and Bridge commits. `0011` stays; it
   accepts both names.
+- **Rollback is a one-way door after the first `paid-media-v1` finalize.** The rolled-back
+  contract accepts only `paid-media-livepeer-v1`: a `paid-media-v1` job can no longer be
+  finalized or restarted, and the pre-MC Bridge refuses to play publications stored under
+  `paid-media-v1`. Roll back only before step 9's first finalize, or accept that those
+  publications become unplayable.
 
 Evidence today: LOCAL_TEST only (contract unit, integration and sandbox tests; protocol vectors;
 relayer, web, read-model and release-script tests). No step above has run.

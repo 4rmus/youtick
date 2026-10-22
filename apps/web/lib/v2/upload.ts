@@ -350,6 +350,7 @@ export async function prepareV2UploadResume(input: {
         const intent = {
             accountId: session.accountId, jobId: input.jobId, generation: 1, expectedSourceBytes: input.file.size,
             sourceType: source.sourceType, sourceFingerprintSha256: draft.sourceFingerprintSha256, signal: input.signal,
+            profileId: PROFILE_ID,
         };
         const status = await requestLivepeerUploadIntent({ ...intent, recovery: 'reconcile' });
         if (!UPLOADABLE_STATES.includes(status.state)) return status;

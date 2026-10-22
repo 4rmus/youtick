@@ -28,7 +28,7 @@ import {
     type LivepeerUploadIntent,
 } from '@/lib/livepeer-upload';
 import { readAccessKey } from '@/lib/v2/near-reads';
-import { authorizeV2PaidJob, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, TERMINAL_UPLOAD_STATES, UploadError } from '@/lib/v2/upload';
+import { authorizeV2PaidJob, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, PROFILE_ID, TERMINAL_UPLOAD_STATES, UploadError } from '@/lib/v2/upload';
 import { useNearAuthV2 } from './NearAuthV2Provider';
 import { SignInPanel } from './SignInPanel';
 
@@ -172,6 +172,7 @@ export function UploadForm() {
             const intent = await requestLivepeerUploadIntent({
                 accountId, jobId: activeJobId, generation: 1, expectedSourceBytes: file.size,
                 sourceFingerprintSha256: await fingerprintLivepeerSource(file), sourceType: source.sourceType, signal: controller.signal,
+                profileId: PROFILE_ID,
             });
             await transfer(accountId, activeJobId, intent, controller);
         } catch (reason) {

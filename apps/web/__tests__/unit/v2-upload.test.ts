@@ -248,6 +248,8 @@ describe('NEAR Auth upload resume', () => {
         expect(intent.request).toHaveBeenCalledTimes(2);
         expect(intent.request).toHaveBeenNthCalledWith(1, expect.objectContaining({ jobId: JOB, recovery: 'reconcile', expectedSourceBytes: file.size }));
         expect(intent.request).toHaveBeenNthCalledWith(2, expect.not.objectContaining({ recovery: expect.anything() }));
+        // The Bridge compares the intent body's profile_id with the chain job's (paid-media-v1).
+        for (const [call] of intent.request.mock.calls) expect(call).toMatchObject({ profileId: 'paid-media-v1' });
     });
 
     it('needs no approval when this tab still holds the job key', async () => {
