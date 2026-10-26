@@ -231,8 +231,11 @@ export type StreamBackend = {
         createStatus: number;
         createBody?: unknown;
         deleteStatus: number;
-        // Surface path → status served to anonymous/forged/expired credentials (exposure tests).
+        // Surface path → status served to anonymous/forged/expired credentials (exposure tests);
+        // the key `segment` is the status of a query-stripped segment (default 404).
         anonymousOverride: Record<string, number>;
+        // Replaces the signed master playlist body (ladder-shape and budget tests).
+        master?: string;
         thumbnail: Uint8Array;
         rpc?: (body: { method: string; params: Record<string, unknown> }) => Response | Promise<Response> | null;
     };
@@ -320,9 +323,12 @@ async function delivery(keys: StreamKeys, backend: StreamBackend, url: URL, head
     const path = rest.join('/');
     if (path.startsWith('video/')) {
         // Segments carry the signed p/s query, never the JWT; a stripped query is 404.
-        return credential === V.UID && url.searchParams.get('p') === V.P && url.searchParams.get('s') === V.S
-            ? new Response(new Uint8Array([0]), { status: 206 })
-            : new Response(null, { status: 404 });
+        if (credential === V.UID && url.searchParams.get('p') === V.P && url.searchParams.get('s') === V.S) {
+            return new Response(new Uint8Array([0]), { status: 206 });
+        }
+        const forced = backend.state.anonymousOverride.segment;
+        return forced === undefined ? new Response(null, { status: 404 })
+            : new Response(forced < 300 ? new Uint8Array([0]) : null, { status: forced });
     }
     const claims = credential === V.UID ? null : await verifiedClaims(keys, credential);
     if (!claims) {
@@ -335,6 +341,7 @@ async function delivery(keys: StreamKeys, backend: StreamBackend, url: URL, head
         return new Response(null, { status: 404 });
     }
     if (path === 'manifest/video.m3u8') {
+        if (backend.state.master !== undefined) return new Response(backend.state.master);
         const master = { partial: 'master-partial.m3u8', dashboard: 'master-dashboard.m3u8' }[backend.state.ladder as string];
         return new Response(await streamText(master ?? 'master.m3u8'));
     }

@@ -232,7 +232,8 @@ async function readyPending(
 ): Promise<ProviderVerificationResult | null> {
     if (!Number.isFinite(video.pctComplete) || video.pctComplete >= 100) return null;
     if (video.state !== 'ready' || !video.readyToStream) return null;
-    // Pending is only granted to this job's own signed, ready video.
+    // Pending is only granted to this job's own signed, ready video (identityMatches requires
+    // requireSignedURLs === true through the asset policy).
     if (!provider.identityMatches(streamProviderAsset(video, provider.options.accountId!), {
         jobId: input.jobId,
         generation: input.generation,
@@ -243,8 +244,6 @@ async function readyPending(
     })) {
         throw new Error('provider_identity_mismatch');
     }
-    // Never hold a pending checkpoint for a video that is not signed-only.
-    if (!video.requireSignedURLs) throw new Error('provider_state_invalid');
     const complete = await ladderComplete(provider, spec, budget, input, video, token);
     if (complete) return null;
     const bindingSha256 = await provider.options.sha256(`${PENDING_MARKER}\n${input.assetId}\n${input.jobId}\n${input.generation}`);

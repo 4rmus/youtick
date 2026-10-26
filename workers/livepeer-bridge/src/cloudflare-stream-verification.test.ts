@@ -1,9 +1,11 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LivepeerControl, type Env } from './index';
 import { STREAM_PROFILE_HASH } from './media-provider';
-import { STREAM_TEST_VALUES as V } from './stream-test-fixtures';
+import { STREAM_TEST_VALUES as V, streamText } from './stream-test-fixtures';
+import { CloudflareStreamProvider } from './cloudflare-stream-provider';
 import {
     STREAM_DENIAL_SURFACES,
+    STREAM_MAX_VERIFICATION_REQUESTS,
     STREAM_READY_SEGMENT_PROBE,
     STREAM_REQUIRE_END_LIST,
 } from './cloudflare-stream-verification';
@@ -17,6 +19,7 @@ import {
     rpcValue,
     sha256Hex,
     streamBackend,
+    verifiedClaims,
     streamEnv,
     streamJobRecord,
     streamVideo,
@@ -50,6 +53,15 @@ async function runtime(options: {
 
 const isHead = (call: { method: string; url: string }) => call.method === 'HEAD';
 const isDelete = (call: { method: string; url: string }) => call.method === 'DELETE' && call.url === `${API}/${V.UID}`;
+const isVerificationCall = (call: { url: string }) => new URL(call.url).hostname !== 'rpc.testnet.near.org';
+// tus_head, video_read, or <anonymous|signed>:<delivery path>; a signed call carries a JWT credential.
+const requestLabel = (call: { method: string; url: string }) => {
+    const url = new URL(call.url);
+    if (call.method === 'HEAD') return 'tus_head';
+    if (url.hostname === 'api.cloudflare.com') return 'video_read';
+    const [, credential, ...rest] = url.pathname.split('/');
+    return `${credential === V.UID ? 'anonymous' : 'signed'}:${rest.join('/')}`;
+};
 const deliveryPath = (call: { url: string }) => {
     const url = new URL(call.url);
     return url.hostname === DELIVERY_HOST ? url.pathname.split('/').slice(2).join('/') : null;
@@ -263,6 +275,90 @@ describe('Stream readiness (option A)', () => {
     });
 });
 
+describe('Stream readiness: per-asset probes and the run budget', () => {
+    it('verifies a 5-rendition ladder with 12 requests, metadata reads included', async () => {
+        const run = await runtime();
+        expect((await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')))).status).toBe(200);
+        expect(run.job().state).toBe('ONCHAIN_PUBLISHED');
+        const labels = run.calls(isVerificationCall).map(requestLabel);
+        expect([...labels].sort()).toEqual([
+            'anonymous:downloads/default.mp4',
+            'anonymous:manifest/video.m3u8',
+            'anonymous:manifest/video.mpd',
+            'anonymous:video/240/seg_1.mp4',
+            'signed:manifest/stream_t2.m3u8',
+            'signed:manifest/stream_t3.m3u8',
+            'signed:manifest/stream_t4.m3u8',
+            'signed:manifest/stream_t5.m3u8',
+            'signed:manifest/stream_t6.m3u8',
+            'signed:manifest/video.m3u8',
+            'tus_head',
+            'video_read',
+        ]);
+        expect(labels).toHaveLength(12);
+        expect(labels.length).toBeLessThanOrEqual(STREAM_MAX_VERIFICATION_REQUESTS);
+    });
+
+    it('sends no forged, expired or wrong-subject credential and probes no variant playlist anonymously', async () => {
+        const run = await runtime();
+        expect((await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')))).status).toBe(200);
+        for (const call of run.calls((call) => deliveryPath(call) !== null)) {
+            const credential = new URL(call.url).pathname.split('/')[1];
+            if (credential === V.UID) continue;
+            // Every non-anonymous credential is this video's valid viewer token.
+            expect(await verifiedClaims(keys, credential)).toMatchObject({ sub: V.UID });
+        }
+        const anonymous = run.calls((call) => requestLabel(call).startsWith('anonymous:manifest/stream_'));
+        expect(anonymous).toHaveLength(0);
+    });
+
+    it.each([200, 206])('fails closed when a query-stripped segment answers %i', async (status) => {
+        const run = await runtime({ backend: { anonymousOverride: { segment: status } } });
+        const response = await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')));
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: 'provider_playback_exposed' });
+        expect(run.job().state).toBe('UPLOAD_READY');
+        expect(run.finalizeCalls()).toHaveLength(0);
+    });
+
+    it.each([
+        ['a finished ladder', 'video-ready.json'],
+        ['a pending ladder', 'video-ready-33.json'],
+    ])('refuses a video without requireSignedURLs (%s) before any delivery request', async (_case, fixture) => {
+        const run = await runtime({ backend: { video: await streamVideo(fixture, { requireSignedURLs: false }) } });
+        const response = await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')));
+        expect(response.status).toBe(409);
+        // The signed-only policy is part of the asset identity Stream must match.
+        expect(await response.json()).toEqual({ error: 'provider_identity_mismatch' });
+        expect(run.calls((call) => deliveryPath(call) !== null)).toHaveLength(0);
+        expect(run.job()).not.toHaveProperty('providerVerification');
+        expect(run.finalizeCalls()).toHaveLength(0);
+    });
+
+    it('stops at the cap with provider_verification_budget_exceeded, never provider_unavailable', async () => {
+        // A pending ladder whose master lists 25 audio renditions: the ladder reads alone pass the cap.
+        const master = (await streamText('master.m3u8')).replace('#EXT-X-INDEPENDENT-SEGMENTS\n', [
+            '#EXT-X-INDEPENDENT-SEGMENTS',
+            ...Array.from({ length: 25 }, (_, index) => (
+                `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="group_audio",NAME="a${index}",URI="stream_t1_r${index}.m3u8"`
+            )),
+            '',
+        ].join('\n'));
+        const run = await runtime({ backend: { master, video: await streamVideo('video-ready-33.json') } });
+        const response = await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')));
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: 'provider_verification_budget_exceeded' });
+        // The 31st request is never started.
+        expect(run.calls(isVerificationCall)).toHaveLength(STREAM_MAX_VERIFICATION_REQUESTS);
+        expect(run.job().state).toBe('UPLOAD_READY');
+        expect(run.job()).not.toHaveProperty('providerVerification');
+        expect(run.jobState.values.get('reconcile:v1')).toMatchObject({
+            uploadReadFailed: true, uploadErrorCode: 'provider_verification_budget_exceeded',
+        });
+        expect(run.finalizeCalls()).toHaveLength(0);
+    });
+});
+
 async function publishedRuntime(options: { evidence?: boolean; backend?: Partial<StreamBackend['state']> } = {}) {
     const readyAtMs = String(READY_AT_MS);
     const publication = {
@@ -318,6 +414,25 @@ describe('Stream published re-verification', () => {
         ));
         await run.control.alarm();
         expect(run.jobState.values.get('reconcile:v1')).toMatchObject({ status: 'PROVIDER_UNKNOWN' });
+    });
+
+    it('re-verifies with 11 requests: no upload HEAD, the same probes as at readiness', async () => {
+        const run = await publishedRuntime();
+        await run.control.alarm();
+        expect(run.jobState.values.get('reconcile:v1')).toMatchObject({ status: 'HEALTHY' });
+        const labels = run.calls((call) => isVerificationCall(call)).map(requestLabel);
+        expect(labels).not.toContain('tus_head');
+        expect(labels).toHaveLength(11);
+    });
+
+    it('records a run over the cap as drift, not as an unknown provider state', async () => {
+        const run = await publishedRuntime();
+        vi.spyOn(CloudflareStreamProvider.prototype, 'verifyReadyAsset')
+            .mockRejectedValue(new Error('provider_verification_budget_exceeded'));
+        await run.control.alarm();
+        expect(run.jobState.values.get('reconcile:v1')).toMatchObject({
+            status: 'DRIFT_BLOCKED', lastDrift: { code: 'provider_verification_budget_exceeded' },
+        });
     });
 
     it('records drift when the UID is gone', async () => {

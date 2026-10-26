@@ -1,7 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import {
+    newVerificationBudget,
     verifyAdaptiveHlsWith,
     verifyReadyProviderAsset,
+    type HlsContext,
     type ProviderProbeSpec,
     type VerificationAdapter,
 } from './provider-verification';
@@ -199,4 +201,93 @@ it('refuses a path-token adapter whose authorized request also carries a credent
     await expect(verifyReadyProviderAsset(adapter, {
         ...tusInput, mode: 'ready', tusEndpoint: 'https://upload.test/tus/1',
     }, dependencies)).rejects.toThrow('runtime_not_configured');
+});
+
+// Sampled coverage: two video renditions and an audio group, of which the profile requires 720p only.
+const sampledSpec: ProviderProbeSpec = { ...pathTokenSpec, coverage: 'sampled' };
+const ladderMaster = (lowUri = '360.m3u8') => [
+    '#EXTM3U',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="original",URI="audio.m3u8"',
+    '#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,AUDIO="audio"',
+    '720.m3u8',
+    '#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=640x360,AUDIO="audio"',
+    lowUri,
+].join('\n');
+
+function ladderBackend(options: { master?: string; childPlaylist?: string; anonymous?: (url: URL) => Response | null } = {}) {
+    return vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        if (!url.pathname.startsWith(`/${TOKEN}/`)) {
+            const forced = options.anonymous?.(url);
+            if (forced) return forced;
+            return new Response(null, { status: url.pathname.endsWith('.m3u8') ? 401 : 404 });
+        }
+        return new Response(url.pathname.endsWith('/video.m3u8') ? options.master ?? ladderMaster() : options.childPlaylist ?? media());
+    });
+}
+
+const freshContext = (maxRequests?: number): HlsContext => ({
+    manifests: new Map(), mediaReferences: new Set(), budget: newVerificationBudget(maxRequests),
+});
+
+it('sampled coverage denies the master, reads only required renditions and probes one segment', async () => {
+    const fetchMock = ladderBackend();
+    vi.stubGlobal('fetch', fetchMock);
+    const context = freshContext();
+
+    const result = await verifyAdaptiveHlsWith(sampledSpec, MASTER, TOKEN, [{ width: 1280, height: 720 }], undefined, context);
+
+    expect(result.required.map((variant) => variant.height)).toEqual([720]);
+    expect(result.variants.map((variant) => variant.height)).toEqual([720, 360]);
+    const urls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(urls).toEqual([
+        MASTER,
+        `https://${HOST}/forged/manifest/video.m3u8`,
+        `https://${HOST}/${TOKEN}/manifest/video.m3u8`,
+        `https://${HOST}/${TOKEN}/manifest/720.m3u8`,
+        `https://${HOST}/${PLAYBACK}/manifest/seg_0.mp4`,
+    ]);
+    expect(context.budget!.requests).toBe(urls.length);
+});
+
+it.each([
+    ['the master', (url: URL) => url.pathname.endsWith('/video.m3u8')
+        ? new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=1280x720\n720.m3u8\n') : null],
+    ['the sampled segment', (url: URL) => url.pathname.endsWith('/seg_0.mp4') ? new Response('bytes', { status: 206 }) : null],
+])('sampled coverage fails closed when %s is served anonymously', async (_name, anonymous) => {
+    vi.stubGlobal('fetch', ladderBackend({ anonymous }));
+    await expect(verifyAdaptiveHlsWith(sampledSpec, MASTER, TOKEN, [{ width: 1280, height: 720 }], undefined, freshContext()))
+        .rejects.toThrow('provider_playback_exposed');
+});
+
+it.each([
+    ['an unread rendition on a foreign host', { master: ladderMaster('https://evil.test/video/manifest/360.m3u8') }],
+    ['an unprobed segment with an unlisted query key', { childPlaylist: [
+        '#EXTM3U', '#EXT-X-MAP:URI="init.mp4?p=a&s=b"', '#EXTINF:2,', 'seg_0.mp4?p=a&s=b', '#EXTINF:2,', 'seg_1.mp4?p=a&x=b',
+    ].join('\n') }],
+])('sampled coverage still validates %s without requesting it', async (_name, options) => {
+    vi.stubGlobal('fetch', ladderBackend(options));
+    await expect(verifyAdaptiveHlsWith(sampledSpec, MASTER, TOKEN, [{ width: 1280, height: 720 }], undefined, freshContext()))
+        .rejects.toThrow('provider_playback_mismatch');
+});
+
+it('stops at the run cap with provider_verification_budget_exceeded and never starts the next request', async () => {
+    const fetchMock = ladderBackend();
+    vi.stubGlobal('fetch', fetchMock);
+    const context = freshContext(3);
+    await expect(verifyAdaptiveHlsWith(sampledSpec, MASTER, TOKEN, [{ width: 1280, height: 720 }], undefined, context))
+        .rejects.toThrow('provider_verification_budget_exceeded');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(context.budget!.requests).toBe(3);
+});
+
+it('charges an adapter-supplied run budget instead of the two default metadata reads', async () => {
+    const fetchMock = pathTokenBackend();
+    vi.stubGlobal('fetch', fetchMock);
+    const { adapter } = tusOffsetAdapter();
+    const budget = newVerificationBudget(30);
+    await verifyReadyProviderAsset(adapter, {
+        ...tusInput, mode: 'ready', tusEndpoint: 'https://upload.test/tus/1',
+    }, { ...dependencies, budget });
+    expect(budget.requests).toBe(fetchMock.mock.calls.length);
 });
