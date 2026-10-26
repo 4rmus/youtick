@@ -109,7 +109,7 @@ function streamConstants() {
 export function streamWebhookUrl() {
     return `https://${bridgeHost()}/v1/stream-webhooks`;
 }
-// Owner-named wallet creators allowed to upload (2026-10-12); never a wildcard.
+// Owner-named wallet creators (2026-10-12).
 export const WALLET_CREATOR_ALLOWLIST = Object.freeze(['ticks.testnet', 'soteri.testnet', 'utick.testnet']);
 // NEAR Auth creators (E5b.3, decision D11): the implicit account of each invited creator, added here
 // after the invite code is redeemed and checked with the relayer's /internal/invited-accounts/<id>.
@@ -117,6 +117,8 @@ export const WALLET_CREATOR_ALLOWLIST = Object.freeze(['ticks.testnet', 'soteri.
 // 2026-10-12: owner's Google test account; invite paid in 2em5fQA65TnPYSE22mKzsU1hyPZiXYi5ygLJzk1GLyrU.
 export const NEAR_AUTH_CREATOR_ALLOWLIST = Object.freeze(['37729f76f581ce6e2cc9cc08e48b9f098158cf4bd044d62fe2a9f4bfd06c23d9']);
 export const CREATOR_ALLOWLIST = Object.freeze([...WALLET_CREATOR_ALLOWLIST, ...NEAR_AUTH_CREATOR_ALLOWLIST]);
+// The Bridge reads a lone '*' as "any valid account" (creatorAllowlist in workers/livepeer-bridge/src/index.ts).
+export const OPEN_CREATOR_ALLOWLIST = '*';
 // Unused by any other Worker (1001-2002 web, 3001 Bridge, 3101/3201 V2 Workers, 5001-5003 public-testnet).
 export const RATE_LIMIT_NAMESPACE = '6003';
 
@@ -144,7 +146,10 @@ export const FIXED_VARS = Object.freeze({
     // Studio-only values (OD19): empty, so the V2 Bridge sees no Studio adapter configuration.
     LIVEPEER_PROJECT_ID: '',
     LIVEPEER_API_TOKEN_NAME: '',
-    LIVEPEER_CREATOR_ALLOWLIST: CREATOR_ALLOWLIST.join(','),
+    // 2026-10-26 (owner): any creator may upload on the V2 testnet while it is a test network.
+    // Accounts still open only through a relayer invite, and the Bridge's daily and budget limits apply.
+    // The named lists above stay as the record of known test creators.
+    LIVEPEER_CREATOR_ALLOWLIST: OPEN_CREATOR_ALLOWLIST,
     LIVEPEER_OPERATOR_JOB_ID: '',
     LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '20000000',
     LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS: '2000000',
