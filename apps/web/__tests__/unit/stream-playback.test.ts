@@ -63,6 +63,13 @@ describe('Stream delivery URLs', () => {
         expect(xhr.setRequestHeader).not.toHaveBeenCalled();
     });
 
+    it('allows the separate audio rendition path Stream serves (PROVIDER, 2026-10-26)', () => {
+        for (const name of ['init.mp4', 'seg_1.mp4']) {
+            const url = `${HOST}/${UID}/audio/130/${name}?p=a&s=b`;
+            expect(isStreamMediaUrl(url, CODE), url).toBe(true);
+        }
+    });
+
     it.each([
         ['another host', `https://customer-otherotherother1.cloudflarestream.com/${TOKEN}/manifest/video.m3u8`],
         ['a lookalike host', `https://customer-${CODE}.cloudflarestream.com.example.test/${TOKEN}/manifest/video.m3u8`],
@@ -82,6 +89,8 @@ describe('Stream delivery URLs', () => {
         ['a transport-stream segment', `${HOST}/${UID}/video/720/seg_1.ts?p=a&s=b`],
         ['a segment off the UID path', `${HOST}/${TOKEN}/video/720/seg_1.mp4?p=a&s=b`],
         ['a downloads path', `${HOST}/${UID}/downloads/default.mp4?p=a&s=b`],
+        ['an audio segment off the UID path', `${HOST}/${TOKEN}/audio/130/seg_1.mp4?p=a&s=b`],
+        ['another media kind', `${HOST}/${UID}/text/en/seg_1.mp4?p=a&s=b`],
         ['not a URL', 'video.m3u8'],
     ])('refuses %s before the request is sent', (_name, url) => {
         expect(isStreamMediaUrl(url, CODE)).toBe(false);
