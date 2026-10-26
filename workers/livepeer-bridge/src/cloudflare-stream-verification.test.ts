@@ -2,7 +2,11 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LivepeerControl, type Env } from './index';
 import { STREAM_PROFILE_HASH } from './media-provider';
 import { STREAM_TEST_VALUES as V } from './stream-test-fixtures';
-import { STREAM_READY_SEGMENT_PROBE, STREAM_REQUIRE_END_LIST } from './cloudflare-stream-verification';
+import {
+    STREAM_DENIAL_SURFACES,
+    STREAM_READY_SEGMENT_PROBE,
+    STREAM_REQUIRE_END_LIST,
+} from './cloudflare-stream-verification';
 import {
     API,
     DELIVERY_HOST,
@@ -108,10 +112,13 @@ describe('Stream readiness (option A)', () => {
             expect(call.headers.has('Authorization')).toBe(false);
         }
         expect(run.calls(isHead)).toHaveLength(1);
-        // Every denial surface of the matrix was probed.
+        // Every per-asset denial surface was probed; Cloudflare's own shells and stills stay with the canary.
         const paths = new Set(run.calls((call) => deliveryPath(call) !== null).map(deliveryPath));
-        for (const path of ['manifest/video.mpd', 'thumbnails/thumbnail.jpg', 'thumbnails/thumbnail.gif', 'iframe', 'watch', 'downloads/default.mp4']) {
+        for (const path of ['manifest/video.m3u8', ...STREAM_DENIAL_SURFACES]) {
             expect(paths, path).toContain(path);
+        }
+        for (const path of ['thumbnails/thumbnail.jpg', 'thumbnails/thumbnail.gif', 'iframe', 'watch']) {
+            expect(paths, path).not.toContain(path);
         }
     });
 
@@ -213,10 +220,6 @@ describe('Stream readiness (option A)', () => {
     it.each([
         'manifest/video.m3u8',
         'manifest/video.mpd',
-        'thumbnails/thumbnail.jpg',
-        'thumbnails/thumbnail.gif',
-        'iframe',
-        'watch',
         'downloads/default.mp4',
     ])('fails verification when %s answers 200 to an anonymous request', async (path) => {
         const run = await runtime({ backend: { anonymousOverride: { [path]: 200 } } });
@@ -228,10 +231,10 @@ describe('Stream readiness (option A)', () => {
     });
 
     it('accepts 403 as a refusal and fails closed on any other status', async () => {
-        const accepted = await runtime({ backend: { anonymousOverride: { iframe: 403, 'manifest/video.m3u8': 403 } } });
+        const accepted = await runtime({ backend: { anonymousOverride: { 'downloads/default.mp4': 403, 'manifest/video.m3u8': 403 } } });
         expect((await accepted.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')))).status).toBe(200);
         vi.unstubAllGlobals();
-        const run = await runtime({ backend: { anonymousOverride: { iframe: 404 } } });
+        const run = await runtime({ backend: { anonymousOverride: { 'manifest/video.mpd': 404 } } });
         const response = await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')));
         expect(await response.json()).toEqual({ error: 'provider_playback_mismatch' });
     });
