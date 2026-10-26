@@ -21,11 +21,14 @@ export const MAX_PROVIDER_PLAYBACK_OUTPUTS = 16;
 const MAX_THUMBNAIL_PROBES_PER_STEP = 64;
 // ponytail: 1024 references covers the measured 720-cue asset; larger lists require a budget review.
 export const MAX_THUMBNAIL_REFERENCES = 1024;
+// Default per-run request ceiling (Studio, full coverage); a budget may carry a lower adapter cap.
 const MAX_VERIFICATION_REQUESTS = 256;
 const VERIFICATION_STEP_MS = 30_000;
 const VERIFICATION_CYCLE_MS = 10 * 60_000;
-export type VerificationBudget = { requests: number; deadlineAtMs: number };
-const MAX_HLS_MANIFESTS = 16;
+// Reaching a run's request cap is not transient: the same asset needs the same requests next time.
+export const VERIFICATION_BUDGET_EXCEEDED = 'provider_verification_budget_exceeded';
+export type VerificationBudget = { requests: number; deadlineAtMs: number; maxRequests?: number };
+export const MAX_HLS_MANIFESTS = 16;
 const MAX_HLS_MEDIA_REFERENCES = 64;
 export const DIMENSION_TOLERANCE = 2;
 
@@ -69,8 +72,15 @@ export type ProviderProbeSpec = {
     signedPolicy: string;
     canonicalHlsUrl(playbackId: string): string;
     authorizedRequest(url: string, token: string): ProbeRequest;
-    // Anonymous and forged-credential shapes every manifest must refuse, in probe order.
+    // Anonymous and forged-credential shapes every probed manifest must refuse, in probe order.
     manifestDenialRequests(url: string): ProbeRequest[];
+    // 'every-playlist' (default): every playlist gets the denial requests, every variant and
+    // alternate is read, and each playlist's first/last segment and keys/maps are denial-probed.
+    // 'sampled': one per-video signed-URL policy covers every path, so only the master manifests get
+    // the denial requests, only the renditions the profile requires are read, and one segment of
+    // the run is denial-probed. Variant and alternate URLs in the master and every reference in a
+    // playlist that is read are still validated (host, query keys) without a request.
+    coverage?: 'every-playlist' | 'sampled';
 };
 
 export type SurfaceProbeInput = {
@@ -105,7 +115,28 @@ export type VerificationAdapter = {
 export type VerificationDependencies = {
     sha256(value: string): Promise<string>;
     signPlaybackToken?: (playbackId: string) => Promise<string>;
+    // A run budget the adapter already charged for its own reads (byte proof, metadata); without
+    // one the core charges the two metadata reads itself.
+    budget?: VerificationBudget;
 };
+
+export function newVerificationBudget(maxRequests?: number): VerificationBudget {
+    return { requests: 0, deadlineAtMs: Date.now() + VERIFICATION_STEP_MS, ...(maxRequests ? { maxRequests } : {}) };
+}
+
+/** Counts one request against the run; the request that would pass the cap is never started. */
+export function chargeVerificationRequest(budget: VerificationBudget): void {
+    if (budget.requests >= (budget.maxRequests ?? MAX_VERIFICATION_REQUESTS)) {
+        throw new Error(VERIFICATION_BUDGET_EXCEEDED);
+    }
+    budget.requests += 1;
+}
+
+/** A transport failure is transient; an exhausted run budget keeps its own, non-transient code. */
+export function verificationFetchFailure(error: unknown): Error {
+    return error instanceof Error && error.message === VERIFICATION_BUDGET_EXCEEDED
+        ? error : new Error('provider_unavailable');
+}
 
 export async function verifyReadyProviderAsset(
     adapter: VerificationAdapter,
@@ -114,7 +145,7 @@ export async function verifyReadyProviderAsset(
 ): Promise<ProviderVerificationResult> {
     const { spec } = adapter;
     // The two provider metadata reads each retain their existing five-second timeout.
-    const budget = { requests: 2, deadlineAtMs: Date.now() + VERIFICATION_STEP_MS };
+    const budget = dependencies.budget ?? { requests: 2, deadlineAtMs: Date.now() + VERIFICATION_STEP_MS };
     const expectedProfiles = adapter.describeProfile(input.profileConfigSha256).renditions;
     const asset = await adapter.readAsset(input.assetId);
     const playback = await adapter.readPlayback(input.playbackId);
@@ -188,7 +219,8 @@ export async function verifyReadyProviderAsset(
     const end = Math.min(nextThumbnail + MAX_THUMBNAIL_PROBES_PER_STEP, deferred.length);
     while (nextThumbnail < end) {
         // Reserve a complete probe timeout; never start the N+1 or an over-deadline request.
-        if (budget.requests >= MAX_VERIFICATION_REQUESTS || Date.now() + 5_000 > budget.deadlineAtMs) break;
+        if (budget.requests >= (budget.maxRequests ?? MAX_VERIFICATION_REQUESTS)
+            || Date.now() + 5_000 > budget.deadlineAtMs) break;
         await requireAnonymousPlaybackDenied(spec, deferred[nextThumbnail], context.mediaReferences, budget);
         nextThumbnail += 1;
     }
@@ -305,8 +337,8 @@ async function requireHlsPlaybackDenied(spec: ProviderProbeSpec, url: string, bu
                 redirect: 'manual',
                 signal: AbortSignal.timeout(5_000),
             });
-        } catch {
-            throw new Error('provider_unavailable');
+        } catch (error) {
+            throw verificationFetchFailure(error);
         }
         if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
         if (!await hlsPlaybackDenied(response, probe.deniedStatuses ?? spec.policy.deniedStatuses.manifest)) {
@@ -340,8 +372,8 @@ export async function requireAnonymousPlaybackDenied(
             redirect: 'manual',
             signal: AbortSignal.timeout(5_000),
         });
-    } catch {
-        throw new Error('provider_unavailable');
+    } catch (error) {
+        throw verificationFetchFailure(error);
     }
     await response.body?.cancel().catch(() => undefined);
     if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
@@ -423,7 +455,8 @@ export async function verifyAdaptiveHlsWith(
     context: HlsContext = { manifests: new Map(), mediaReferences: new Set() },
 ): Promise<HlsVerification> {
     context.budget ??= { requests: 0, deadlineAtMs: Date.now() + VERIFICATION_STEP_MS };
-    const master = await verifiedHlsManifest(spec, masterUrl, token, context);
+    const sampled = spec.coverage === 'sampled';
+    const master = await verifiedHlsManifest(spec, masterUrl, token, context, true);
     const alternates = master.flatMap((line) => /(?:^|[:,])URI=/.test(line)
         ? [...line.matchAll(/(?:^|[:,])URI="([^"]+)"/g)].map((match) => match[1]) : []);
     // Unverified alternate audio/I-frame playlists stay closed unless the adapter policy verifies them.
@@ -450,17 +483,19 @@ export async function verifyAdaptiveHlsWith(
         || context.reference && !sameAspect(context.reference, reference)) throw new Error('provider_playback_mismatch');
     context.reference ??= reference;
     const required = requiredRenditions(variants, profiles, source);
-    for (const variant of variants) {
+    const alternateUrls = alternates.map((alternate) => hlsReference(spec, masterUrl, alternate));
+    // Sampled coverage reads what the ladder invariants need; other playlists are validated as URLs only.
+    for (const variant of sampled ? required : variants) {
         await verifyMediaPlaylist(spec, variant.url, token, context);
     }
-    for (const alternate of alternates) {
-        await verifyMediaPlaylist(spec, hlsReference(spec, masterUrl, alternate), token, context);
+    for (const alternateUrl of sampled ? [] : alternateUrls) {
+        await verifyMediaPlaylist(spec, alternateUrl, token, context);
     }
     return { variants, required };
 }
 
 async function verifyMediaPlaylist(spec: ProviderProbeSpec, url: string, token: string, context: HlsContext): Promise<void> {
-    const media = await verifiedHlsManifest(spec, url, token, context);
+    const media = await verifiedHlsManifest(spec, url, token, context, spec.coverage !== 'sampled');
     if (media.some((line) => line.startsWith('#EXT-X-STREAM-INF:'))
         || spec.policy.requireEndList && !media.includes('#EXT-X-ENDLIST')
         || spec.policy.initSegment === 'required' && !media.some((line) => line.startsWith('#EXT-X-MAP:'))) {
@@ -476,18 +511,22 @@ async function verifyMediaPlaylist(spec: ProviderProbeSpec, url: string, token: 
     for (const reference of references) {
         const referenceUrl = hlsReference(spec, url, reference);
         if (context.mediaReferences.has(referenceUrl)) continue;
+        // Sampled coverage: the run's first segment stands for every segment of the video.
+        if (spec.coverage === 'sampled' && context.mediaReferences.size > 0) continue;
         if (context.mediaReferences.size >= MAX_HLS_MEDIA_REFERENCES) throw new Error('provider_playback_mismatch');
         await requireAnonymousPlaybackDenied(spec, referenceUrl, undefined, context.budget);
         context.mediaReferences.add(referenceUrl);
     }
 }
 
-async function verifiedHlsManifest(spec: ProviderProbeSpec, url: string, token: string, context: HlsContext): Promise<string[]> {
+async function verifiedHlsManifest(
+    spec: ProviderProbeSpec, url: string, token: string, context: HlsContext, denial: boolean,
+): Promise<string[]> {
     if (!playbackUrlAllowed(url, spec.hosts)) throw new Error('provider_playback_mismatch');
     const previous = context.manifests.get(url);
     if (previous) return previous;
     if (context.manifests.size >= MAX_HLS_MANIFESTS) throw new Error('provider_playback_mismatch');
-    await requireHlsPlaybackDenied(spec, url, context.budget);
+    if (denial) await requireHlsPlaybackDenied(spec, url, context.budget);
     const lines = await authorizedHls(spec, url, token, context);
     context.manifests.set(url, lines);
     return lines;
@@ -516,7 +555,7 @@ async function authorizedHls(spec: ProviderProbeSpec, url: string, token: string
         response = await verificationFetch(spec, context.budget, 'hls_authorized_probe', authorized.url, {
             headers: authorized.headers, redirect: 'manual', signal: AbortSignal.timeout(5_000),
         });
-    } catch { throw new Error('provider_unavailable'); }
+    } catch (error) { throw verificationFetchFailure(error); }
     if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
     if (response.status !== 200 || !response.body) throw new Error('provider_playback_mismatch');
     const body = await readVerificationText(response);
@@ -551,10 +590,8 @@ export function verificationFetch(
     init: RequestInit,
 ): Promise<Response> {
     const remainingMs = budget ? budget.deadlineAtMs - Date.now() : 5_000;
-    if (remainingMs <= 0 || budget && budget.requests >= MAX_VERIFICATION_REQUESTS) {
-        throw new Error('provider_unavailable');
-    }
-    if (budget) budget.requests += 1;
+    if (remainingMs <= 0) throw new Error('provider_unavailable');
+    if (budget) chargeVerificationRequest(budget);
     return dependencyFetch(spec.dependency, operation, url, {
         ...init, signal: AbortSignal.timeout(Math.min(5_000, remainingMs)),
     });

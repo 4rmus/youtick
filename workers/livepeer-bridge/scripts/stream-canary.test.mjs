@@ -98,7 +98,7 @@ function createFakeStream({ clock, owner, behaviour = {} }) {
                 `../../${uid}/video/720/seg_1.mp4?${query}`, ...(behaviour.openVariant ? [] : ['#EXT-X-ENDLIST']), ''].join('\n'));
         }
         if (path === 'downloads/default.mp4') return new Response('forbidden', { status: 403 });
-        if (['manifest/video.mpd', 'thumbnails/thumbnail.jpg', 'watch', 'iframe'].includes(path)) return new Response('ok', { status: 200 });
+        if (['manifest/video.mpd', 'thumbnails/thumbnail.jpg', 'thumbnails/thumbnail.gif', 'watch', 'iframe'].includes(path)) return new Response('ok', { status: 200 });
         return new Response('nf', { status: 404 });
     }
 

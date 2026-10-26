@@ -1,17 +1,23 @@
 // Cloudflare Stream probes on top of the neutral verification core: option A byte proof (tus HEAD
-// at readiness, stored evidence afterwards), the path-token credential, the per-surface denial
-// matrix recorded in the spike (docs report §9.3), and the pending rule for a ready webhook that
-// arrives before the full ladder exists. No authorized segment is fetched in published mode.
+// at readiness, stored evidence afterwards), the path-token credential, sampled anonymous denials
+// of this asset's surfaces, and the pending rule for a ready webhook that arrives before the full
+// ladder exists. No authorized segment is fetched in published mode. One run, metadata reads
+// included, stays at or under STREAM_MAX_VERIFICATION_REQUESTS so a Durable Object alarm fits the
+// Workers Free subrequest limit. Forged, expired and wrong-subject tokens test Cloudflare's JWT
+// check rather than this asset; the playback canary (scripts/stream-canary.mjs) keeps that matrix.
 import type {
     ProviderVerificationCheckpoint,
     ProviderVerificationResult,
     TusState,
     VerifyReadyAssetInput,
 } from './media-provider';
-import { dependencyFetch } from './dependency-fetch';
 import {
+    MAX_HLS_MANIFESTS,
+    chargeVerificationRequest,
+    newVerificationBudget,
     readVerificationText,
     verificationFetch,
+    verificationFetchFailure,
     verifyReadyProviderAsset,
     type ManifestPolicy,
     type ProbeRequest,
@@ -28,10 +34,10 @@ import {
     type StreamVideo,
 } from './cloudflare-stream-provider';
 
-/** none, forged and expired credentials: the spike saw 401 on every surface (§9.3); 403 is a refusal too. */
+/** No credential: the spike saw 401 on every surface (§9.3); 403 is a refusal too. */
 export const STREAM_DENIED_CREDENTIAL_STATUSES: readonly number[] = Object.freeze([401, 403]);
-/** A valid signature for another UID: 404 on manifests, variants, thumbnails and the MP4 download. */
-export const STREAM_WRONG_SUBJECT_STATUSES: readonly number[] = Object.freeze([404]);
+/** Workers Free allows 50 subrequests per invocation; the alarm's own reads and finalize need the rest. */
+export const STREAM_MAX_VERIFICATION_REQUESTS = 30;
 
 /** Every recorded variant playlist carries #EXT-X-ENDLIST (spike and dashboard 2026-10-22). */
 export const STREAM_REQUIRE_END_LIST = true;
@@ -49,29 +55,14 @@ export function streamManifestPolicy(): ManifestPolicy {
     };
 }
 
-type SurfaceRule = {
-    path: string;
-    // Expected status for a valid signature on another UID; absent: not probed (iframe 200 shell, watch 500).
-    wrongSubject?: number;
-    // Expected statuses for this video's valid viewer token (never `downloadable`): the spike saw
-    // 403; a video without a generated MP4 may answer 404 (dashboard 2026-10-22). Both are refusals.
-    valid?: readonly number[];
-};
-
-/** Non-HLS surfaces, verbatim from the spike table. HLS master and variants go through the core. */
-export const STREAM_SURFACE_MATRIX: readonly SurfaceRule[] = Object.freeze([
-    { path: 'manifest/video.mpd', wrongSubject: 404 },
-    { path: 'thumbnails/thumbnail.jpg', wrongSubject: 404 },
-    { path: 'thumbnails/thumbnail.gif', wrongSubject: 404 },
-    { path: 'iframe' },
-    { path: 'watch' },
-    { path: 'downloads/default.mp4', wrongSubject: 404, valid: [403, 404] },
-]);
+/**
+ * Non-HLS surfaces that must refuse an anonymous request: DASH serves the same media as HLS and the
+ * MP4 download would be the whole file. Both answer to the same per-video requireSignedURLs as HLS.
+ */
+export const STREAM_DENIAL_SURFACES: readonly string[] = Object.freeze(['manifest/video.mpd', 'downloads/default.mp4']);
 
 const PENDING_MARKER = 'youtick.stream-ready-pending.v1';
 const PENDING_RETRY_MS = 15_000;
-
-type Credentials = { valid: string; forged: string; expired: string; wrongSubject: string };
 
 export async function verifyStreamReadyAsset(
     provider: CloudflareStreamProvider,
@@ -79,29 +70,35 @@ export async function verifyStreamReadyAsset(
 ): Promise<ProviderVerificationResult> {
     const options = provider.options;
     const nowMs = Date.now();
+    const budget = newVerificationBudget(STREAM_MAX_VERIFICATION_REQUESTS);
     let tus: TusState | undefined;
     if (input.mode === 'ready') {
-        tus = await readyByteProof(provider, input, nowMs);
+        tus = await readyByteProof(provider, input, nowMs, budget);
     } else if (!input.storedEvidence || !input.storedEvidence.readyAtMs) {
         // A missing Bridge-side record is not provider drift: keep the job blocked, never suspend sales.
         throw new Error('verification_evidence_missing');
     }
     let video: StreamVideo | undefined;
     const readVideo = async () => {
-        video ??= await provider.readVideo(input.assetId);
+        if (!video) {
+            chargeVerificationRequest(budget);
+            video = await provider.readVideo(input.assetId);
+        }
         return video;
     };
-    const credentials = await streamCredentials(provider, input.playbackId, nowMs);
+    const { token } = await provider.signPlayback(
+        input.playbackId, options.verificationTokenTtlSeconds, Math.floor(nowMs / 1000),
+    );
+    const spec = streamProbeSpec(provider, input.playbackId);
     if (input.mode === 'ready') {
-        const pending = await readyPending(provider, input, await readVideo(), credentials.valid, nowMs);
+        const pending = await readyPending(provider, spec, budget, input, await readVideo(), token, nowMs);
         if (pending) return pending;
     }
-    const spec = streamProbeSpec(provider, input.playbackId, credentials);
     const { checkpoint: _checkpoint, ...coreInput } = input;
     const verified = await verifyReadyProviderAsset({
         capabilities: STREAM_CAPABILITIES,
         spec,
-        surfaces: streamSurfaces(provider, input, credentials, spec, () => video),
+        surfaces: streamSurfaces(provider, input, spec, () => video),
         readAsset: async () => streamProviderAsset(await readVideo(), options.accountId!),
         readPlayback: async () => streamProviderPlayback(await readVideo()),
         // Ready mode: the HEAD above is the proof; the core never reads the upload a second time.
@@ -113,7 +110,8 @@ export async function verifyStreamReadyAsset(
         describeProfile: (hash) => provider.describeProfile(hash),
     }, coreInput, {
         sha256: options.sha256,
-        signPlaybackToken: async () => credentials.valid,
+        signPlaybackToken: async () => token,
+        budget,
     });
     if ('pending' in verified) return verified;
     if (input.mode === 'published') {
@@ -137,44 +135,19 @@ async function readyByteProof(
     provider: CloudflareStreamProvider,
     input: VerifyReadyAssetInput,
     nowMs: number,
+    budget: VerificationBudget,
 ): Promise<TusState> {
     if (!input.tusEndpoint) throw new Error('provider_state_invalid');
     if (input.uploadCreatedAtMs !== undefined
         && (!Number.isSafeInteger(input.uploadCreatedAtMs) || nowMs >= input.uploadCreatedAtMs + STREAM_TUS_URL_LIFETIME_MS)) {
         throw new Error('provider_tus_url_expired');
     }
+    chargeVerificationRequest(budget);
     const tus = await provider.readTusOffset(input.tusEndpoint);
     if (tus.lengthBytes !== input.expectedSourceBytes || tus.offsetBytes !== tus.lengthBytes) {
         throw new Error('provider_tus_state_invalid');
     }
     return tus;
-}
-
-async function streamCredentials(
-    provider: CloudflareStreamProvider,
-    playbackId: string,
-    nowMs: number,
-): Promise<Credentials> {
-    const nowSeconds = Math.floor(nowMs / 1000);
-    const { token: valid } = await provider.signPlayback(
-        playbackId, provider.options.verificationTokenTtlSeconds, nowSeconds,
-    );
-    const [header, payload] = valid.split('.');
-    const forgedSignature = new Uint8Array(256);
-    crypto.getRandomValues(forgedSignature);
-    const randomUid = new Uint8Array(16);
-    crypto.getRandomValues(randomUid);
-    return {
-        valid,
-        // Right kid and claims, a signature no key of ours produced.
-        forged: `${header}.${payload}.${base64Url(forgedSignature)}`,
-        expired: await provider.signToken(playbackId, nowSeconds - 600, nowSeconds - 1200),
-        wrongSubject: await provider.signToken(
-            Array.from(randomUid, (byte) => byte.toString(16).padStart(2, '0')).join(''),
-            nowSeconds + provider.options.verificationTokenTtlSeconds,
-            nowSeconds - 60,
-        ),
-    };
 }
 
 /** Replaces the credential (first path segment) of a delivery URL. */
@@ -187,11 +160,7 @@ export function withStreamCredential(url: string, credential: string): string {
     return parsed.toString();
 }
 
-function streamProbeSpec(
-    provider: CloudflareStreamProvider,
-    playbackId: string,
-    credentials: Credentials,
-): ProviderProbeSpec {
+function streamProbeSpec(provider: CloudflareStreamProvider, playbackId: string): ProviderProbeSpec {
     return {
         dependency: 'stream_media',
         policy: streamManifestPolicy(),
@@ -199,23 +168,15 @@ function streamProbeSpec(
         signedPolicy: 'jwt',
         canonicalHlsUrl: (uid) => provider.deliveryUrl(uid, 'manifest/video.m3u8'),
         authorizedRequest: (url, token) => ({ url: withStreamCredential(url, token), headers: {} }),
-        manifestDenialRequests: (url): ProbeRequest[] => [
-            { url: withStreamCredential(url, playbackId), headers: {} },
-            { url: withStreamCredential(url, credentials.forged), headers: {} },
-            { url: withStreamCredential(url, credentials.expired), headers: {} },
-            {
-                url: withStreamCredential(url, credentials.wrongSubject),
-                headers: {},
-                deniedStatuses: STREAM_WRONG_SUBJECT_STATUSES,
-            },
-        ],
+        // The unsigned URL form (the UID as credential) is what anyone holding a playback link has.
+        manifestDenialRequests: (url): ProbeRequest[] => [{ url: withStreamCredential(url, playbackId), headers: {} }],
+        coverage: 'sampled',
     };
 }
 
 function streamSurfaces(
     provider: CloudflareStreamProvider,
     input: VerifyReadyAssetInput,
-    credentials: Credentials,
     spec: ProviderProbeSpec,
     currentVideo: () => StreamVideo | undefined,
 ): ProviderSurfaces {
@@ -225,17 +186,8 @@ function streamSurfaces(
             return video ? [video.thumbnailUrl, video.dashUrl].filter(Boolean) : [];
         },
         async probe({ budget }) {
-            for (const rule of STREAM_SURFACE_MATRIX) {
-                const url = (credential: string) => provider.deliveryUrl(credential, rule.path);
-                for (const credential of [input.playbackId, credentials.forged, credentials.expired]) {
-                    await requireSurfaceStatus(spec, budget, url(credential), STREAM_DENIED_CREDENTIAL_STATUSES);
-                }
-                if (rule.wrongSubject !== undefined) {
-                    await requireSurfaceStatus(spec, budget, url(credentials.wrongSubject), [rule.wrongSubject]);
-                }
-                if (rule.valid !== undefined) {
-                    await requireSurfaceStatus(spec, budget, url(credentials.valid), rule.valid);
-                }
+            for (const path of STREAM_DENIAL_SURFACES) {
+                await requireSurfaceStatus(spec, budget, provider.deliveryUrl(input.playbackId, path), STREAM_DENIED_CREDENTIAL_STATUSES);
             }
             return { bindingParts: [], deferredDenials: [] };
         },
@@ -255,8 +207,8 @@ async function requireSurfaceStatus(
             headers: { Range: 'bytes=0-0' },
             redirect: 'manual',
         });
-    } catch {
-        throw new Error('provider_unavailable');
+    } catch (error) {
+        throw verificationFetchFailure(error);
     }
     await response.body?.cancel().catch(() => undefined);
     if (expected.includes(response.status)) return;
@@ -268,9 +220,12 @@ async function requireSurfaceStatus(
 
 // The ready webhook can precede the full ladder (spike: pctComplete 33-64). While pctComplete <
 // 100, a missing rendition, a variant that is not yet served or (with requireEndList) an open
-// variant playlist is "pending", never a drift code. Only authorized reads decide this.
+// variant playlist is "pending", never a drift code. Only authorized reads decide this, and they
+// count against the same run budget as the verification that follows.
 async function readyPending(
     provider: CloudflareStreamProvider,
+    spec: ProviderProbeSpec,
+    budget: VerificationBudget,
     input: VerifyReadyAssetInput,
     video: StreamVideo,
     token: string,
@@ -278,7 +233,8 @@ async function readyPending(
 ): Promise<ProviderVerificationResult | null> {
     if (!Number.isFinite(video.pctComplete) || video.pctComplete >= 100) return null;
     if (video.state !== 'ready' || !video.readyToStream) return null;
-    // Pending is only granted to this job's own signed, ready video.
+    // Pending is only granted to this job's own signed, ready video (identityMatches requires
+    // requireSignedURLs === true through the asset policy).
     if (!provider.identityMatches(streamProviderAsset(video, provider.options.accountId!), {
         jobId: input.jobId,
         generation: input.generation,
@@ -289,7 +245,7 @@ async function readyPending(
     })) {
         throw new Error('provider_identity_mismatch');
     }
-    const complete = await ladderComplete(provider, input, video, token);
+    const complete = await ladderComplete(provider, spec, budget, input, video, token);
     if (complete) return null;
     const bindingSha256 = await provider.options.sha256(`${PENDING_MARKER}\n${input.assetId}\n${input.jobId}\n${input.generation}`);
     const previous = input.checkpoint;
@@ -305,12 +261,14 @@ async function readyPending(
 
 async function ladderComplete(
     provider: CloudflareStreamProvider,
+    spec: ProviderProbeSpec,
+    budget: VerificationBudget,
     input: VerifyReadyAssetInput,
     video: StreamVideo,
     token: string,
 ): Promise<boolean> {
     const masterUrl = provider.deliveryUrl(token, 'manifest/video.m3u8');
-    const master = await authorizedPlaylist(masterUrl);
+    const master = await authorizedPlaylist(spec, budget, masterUrl);
     if (!master) return false;
     const variants: { short: number; uri: string }[] = [];
     const alternates: string[] = [];
@@ -327,6 +285,9 @@ async function ladderComplete(
     const targets = [...new Set(provider.describeProfile(input.profileConfigSha256).renditions
         .map((size) => Math.min(Math.min(size.width, size.height), sourceShort)))];
     if (targets.some((target) => !variants.some((variant) => Math.abs(variant.short - target) <= 2))) return false;
+    // More playlists than the core accepts: let the core decide instead of spending the run budget
+    // (a budget error here would also clear the pending checkpoint and restart its window).
+    if (variants.length + alternates.length > MAX_HLS_MANIFESTS) return true;
     for (const reference of [...variants.map((variant) => variant.uri), ...alternates]) {
         let url: string;
         try {
@@ -335,7 +296,7 @@ async function ladderComplete(
             return true;
         }
         if (!provider.hostAllowlist().exact.includes(new URL(url).hostname)) return true;
-        const playlist = await authorizedPlaylist(url);
+        const playlist = await authorizedPlaylist(spec, budget, url);
         if (!playlist) return false;
         if (STREAM_REQUIRE_END_LIST && !playlist.includes('#EXT-X-ENDLIST')) return false;
     }
@@ -343,15 +304,15 @@ async function ladderComplete(
 }
 
 // The token travels in the URL path; nothing here logs or returns the URL.
-async function authorizedPlaylist(url: string): Promise<string[] | null> {
+async function authorizedPlaylist(spec: ProviderProbeSpec, budget: VerificationBudget, url: string): Promise<string[] | null> {
     let response: Response;
     try {
-        response = await dependencyFetch('stream_media', 'hls_pending_probe', url, {
+        response = await verificationFetch(spec, budget, 'hls_pending_probe', url, {
             redirect: 'manual',
             signal: AbortSignal.timeout(5_000),
         });
-    } catch {
-        throw new Error('provider_unavailable');
+    } catch (error) {
+        throw verificationFetchFailure(error);
     }
     if (response.status === 429 || response.status >= 500) {
         await response.body?.cancel().catch(() => undefined);
@@ -364,10 +325,4 @@ async function authorizedPlaylist(url: string): Promise<string[] | null> {
     const body = await readVerificationText(response);
     const lines = body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return lines[0] === '#EXTM3U' ? lines : null;
-}
-
-function base64Url(bytes: Uint8Array): string {
-    let binary = '';
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
