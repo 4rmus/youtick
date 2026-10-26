@@ -250,15 +250,22 @@ as the Stream configuration is present.
   route; the video must be `ready`, `readyToStream` and `requireSignedURLs`.
   Manifests: alternate media allowed (not required), `p`/`s` query keys,
   `EXT-X-MAP` and `EXT-X-ENDLIST` required (every recorded playlist has both).
-  Expected renditions are the descriptor heights capped by the source. The
-  denial matrix is the spike's (docs report §9.3): anonymous, forged and
-  expired credentials must be refused with 401 (403 also counts) on every
-  surface; a wrong-subject token gets 404
-  on the HLS master and variants, DASH, `thumbnail.jpg`/`.gif` and the MP4
-  download; iframe and watch are probed for 401/403 only; a valid viewer token gets
-  403 (or 404 without a generated MP4) on the download; a query-stripped
-  segment answering 401, 403 or 404 counts as denied. A listed `p`/`s` segment
-  URL is never fetched anonymously and no authorized segment is ever fetched.
+  Expected renditions are the descriptor heights capped by the source. Per
+  asset the Bridge reads the master and each required rendition with the
+  viewer token and sends anonymous requests (the UID as credential) that must
+  be refused with 401 (403 also counts) to the HLS master, DASH and the MP4
+  download; one query-stripped segment answering 401, 403 or 404 counts as
+  denied. Every listed playlist and segment URL is still validated (host,
+  query keys) without a request. A listed `p`/`s` segment URL is never fetched
+  anonymously and no authorized segment is ever fetched. Forged, expired and
+  wrong-subject tokens, thumbnails, watch and iframe test Cloudflare's token
+  check rather than the asset; `canary:stream:playback` keeps that matrix
+  (docs report §9.3). One verification run, metadata reads and pending ladder
+  reads included, makes at most 30 requests (12 for the recorded 5-rendition
+  ladder at readiness, 11 when published) so an alarm fits the Workers Free
+  limit of 50 subrequests; a run that would pass the cap stops with
+  `provider_verification_budget_exceeded`, handled as drift, not as
+  `provider_unavailable`.
   A ready webhook that precedes the full ladder (`pctComplete < 100`) is
   pending (look again after 15 s, bounded by max(`STREAM_STUCK_TIMEOUT_MS`,
   60 minutes)), never a drift code.
