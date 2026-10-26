@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-    BASE_SECRETS, BRIDGE, CREATOR_ALLOWLIST, DEFAULT_OPERATOR_KEY_SET, FIXED_VARS, FLAGS, NEAR_AUTH_CREATOR_ALLOWLIST, OPERATOR_KEY_METHOD_SETS,
+    BASE_SECRETS, BRIDGE, CREATOR_ALLOWLIST, DEFAULT_OPERATOR_KEY_SET, FIXED_VARS, FLAGS, NEAR_AUTH_CREATOR_ALLOWLIST, OPEN_CREATOR_ALLOWLIST, OPERATOR_KEY_METHOD_SETS,
     OPERATOR_METHODS, OPTIONAL_STREAM_SECRETS, RATE_LIMIT_NAMESPACE, READ_MODEL_D1_NAME, RELEASE_CRON, RETIRED_SECRETS, SECRETS, STREAM,
     STREAM_SECRETS, STREAM_SENTINELS, WALLET_CREATOR_ALLOWLIST,
     bridgeHost, bridgeVars, deployRelease, preflightStreamWebhook, webhookSecretPreflight, quotePublicKey, releaseSecrets, releaseStream, releaseVars, rsaKeyMatches,
@@ -172,8 +172,8 @@ test('the repository Bridge config sanitizes to Market V2 vars with no Queue, D1
     assert.doesNotMatch(config, /^MARKET_V2_RELEASE_ENABLED\s*=/m);
     assert.match(config, /^LIVEPEER_WEBHOOK_QUEUE_ENABLED = "false"$/m);
     assert.match(config, /^MULTI_ASSET_PAYMENTS_MODE = "off"$/m);
-    assert.ok(config.includes(`LIVEPEER_CREATOR_ALLOWLIST = ${JSON.stringify(CREATOR_ALLOWLIST.join(','))}\n`));
-    assert.match(config, /^LIVEPEER_CREATOR_ALLOWLIST = "ticks\.testnet,soteri\.testnet,utick\.testnet[^"]*"$/m);
+    // 2026-10-26: uploads are open to any account on the V2 testnet.
+    assert.match(config, /^LIVEPEER_CREATOR_ALLOWLIST = "\*"$/m);
     assert.match(config, /\[\[durable_objects\.bindings\]\]\nname = "LIVEPEER_CONTROL"/);
     // OD19: no Studio adapter configuration on the V2 Bridge; the Stream flag is off unless the release says so.
     for (const key of ['LIVEPEER_PROJECT_ID', 'LIVEPEER_API_TOKEN_NAME', 'LIVEPEER_JWT_PUBLIC_KEY', 'LIVEPEER_JWT_ISSUER']) {
@@ -297,7 +297,8 @@ test('the Stream cap equals the descriptor cap once protocol/paid-media-v1 lands
     assert.equal(String(descriptor.stream.maxDurationSecondsCap), STREAM.maxDurationSeconds);
 });
 
-test('the allowlist names accounts only and never a wildcard', () => {
+test('the named creator lists hold accounts only; the deployed allowlist is the lone wildcard', () => {
+    assert.equal(OPEN_CREATOR_ALLOWLIST, '*');
     assert.ok(CREATOR_ALLOWLIST.length > 0);
     for (const account of CREATOR_ALLOWLIST) assert.match(account, /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/);
 });
