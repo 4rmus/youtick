@@ -28,7 +28,7 @@ const VERIFICATION_CYCLE_MS = 10 * 60_000;
 // Reaching a run's request cap is not transient: the same asset needs the same requests next time.
 export const VERIFICATION_BUDGET_EXCEEDED = 'provider_verification_budget_exceeded';
 export type VerificationBudget = { requests: number; deadlineAtMs: number; maxRequests?: number };
-const MAX_HLS_MANIFESTS = 16;
+export const MAX_HLS_MANIFESTS = 16;
 const MAX_HLS_MEDIA_REFERENCES = 64;
 export const DIMENSION_TOLERANCE = 2;
 
@@ -78,7 +78,8 @@ export type ProviderProbeSpec = {
     // alternate is read, and each playlist's first/last segment and keys/maps are denial-probed.
     // 'sampled': one per-video signed-URL policy covers every path, so only the master manifests get
     // the denial requests, only the renditions the profile requires are read, and one segment of
-    // the run is denial-probed. Every listed reference is still validated without a request.
+    // the run is denial-probed. Variant and alternate URLs in the master and every reference in a
+    // playlist that is read are still validated (host, query keys) without a request.
     coverage?: 'every-playlist' | 'sampled';
 };
 

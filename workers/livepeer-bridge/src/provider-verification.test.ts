@@ -291,3 +291,19 @@ it('charges an adapter-supplied run budget instead of the two default metadata r
     }, { ...dependencies, budget });
     expect(budget.requests).toBe(fetchMock.mock.calls.length);
 });
+
+it('sampled coverage denies every master the playback lists and still probes one segment per run', async () => {
+    const second = `https://${HOST}/${PLAYBACK}/alt/video.m3u8`;
+    const fetchMock = ladderBackend();
+    vi.stubGlobal('fetch', fetchMock);
+    const { adapter } = tusOffsetAdapter(undefined, sampledSpec);
+    adapter.readPlayback = async () => ({ kind: 'vod', policy: 'signed', sources: [
+        { kind: 'hls', url: MASTER, width: null, height: null, bitrate: null },
+        { kind: 'hls', url: second, width: null, height: null, bitrate: null },
+    ] });
+    await verifyReadyProviderAsset(adapter, { ...tusInput, mode: 'ready', tusEndpoint: 'https://upload.test/tus/1' }, dependencies);
+    const urls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(urls).toContain(MASTER);
+    expect(urls).toContain(second);
+    expect(urls.filter((url) => url.endsWith('.mp4'))).toEqual([`https://${HOST}/${PLAYBACK}/manifest/seg_0.mp4`]);
+});

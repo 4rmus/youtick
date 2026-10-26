@@ -335,27 +335,31 @@ describe('Stream readiness: per-asset probes and the run budget', () => {
         expect(run.finalizeCalls()).toHaveLength(0);
     });
 
-    it('stops at the cap with provider_verification_budget_exceeded, never provider_unavailable', async () => {
-        // A pending ladder whose master lists 25 audio renditions: the ladder reads alone pass the cap.
-        const master = (await streamText('master.m3u8')).replace('#EXT-X-INDEPENDENT-SEGMENTS\n', [
-            '#EXT-X-INDEPENDENT-SEGMENTS',
-            ...Array.from({ length: 25 }, (_, index) => (
-                `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="group_audio",NAME="a${index}",URI="stream_t1_r${index}.m3u8"`
-            )),
-            '',
-        ].join('\n'));
-        const run = await runtime({ backend: { master, video: await streamVideo('video-ready-33.json') } });
-        const response = await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')));
-        expect(response.status).toBe(409);
-        expect(await response.json()).toEqual({ error: 'provider_verification_budget_exceeded' });
-        // The 31st request is never started.
-        expect(run.calls(isVerificationCall)).toHaveLength(STREAM_MAX_VERIFICATION_REQUESTS);
-        expect(run.job().state).toBe('UPLOAD_READY');
-        expect(run.job()).not.toHaveProperty('providerVerification');
-        expect(run.jobState.values.get('reconcile:v1')).toMatchObject({
-            uploadReadFailed: true, uploadErrorCode: 'provider_verification_budget_exceeded',
-        });
-        expect(run.finalizeCalls()).toHaveLength(0);
+    // A pending ladder (pctComplete 33): the recorded master (5 video renditions, 1 audio group) plus `audio` alternates.
+    const pendingMaster = async (audio: number) => (await streamText('master.m3u8')).replace('#EXT-X-INDEPENDENT-SEGMENTS\n', [
+        '#EXT-X-INDEPENDENT-SEGMENTS',
+        ...Array.from({ length: audio }, (_, index) => (
+            `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="group_audio",NAME="a${index}",URI="stream_t1_r${index}.m3u8"`
+        )),
+        '',
+    ].join('\n'));
+
+    it('keeps the worst pending run (16 playlists read before the probes) at 29 requests', async () => {
+        const run = await runtime({ backend: { master: await pendingMaster(10), video: await streamVideo('video-ready-33.json') } });
+        expect((await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')))).status).toBe(200);
+        expect(run.job().state).toBe('ONCHAIN_PUBLISHED');
+        // HEAD + video read, master + 16 pending ladder reads, then the 10 probes of a finished ladder.
+        expect(run.calls(isVerificationCall)).toHaveLength(29);
+        expect(29).toBeLessThanOrEqual(STREAM_MAX_VERIFICATION_REQUESTS);
+    });
+
+    it('hands a pending master with more playlists than the core accepts to the full check, never to the budget', async () => {
+        const run = await runtime({ backend: { master: await pendingMaster(25), video: await streamVideo('video-ready-33.json') } });
+        expect((await run.control.fetch(internalStreamWebhook(await streamVideo('webhook-ready.json')))).status).toBe(200);
+        expect(run.job().state).toBe('ONCHAIN_PUBLISHED');
+        // Only the pending master read precedes the sampled probes; unread audio playlists are validated as URLs.
+        expect(run.calls(isVerificationCall)).toHaveLength(13);
+        expect(run.calls((call) => requestLabel(call).includes('stream_t1_r'))).toHaveLength(0);
     });
 });
 

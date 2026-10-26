@@ -12,6 +12,7 @@ import type {
     VerifyReadyAssetInput,
 } from './media-provider';
 import {
+    MAX_HLS_MANIFESTS,
     chargeVerificationRequest,
     newVerificationBudget,
     readVerificationText,
@@ -284,6 +285,9 @@ async function ladderComplete(
     const targets = [...new Set(provider.describeProfile(input.profileConfigSha256).renditions
         .map((size) => Math.min(Math.min(size.width, size.height), sourceShort)))];
     if (targets.some((target) => !variants.some((variant) => Math.abs(variant.short - target) <= 2))) return false;
+    // More playlists than the core accepts: let the core decide instead of spending the run budget
+    // (a budget error here would also clear the pending checkpoint and restart its window).
+    if (variants.length + alternates.length > MAX_HLS_MANIFESTS) return true;
     for (const reference of [...variants.map((variant) => variant.uri), ...alternates]) {
         let url: string;
         try {
