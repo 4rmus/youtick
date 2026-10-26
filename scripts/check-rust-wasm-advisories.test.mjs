@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const CLI = resolve(import.meta.dirname, 'check-rust-wasm-advisories.mjs');
 
-function run(vulnerabilities, packages, warnings = {}) {
+function run(vulnerabilities, packages, warnings = {}, label = 'market') {
     const root = mkdtempSync(join(tmpdir(), 'youtick-rust-audit-'));
     const auditPath = join(root, 'audit.json');
     const packagesPath = join(root, 'packages.txt');
@@ -17,7 +17,7 @@ function run(vulnerabilities, packages, warnings = {}) {
         CLI,
         '--audit-json', auditPath,
         '--packages', packagesPath,
-        '--label', 'market',
+        '--label', label,
     ], { encoding: 'utf8' });
 }
 
@@ -43,6 +43,30 @@ test('rejects a vulnerability reachable from the normal WASM graph', () => {
     );
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /RUSTSEC-2026-0001:near-sdk@5\.5\.0/);
+});
+
+test('accepts the reviewed advisory only for its exact package version and contract', () => {
+    const advisory = vulnerability('RUSTSEC-2026-0387', 'crypto-bigint', '0.7.0-pre.4');
+    const graph = ['ckd-gate v0.2.0 (/repo/contracts/ckd-gate)', 'crypto-bigint v0.7.0-pre.4'];
+    const ok = run([advisory], graph, {}, 'ckd-gate');
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /accepted=RUSTSEC-2026-0387/);
+    assert.match(ok.stdout, /dev_only=none/);
+
+    const otherContract = run([advisory], graph, {}, 'market-v2');
+    assert.notEqual(otherContract.status, 0);
+    assert.match(otherContract.stderr, /RUSTSEC-2026-0387:crypto-bigint@0\.7\.0-pre\.4/);
+
+    const otherVersion = run(
+        [vulnerability('RUSTSEC-2026-0387', 'crypto-bigint', '0.7.1')],
+        ['ckd-gate v0.2.0 (/repo/contracts/ckd-gate)', 'crypto-bigint v0.7.1'],
+        {},
+        'ckd-gate',
+    );
+    assert.notEqual(otherVersion.status, 0);
+
+    const otherAdvisory = run([vulnerability('RUSTSEC-2026-0999', 'crypto-bigint', '0.7.0-pre.4')], graph, {}, 'ckd-gate');
+    assert.notEqual(otherAdvisory.status, 0);
 });
 
 test('rejects malformed cargo-audit input', () => {
