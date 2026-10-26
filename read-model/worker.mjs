@@ -68,6 +68,7 @@ const INGESTION_ERROR_CODES = new Set([
     'invalid_read_model_rpc',
     'read_model_rpc_unavailable',
     'read_model_watermark_conflict',
+    'read_model_header_unavailable',
 ]);
 const BACKFILL_ERROR_CODES = new Set([
     ...INGESTION_ERROR_CODES,
@@ -236,7 +237,6 @@ async function ingestSparseMarketReadModelBatch(env, dependencies, config, { bou
     const sleep = dependencies.sleepFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     const fetchIndexHead = dependencies.fetchIndexHead ?? ((network) => fetchFastnearIndexHead(network, boundedFetch));
     const discover = dependencies.discoverEventBlocks ?? ((input) => discoverMarketEventBlocks(input, boundedFetch));
-    const fetchHeader = dependencies.fetchBlockHeader ?? ((height) => fetchNearBlockHeader(env, height, boundedFetch));
     const fetchEscrow = dependencies.fetchEscrowBalance
         ?? ((height) => fetchMarketEscrowBalance(env, config.contractId, height, boundedFetch));
 
@@ -341,18 +341,25 @@ async function ingestSparseMarketReadModelBatch(env, dependencies, config, { bou
             block_hash: last?.block_hash, event_count: last?.events.length };
     }
 
-    // Every event block up to the coverage height is written: move the watermark there.
-    let header = null;
-    for (let height = coverage; !header && height > lastEventHeight && height > coverage - SPARSE_HEADER_ATTEMPTS; height -= 1) {
-        header = await fetchHeader(height);
+    // Every event block up to the coverage height is written: move the watermark there. The coverage
+    // block comes from neardata like the event blocks: a regular RPC node has garbage-collected heights
+    // more than a few epochs old, and the media-account D1 rescans from the start block (2026-10-26).
+    // A block the index missed keeps its events; `null` is a skipped height.
+    let coverageBlock = null;
+    let attempts = 0;
+    for (let height = coverage; !coverageBlock && height > lastEventHeight && attempts < SPARSE_HEADER_ATTEMPTS; height -= 1) {
+        await sleep(Math.max(0, 350 - (now() - lastFetchAt)));
+        lastFetchAt = now();
+        coverageBlock = await fetchBlock({ network: config.network, contractId: config.contractId,
+            blockHeight: height, requirePredecessor: true });
+        attempts += 1;
+        if (coverageBlock && (coverageBlock.block_height !== height || !Array.isArray(coverageBlock.events))) throw new Error('invalid_neardata_block');
     }
-    if (header && header.height > lastEventHeight) {
-        await write({
-            network: config.network, contract_id: config.contractId, finality: 'final',
-            block_height: header.height, block_hash: header.hash,
-            prev_block_height: header.prev_height, prev_block_hash: header.prev_hash, events: [],
-        });
-        last = { block_height: header.height, block_hash: header.hash, events: [] };
+    // Ten skipped heights in a row do not happen on NEAR; never stall without an alarm.
+    if (!coverageBlock && attempts === SPARSE_HEADER_ATTEMPTS) throw new Error('read_model_header_unavailable');
+    if (coverageBlock) {
+        await write(coverageBlock);
+        last = coverageBlock;
     }
     // The safety margin behind final is by design; only a window cap leaves work for the next run.
     const result = { ...telemetry, ...telemetryExtra, status: coverage < target ? 'catching_up' : 'applied',
@@ -410,21 +417,6 @@ async function nearRpc(env, id, method, params, fetchImpl) {
     }
     if (value?.jsonrpc !== '2.0' || value?.id !== id) throw new Error('invalid_read_model_rpc');
     return value;
-}
-
-/** A block's header by height, or null when the height was skipped. */
-export async function fetchNearBlockHeader(env, height, fetchImpl = fetch) {
-    const value = await nearRpc(env, 'youtick-read-model-header', 'block', { block_id: height }, fetchImpl);
-    if (value.error) {
-        if (value.error?.cause?.name === 'UNKNOWN_BLOCK') return null;
-        throw new Error('read_model_rpc_unavailable');
-    }
-    const header = value.result?.header;
-    if (header?.height !== height || typeof header.hash !== 'string' || !Number.isSafeInteger(header.prev_height)
-        || header.prev_height >= height || typeof header.prev_hash !== 'string') {
-        throw new Error('invalid_read_model_rpc');
-    }
-    return { height, hash: header.hash, prev_height: header.prev_height, prev_hash: header.prev_hash };
 }
 
 export async function fetchMarketEscrowBalance(env, contractId, height, fetchImpl = fetch) {
