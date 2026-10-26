@@ -178,8 +178,9 @@ What differs from the Workers release:
   - creator allowlist `ticks.testnet`, `soteri.testnet`, `utick.testnet` (wallet test accounts) plus
     the NEAR Auth creators in `NEAR_AUTH_CREATOR_ALLOWLIST` (one so far; see "NEAR Auth creators"
     below), a 20 USD monthly budget and a 2 USD reservation per job.
-    > Changed (2026-10-26, owner): the deployed allowlist is the lone wildcard `*`, so any account may
-    > upload on the V2 testnet. The named lists stay in the release script as a record.
+    > Never a wildcard: on Market V2 testnet a `*` allowlist turns operator mutations off
+    > (`isMarketV2TestnetCreatorScope`), so uploads would never finalize and tickets would not settle.
+    > A wildcard deploy on 2026-10-26 did exactly that and was reverted.
 - **Always off in W2:** webhook Queue, D1 archives, sponsored uploads, V1 stateless playback,
   multi-asset payments and `MARKET_V2_RELEASE_ENABLED` (the 30-day `release_expired` job needs the
   V2 read model, milestone W3).
@@ -270,11 +271,6 @@ list is static in this phase:
    (the test refuses anything but a 64-character hex id), merge the PR and deploy `acceptance`
    again. One deploy per added creator; a signed attestation from the relayer replaces this list
    after the Gala.
-
-> Changed (2026-10-26, owner): the V2 testnet Bridge deploys `LIVEPEER_CREATOR_ALLOWLIST = "*"`, so
-> steps 2 and 3 are not needed while it is a test network. An account still opens only through a
-> relayer invite, and the Bridge's daily attempt limits and monthly budget still apply. Mainnet keeps
-> a named list.
 
 Sponsored uploads stay off: the V2 upload path needs no Bridge quote and no sponsor relay.
 
