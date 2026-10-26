@@ -131,13 +131,18 @@ succeeded and logged an event, and reads only those (at most 20 a run) from
 Neardata with the same parser. The coverage height stays 120 blocks behind the
 lower of RPC final and the index head; transactions up to 600 blocks before the
 watermark are re-read for late receipts. When every event block up to the
-coverage height is written, the watermark moves to that height's RPC header.
+coverage height is written, the watermark moves to that height's block, read
+from Neardata as well (it keeps its events if the index missed any). A regular RPC
+node answers `UNKNOWN_BLOCK` for heights older than a few epochs, so an RPC header
+stalled every rescan that started behind its history (2026-10-26); ten unreadable
+heights in a row now fail the run with `read_model_header_unavailable`.
 These jumps skip blocks on purpose, so each write deletes the watermark row only
 while it still holds the expected block and then inserts the new one; the
 contiguity trigger, which guards updates, still stops any other writer. The run
 then compares `get_escrow_balance` at the watermark with the purchased crypto
 tickets in `market_v2_tickets` and reports `escrow.matched` (an `escrow_mismatch`
-error line when they differ). Every run also re-discovers the lookback window below
+error line when they differ). While a rescan is behind the RPC node's history this
+read reports `matched: null` with `read_model_rpc_unavailable`; it only reports. Every run also re-discovers the lookback window below
 the watermark; an event block there that D1 does not hold (the index stored its
 transaction late) is reported as `missed_event_blocks` with an error line, since the
 watermark has already passed it. A window busier than five index pages halves until
