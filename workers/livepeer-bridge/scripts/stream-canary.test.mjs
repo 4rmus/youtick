@@ -35,7 +35,7 @@ function createFakeStream({ clock, owner, behaviour = {} }) {
     if (behaviour.otherVideo) videos.set(OTHER_UID, { uid: OTHER_UID, ready: true, length: 1, maxDuration: 30, offset: 1 });
     const keys = new Map([[owner.id, owner.publicKey]]);
     const calls = [];
-    const health = { lastWebhookAtMs: 1000 };
+    const health = behaviour.freshBridge ? { lastWebhookAtMs: null } : { lastWebhookAtMs: 1000 };
     let sequence = 0;
     const baseMinutes = 3;
 
@@ -107,7 +107,9 @@ function createFakeStream({ clock, owner, behaviour = {} }) {
         const method = init.method ?? 'GET';
         calls.push({ method, url: url.toString(), headers: init.headers ?? {} });
         if (url.toString() === HEALTH) {
-            return new Response(JSON.stringify({ stream: behaviour.healthWithoutWebhookTime ? { lastWebhookAtMs: null } : { ...health } }), { status: 200 });
+            if (behaviour.healthWithoutStream) return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+            if (behaviour.healthMalformedWebhookTime) return new Response(JSON.stringify({ stream: { lastWebhookAtMs: 'soon' } }), { status: 200 });
+            return new Response(JSON.stringify({ stream: { ...health } }), { status: 200 });
         }
         if (url.hostname === `customer-${CODE}.cloudflarestream.com`) return playback(url);
         if (url.hostname === 'upload.cloudflarestream.com') {
@@ -321,13 +323,21 @@ test('webhook: ERR_NON_VIDEO from the provider; PASS only when the Bridge health
     assert.equal(await lost.run(['webhook', '--out', lost.out, '--bridge-health-url', HEALTH, '--timeout-minutes', '1']), 1);
     assert.equal((await receiptOf(lost.out, 'webhook')).receipt.status, 'FAIL');
     assert.equal(await lost.run(['webhook', '--out', lost.out, '--bridge-health-url', 'http://bridge.example/__health']), 1);
-    // A reachable /__health without stream.lastWebhookAtMs is a contract failure, found before any upload.
-    const blind = await setup({ healthWithoutWebhookTime: true });
-    assert.equal(await blind.run(['webhook', '--out', blind.out, '--bridge-health-url', HEALTH]), 1);
-    const refused = await receiptOf(blind.out, 'webhook');
-    assert.equal(refused.receipt.status, 'FAIL');
-    assert.deepEqual(refused.receipt.checks.map((entry) => [entry.name, entry.pass]), [['bridge_health_reports_lastWebhookAtMs', false]]);
-    assert.ok(!blind.stream.calls.some((call) => call.method === 'POST'));
+    // A fresh Bridge reports no webhook time yet (null); the first delivery advances it from baseline 0.
+    const fresh = await setup({ freshBridge: true });
+    assert.equal(await fresh.run(['webhook', '--out', fresh.out, '--bridge-health-url', HEALTH]), 0);
+    const first = await receiptOf(fresh.out, 'webhook');
+    assert.equal(first.receipt.status, 'PASS');
+    assert.equal(first.receipt.bridge.advanced, true);
+    // A reachable /__health without the stream block, or with a malformed time, is a contract failure, found before any upload.
+    for (const behaviour of [{ healthWithoutStream: true }, { healthMalformedWebhookTime: true }]) {
+        const blind = await setup(behaviour);
+        assert.equal(await blind.run(['webhook', '--out', blind.out, '--bridge-health-url', HEALTH]), 1);
+        const refused = await receiptOf(blind.out, 'webhook');
+        assert.equal(refused.receipt.status, 'FAIL');
+        assert.deepEqual(refused.receipt.checks.map((entry) => [entry.name, entry.pass]), [['bridge_health_reports_lastWebhookAtMs', false]]);
+        assert.ok(!blind.stream.calls.some((call) => call.method === 'POST'));
+    }
 });
 
 test('ladder: every descriptor rung, H.264 and complete fMP4 playlists; a missing rung fails', async () => {
