@@ -7611,12 +7611,16 @@ async function verifyStatelessProviderPolicy(
     profileConfigSha256: string | undefined,
 ): Promise<{ previewVttUrl?: string }> {
     const provider = mediaProvider(env, profileConfigSha256);
-    let playback: ProviderPlayback;
-    try {
-        playback = await provider.readPlayback(playbackId);
-    } catch (error) {
-        if (safeErrorCode(error) === 'provider_unavailable') throw error;
-        throw new Error('playback_denied');
+    let playback: ProviderPlayback | undefined;
+    // One more read after an outage answer: a cold isolate has no policy cache, and a single slow
+    // provider read (M4, 2026-10-28: Stream API timed out at 5 s) would otherwise stop a renewal.
+    for (let attempt = 0; !playback; attempt += 1) {
+        try {
+            playback = await provider.readPlayback(playbackId);
+        } catch (error) {
+            if (safeErrorCode(error) !== 'provider_unavailable') throw new Error('playback_denied');
+            if (attempt >= 1) throw error;
+        }
     }
     if (playback.kind !== 'vod' || playback.policy !== 'jwt') throw new Error('playback_denied');
     // Optional metadata from the same authorized playback lookup; never fetch it during token issuance.
