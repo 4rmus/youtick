@@ -8,6 +8,13 @@ import {
     type LivepeerPublication,
 } from '@/lib/livepeer-publication';
 import { FEATURE_FLAGS } from '@/lib/constants';
+import { v2Config } from '@/lib/v2/config';
+
+/** V2 buyers sign in with NEAR Auth on the ticket page; the V1 watch page is wallet-only. */
+export function publicationHref(publicationId: string): string | null {
+    if (v2Config()) return `/tickets/buy?publication=${encodeURIComponent(publicationId)}`;
+    return FEATURE_FLAGS.enablePaidMediaLivepeerV1 ? `/watch?job=${encodeURIComponent(publicationId)}` : null;
+}
 
 export function VideoCard({ publication }: { publication: LivepeerPublication }) {
     const coverUrl = livepeerPublicationCoverUrl(publication);
@@ -39,8 +46,9 @@ export function VideoCard({ publication }: { publication: LivepeerPublication })
             </div>
         </Card>
     );
-    return FEATURE_FLAGS.enablePaidMediaLivepeerV1 ? (
-        <Link href={`/watch?job=${encodeURIComponent(publication.publication_id)}`} className="group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400">
+    const href = publicationHref(publication.publication_id);
+    return href ? (
+        <Link href={href} className="group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400">
             {card}
         </Link>
     ) : (
