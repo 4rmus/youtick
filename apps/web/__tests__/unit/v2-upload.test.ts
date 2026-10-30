@@ -417,3 +417,25 @@ describe('signed-in bar', () => {
         expect(shortAccountId('creator.testnet')).toBe('creator.testnet');
     });
 });
+
+describe('sign-in after Sign out', () => {
+    it('asks the provider for its login screen once after Sign out, until a sign-in completes', async () => {
+        const { setForceLogin, signInPrompt } = await import('@/lib/v2/sign-in-prompt');
+        const values = new Map<string, string>();
+        const storage = {
+            getItem: (key: string) => values.get(key) ?? null,
+            setItem: (key: string, value: string) => { values.set(key, value); },
+            removeItem: (key: string) => { values.delete(key); },
+        };
+        expect(signInPrompt(storage)).toBeUndefined();
+        setForceLogin(true, storage);
+        expect(signInPrompt(storage)).toBe('login');
+        setForceLogin(false, storage);
+        expect(signInPrompt(storage)).toBeUndefined();
+        // Blocked storage reuses the provider session instead of failing the sign-in.
+        const blocked = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); }, removeItem: () => { throw new Error('blocked'); } };
+        expect(() => setForceLogin(true, blocked)).not.toThrow();
+        expect(signInPrompt(blocked)).toBeUndefined();
+        expect(signInPrompt(null)).toBeUndefined();
+    });
+});

@@ -5,6 +5,7 @@ import { getProvider, viewContract } from '@/lib/near';
 import { signInWithCkd } from '@/lib/near-auth/ckd-sign-in';
 import { ckdGates } from '@/lib/ticket-keys/ckd';
 import { v2Config, type V2Config } from '@/lib/v2/config';
+import { setForceLogin, signInPrompt } from '@/lib/v2/sign-in-prompt';
 import { addGateKey, canUnlock, pendingGates as pendingGatesOf, type PendingGate, type UnlockState } from '@/lib/v2/gates';
 import { createRelayerClient, relayerSubmitter, type InviteResult } from '@/lib/v2/relayer-client';
 import type { GateKey, ViewContract } from '@/lib/v2/tickets';
@@ -77,8 +78,10 @@ export function NearAuthV2Provider({ children }: { children: ReactNode }) {
         void signInWithCkd({
             config: config.auth, gateAccountId: config.gateAccountId, popup, redirectUri: window.location.origin, view,
             submit: relayerSubmitter(client, { inviteCode: options.inviteCode, onInvite: setInvite }),
+            prompt: signInPrompt(),
         }).then((result) => {
             if (current === generation.current) {
+                setForceLogin(false);
                 setSession({
                     status: 'signed_in', accountId: result.accountId, publicKey: result.publicKey, ckdKey: result.ckdKey,
                     gateKeys: [{ gateAccountId: result.gateAccountId, ckdKey: result.ckdKey }],
@@ -127,6 +130,7 @@ export function NearAuthV2Provider({ children }: { children: ReactNode }) {
 
     const signOut = useCallback(() => {
         generation.current += 1;
+        setForceLogin(true);
         setSession({ status: 'signed_out' });
         setInvite(null);
         setUnlocking({});
