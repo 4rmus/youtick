@@ -401,9 +401,19 @@ describe('upload refusal copy', () => {
         // feePaid changes only the codes that differ after payment.
         expect(uploadErrorMessage(new UploadError('media_provider_not_ready'), true)).toBe(copy[3]);
         for (const text of copy) expect(text).not.toMatch(/livepeer|cloudflare|stream|studio|\(/i);
-        // Other reasons keep today's admission_denied copy.
-        const busy = 'Uploads are busy right now. Please try again in a few minutes.';
-        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('daily_limit', 1))).toBe(busy);
-        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError(null, null))).toBe(busy);
+        // M4 2026-10-30: the creator's own limits read as such, not as a busy platform.
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('daily_limit', 1))).toBe(
+            "You have used today's upload attempts. Please try again after midnight UTC. No fee was taken.");
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('active_upload', 1))).toMatch(/^You already have an upload in progress/);
+        // An unknown reason keeps the admission_denied copy.
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError(null, null))).toBe('Uploads are busy right now. Please try again in a few minutes.');
+    });
+});
+
+describe('signed-in bar', () => {
+    it('shortens an implicit account and keeps a named account', async () => {
+        const { shortAccountId } = await import('@/components/v2/SignInPanel');
+        expect(shortAccountId('92fe8c29082ef13c8b4dd4973cb3e5f09241bb6a9a6cd400450a18a2429f2615')).toBe('92fe8c29…2615');
+        expect(shortAccountId('creator.testnet')).toBe('creator.testnet');
     });
 });

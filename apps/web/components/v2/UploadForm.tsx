@@ -35,7 +35,7 @@ import {
     TERMINAL_UPLOAD_STATES, UploadError, v2ProfileOf,
 } from '@/lib/v2/upload';
 import { useNearAuthV2 } from './NearAuthV2Provider';
-import { SignInPanel } from './SignInPanel';
+import { SignedInBar, SignInPanel } from './SignInPanel';
 
 const ERRORS: Record<string, string> = {
     empty_file: 'Choose a video file first.',
@@ -75,6 +75,8 @@ const ERRORS: Record<string, string> = {
 /** Preflight refusals with a Bridge reason; any other reason keeps the `admission_denied` copy. */
 const ADMISSION_ERRORS: Partial<Record<LivepeerAdmissionReason, string>> = {
     reservation_budget: 'Another upload is in progress on the platform. Please try again in a few minutes. No fee was taken.',
+    active_upload: 'You already have an upload in progress. Finish it, or wait about 30 minutes after leaving it, before starting another. No fee was taken.',
+    daily_limit: 'You have used today\'s upload attempts. Please try again after midnight UTC. No fee was taken.',
     capacity: 'Uploads are at capacity right now. Please try again in a few minutes. No fee was taken.',
 };
 
@@ -269,6 +271,7 @@ export function UploadForm() {
 
     const busy = step === 'paying' || step === 'uploading' || step === 'processing';
     return <Card className="mx-auto max-w-xl space-y-4 p-6">
+        <SignedInBar busy={busy} />
         <h1 className="text-xl font-semibold">Upload a screening</h1>
         <label className="block space-y-1 text-sm">
             <span className="text-white/80">Video file</span>

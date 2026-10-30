@@ -21,7 +21,7 @@ import { InstantAccessConsent } from './InstantAccessConsent';
 import { INSTANT_ACCESS_CONSENT_VERSION } from './instant-access-consent';
 import { FundBalance } from './FundBalance';
 import { useNearAuthV2 } from './NearAuthV2Provider';
-import { SignInPanel } from './SignInPanel';
+import { SignedInBar, SignInPanel } from './SignInPanel';
 
 const ERRORS: Record<string, string> = {
     publication_not_available: 'This screening is not on sale right now.',
@@ -219,6 +219,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
 
     if (!cryptoRail) {
         return <Card className="mx-auto max-w-xl space-y-4 p-6">
+            <SignedInBar busy={state === 'buying'} />
             <h1 className="text-xl font-semibold">{item.publication_id}</h1>
             <p className="text-white/80">Ticket price: <strong>{cardPrice ?? '…'}</strong></p>
             {card && <InstantAccessConsent checked={consented} onChange={setConsented} disabled={state === 'buying'} />}
@@ -228,6 +229,7 @@ export function BuyTicket({ publicationId }: { publicationId: string | null }) {
     }
 
     return <Card className="mx-auto max-w-xl space-y-4 p-6">
+        <SignedInBar busy={state === 'buying'} />
         <h1 className="text-xl font-semibold">{item.publication_id}</h1>
         <p className="text-white/80">Ticket price: <strong>{formatUsdc(item.price_usdc)} USDC</strong> (VAT included)</p>
         <p className="text-sm text-white/60">
