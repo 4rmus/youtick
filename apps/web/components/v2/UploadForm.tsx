@@ -8,7 +8,7 @@ import { ScreenState } from '@/components/ScreenState';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
-import { formatUsdc, readLivepeerUploadProgress } from '@/lib/livepeer-publication';
+import { formatUsdc } from '@/lib/livepeer-publication';
 import {
     LIVEPEER_SOURCE_ACCEPT,
     LivepeerAdmissionDeniedError,
@@ -31,8 +31,8 @@ import {
 } from '@/lib/livepeer-upload';
 import { readAccessKey } from '@/lib/v2/near-reads';
 import {
-    authorizeV2PaidJob, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, PROCESSING_POLL_MS, processingWaitMs, PROFILE_ID,
-    TERMINAL_UPLOAD_STATES, UploadError, v2ProfileOf,
+    authorizeV2PaidJob, awaitV2Publication, bridgeStatusProbe, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, processingWaitMs, PROFILE_ID,
+    TERMINAL_UPLOAD_STATES, terminalUploadErrorCode, UploadError, v2ProfileOf, v2UploadProfileHash, type ProcessingProbe,
 } from '@/lib/v2/upload';
 import { useNearAuthV2 } from './NearAuthV2Provider';
 import { SignedInBar, SignInPanel } from './SignInPanel';
@@ -127,29 +127,43 @@ export function UploadForm() {
         setError(uploadErrorMessage(reason, feePaid));
     }, []);
 
-    /** Media processing and the Bridge's on-chain publication; the chain is the only source of truth. */
-    const awaitPublication = useCallback(async (accountId: string, activeJobId: string, controller: AbortController, waitMs: number) => {
+    /** The Bridge state probe of the processing wait, for the file this tab holds. */
+    const probeFor = useCallback(async (accountId: string, activeJobId: string, profileConfigSha256: string): Promise<ProcessingProbe> => {
+        if (!file) throw new UploadError('empty_file');
+        const source = validateLivepeerSourceFile(file);
+        if (!source.ok) throw new UploadError(source.error);
+        return bridgeStatusProbe({
+            accountId, jobId: activeJobId, expectedSourceBytes: file.size, sourceFingerprintSha256: await fingerprintLivepeerSource(file),
+            sourceType: source.sourceType, profileConfigSha256,
+        });
+    }, [file]);
+
+    /**
+     * Media processing and the Bridge's on-chain publication; the chain is the only source of truth,
+     * the Bridge is asked only whether the job ended. A job that ended is over: the next attempt is a new job.
+     */
+    const awaitPublication = useCallback(async (accountId: string, activeJobId: string, controller: AbortController, waitMs: number, probe: ProcessingProbe) => {
         setProgress(100);
         setStep('processing');
-        for (let attempt = 0; attempt < waitMs / PROCESSING_POLL_MS; attempt += 1) {
-            const state = await readLivepeerUploadProgress(activeJobId, accountId).catch(() => null);
-            controller.signal.throwIfAborted();
-            if (state?.publication) {
-                clearLivepeerUploadDraft(accountId);
-                clearLivepeerJobSessionKey(accountId, activeJobId);
-                forgetLivepeerUploadJob(accountId, activeJobId);
+        try {
+            await awaitV2Publication({ accountId, jobId: activeJobId, waitMs, probe, signal: controller.signal });
+        } catch (reason) {
+            if (reason instanceof UploadError && reason.message !== 'livepeer_processing_timeout') {
                 setResumable(false);
-                setStep('published');
-                return;
+                setJobId(null);
             }
-            await new Promise((resolve) => setTimeout(resolve, PROCESSING_POLL_MS));
+            // On the timeout the fee stays paid and the job stays resumable; only this page stops waiting.
+            throw reason;
         }
-        // The fee stays paid and the job stays resumable; only this page stops waiting.
-        throw new UploadError('livepeer_processing_timeout');
+        clearLivepeerUploadDraft(accountId);
+        clearLivepeerJobSessionKey(accountId, activeJobId);
+        forgetLivepeerUploadJob(accountId, activeJobId);
+        setResumable(false);
+        setStep('published');
     }, []);
 
     const transfer = useCallback(async (
-        accountId: string, activeJobId: string, intent: LivepeerUploadIntent, controller: AbortController, waitMs: number,
+        accountId: string, activeJobId: string, intent: LivepeerUploadIntent, controller: AbortController, waitMs: number, probe: ProcessingProbe,
     ) => {
         if (!file) throw new UploadError('empty_file');
         setStep('uploading');
@@ -161,7 +175,7 @@ export function UploadForm() {
         });
         controller.signal.throwIfAborted();
         advanceLivepeerUploadDraftStage(accountId, activeJobId, 'provider_processing');
-        await awaitPublication(accountId, activeJobId, controller, waitMs);
+        await awaitPublication(accountId, activeJobId, controller, waitMs, probe);
     }, [file, awaitPublication]);
 
     async function start() {
@@ -204,7 +218,8 @@ export function UploadForm() {
                 // The hash the chain job carries (a reused job keeps its own).
                 profileId: PROFILE_ID, profileConfigSha256: paid.profileConfigSha256,
             });
-            await transfer(accountId, activeJobId, intent, controller, processingWaitMs(v2ProfileOf(paid.profileConfigSha256)));
+            await transfer(accountId, activeJobId, intent, controller, processingWaitMs(v2ProfileOf(paid.profileConfigSha256)),
+                await probeFor(accountId, activeJobId, paid.profileConfigSha256));
         } catch (reason) {
             if (!popup.closed) popup.close();
             if (!controller.signal.aborted) fail(reason, feePaid);
@@ -226,22 +241,24 @@ export function UploadForm() {
                 config, session: { accountId: session.accountId, publicKey: session.publicKey }, jobId, file, popup,
                 redirectUri: window.location.origin, deps: { view, accessKey: readAccessKey }, signal: controller.signal,
             });
-            // The resume path does not surface the job's hash, so the wait follows this build's profile.
+            // The resume path does not surface the job's hash, so the wait follows this build's profile;
+            // the probe takes the hash from the chain job it reads.
             const waitMs = processingWaitMs();
+            const probe = await probeFor(session.accountId, jobId, v2UploadProfileHash());
             if ('state' in result) {
                 if (result.state === 'ONCHAIN_PUBLISHED') {
-                    await awaitPublication(session.accountId, jobId, controller, waitMs);
+                    await awaitPublication(session.accountId, jobId, controller, waitMs, probe);
                 } else if (TERMINAL_UPLOAD_STATES.includes(result.state)) {
                     // Nothing more can happen on this job; the next attempt is a new job.
                     setResumable(false);
                     setJobId(null);
-                    throw new UploadError(result.state === 'PROVIDER_FAILED' ? 'livepeer_provider_failed' : 'livepeer_upload_expired');
+                    throw new UploadError(terminalUploadErrorCode(result.state));
                 } else {
                     // Source received; only media processing and the Bridge's publication remain.
-                    await awaitPublication(session.accountId, jobId, controller, waitMs);
+                    await awaitPublication(session.accountId, jobId, controller, waitMs, probe);
                 }
             } else {
-                await transfer(session.accountId, jobId, result, controller, waitMs);
+                await transfer(session.accountId, jobId, result, controller, waitMs, probe);
             }
         } catch (reason) {
             if (!popup.closed) popup.close();
