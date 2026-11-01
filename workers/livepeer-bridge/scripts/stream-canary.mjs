@@ -44,12 +44,15 @@ const iso = (ms) => new Date(ms).toISOString();
  * Expected status per surface and credential, verbatim from the 2026-10-21 sandbox spike (docs report
  * §9.3). `null` = not probed: a wrong-sub iframe answers a 200 page shell and a wrong-sub watch page 500,
  * so neither says anything about access. A valid viewer token never carries `downloadable`, so the MP4
- * download stays denied (403) even for it.
+ * download stays denied (403) even for it. The Bridge's per-asset readiness check only sends anonymous
+ * requests (HLS master, one segment, DASH, download); this matrix is where forged, expired and
+ * wrong-subject credentials and the thumbnail, watch and iframe surfaces are checked.
  */
 export const DENIAL_MATRIX = Object.freeze({
     hls_master: Object.freeze({ path: 'manifest/video.m3u8', none: 401, forged: 401, expired: 401, wrong_sub: 404, valid: 200 }),
     dash_manifest: Object.freeze({ path: 'manifest/video.mpd', none: 401, forged: 401, expired: 401, wrong_sub: 404, valid: 200 }),
     thumbnail: Object.freeze({ path: 'thumbnails/thumbnail.jpg', none: 401, forged: 401, expired: 401, wrong_sub: 404, valid: 200 }),
+    thumbnail_gif: Object.freeze({ path: 'thumbnails/thumbnail.gif', none: 401, forged: 401, expired: 401, wrong_sub: 404, valid: 200 }),
     watch: Object.freeze({ path: 'watch', none: 401, forged: 401, expired: 401, wrong_sub: null, valid: 200 }),
     iframe: Object.freeze({ path: 'iframe', none: 401, forged: 401, expired: 401, wrong_sub: null, valid: 200 }),
     download: Object.freeze({ path: 'downloads/default.mp4', none: 401, forged: 401, expired: 401, wrong_sub: 404, valid: 403 }),
@@ -569,7 +572,7 @@ export function planFor(sub, opts) {
             ['GET', `${api}/storage-usage`, 'poll until back to the baseline']];
     case 'playback':
         return [['GET', `${api}/<UID>`, 'ready video, customer code'],
-            ['GET', `${playback}/<CREDENTIAL>/{manifest/video.m3u8,manifest/video.mpd,thumbnails/thumbnail.jpg,watch,iframe,downloads/default.mp4}`,
+            ['GET', `${playback}/<CREDENTIAL>/{manifest/video.m3u8,manifest/video.mpd,thumbnails/thumbnail.jpg,thumbnails/thumbnail.gif,watch,iframe,downloads/default.mp4}`,
                 'none/forged/expired/wrong-sub/valid (wrong-sub not on watch or iframe); manifests and denials only'],
             ['GET', `${playback}/<CREDENTIAL>/manifest/<variant>.m3u8`, 'first variant under every credential'],
             ['GET', `${playback}/<UID>/video/<rendition>/seg_N.mp4`, 'the first segment with its p/s query stripped (expect 404); the listed URL is never fetched']];

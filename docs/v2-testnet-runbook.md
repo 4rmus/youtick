@@ -178,6 +178,9 @@ What differs from the Workers release:
   - creator allowlist `ticks.testnet`, `soteri.testnet`, `utick.testnet` (wallet test accounts) plus
     the NEAR Auth creators in `NEAR_AUTH_CREATOR_ALLOWLIST` (one so far; see "NEAR Auth creators"
     below), a 20 USD monthly budget and a 2 USD reservation per job.
+    > Never a wildcard: on Market V2 testnet a `*` allowlist turns operator mutations off
+    > (`isMarketV2TestnetCreatorScope`), so uploads would never finalize and tickets would not settle.
+    > A wildcard deploy on 2026-10-26 did exactly that and was reverted.
 - **Always off in W2:** webhook Queue, D1 archives, sponsored uploads, V1 stateless playback,
   multi-asset payments and `MARKET_V2_RELEASE_ENABLED` (the 30-day `release_expired` job needs the
   V2 read model, milestone W3).
@@ -340,6 +343,29 @@ What differs from the V1 read model:
      expected: one `watched` ticket of 2026-10-13;
    - Bridge logs: `market_v2_release_failed` must not appear; `market_v2_release_scheduled`
      appears only once a ticket is 30 days old.
+
+### Read model stall, 2026-10-26
+
+After the M1.5 move the media-account read model rescanned from block `272905000` into an empty
+D1 and stopped at block `272925231` (an event block of 2026-10-13): `/__health` said `ENABLED`, but
+`/v1/publications` never listed `lp-fd581713…`. The sparse scanner wrote the two discovered event
+blocks, then asked `READ_MODEL_NEAR_RPC_URL` for the coverage height's header. A regular RPC node
+keeps only a few epochs, answers `UNKNOWN_BLOCK` for older heights, and the scanner read that as
+a skipped height: every run ended without a write and without an error. The old-account instance
+never hit this because it started when its start block was recent.
+
+The fix reads the coverage block from neardata (archival, already the event-block source) and
+fails a run with `read_model_header_unavailable` after ten unreadable heights. Catch-up runs at up
+to 100,000 blocks a minute; while the watermark is older than the RPC node's history, the escrow
+check reports `matched: null` with `read_model_rpc_unavailable`.
+
+Owner steps after the fix is on `main`:
+1. Run *V2 Testnet Workers* on that `main` commit in `acceptance`, with the same `card_path` as the
+   last run (the workflow deploys all three Workers). No D1 write by hand: the watermark moves on
+   from `272925231`.
+2. Check `/v1/publications` (Origin `http://localhost:3000`): the watermark climbs every minute and,
+   within about half an hour, `lp-fd581713…` appears and the watermark is within a few hundred
+   blocks of final. Worker logs show `escrow.matched: true` once it is caught up.
 
 ## Refund rule (2026-10-14)
 
