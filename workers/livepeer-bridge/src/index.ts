@@ -800,6 +800,7 @@ const STRONG_PROVIDER_DRIFT_CODES = new Set([
     'provider_playback_mismatch',
     'provider_playback_missing',
     'provider_state_invalid',
+    'provider_verification_budget_exceeded',
 ]);
 const PROVIDER_INVENTORY_DRIFT_CODES = new Set([
     'provider_asset_missing',
@@ -861,6 +862,7 @@ const SAFE_ERROR_CODES = new Set([
     'provider_playback_mismatch',
     'publication_cover_image_denied',
     'provider_verification_incomplete',
+    'provider_verification_budget_exceeded',
     'verification_evidence_missing',
     'publication_cover_image_redirected',
     'publication_cover_image_status',
@@ -9135,6 +9137,7 @@ function errorStatus(code: string): number {
         || code === 'provider_playback_exposed'
         || code === 'provider_playback_mismatch'
         || code === 'provider_verification_incomplete'
+        || code === 'provider_verification_budget_exceeded'
         || code === 'verification_evidence_missing'
         || code === 'provider_state_invalid'
         || code === 'provider_tus_state_invalid'

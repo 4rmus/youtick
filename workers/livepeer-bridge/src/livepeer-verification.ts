@@ -17,6 +17,7 @@ import {
     sameDimensions,
     validDimensions,
     verificationFetch,
+    verificationFetchFailure,
     verifyAdaptiveHlsWith,
     verifyReadyProviderAsset,
     type Dimensions,
@@ -194,8 +195,8 @@ async function fetchVttReferences(vttUrl: string, token: string, budget?: Verifi
             redirect: 'manual',
             signal: AbortSignal.timeout(5_000),
         });
-    } catch {
-        throw new Error('provider_unavailable');
+    } catch (error) {
+        throw verificationFetchFailure(error);
     }
     if (response.status === 429 || response.status >= 500) throw new Error('provider_unavailable');
     if (response.status !== 200) throw new Error('provider_playback_mismatch');

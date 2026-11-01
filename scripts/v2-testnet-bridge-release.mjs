@@ -115,7 +115,11 @@ export const WALLET_CREATOR_ALLOWLIST = Object.freeze(['ticks.testnet', 'soteri.
 // after the invite code is redeemed and checked with the relayer's /internal/invited-accounts/<id>.
 // Each entry is a 64-character hex account id; a deploy follows every change.
 // 2026-10-12: owner's Google test account; invite paid in 2em5fQA65TnPYSE22mKzsU1hyPZiXYi5ygLJzk1GLyrU.
-export const NEAR_AUTH_CREATOR_ALLOWLIST = Object.freeze(['37729f76f581ce6e2cc9cc08e48b9f098158cf4bd044d62fe2a9f4bfd06c23d9']);
+// 2026-10-26: owner's second Google test account, used for the Stream web acceptance.
+export const NEAR_AUTH_CREATOR_ALLOWLIST = Object.freeze([
+    '37729f76f581ce6e2cc9cc08e48b9f098158cf4bd044d62fe2a9f4bfd06c23d9',
+    '92fe8c29082ef13c8b4dd4973cb3e5f09241bb6a9a6cd400450a18a2429f2615',
+]);
 export const CREATOR_ALLOWLIST = Object.freeze([...WALLET_CREATOR_ALLOWLIST, ...NEAR_AUTH_CREATOR_ALLOWLIST]);
 // Unused by any other Worker (1001-2002 web, 3001 Bridge, 3101/3201 V2 Workers, 5001-5003 public-testnet).
 export const RATE_LIMIT_NAMESPACE = '6003';
@@ -144,6 +148,9 @@ export const FIXED_VARS = Object.freeze({
     // Studio-only values (OD19): empty, so the V2 Bridge sees no Studio adapter configuration.
     LIVEPEER_PROJECT_ID: '',
     LIVEPEER_API_TOKEN_NAME: '',
+    // Never '*': on Market V2 testnet the Bridge enables operator mutations (finalize_publication,
+    // mark_watched) only for a named creator list (isMarketV2TestnetCreatorScope). A wildcard was
+    // deployed on 2026-10-26 and turned them off.
     LIVEPEER_CREATOR_ALLOWLIST: CREATOR_ALLOWLIST.join(','),
     LIVEPEER_OPERATOR_JOB_ID: '',
     LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS: '20000000',

@@ -130,7 +130,15 @@ export function TicketPlayer(props: {
             if (hls && stream) {
                 hls.on(Hls.Events.FRAG_LOADED, () => renewal.fragmentLoaded());
                 hls.on(Hls.Events.ERROR, (_event, data) => {
-                    if (isStreamAuthFailure(data)) renewal.authFailure();
+                    if (isStreamAuthFailure(data)) {
+                        renewal.authFailure();
+                    } else if (data.fatal) {
+                        // A refused URL or a media error ends playback visibly instead of a silent black frame.
+                        renewal.stop();
+                        hls.stopLoad();
+                        setState('error');
+                        setError('Playback is not available right now. Please try again.');
+                    }
                 });
             }
             cleanup.current = () => {

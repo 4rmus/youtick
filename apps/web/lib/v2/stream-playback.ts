@@ -3,7 +3,8 @@
 // signed token in its PATH (`https://customer-<code>.cloudflarestream.com/<token>/manifest/video.m3u8`),
 // so no request header carries the token. The master and variant playlists are relative and carry
 // no query; init and media segments are `../../<uid>/video/<rendition>/<name>.mp4?p=…&s=…` with a
-// provider-signed `p`/`s` query (manifest shape: PROVIDER, 2026-10-22). Renewal swaps the source.
+// provider-signed `p`/`s` query (manifest shape: PROVIDER, 2026-10-22). A separate audio rendition is
+// served from `../../<uid>/audio/<rendition>/<name>.mp4` (PROVIDER, 2026-10-26). Renewal swaps the source.
 
 /** Exact delivery host of a customer code; the Bridge builds its URLs the same way. */
 export function streamCustomerHost(customerCode: string): string {
@@ -14,7 +15,7 @@ export function streamCustomerHost(customerCode: string): string {
 export const STREAM_TOKEN_PATTERN = /^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
 const PLAYLIST_PATH = /^\/eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\/manifest\/[A-Za-z0-9_-]+\.m3u8$/;
-const MEDIA_PATH = /^\/[0-9a-f]{32}\/video\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.mp4$/;
+const MEDIA_PATH = /^\/[0-9a-f]{32}\/(?:video|audio)\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\.mp4$/;
 
 /** The HLS URL the Bridge must answer for this token: exact string, so no query, fragment or port. */
 export function expectedStreamHlsUrl(customerCode: string, token: string): string {
@@ -23,7 +24,8 @@ export function expectedStreamHlsUrl(customerCode: string, token: string): strin
 
 /**
  * Whether hls.js may request `value`: the customer host only; playlists under a token path with no
- * query; init and media segments under a video UID with exactly the `p` and `s` query keys.
+ * query; init and media segments (video or audio) under a video UID with exactly the `p` and `s`
+ * query keys.
  */
 export function isStreamMediaUrl(value: string, customerCode: string): boolean {
     let url: URL;

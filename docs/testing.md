@@ -236,8 +236,10 @@ npm run canary:stream:playback -- --out <dir> --uid <uid> --signing-key-file <fi
 `canary:stream:reservation` (abandoned reservation counted in `storage-usage`
 and released by DELETE), `canary:stream:playback` (the denial matrix of the
 2026-10-21 spike for none, forged, expired, wrong-sub and valid tokens on
-manifests, thumbnail, watch, iframe and MP4 download, plus a query-stripped
-segment; a listed `p`/`s` segment URL is never fetched), `canary:stream:webhook`
+manifests, both thumbnails, watch, iframe and MP4 download, plus a query-stripped
+segment; a listed `p`/`s` segment URL is never fetched; the Bridge's per-asset
+readiness check sends anonymous requests only and relies on this run for the
+credential matrix), `canary:stream:webhook`
 (a 64 KiB non-video upload whose signed `ERR_NON_VIDEO` delivery the Bridge
 must accept: PASS with `--bridge-health-url`, otherwise `OPERATOR_CHECK` from
 the Bridge log), `canary:stream:ladder` (master and variant playlists against

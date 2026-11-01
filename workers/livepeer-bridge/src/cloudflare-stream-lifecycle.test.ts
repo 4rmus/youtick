@@ -186,6 +186,20 @@ describe('Stream lifecycle: bounded poll and deletion', () => {
         expect(run.operatorCalls.filter((request) => new URL(request.url).pathname === '/internal/finalize')).toHaveLength(1);
     });
 
+    it('finalizes a 5-rendition ladder from one alarm with 13 provider requests, under the Workers Free 50', async () => {
+        const run = await wired({ job: { state: 'UPLOADING' } });
+        await seedReservation(run);
+        run.backend.calls.length = 0;
+        await run.control.alarm();
+        expect(run.job().state).toBe('ONCHAIN_PUBLISHED');
+        // The poll's video read, then one verification run: tus HEAD, video read, 10 delivery probes.
+        expect(run.calls(isVideoGet)).toHaveLength(2);
+        expect(run.calls((call) => call.method === 'HEAD')).toHaveLength(1);
+        expect(run.backend.calls).toHaveLength(13);
+        // Finalize and admission go to Durable Objects; together they still leave the alarm far below 50.
+        expect(run.backend.calls.length + run.operatorCalls.length).toBeLessThan(50);
+    });
+
     it('moves an uploading job to PROCESSING and polls again in a minute', async () => {
         const run = await wired({ job: { state: 'UPLOADING' }, backend: { video: await streamVideo('video-inprogress.json') } });
         const now = Date.now();

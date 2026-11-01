@@ -98,10 +98,6 @@ function sparseEnv(db) {
         READ_MODEL_MAX_BLOCKS_PER_RUN: '180', READ_MODEL_NEAR_RPC_URL: 'https://test.rpc.fastnear.com', MARKET_READ_MODEL: db };
 }
 
-function header(height) {
-    return { height, hash: hashOf(height), prev_height: height - 1, prev_hash: hashOf(height - 1) };
-}
-
 function watermark(db) {
     return { ...db.sqlite.prepare('SELECT block_height, block_hash, prev_block_height, scan_height FROM finality_watermarks').get() };
 }
@@ -130,9 +126,8 @@ function sparseDeps(blocks, overrides = {}) {
             fetchBlock: async ({ blockHeight, requirePredecessor }) => {
                 assert.equal(requirePredecessor, true);
                 fetched.push(blockHeight);
-                return eventBlock(blockHeight, blocks[blockHeight]);
+                return eventBlock(blockHeight, blocks[blockHeight] ?? []);
             },
-            fetchBlockHeader: async (height) => header(height),
             fetchEscrowBalance: async () => '0',
             ...overrides,
         },
@@ -204,7 +199,8 @@ test('the V2 testnet reads only event blocks, jumps the watermark to the coverag
     const result = await ingestMarketReadModelBatch(sparseEnv(db), deps);
     assert.deepEqual(discovered, [{ network: 'testnet', contractId: CONTRACT_ID, fromTxHeight: 100, toTxHeight: 878,
         minBlockHeight: 100, maxBlockHeight: 878 }]);
-    assert.deepEqual(fetched, [300, 650]);
+    // The event blocks, then the coverage block's header (neardata, like the event blocks).
+    assert.deepEqual(fetched, [300, 650, 878]);
     assert.equal(result.mode, 'sparse');
     assert.equal(result.status, 'applied');
     assert.equal(result.block_count, 2);
@@ -246,7 +242,7 @@ test('more event blocks than a run takes leave the watermark on the last one wri
     assert.equal(watermark(db).block_height, 390);
     const second = sparseDeps(blocks);
     const done = await ingestMarketReadModelBatch(sparseEnv(db), second.deps);
-    assert.deepEqual(second.fetched, [400, 410, 420, 430, 440]);
+    assert.deepEqual(second.fetched, [400, 410, 420, 430, 440, 878]);
     assert.equal(done.status, 'applied');
     // The blocks re-discovered below the watermark are all written.
     assert.equal(done.missed_event_blocks, undefined);
@@ -256,10 +252,44 @@ test('more event blocks than a run takes leave the watermark on the last one wri
 
 test('a skipped coverage height falls back to the nearest earlier block header', async () => {
     const db = await linkedDatabase();
-    const { deps } = sparseDeps({}, { fetchBlockHeader: async (height) => (height >= 877 ? null : header(height)) });
+    const { deps } = sparseDeps({}, {
+        fetchBlock: async ({ blockHeight }) => (blockHeight >= 877 ? null : eventBlock(blockHeight, [])),
+    });
     const result = await ingestMarketReadModelBatch(sparseEnv(db), deps);
     assert.equal(result.block_height, 876);
     assert.equal(watermark(db).block_height, 876);
+    db.sqlite.close();
+});
+
+test('the coverage header comes from neardata, so a watermark older than RPC history still moves', async () => {
+    // 2026-10-26: the media-account rescan stood at an event block of 2026-10-13 because the RPC node
+    // answered UNKNOWN_BLOCK for every coverage height; neardata keeps the whole history.
+    const db = await linkedDatabase();
+    const { deps, fetched } = sparseDeps({ 300: [vectors.events.ticket_purchased] });
+    const result = await ingestMarketReadModelBatch(sparseEnv(db), deps);
+    assert.deepEqual(fetched, [300, 878]);
+    assert.equal(result.status, 'applied');
+    assert.equal(watermark(db).block_height, 878);
+    db.sqlite.close();
+});
+
+test('a coverage block the index missed keeps its events', async () => {
+    const db = await linkedDatabase();
+    const { deps } = sparseDeps({}, {
+        fetchBlock: async ({ blockHeight }) => eventBlock(blockHeight, blockHeight === 878 ? [vectors.events.ticket_purchased] : []),
+    });
+    const result = await ingestMarketReadModelBatch(sparseEnv(db), deps);
+    assert.equal(result.block_height, 878);
+    assert.equal(result.event_count, 1);
+    assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM market_v2_tickets').get().n, 1);
+    db.sqlite.close();
+});
+
+test('ten unreadable coverage heights fail the run instead of stalling silently', async () => {
+    const db = await linkedDatabase();
+    const { deps } = sparseDeps({}, { fetchBlock: async () => null });
+    await assert.rejects(() => ingestMarketReadModelBatch(sparseEnv(db), deps), /read_model_header_unavailable/);
+    assert.equal(watermark(db).block_height, 120);
     db.sqlite.close();
 });
 
@@ -328,7 +358,8 @@ test('an event block the index adds below the watermark raises an alarm instead 
     late.deps.logger = { log() {}, error: (line) => errors.push(JSON.parse(line)) };
     const result = await ingestMarketReadModelBatch(sparseEnv(db), late.deps);
     assert.deepEqual(result.missed_event_blocks, [500]);
-    assert.deepEqual(late.fetched, []);
+    // Only the coverage header (1_100 - 120); the missed block is not written behind the watermark.
+    assert.deepEqual(late.fetched, [980]);
     assert.equal(result.escrow.matched, false);
     assert.deepEqual(errors.map((line) => line.status), ['missed_event_blocks', 'escrow_mismatch']);
     db.sqlite.close();

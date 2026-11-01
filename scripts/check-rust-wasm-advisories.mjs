@@ -3,6 +3,26 @@
 import { readFile } from 'node:fs/promises';
 import process from 'node:process';
 
+// Reachable advisories accepted after review. Each entry names one advisory, one exact package
+// version and one contract graph; a new version or any other contract fails again.
+const ACCEPTED = Object.freeze([
+    Object.freeze({
+        id: 'RUSTSEC-2026-0387',
+        package: 'crypto-bigint@0.7.0-pre.4',
+        label: 'ckd-gate',
+        // 2026-10-26 (owner): timing variability in operations meant to be constant-time. In
+        // ckd-gate it is reached only through base-jwt-guard's RS256 verification
+        // (fast-auth 8f84383, src/rsa/rs256.rs), whose inputs are the public key, the signature
+        // and the signed payload; there is no secret to leak, and on-chain execution time is not
+        // observable. The fix (>= 0.7.6) needs Rust 1.87 and the testnet gate has no upgrade path;
+        // the upgrade is a mainnet prerequisite.
+    }),
+]);
+
+function accepted(entry, label) {
+    return ACCEPTED.some((item) => item.id === entry.id && item.package === entry.package && item.label === label);
+}
+
 function fail(message) {
     throw new Error(message);
 }
@@ -84,17 +104,22 @@ async function main() {
     const packages = productionPackages(packageSource);
     const vulnerabilities = auditVulnerabilities(audit);
     const warnings = auditWarnings(audit);
-    const reachable = vulnerabilities.filter((entry) => packages.has(entry.package));
+    const reachableAll = vulnerabilities.filter((entry) => packages.has(entry.package));
+    const acceptedReachable = reachableAll.filter((entry) => accepted(entry, options.label));
+    const reachable = reachableAll.filter((entry) => !accepted(entry, options.label));
     if (reachable.length > 0) {
         fail(`production WASM vulnerability: ${reachable.map((entry) => `${entry.id}:${entry.package}`).join(',')}`);
     }
-    const devOnly = vulnerabilities.map((entry) => entry.id).sort();
+    const devOnly = vulnerabilities
+        .filter((entry) => !packages.has(entry.package))
+        .map((entry) => entry.id)
+        .sort();
     const reachableWarnings = warnings
         .filter((entry) => packages.has(entry.package))
         .map((entry) => entry.id)
         .sort();
     console.log(
-        `rust-wasm-audit PASS label=${options.label} packages=${packages.size} dev_only=${devOnly.join(',') || 'none'} warnings=${reachableWarnings.join(',') || 'none'}`,
+        `rust-wasm-audit PASS label=${options.label} packages=${packages.size} dev_only=${devOnly.join(',') || 'none'} accepted=${acceptedReachable.map((entry) => entry.id).sort().join(',') || 'none'} warnings=${reachableWarnings.join(',') || 'none'}`,
     );
 }
 
