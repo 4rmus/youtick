@@ -11,7 +11,9 @@ import {
     internalStreamWebhook,
     signedStreamWebhook,
     streamBackend,
+    streamCancellationRequest,
     streamEnv,
+    streamIntentBody,
     streamIntentRequest,
     streamJobRecord,
     streamVideo,
@@ -329,6 +331,37 @@ describe('Stream lifecycle: bounded poll and deletion', () => {
         expect(run.calls(isDelete)).toHaveLength(1);
         expect(run.operatorCalls.filter(isFinalize)).toHaveLength(0);
         expect(run.admissionRecord()!.stream).toMatchObject({ openReservedSeconds: 0 });
+    });
+
+    it('cancels a Stream upload the creator gives up before the bytes are in: UID deleted, reservation released at once', async () => {
+        const body = streamIntentBody();
+        const run = await wired({ job: { state: 'UPLOADING', jobId: body.job_id, generation: body.generation } });
+        await seedReservation(run, body.job_id);
+        const response = await run.control.fetch(await streamCancellationRequest(keys, body));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ cancelled: true, duplicate: false, refundable: false });
+        expect(run.job()).toMatchObject({ state: 'CANCELLED', providerDelete: { outcome: 'DELETED' } });
+        expect(run.calls(isDelete)).toHaveLength(1);
+        expect(run.admissionRecord()!.stream).toMatchObject({ openReservedSeconds: 0 });
+        // A second cancellation is a duplicate; a later alarm reads and deletes nothing more.
+        const again = await run.control.fetch(await streamCancellationRequest(keys, body));
+        expect(await again.json()).toMatchObject({ cancelled: true, duplicate: true });
+        await run.control.alarm();
+        expect(run.calls(isDelete)).toHaveLength(1);
+        expect(run.calls(isTusHead)).toHaveLength(0);
+    });
+
+    it('refuses to cancel a Stream job once its bytes are in', async () => {
+        const body = streamIntentBody();
+        const run = await wired({
+            job: { state: 'PROCESSING', jobId: body.job_id, generation: body.generation },
+            backend: { video: await streamVideo('video-inprogress.json') },
+        });
+        const response = await run.control.fetch(await streamCancellationRequest(keys, body));
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: 'upload_cancel_denied' });
+        expect(run.job().state).toBe('PROCESSING');
+        expect(run.calls(isDelete)).toHaveLength(0);
     });
 
     it('fails a job the poll finds in error and deletes the UID', async () => {

@@ -2043,7 +2043,14 @@ export class LivepeerControl {
             );
             if (current.state === 'CANCELLED') {
                 await transaction.put(nonceKey, { expiresAtMs: Number(input.envelope.expires_at_ms) });
-                return { record: current, duplicate: true, fromState: current.state };
+                return { record: current, duplicate: true, fromState: current.state, releaseProvider: false };
+            }
+            // A Stream upload the creator gives up before its bytes are in frees the slot at once
+            // (UID deleted, reservation released) instead of holding it until the lease lapses.
+            // Once Stream has the bytes (PROCESSING and later) the job runs to its own end.
+            if (['UPLOAD_READY', 'UPLOADING'].includes(current.state) && jobProviderKind(current) === 'stream') {
+                await transaction.put(nonceKey, { expiresAtMs: Number(input.envelope.expires_at_ms) });
+                return { record: current, duplicate: false, fromState: current.state, releaseProvider: true };
             }
             if (!['AUTHORIZED', 'LEASED'].includes(current.state)) {
                 throw new Error('upload_cancel_denied');
@@ -2051,9 +2058,14 @@ export class LivepeerControl {
             const cancelled = transitionJob(current, 'CANCELLED');
             await transaction.put(nonceKey, { expiresAtMs: Number(input.envelope.expires_at_ms) });
             await transaction.put(JOB_KEY, cancelled);
-            return { record: cancelled, duplicate: false, fromState: current.state };
+            return { record: cancelled, duplicate: false, fromState: current.state, releaseProvider: false };
         });
         await scheduleAlarmNoLaterThan(this.state, Number(input.envelope.expires_at_ms));
+        if (result.releaseProvider) {
+            // Transition, UID delete, archive and admission release in one place with the other Stream exits.
+            await terminateStreamJob(this.state, this.env, result.record, 'CANCELLED', 'creator_cancelled');
+            return json({ cancelled: true, duplicate: false, refundable: false });
+        }
         if (!result.duplicate) logJobStateTransition(result.fromState, result.record.state);
         await scheduleTerminalArchive(this.state, this.env, result.record);
         if (result.record.leaseId) await updateAdmission(this.env, result.record, 'CANCELLED');
@@ -6310,8 +6322,8 @@ const JOB_STATE_TRANSITIONS: Record<JobState, ReadonlySet<JobState>> = {
     PROVIDER_CREATE_PENDING: new Set(['CREATE_AMBIGUOUS', 'UPLOAD_READY', 'UPLOAD_EXPIRED']),
     CREATE_PENDING: new Set(['CREATE_AMBIGUOUS', 'UPLOAD_READY']),
     CREATE_AMBIGUOUS: new Set(),
-    UPLOAD_READY: new Set(['UPLOADING', 'PROCESSING', 'READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED']),
-    UPLOADING: new Set(['PROCESSING', 'READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED']),
+    UPLOAD_READY: new Set(['UPLOADING', 'PROCESSING', 'READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'CANCELLED']),
+    UPLOADING: new Set(['PROCESSING', 'READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'CANCELLED']),
     PROCESSING: new Set(['READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED']),
     READY_VERIFIED: new Set(['FINALIZE_QUEUED', 'FINALIZE_RETRY', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED']),
     FINALIZE_QUEUED: new Set(['FINALIZE_RETRY', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED']),

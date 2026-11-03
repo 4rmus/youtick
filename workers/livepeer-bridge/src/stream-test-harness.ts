@@ -173,6 +173,29 @@ export async function streamIntentRequest(keys: StreamKeys, body = streamIntentB
     });
 }
 
+/** A signed /v1/upload-cancellations request for the job of `body` under the harness upload key. */
+export async function streamCancellationRequest(keys: StreamKeys, body = streamIntentBody()): Promise<Request> {
+    nonce += 1;
+    const cancellation = { job_id: body.job_id, generation: body.generation };
+    const envelope: Record<string, unknown> = {
+        ...vectors.upload_intent.envelope,
+        version: '2',
+        route: '/v1/upload-cancellations',
+        session_public_key: keys.requestPublicKey,
+        device_nonce: base64Url(new Uint8Array(32).fill(nonce % 250 + 1)).slice(0, 43),
+        expires_at_ms: String(Date.now() + 5 * 60 * 1000),
+        body_sha256: await sha256Hex(canonicalJson(cancellation)),
+    };
+    const signature = new Uint8Array(await crypto.subtle.sign(
+        'Ed25519', keys.requestKey.privateKey, new TextEncoder().encode(canonicalControlMessage(envelope)),
+    ));
+    return new Request('https://bridge.youtick.net/v1/upload-cancellations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: ORIGIN, 'X-Youtick-Signature': base64(signature) },
+        body: JSON.stringify({ body: cancellation, envelope }),
+    });
+}
+
 export function finalJobRpc(keys: StreamKeys, body = streamIntentBody()): Response {
     return rpcValue({
         job_id: body.job_id,
