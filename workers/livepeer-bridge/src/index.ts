@@ -1831,8 +1831,9 @@ export class LivepeerControl {
 
     /**
      * Bounded Stream poll (the V2 Bridge has no other poll): one GET per alarm for a job still
-     * uploading or processing, so a lost webhook cannot strand a job whose fee is spent. Stops at
-     * a terminal state; a pre-ready job ends at the tus URL's 24 h life.
+     * uploading or processing, plus one tus HEAD while Stream transcodes, so a lost webhook cannot
+     * strand a job whose fee is spent and an overflow ends before readiness. Stops at a terminal
+     * state; a pre-ready job ends at the tus URL's 24 h life.
      */
     private async pollStreamUpload(record: JobRecord): Promise<void> {
         if (!['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(record.state) || !record.assetId) return;
@@ -1878,6 +1879,14 @@ export class LivepeerControl {
         const progress = { state: video.state, pctComplete: Number.isFinite(video.pctComplete) ? video.pctComplete : 0 };
         const tracked = trackStreamProgress(record, progress, now);
         if (['queued', 'inprogress', 'downloading'].includes(video.state)) {
+            // Option A, early: an upload past its declared length (offset > length, the overflow
+            // shape of 2026-10-21 F3b) is terminal as soon as a poll sees it, before Stream finishes
+            // transcoding the extra bytes. Only that definitive shape ends the job here; every other
+            // HEAD outcome is left to the ready proof, which fails closed.
+            if (record.tusEndpoint && await streamUploadOverflowed(provider, record.tusEndpoint)) {
+                await terminateStreamJob(this.state, this.env, tracked, 'PROVIDER_FAILED', 'provider_tus_state_invalid');
+                return;
+            }
             if (record.state !== 'PROCESSING') {
                 const processing = transitionJob(tracked, 'PROCESSING');
                 await this.state.storage.put(JOB_KEY, processing);
@@ -2394,6 +2403,16 @@ export class LivepeerControl {
             await closeAdmissionAfterAmbiguousDelete(this.env, record);
             throw new Error('provider_delete_ambiguous');
         }
+    }
+}
+
+/** True only for a readable tus HEAD whose offset exceeds its length; unreadable, expired or short is false. */
+async function streamUploadOverflowed(provider: CloudflareStreamProvider, tusEndpoint: string): Promise<boolean> {
+    try {
+        const tus = await provider.readTusProgress(tusEndpoint);
+        return BigInt(tus.offsetBytes) > BigInt(tus.lengthBytes);
+    } catch {
+        return false;
     }
 }
 

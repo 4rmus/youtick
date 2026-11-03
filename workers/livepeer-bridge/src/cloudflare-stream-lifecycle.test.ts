@@ -56,6 +56,8 @@ async function wired(options: { env?: Partial<Env>; backend?: Partial<StreamBack
 
 const isDelete = (call: { method: string; url: string }) => call.method === 'DELETE' && call.url === `${API}/${V.UID}`;
 const isVideoGet = (call: { method: string; url: string }) => call.method === 'GET' && call.url === `${API}/${V.UID}`;
+const isTusHead = (call: { method: string }) => call.method === 'HEAD';
+const isFinalize = (request: Request) => new URL(request.url).pathname === '/internal/finalize';
 
 async function seedReservation(run: Awaited<ReturnType<typeof wired>>, jobId = 'job-001') {
     const response = await run.admission.fetch(admissionRequest('reserve', candidate(jobId, CREATOR, { reservedSeconds: 7200 })));
@@ -275,6 +277,46 @@ describe('Stream lifecycle: bounded poll and deletion', () => {
         });
         await run.control.alarm();
         expect(run.job().state).toBe('PROCESSING');
+    });
+
+    it('fails an overflow the poll finds while Stream still transcodes, deletes the UID once and releases the reservation', async () => {
+        const run = await wired({
+            job: { state: 'PROCESSING' },
+            backend: { video: await streamVideo('video-inprogress.json'), head: { status: 200, offset: '20262144', length: V.LENGTH } },
+        });
+        await seedReservation(run);
+        await run.control.alarm();
+        expect(run.job()).toMatchObject({ state: 'PROVIDER_FAILED', providerDelete: { outcome: 'DELETED' } });
+        expect(run.calls(isTusHead)).toHaveLength(1);
+        expect(run.calls(isDelete)).toHaveLength(1);
+        expect(run.operatorCalls.filter(isFinalize)).toHaveLength(0);
+        expect(run.admissionRecord()!.stream).toMatchObject({ openReservedSeconds: 0 });
+        // Terminal: a later alarm reads nothing more and never deletes twice.
+        await run.control.alarm();
+        expect(run.calls(isTusHead)).toHaveLength(1);
+        expect(run.calls(isDelete)).toHaveLength(1);
+    });
+
+    it.each([
+        ['an upload URL the HEAD cannot read', { status: 503, offset: '', length: '' }],
+        ['an upload URL already gone', { status: 404, offset: '', length: '' }],
+        ['a complete upload', { status: 200, offset: V.LENGTH, length: V.LENGTH }],
+    ])('keeps polling a transcoding job with %s: only the ready proof decides', async (_case, head) => {
+        const run = await wired({ job: { state: 'PROCESSING' }, backend: { video: await streamVideo('video-inprogress.json'), head } });
+        await run.control.alarm();
+        expect(run.job().state).toBe('PROCESSING');
+        expect(run.calls(isTusHead)).toHaveLength(1);
+        expect(run.calls(isDelete)).toHaveLength(0);
+    });
+
+    it('fails an overflow through the poll when the ready webhook is lost, and never finalizes', async () => {
+        const run = await wired({ job: { state: 'UPLOADING' }, backend: { head: { status: 200, offset: '20262144', length: V.LENGTH } } });
+        await seedReservation(run);
+        await run.control.alarm();
+        expect(run.job()).toMatchObject({ state: 'PROVIDER_FAILED', providerDelete: { outcome: 'DELETED' } });
+        expect(run.calls(isDelete)).toHaveLength(1);
+        expect(run.operatorCalls.filter(isFinalize)).toHaveLength(0);
+        expect(run.admissionRecord()!.stream).toMatchObject({ openReservedSeconds: 0 });
     });
 
     it('fails a job the poll finds in error and deletes the UID', async () => {
