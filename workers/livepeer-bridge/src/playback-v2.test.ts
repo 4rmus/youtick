@@ -541,6 +541,8 @@ describe('stateless playback v2', () => {
     ] as const)('binds the publication profile id to the market: %s', async (_case, protocol, profileId, status) => {
         const { env } = await createEnv();
         env.MARKET_PROTOCOL = protocol;
+        // Market V2 consults the native limiter on every token route.
+        if (protocol === 'v2') env.PUBLIC_BETA_RATE_LIMITER = { limit: vi.fn().mockResolvedValue({ success: true }) } as RateLimit;
         const signed = await playbackRequest();
         vi.stubGlobal('fetch', playbackDependencies({ ...signed, profileId }).fetcher);
 

@@ -765,6 +765,16 @@ function isMarketV2(env: Env): boolean {
     return env.MARKET_PROTOCOL === 'v2';
 }
 
+/**
+ * Where the native rate limiter (PUBLIC_BETA_RATE_LIMITER, 30 requests / 60 s per IP and per
+ * account on PUBLIC_BETA_RATE_LIMIT_ROUTES) is enforced: the public-beta packet, public testnet and
+ * every Market V2 deployment. V2 has no other limit on its upload routes (2026-11-03 threat review),
+ * and its release config always carries the binding; without it the routes fail closed (503).
+ */
+function rateLimitedEnvironment(env: Env): boolean {
+    return isPublicBetaPacket(env) || isPublicTestnetEnvironment(env) || isMarketV2(env);
+}
+
 // The on-chain operator key must allow exactly these methods; V1 deployments are unchanged.
 function operatorOutboxMethods(env: Env): Set<OutboxMethod> {
     return isMarketV2(env) ? MARKET_V2_OUTBOX_METHODS : V1_OUTBOX_METHODS;
@@ -912,7 +922,7 @@ const bridgeWorker = {
         }
         if (request.method === 'GET' && url.pathname === '/__health') {
             // Health stays observable without the binding; it reports publicBetaRateLimitReady itself.
-            if (env.PUBLIC_BETA_RATE_LIMITER && (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))) {
+            if (env.PUBLIC_BETA_RATE_LIMITER && rateLimitedEnvironment(env)) {
                 const limited = await publicBetaRateLimitResponse(request, env, '/__health');
                 if (limited?.status === 429) return withHealthCors(limited, request, env);
             }
@@ -978,8 +988,7 @@ const bridgeWorker = {
                     && validWebhookConfig(env),
                 uploadJobArchiveReady: validTerminalArchiveConfig(env),
                 operatorOutboxArchiveReady: validOperatorArchiveConfig(env),
-                publicBetaRateLimitReady: (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))
-                    && Boolean(env.PUBLIC_BETA_RATE_LIMITER),
+                publicBetaRateLimitReady: rateLimitedEnvironment(env) && Boolean(env.PUBLIC_BETA_RATE_LIMITER),
                 mediaProvider: { kind: studioActive(env) ? mediaProvider(env).id : 'stream' },
                 // Never true with the flag off: empty STREAM_* values then mean "not configured".
                 streamConfigured: streamEnabled(env) && validStreamConfig(env),
@@ -989,7 +998,7 @@ const bridgeWorker = {
 
         if (request.method === 'POST'
             && PUBLIC_BETA_RATE_LIMIT_ROUTES.has(url.pathname)
-            && (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))) {
+            && rateLimitedEnvironment(env)) {
             const limited = await publicBetaRateLimitResponse(request, env, url.pathname);
             if (limited) return limited;
         }
@@ -1232,7 +1241,7 @@ const bridgeWorker = {
             if (!env.LIVEPEER_CONTROL) {
                 return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
             }
-            if (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env)) {
+            if (rateLimitedEnvironment(env)) {
                 const limited = await publicBetaRateLimitResponse(request, env, CREATOR_PENDING_UPLOAD_ROUTE);
                 if (limited) return withCors(limited, corsOrigin);
             }
@@ -4153,7 +4162,7 @@ async function enforcePublicBetaAccountRateLimit(
     route: string,
     account: string,
 ): Promise<void> {
-    if (!isPublicBetaPacket(env) && !isPublicTestnetEnvironment(env)) return;
+    if (!rateLimitedEnvironment(env)) return;
     if (!env.PUBLIC_BETA_RATE_LIMITER) throw new Error('runtime_not_configured');
     let outcome: RateLimitOutcome;
     try {
@@ -7969,7 +7978,7 @@ async function publicationCover(
             const hit = await cachedCover();
             if (hit) return hit;
         }
-        if (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env)) {
+        if (rateLimitedEnvironment(env)) {
             const limited = await publicBetaRateLimitResponse(request, env, '/v1/publication-covers');
             if (limited) return limited;
         }

@@ -169,6 +169,18 @@ describe('Stream admission: reservation budget and storage headroom', () => {
         expect(run.admissionRecord()?.stream?.openReservedSeconds ?? 0).toBe(0);
     });
 
+    it.each([
+        ['refuses an intent the account bucket denies', { limit: async () => ({ success: false }) } as RateLimit, 429, 'rate_limited'],
+        ['fails closed on a V2 Bridge without the limiter binding', undefined, 503, 'runtime_not_configured'],
+    ])('%s before any reservation or Stream creation', async (_case, limiter, status, error) => {
+        const run = await wired({ env: { PUBLIC_BETA_RATE_LIMITER: limiter } });
+        const response = await run.control.fetch(await streamIntentRequest(keys));
+        expect(response.status).toBe(status);
+        expect(await response.json()).toEqual({ error });
+        expect(run.calls((call) => call.method === 'POST' && call.url.endsWith('?direct_user=true'))).toHaveLength(0);
+        expect(run.admissionRecord()?.stream?.openReservedSeconds ?? 0).toBe(0);
+    });
+
     it('admits a Stream intent with headroom, books the cap and records the observed usage', async () => {
         const run = await wired({ backend: { storageMinutes: 880 } });
         const response = await run.control.fetch(await streamIntentRequest(keys));

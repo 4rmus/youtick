@@ -84,6 +84,8 @@ export function streamEnv(keys: StreamKeys, overrides: Partial<Env> = {}): Env {
     return {
         CF_VERSION_METADATA: { id: 'worker-version-test', tag: 'test', timestamp: '2026-10-22T00:00:00.000Z' },
         MARKET_PROTOCOL: 'v2',
+        // The V2 release config always carries the limiter; tests of the fail-closed path unset it.
+        PUBLIC_BETA_RATE_LIMITER: { limit: async () => ({ success: true }) } as RateLimit,
         LIVEPEER_BRIDGE_ENABLED: 'true',
         LIVEPEER_NEW_UPLOADS_ENABLED: 'true',
         LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: 'true',

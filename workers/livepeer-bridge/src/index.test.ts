@@ -1255,6 +1255,36 @@ describe('Livepeer bridge PR-3 upload intent', () => {
         expect(successLimit).toHaveBeenCalledWith({ key: expect.stringMatching(/^\/v1\/upload-preflight:ip:/) });
     });
 
+    it('applies the native limiter to Market V2 and fails closed there without the binding', async () => {
+        const v2Env = (overrides?: Partial<Env>) => createEnv({
+            MARKET_PROTOCOL: 'v2',
+            VIDEO_ENVIRONMENT: 'v2-testnet',
+            LIVEPEER_BRIDGE_ENABLED: 'true',
+            LIVEPEER_NEW_UPLOADS_ENABLED: 'true',
+            LIVEPEER_CREATOR_ALLOWLIST: 'creator.testnet',
+            ...overrides,
+        });
+        expect(await (await handler.fetch(new Request('https://bridge.youtick.net/__health'), v2Env())).json())
+            .toMatchObject({ publicBetaRateLimitReady: true });
+        const missing = v2Env({ PUBLIC_BETA_RATE_LIMITER: undefined });
+        expect(await (await handler.fetch(new Request('https://bridge.youtick.net/__health'), missing)).json())
+            .toMatchObject({ publicBetaRateLimitReady: false });
+        const unavailable = await handler.fetch(uploadPreflightRequest(), missing);
+        expect(unavailable.status).toBe(503);
+        expect(await unavailable.json()).toEqual({ error: 'runtime_not_configured' });
+
+        const limit = vi.fn().mockResolvedValue({ success: false });
+        const limited = await handler.fetch(uploadPreflightRequest(), v2Env({ PUBLIC_BETA_RATE_LIMITER: { limit } as RateLimit }));
+        expect(limited.status).toBe(429);
+        expect(limited.headers.get('Retry-After')).toBe('60');
+        expect(limit).toHaveBeenCalledWith({ key: expect.stringMatching(/^\/v1\/upload-preflight:ip:/) });
+
+        // A V1 deployment outside the public-beta packet stays unlimited, as before.
+        const untouched = vi.fn().mockResolvedValue({ success: false });
+        await handler.fetch(uploadPreflightRequest(), v2Env({ MARKET_PROTOCOL: undefined, PUBLIC_BETA_RATE_LIMITER: { limit: untouched } as RateLimit }));
+        expect(untouched).not.toHaveBeenCalled();
+    });
+
     it('rejects a public-beta upload before provider create without the final chain marker', async () => {
         vi.spyOn(Date, 'now').mockReturnValue(1_785_589_300_000);
         const request = await controlRequest({ body: { expected_source_bytes: '1000000000' } });
