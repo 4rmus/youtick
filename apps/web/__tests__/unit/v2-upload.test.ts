@@ -487,6 +487,8 @@ describe('upload refusal copy', () => {
         expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('active_upload', 1))).toMatch(/^You already have an upload in progress/);
         // An unknown reason keeps the admission_denied copy.
         expect(uploadErrorMessage(new LivepeerAdmissionDeniedError(null, null))).toBe('Uploads are busy right now. Please try again in a few minutes.');
+        // Discard refused by the Bridge: the job stays resumable and the copy points at Resume.
+        expect(uploadErrorMessage(new Error('upload_cancel_denied'), true)).toMatch(/no longer be discarded.*Use Resume/);
     });
 });
 

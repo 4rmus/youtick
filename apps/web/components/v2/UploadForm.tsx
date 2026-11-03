@@ -13,6 +13,7 @@ import {
     LIVEPEER_SOURCE_ACCEPT,
     LivepeerAdmissionDeniedError,
     advanceLivepeerUploadDraftStage,
+    cancelLivepeerUpload,
     clearLivepeerJobSessionKey,
     clearLivepeerUploadDraft,
     createLivepeerJobId,
@@ -66,6 +67,7 @@ const ERRORS: Record<string, string> = {
     livepeer_provider_failed: 'The video could not be processed. The fee is not refunded; start a new upload with another file.',
     provider_recovery_not_ready: 'This upload cannot be resumed from here. Start a new upload.',
     livepeer_resume_required: 'This upload was already paid. Use Resume to continue it.',
+    upload_cancel_denied: 'This upload can no longer be discarded: the video was already received, or the job has ended. Use Resume to see where it stands.',
     livepeer_already_published: 'This screening is already published.',
     livepeer_resume_file_mismatch: 'Choose the same file you started this upload with.',
     account_not_ready: 'Your youtick account is still being set up. Please try again in a minute.',
@@ -85,7 +87,7 @@ const PAID_ERRORS: Record<string, string> = {
     provider_admission_closed: 'Uploads are at capacity right now. Your fee is paid and this upload stays here; use Resume later.',
 };
 
-type Step = 'idle' | 'paying' | 'uploading' | 'processing' | 'published' | 'error';
+type Step = 'idle' | 'paying' | 'uploading' | 'processing' | 'discarding' | 'published' | 'error';
 
 export function uploadErrorMessage(error: unknown, feePaid = false): string {
     if (error instanceof LivepeerAdmissionDeniedError && error.reason && ADMISSION_ERRORS[error.reason]) {
@@ -228,6 +230,37 @@ export function UploadForm() {
         }
     }
 
+    /**
+     * Gives up a paid upload that cannot continue. The Bridge deletes the host upload and frees the
+     * platform's upload slot at once instead of holding it until the lease lapses; the fee stays spent.
+     * Refused once the video was received (then Resume follows the publication) or the job has ended.
+     */
+    async function discard() {
+        if (!signedIn || !jobId || operation.current) return;
+        const controller = new AbortController();
+        operation.current = controller;
+        const accountId = session.accountId;
+        const activeJobId = jobId;
+        setError('');
+        setStep('discarding');
+        try {
+            await cancelLivepeerUpload({ accountId, jobId: activeJobId, generation: 1, signal: controller.signal });
+        } catch (reason) {
+            // The job stays resumable; the message says what Resume would show.
+            if (!controller.signal.aborted) fail(reason, true);
+            return;
+        } finally {
+            if (operation.current === controller) operation.current = null;
+        }
+        clearLivepeerUploadDraft(accountId);
+        clearLivepeerJobSessionKey(accountId, activeJobId);
+        forgetLivepeerUploadJob(accountId, activeJobId);
+        setResumable(false);
+        setJobId(null);
+        setProgress(0);
+        setStep('idle');
+    }
+
     async function resume() {
         if (!signedIn || !file || !jobId || operation.current) return;
         const popup = window.open('about:blank', 'youtick-near-auth', 'width=480,height=720');
@@ -286,7 +319,7 @@ export function UploadForm() {
         </ScreenState>;
     }
 
-    const busy = step === 'paying' || step === 'uploading' || step === 'processing';
+    const busy = step === 'paying' || step === 'uploading' || step === 'processing' || step === 'discarding';
     return <Card className="mx-auto max-w-xl space-y-4 p-6">
         <SignedInBar busy={busy} />
         <h1 className="text-xl font-semibold">Upload a screening</h1>
@@ -324,7 +357,14 @@ export function UploadForm() {
                 {step === 'paying' ? 'Waiting for your approval…' : step === 'uploading' ? `Uploading ${progress}%` : step === 'processing' ? 'Processing…' : 'Pay the fee and upload'}
             </Button>}
             {resumable && !busy && <Button className="min-h-11" onClick={() => void resume()}>Resume this upload</Button>}
+            {resumable && !busy && <Button variant="outline" className="min-h-11" onClick={() => void discard()}>Discard this upload</Button>}
+            {step === 'discarding' && <Button variant="outline" className="min-h-11 gap-2" disabled>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Discarding…
+            </Button>}
         </div>
+        {resumable && !busy && <p className="text-xs text-white/50">
+            Resume continues this paid upload with the same file. Discard frees the upload slot for other creators right away; the fee stays spent and this upload cannot be resumed afterwards.
+        </p>}
         <p className="text-xs text-white/50">The fee pays for processing and is not refunded. Keep this tab open until the upload finishes.</p>
         {step === 'error' && <p className="text-sm text-red-300" role="alert">{error}</p>}
     </Card>;
