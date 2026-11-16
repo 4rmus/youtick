@@ -50,6 +50,12 @@
     "wrangler": "4.151.2"
   },
   "overrides": {
-    "sharp": "^0.35.5"
+    "sharp": "^0.35.5",
+    "miniflare": {
+      "undici": "7.30.1"
+    },
+    "@node-minify/core": {
+      "glob": "10.5.0"
+    }
   }
 }

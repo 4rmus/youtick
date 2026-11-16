@@ -19,5 +19,11 @@
     },
     "dependencies": {
         "near-api-js": "7.3.0"
+    },
+    "overrides": {
+        "miniflare": {
+            "undici": "7.30.1",
+            "sharp": "^0.35.5"
+        }
     }
 }
