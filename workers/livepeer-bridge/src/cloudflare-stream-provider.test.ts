@@ -245,6 +245,16 @@ describe('Cloudflare Stream adapter: tus offset', () => {
         expect(await provider().readTusOffset(TUS_URL)).toEqual({ offsetBytes: V.LENGTH, lengthBytes: V.LENGTH });
     });
 
+    it('reports an overflow through readTusProgress for the processing poll, which readTusOffset refuses', async () => {
+        vi.stubGlobal('fetch', transport({ head: () => headResponse('head-overflow.json') }));
+        expect(await provider().readTusProgress(TUS_URL)).toEqual({ offsetBytes: '15466496', lengthBytes: '10400529' });
+        await expect(provider().readTusOffset(TUS_URL)).rejects.toThrow('provider_tus_state_invalid');
+        for (const status of [404, 503]) {
+            vi.stubGlobal('fetch', transport({ head: () => new Response(null, { status }) }));
+            await expect(provider().readTusProgress(TUS_URL)).rejects.toThrow(status === 404 ? 'provider_tus_url_expired' : 'provider_unavailable');
+        }
+    });
+
     it('fails closed on overflow, expiry, a foreign host and transients', async () => {
         vi.stubGlobal('fetch', transport({ head: () => headResponse('head-overflow.json') }));
         await expect(provider().readTusOffset(TUS_URL)).rejects.toThrow('provider_tus_state_invalid');

@@ -7,7 +7,7 @@ import { V2_MEDIA_CONFIG } from '@/lib/constants';
 import { createLivepeerHlsConfig } from '@/lib/livepeer-playback';
 import type { DeviceKey } from '@/lib/v2/device-key';
 import { DEVICE_LINK_ENABLED } from '@/lib/v2/devices';
-import { nativePlaybackSource, requestPlaybackV3Token, type PlaybackV3Token } from '@/lib/v2/playback';
+import { nativePlaybackSource, isTransientPlaybackError, requestPlaybackV3Token, type PlaybackV3Token } from '@/lib/v2/playback';
 import { createStreamHlsConfig, isStreamAuthFailure, reloadStreamSource, startPlaybackRenewal } from '@/lib/v2/stream-playback';
 import { watermarkCode, watermarkPosition, watermarkSlot, WATERMARK_MOVE_MS } from '@/lib/v2/watermark';
 
@@ -107,6 +107,7 @@ export function TicketPlayer(props: {
                 initial: access,
                 request,
                 refreshBeforeExpiryMs: REFRESH_BEFORE_EXPIRY_MS,
+                transient: isTransientPlaybackError,
                 apply: (next) => {
                     tokenRef.current = next.token;
                     if (!hls) {

@@ -2,6 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { LivepeerPublication } from '@/lib/livepeer-publication';
 
 vi.mock('next/image', () => ({ default: () => null }));
 
@@ -77,4 +78,13 @@ it('shows public limits and self-service token guidance without the legacy campa
     expect(terms).toContain('Near Testnet');
     expect(near.view).not.toHaveBeenCalled();
     client.clear();
+});
+
+it('sends a V2 Discover card to the NEAR Auth ticket page, not the wallet watch page', async () => {
+    vi.doMock('@/lib/v2/config', () => ({ v2Config: () => ({ marketContractId: 'market-v2.testnet' }) }));
+    const { VideoCard } = await import('@/components/VideoCard');
+    const html = renderToStaticMarkup(React.createElement(VideoCard, { publication: publication as unknown as LivepeerPublication }));
+    expect(html).toContain('href="/tickets/buy?publication=new-video"');
+    expect(html).not.toContain('/watch?job=');
+    vi.doUnmock('@/lib/v2/config');
 });

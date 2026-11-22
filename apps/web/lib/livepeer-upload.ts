@@ -1562,7 +1562,7 @@ export async function uploadLivepeerSource(
         uploadUrl: intent.tus_endpoint,
         chunkSize: MEDIA_UPLOAD_POLICY.livepeerTusChunkBytes,
         parallelUploads: 1,
-        retryDelays: [0, 1000, 3000],
+        retryDelays: LIVEPEER_TUS_RETRY_DELAYS_MS,
         storeFingerprintForResuming: false,
         onProgress: options?.onProgress,
         onShouldRetry: (error) => shouldRetry(error),
@@ -1638,9 +1638,15 @@ function validateUpload(file: File, intent: LivepeerUploadIntent): void {
     }
 }
 
+// tus retries after a transient failure (network error, 423, 5xx), spread over about 100 s so a
+// short connection drop does not end a paid upload; the lease heartbeat keeps running meanwhile.
+// A longer outage ends in livepeer_upload_failed, and the paid job stays resumable from the offset
+// the host holds. An offline browser retries too: the next attempt simply fails fast if still offline.
+const LIVEPEER_TUS_RETRY_DELAYS_MS = [0, 1000, 3000, 5000, 10000, 20000, 30000, 30000];
+
 function shouldRetry(error: DetailedError): boolean {
     const status = errorStatus(error);
-    if (status === 409 || (typeof navigator !== 'undefined' && navigator.onLine === false)) return false;
+    if (status === 409) return false;
     return status === 0 || status === 423 || status >= 500;
 }
 

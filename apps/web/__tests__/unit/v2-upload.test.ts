@@ -39,8 +39,8 @@ vi.mock('@/lib/livepeer-upload', async (importOriginal) => {
 
 import { fingerprintLivepeerSource, loadLivepeerJobSessionKey, persistLivepeerJobSessionKey, writeLivepeerUploadDraft } from '@/lib/livepeer-upload';
 import {
-    authorizeV2PaidJob, buildUploadMessage, prepareV2UploadResume, PROFILE_ID, UPLOAD_GAS, UPLOAD_KEY_DEPOSIT, UploadError, uploadDelegateBytes,
-    uploadKeyDelegateBytes, processingWaitMs, v2ProfileOf, v2UploadProfileHash,
+    authorizeV2PaidJob, awaitV2Publication, bridgeStatusProbe, buildUploadMessage, prepareV2UploadResume, PROCESSING_POLL_MS, PROCESSING_PROBE_EVERY,
+    PROFILE_ID, UPLOAD_GAS, UPLOAD_KEY_DEPOSIT, UploadError, uploadDelegateBytes, uploadKeyDelegateBytes, processingWaitMs, v2ProfileOf, v2UploadProfileHash,
 } from '@/lib/v2/upload';
 import { KeyPair } from 'near-api-js';
 
@@ -379,6 +379,86 @@ describe('NEAR Auth upload resume', () => {
     });
 });
 
+describe('processing wait', () => {
+    const chainJob = { job_id: JOB, creator_id: session.accountId, status: 'Authorized' as const, upload_public_key: 'ed25519:k', profile_config_sha256: STREAM_PROFILE_HASH };
+    const publication = { publication_id: JOB } as never;
+    function wait(options: { progress: (poll: number) => unknown; probe: (job: unknown) => Promise<unknown>; waitMs?: number; probeEvery?: number }) {
+        let polls = 0;
+        const slept: number[] = [];
+        const readProgress = vi.fn(async () => { polls += 1; return options.progress(polls) as never; });
+        const probe = vi.fn(options.probe as never);
+        const run = awaitV2Publication({
+            accountId: session.accountId, jobId: JOB, waitMs: options.waitMs ?? 10 * PROCESSING_POLL_MS, probe, readProgress,
+            sleep: async (ms) => { slept.push(ms); }, probeEvery: options.probeEvery ?? 3,
+        });
+        return { run, readProgress, probe, slept };
+    }
+
+    it('keeps the chain as the only proof of success and asks the Bridge once a minute whether the job ended', async () => {
+        expect(PROCESSING_PROBE_EVERY * PROCESSING_POLL_MS).toBe(60_000);
+        const w = wait({
+            progress: (poll) => ({ job: chainJob, publication: poll >= 5 ? publication : null, expired: false }),
+            probe: async () => ({ job_id: JOB, generation: 1, state: 'PROCESSING' }),
+        });
+        await expect(w.run).resolves.toBeUndefined();
+        expect(w.readProgress).toHaveBeenCalledTimes(5);
+        expect(w.readProgress).toHaveBeenCalledWith(JOB, session.accountId);
+        // Poll 3 is the first probe (probeEvery 3); a healthy answer changes nothing.
+        expect(w.probe).toHaveBeenCalledTimes(1);
+        expect(w.probe).toHaveBeenCalledWith(chainJob);
+        expect(w.slept).toEqual([PROCESSING_POLL_MS, PROCESSING_POLL_MS, PROCESSING_POLL_MS, PROCESSING_POLL_MS]);
+    });
+
+    it('ends the wait as soon as the Bridge reports a failed encode or an expired upload, not at the timeout', async () => {
+        const failed = wait({
+            progress: () => ({ job: chainJob, publication: null, expired: false }),
+            probe: async () => ({ job_id: JOB, generation: 1, state: 'PROVIDER_FAILED' }),
+        });
+        await expect(failed.run).rejects.toMatchObject({ constructor: UploadError, message: 'livepeer_provider_failed' });
+        expect(failed.readProgress).toHaveBeenCalledTimes(3);
+        const expired = wait({
+            progress: () => ({ job: chainJob, publication: null, expired: false }),
+            probe: async () => ({ job_id: JOB, generation: 1, state: 'UPLOAD_EXPIRED' }),
+        });
+        await expect(expired.run).rejects.toThrow('livepeer_upload_expired');
+    });
+
+    it('treats a failed chain read or probe as a retry and times out with the job still resumable', async () => {
+        let probes = 0;
+        const w = wait({
+            progress: (poll) => { if (poll % 2 === 0) throw new Error('rpc'); return { job: chainJob, publication: null, expired: false }; },
+            probe: async () => { probes += 1; throw new Error('network'); },
+            waitMs: 6 * PROCESSING_POLL_MS,
+        });
+        await expect(w.run).rejects.toThrow('livepeer_processing_timeout');
+        expect(w.readProgress).toHaveBeenCalledTimes(6);
+        // Probes fall on polls 3 and 6; poll 6 failed on chain, so only poll 3 probed.
+        expect(probes).toBe(1);
+    });
+
+    it('does not probe before the first chain job is read', async () => {
+        const w = wait({ progress: () => { throw new Error('rpc'); }, probe: async () => { throw new Error('unreachable'); }, waitMs: 4 * PROCESSING_POLL_MS });
+        await expect(w.run).rejects.toThrow('livepeer_processing_timeout');
+        expect(w.probe).not.toHaveBeenCalled();
+    });
+
+    it('probes with the intent the Bridge holds and the hash the chain job was paid under', async () => {
+        intent.request.mockResolvedValue({ job_id: JOB, generation: 1, state: 'PROCESSING' });
+        const fingerprint = await fingerprintLivepeerSource(file);
+        const probe = bridgeStatusProbe({
+            accountId: session.accountId, jobId: JOB, expectedSourceBytes: file.size, sourceFingerprintSha256: fingerprint, sourceType: 'mp4', profileConfigSha256: LEGACY_HASH,
+        });
+        await expect(probe(chainJob)).resolves.toEqual({ job_id: JOB, generation: 1, state: 'PROCESSING' });
+        expect(intent.request).toHaveBeenCalledWith({
+            accountId: session.accountId, jobId: JOB, generation: 1, expectedSourceBytes: file.size, sourceFingerprintSha256: fingerprint, sourceType: 'mp4',
+            profileId: PROFILE_ID, profileConfigSha256: STREAM_PROFILE_HASH, recovery: 'reconcile',
+        });
+        // A chain job without a hash (none exists on Market V2) falls back to the caller's.
+        await probe({ ...chainJob, profile_config_sha256: undefined });
+        expect(intent.request).toHaveBeenLastCalledWith(expect.objectContaining({ profileConfigSha256: LEGACY_HASH }));
+    });
+});
+
 describe('upload refusal copy', () => {
     it('explains the platform-wide reservation budget and capacity without naming the provider', async () => {
         const { uploadErrorMessage } = await import('@/components/v2/UploadForm');
@@ -401,9 +481,43 @@ describe('upload refusal copy', () => {
         // feePaid changes only the codes that differ after payment.
         expect(uploadErrorMessage(new UploadError('media_provider_not_ready'), true)).toBe(copy[3]);
         for (const text of copy) expect(text).not.toMatch(/livepeer|cloudflare|stream|studio|\(/i);
-        // Other reasons keep today's admission_denied copy.
-        const busy = 'Uploads are busy right now. Please try again in a few minutes.';
-        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('daily_limit', 1))).toBe(busy);
-        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError(null, null))).toBe(busy);
+        // M4 2026-10-30: the creator's own limits read as such, not as a busy platform.
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('daily_limit', 1))).toBe(
+            "You have used today's upload attempts. Please try again after midnight UTC. No fee was taken.");
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError('active_upload', 1))).toMatch(/^You already have an upload in progress/);
+        // An unknown reason keeps the admission_denied copy.
+        expect(uploadErrorMessage(new LivepeerAdmissionDeniedError(null, null))).toBe('Uploads are busy right now. Please try again in a few minutes.');
+        // Discard refused by the Bridge: the job stays resumable and the copy points at Resume.
+        expect(uploadErrorMessage(new Error('upload_cancel_denied'), true)).toMatch(/no longer be discarded.*Use Resume/);
+    });
+});
+
+describe('signed-in bar', () => {
+    it('shortens an implicit account and keeps a named account', async () => {
+        const { shortAccountId } = await import('@/components/v2/SignInPanel');
+        expect(shortAccountId('92fe8c29082ef13c8b4dd4973cb3e5f09241bb6a9a6cd400450a18a2429f2615')).toBe('92fe8c29…2615');
+        expect(shortAccountId('creator.testnet')).toBe('creator.testnet');
+    });
+});
+
+describe('sign-in after Sign out', () => {
+    it('asks the provider for its login screen once after Sign out, until a sign-in completes', async () => {
+        const { setForceLogin, signInPrompt } = await import('@/lib/v2/sign-in-prompt');
+        const values = new Map<string, string>();
+        const storage = {
+            getItem: (key: string) => values.get(key) ?? null,
+            setItem: (key: string, value: string) => { values.set(key, value); },
+            removeItem: (key: string) => { values.delete(key); },
+        };
+        expect(signInPrompt(storage)).toBeUndefined();
+        setForceLogin(true, storage);
+        expect(signInPrompt(storage)).toBe('login');
+        setForceLogin(false, storage);
+        expect(signInPrompt(storage)).toBeUndefined();
+        // Blocked storage reuses the provider session instead of failing the sign-in.
+        const blocked = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); }, removeItem: () => { throw new Error('blocked'); } };
+        expect(() => setForceLogin(true, blocked)).not.toThrow();
+        expect(signInPrompt(blocked)).toBeUndefined();
+        expect(signInPrompt(null)).toBeUndefined();
     });
 });

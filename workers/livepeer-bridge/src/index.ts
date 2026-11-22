@@ -765,6 +765,16 @@ function isMarketV2(env: Env): boolean {
     return env.MARKET_PROTOCOL === 'v2';
 }
 
+/**
+ * Where the native rate limiter (PUBLIC_BETA_RATE_LIMITER, 30 requests / 60 s per IP and per
+ * account on PUBLIC_BETA_RATE_LIMIT_ROUTES) is enforced: the public-beta packet, public testnet and
+ * every Market V2 deployment. V2 has no other limit on its upload routes (2026-11-03 threat review),
+ * and its release config always carries the binding; without it the routes fail closed (503).
+ */
+function rateLimitedEnvironment(env: Env): boolean {
+    return isPublicBetaPacket(env) || isPublicTestnetEnvironment(env) || isMarketV2(env);
+}
+
 // The on-chain operator key must allow exactly these methods; V1 deployments are unchanged.
 function operatorOutboxMethods(env: Env): Set<OutboxMethod> {
     return isMarketV2(env) ? MARKET_V2_OUTBOX_METHODS : V1_OUTBOX_METHODS;
@@ -912,7 +922,7 @@ const bridgeWorker = {
         }
         if (request.method === 'GET' && url.pathname === '/__health') {
             // Health stays observable without the binding; it reports publicBetaRateLimitReady itself.
-            if (env.PUBLIC_BETA_RATE_LIMITER && (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))) {
+            if (env.PUBLIC_BETA_RATE_LIMITER && rateLimitedEnvironment(env)) {
                 const limited = await publicBetaRateLimitResponse(request, env, '/__health');
                 if (limited?.status === 429) return withHealthCors(limited, request, env);
             }
@@ -978,8 +988,7 @@ const bridgeWorker = {
                     && validWebhookConfig(env),
                 uploadJobArchiveReady: validTerminalArchiveConfig(env),
                 operatorOutboxArchiveReady: validOperatorArchiveConfig(env),
-                publicBetaRateLimitReady: (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))
-                    && Boolean(env.PUBLIC_BETA_RATE_LIMITER),
+                publicBetaRateLimitReady: rateLimitedEnvironment(env) && Boolean(env.PUBLIC_BETA_RATE_LIMITER),
                 mediaProvider: { kind: studioActive(env) ? mediaProvider(env).id : 'stream' },
                 // Never true with the flag off: empty STREAM_* values then mean "not configured".
                 streamConfigured: streamEnabled(env) && validStreamConfig(env),
@@ -989,7 +998,7 @@ const bridgeWorker = {
 
         if (request.method === 'POST'
             && PUBLIC_BETA_RATE_LIMIT_ROUTES.has(url.pathname)
-            && (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env))) {
+            && rateLimitedEnvironment(env)) {
             const limited = await publicBetaRateLimitResponse(request, env, url.pathname);
             if (limited) return limited;
         }
@@ -1232,7 +1241,7 @@ const bridgeWorker = {
             if (!env.LIVEPEER_CONTROL) {
                 return withCors(json({ error: 'runtime_not_configured' }, 503), corsOrigin);
             }
-            if (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env)) {
+            if (rateLimitedEnvironment(env)) {
                 const limited = await publicBetaRateLimitResponse(request, env, CREATOR_PENDING_UPLOAD_ROUTE);
                 if (limited) return withCors(limited, corsOrigin);
             }
@@ -1831,8 +1840,9 @@ export class LivepeerControl {
 
     /**
      * Bounded Stream poll (the V2 Bridge has no other poll): one GET per alarm for a job still
-     * uploading or processing, so a lost webhook cannot strand a job whose fee is spent. Stops at
-     * a terminal state; a pre-ready job ends at the tus URL's 24 h life.
+     * uploading or processing, plus one tus HEAD while Stream transcodes, so a lost webhook cannot
+     * strand a job whose fee is spent and an overflow ends before readiness. Stops at a terminal
+     * state; a pre-ready job ends at the tus URL's 24 h life.
      */
     private async pollStreamUpload(record: JobRecord): Promise<void> {
         if (!['UPLOAD_READY', 'UPLOADING', 'PROCESSING'].includes(record.state) || !record.assetId) return;
@@ -1878,6 +1888,14 @@ export class LivepeerControl {
         const progress = { state: video.state, pctComplete: Number.isFinite(video.pctComplete) ? video.pctComplete : 0 };
         const tracked = trackStreamProgress(record, progress, now);
         if (['queued', 'inprogress', 'downloading'].includes(video.state)) {
+            // Option A, early: an upload past its declared length (offset > length, the overflow
+            // shape of 2026-10-21 F3b) is terminal as soon as a poll sees it, before Stream finishes
+            // transcoding the extra bytes. Only that definitive shape ends the job here; every other
+            // HEAD outcome is left to the ready proof, which fails closed.
+            if (record.tusEndpoint && await streamUploadOverflowed(provider, record.tusEndpoint)) {
+                await terminateStreamJob(this.state, this.env, tracked, 'PROVIDER_FAILED', 'provider_tus_state_invalid');
+                return;
+            }
             if (record.state !== 'PROCESSING') {
                 const processing = transitionJob(tracked, 'PROCESSING');
                 await this.state.storage.put(JOB_KEY, processing);
@@ -2025,7 +2043,14 @@ export class LivepeerControl {
             );
             if (current.state === 'CANCELLED') {
                 await transaction.put(nonceKey, { expiresAtMs: Number(input.envelope.expires_at_ms) });
-                return { record: current, duplicate: true, fromState: current.state };
+                return { record: current, duplicate: true, fromState: current.state, releaseProvider: false };
+            }
+            // A Stream upload the creator gives up before its bytes are in frees the slot at once
+            // (UID deleted, reservation released) instead of holding it until the lease lapses.
+            // Once Stream has the bytes (PROCESSING and later) the job runs to its own end.
+            if (['UPLOAD_READY', 'UPLOADING'].includes(current.state) && jobProviderKind(current) === 'stream') {
+                await transaction.put(nonceKey, { expiresAtMs: Number(input.envelope.expires_at_ms) });
+                return { record: current, duplicate: false, fromState: current.state, releaseProvider: true };
             }
             if (!['AUTHORIZED', 'LEASED'].includes(current.state)) {
                 throw new Error('upload_cancel_denied');
@@ -2033,9 +2058,14 @@ export class LivepeerControl {
             const cancelled = transitionJob(current, 'CANCELLED');
             await transaction.put(nonceKey, { expiresAtMs: Number(input.envelope.expires_at_ms) });
             await transaction.put(JOB_KEY, cancelled);
-            return { record: cancelled, duplicate: false, fromState: current.state };
+            return { record: cancelled, duplicate: false, fromState: current.state, releaseProvider: false };
         });
         await scheduleAlarmNoLaterThan(this.state, Number(input.envelope.expires_at_ms));
+        if (result.releaseProvider) {
+            // Transition, UID delete, archive and admission release in one place with the other Stream exits.
+            await terminateStreamJob(this.state, this.env, result.record, 'CANCELLED', 'creator_cancelled');
+            return json({ cancelled: true, duplicate: false, refundable: false });
+        }
         if (!result.duplicate) logJobStateTransition(result.fromState, result.record.state);
         await scheduleTerminalArchive(this.state, this.env, result.record);
         if (result.record.leaseId) await updateAdmission(this.env, result.record, 'CANCELLED');
@@ -2394,6 +2424,16 @@ export class LivepeerControl {
             await closeAdmissionAfterAmbiguousDelete(this.env, record);
             throw new Error('provider_delete_ambiguous');
         }
+    }
+}
+
+/** True only for a readable tus HEAD whose offset exceeds its length; unreadable, expired or short is false. */
+async function streamUploadOverflowed(provider: CloudflareStreamProvider, tusEndpoint: string): Promise<boolean> {
+    try {
+        const tus = await provider.readTusProgress(tusEndpoint);
+        return BigInt(tus.offsetBytes) > BigInt(tus.lengthBytes);
+    } catch {
+        return false;
     }
 }
 
@@ -4134,7 +4174,7 @@ async function enforcePublicBetaAccountRateLimit(
     route: string,
     account: string,
 ): Promise<void> {
-    if (!isPublicBetaPacket(env) && !isPublicTestnetEnvironment(env)) return;
+    if (!rateLimitedEnvironment(env)) return;
     if (!env.PUBLIC_BETA_RATE_LIMITER) throw new Error('runtime_not_configured');
     let outcome: RateLimitOutcome;
     try {
@@ -6282,8 +6322,8 @@ const JOB_STATE_TRANSITIONS: Record<JobState, ReadonlySet<JobState>> = {
     PROVIDER_CREATE_PENDING: new Set(['CREATE_AMBIGUOUS', 'UPLOAD_READY', 'UPLOAD_EXPIRED']),
     CREATE_PENDING: new Set(['CREATE_AMBIGUOUS', 'UPLOAD_READY']),
     CREATE_AMBIGUOUS: new Set(),
-    UPLOAD_READY: new Set(['UPLOADING', 'PROCESSING', 'READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED']),
-    UPLOADING: new Set(['PROCESSING', 'READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED']),
+    UPLOAD_READY: new Set(['UPLOADING', 'PROCESSING', 'READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'CANCELLED']),
+    UPLOADING: new Set(['PROCESSING', 'READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'CANCELLED']),
     PROCESSING: new Set(['READY_VERIFIED', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED']),
     READY_VERIFIED: new Set(['FINALIZE_QUEUED', 'FINALIZE_RETRY', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED']),
     FINALIZE_QUEUED: new Set(['FINALIZE_RETRY', 'UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'ONCHAIN_PUBLISHED']),
@@ -7611,12 +7651,16 @@ async function verifyStatelessProviderPolicy(
     profileConfigSha256: string | undefined,
 ): Promise<{ previewVttUrl?: string }> {
     const provider = mediaProvider(env, profileConfigSha256);
-    let playback: ProviderPlayback;
-    try {
-        playback = await provider.readPlayback(playbackId);
-    } catch (error) {
-        if (safeErrorCode(error) === 'provider_unavailable') throw error;
-        throw new Error('playback_denied');
+    let playback: ProviderPlayback | undefined;
+    // One more read after an outage answer: a cold isolate has no policy cache, and a single slow
+    // provider read (M4, 2026-10-28: Stream API timed out at 5 s) would otherwise stop a renewal.
+    for (let attempt = 0; !playback; attempt += 1) {
+        try {
+            playback = await provider.readPlayback(playbackId);
+        } catch (error) {
+            if (safeErrorCode(error) !== 'provider_unavailable') throw new Error('playback_denied');
+            if (attempt >= 1) throw error;
+        }
     }
     if (playback.kind !== 'vod' || playback.policy !== 'jwt') throw new Error('playback_denied');
     // Optional metadata from the same authorized playback lookup; never fetch it during token issuance.
@@ -7946,7 +7990,7 @@ async function publicationCover(
             const hit = await cachedCover();
             if (hit) return hit;
         }
-        if (isPublicBetaPacket(env) || isPublicTestnetEnvironment(env)) {
+        if (rateLimitedEnvironment(env)) {
             const limited = await publicBetaRateLimitResponse(request, env, '/v1/publication-covers');
             if (limited) return limited;
         }

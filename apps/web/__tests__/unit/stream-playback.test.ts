@@ -184,7 +184,7 @@ describe('playback renewal chain', () => {
     type Access = { expiresAtMs: number; hlsUrl: string };
     const TTL_MS = 180_000;
 
-    function harness() {
+    function harness(transient?: (error: unknown) => boolean) {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);
         const hls = new FakeHls();
@@ -203,6 +203,7 @@ describe('playback renewal chain', () => {
             apply: (next) => reloadStreamSource(hls, video, next.hlsUrl, 'hlsManifestParsed'),
             onFailed,
             refreshBeforeExpiryMs: 60_000,
+            transient,
         });
         return { hls, request, answer, pending, onFailed, renewal };
     }
@@ -306,5 +307,61 @@ describe('playback renewal chain', () => {
         await vi.advanceTimersByTimeAsync(10 * TTL_MS);
         expect(h.request).toHaveBeenCalledOnce();
         expect(h.onFailed).toHaveBeenCalledOnce();
+    });
+
+    // 2026-10-28 M4 acceptance: one renewal got a Bridge 503 (Stream API read timed out) and the
+    // player stopped with 60 s of the current token left.
+    it('retries a transient renewal failure while the current access still plays', async () => {
+        const h = harness(() => true);
+        await vi.advanceTimersByTimeAsync(120_000);
+        h.pending.shift()!.reject(new Error('provider_unavailable'));
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(h.request).toHaveBeenCalledOnce();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(h.request).toHaveBeenCalledTimes(2);
+        h.answer();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(h.onFailed).not.toHaveBeenCalled();
+        expect(h.hls.sources).toEqual([`${HOST}/token-1/manifest/video.m3u8`]);
+        // The retry budget starts again after a success.
+        await vi.advanceTimersByTimeAsync(120_000);
+        h.pending.shift()!.reject(new Error('provider_unavailable'));
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(h.request).toHaveBeenCalledTimes(4);
+    });
+
+    it('stops after the retries, or when a retry could not land before expiry', async () => {
+        const h = harness(() => true);
+        await vi.advanceTimersByTimeAsync(120_000);
+        for (const delay of [5_000, 10_000, 15_000]) {
+            h.pending.shift()!.reject(new Error('provider_unavailable'));
+            await vi.advanceTimersByTimeAsync(delay);
+        }
+        expect(h.request).toHaveBeenCalledTimes(4);
+        h.pending.shift()!.reject(new Error('provider_unavailable'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(h.onFailed).toHaveBeenCalledOnce();
+
+        // A slow failure that leaves less than the margin before expiry fails at once.
+        const late = harness(() => true);
+        await vi.advanceTimersByTimeAsync(120_000);
+        await vi.advanceTimersByTimeAsync(52_000);
+        late.pending.shift()!.reject(new Error('provider_unavailable'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(late.onFailed).toHaveBeenCalledOnce();
+        expect(late.request).toHaveBeenCalledOnce();
+    });
+
+    it('fails at once on a denial, and by default', async () => {
+        const denied = harness((error) => (error as Error).message !== 'ticket_refunded');
+        await vi.advanceTimersByTimeAsync(120_000);
+        denied.pending.shift()!.reject(new Error('ticket_refunded'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(denied.onFailed).toHaveBeenCalledOnce();
+        const plain = harness();
+        await vi.advanceTimersByTimeAsync(120_000);
+        plain.pending.shift()!.reject(new Error('provider_unavailable'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(plain.onFailed).toHaveBeenCalledOnce();
     });
 });

@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/constants', () => ({ FEATURE_FLAGS: state.flags, NEAR_NETWORK: 'testnet', NEAR_CONFIG: { marketContractId: 'market.testnet' } }));
 vi.mock('@/lib/market-read-model', () => ({ readMarketPublicationPage: state.read, readMarketCreatorPublicationPage: state.read }));
+vi.mock('@/lib/v2/config', () => ({ v2Config: () => null }));
 vi.mock('@/lib/livepeer-publication', () => ({
     readLivepeerPublications: state.nearRead, readLivepeerPublicationsCount: state.nearCount,
     livepeerPublicationCoverUrl: () => null,

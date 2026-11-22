@@ -174,6 +174,17 @@ export class CloudflareStreamProvider implements MediaProvider {
     }
 
     async readTusOffset(uploadUrl: string): Promise<TusState> {
+        const tus = await this.readTusProgress(uploadUrl);
+        if (BigInt(tus.offsetBytes) > BigInt(tus.lengthBytes)) throw new Error('provider_tus_state_invalid');
+        return tus;
+    }
+
+    /**
+     * The upload's tus counters as the host reports them, an overflow included: offset > length
+     * (the 2026-10-21 F3b shape) is returned, not refused, so the processing poll can end such a
+     * job before Stream finishes transcoding the extra bytes. The ready proof keeps readTusOffset.
+     */
+    async readTusProgress(uploadUrl: string): Promise<TusState> {
         if (!isStreamTusEndpoint(uploadUrl)) throw new Error('provider_tus_state_invalid');
         let head: Response;
         try {
@@ -192,8 +203,7 @@ export class CloudflareStreamProvider implements MediaProvider {
         const offsetBytes = head.headers.get('Upload-Offset') || '';
         if (![200, 204].includes(head.status)
             || !/^(0|[1-9][0-9]*)$/.test(lengthBytes)
-            || !/^(0|[1-9][0-9]*)$/.test(offsetBytes)
-            || BigInt(offsetBytes) > BigInt(lengthBytes)) {
+            || !/^(0|[1-9][0-9]*)$/.test(offsetBytes)) {
             throw new Error('provider_tus_state_invalid');
         }
         return { offsetBytes, lengthBytes };

@@ -84,6 +84,8 @@ export function streamEnv(keys: StreamKeys, overrides: Partial<Env> = {}): Env {
     return {
         CF_VERSION_METADATA: { id: 'worker-version-test', tag: 'test', timestamp: '2026-10-22T00:00:00.000Z' },
         MARKET_PROTOCOL: 'v2',
+        // The V2 release config always carries the limiter; tests of the fail-closed path unset it.
+        PUBLIC_BETA_RATE_LIMITER: { limit: async () => ({ success: true }) } as RateLimit,
         LIVEPEER_BRIDGE_ENABLED: 'true',
         LIVEPEER_NEW_UPLOADS_ENABLED: 'true',
         LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: 'true',
@@ -168,6 +170,29 @@ export async function streamIntentRequest(keys: StreamKeys, body = streamIntentB
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Origin: ORIGIN, 'X-Youtick-Signature': base64(signature) },
         body: JSON.stringify({ body, envelope }),
+    });
+}
+
+/** A signed /v1/upload-cancellations request for the job of `body` under the harness upload key. */
+export async function streamCancellationRequest(keys: StreamKeys, body = streamIntentBody()): Promise<Request> {
+    nonce += 1;
+    const cancellation = { job_id: body.job_id, generation: body.generation };
+    const envelope: Record<string, unknown> = {
+        ...vectors.upload_intent.envelope,
+        version: '2',
+        route: '/v1/upload-cancellations',
+        session_public_key: keys.requestPublicKey,
+        device_nonce: base64Url(new Uint8Array(32).fill(nonce % 250 + 1)).slice(0, 43),
+        expires_at_ms: String(Date.now() + 5 * 60 * 1000),
+        body_sha256: await sha256Hex(canonicalJson(cancellation)),
+    };
+    const signature = new Uint8Array(await crypto.subtle.sign(
+        'Ed25519', keys.requestKey.privateKey, new TextEncoder().encode(canonicalControlMessage(envelope)),
+    ));
+    return new Request('https://bridge.youtick.net/v1/upload-cancellations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: ORIGIN, 'X-Youtick-Signature': base64(signature) },
+        body: JSON.stringify({ body: cancellation, envelope }),
     });
 }
 

@@ -133,6 +133,15 @@ const browserTimers: RenewalTimers = {
  * renewal brings the new URL), and nothing runs after `stop()` or a failure, even when a request
  * was already in flight.
  */
+/**
+ * Retries after a transient renewal failure (a Bridge 5xx or no answer), while the current access
+ * still plays: the renewal runs 60 s before expiry, so a short provider or RPC stall never stops
+ * playback. A denial (ticket refunded, device unlinked) is not transient and fails at once.
+ */
+export const RENEWAL_RETRY_DELAYS_MS: readonly number[] = [5_000, 10_000, 15_000];
+/** A retry is scheduled only if it can still land this long before the current access expires. */
+const RENEWAL_RETRY_MARGIN_MS = 5_000;
+
 export function startPlaybackRenewal<T extends { expiresAtMs: number }>(input: {
     initial: T;
     request: () => Promise<T>;
@@ -140,6 +149,8 @@ export function startPlaybackRenewal<T extends { expiresAtMs: number }>(input: {
     apply: (access: T) => void;
     onFailed: () => void;
     refreshBeforeExpiryMs: number;
+    /** True for a failure worth retrying (default: none). */
+    transient?: (error: unknown) => boolean;
     timers?: RenewalTimers;
 }): { authFailure(): void; fragmentLoaded(): void; stop(): void } {
     const timers = input.timers ?? browserTimers;
@@ -148,6 +159,7 @@ export function startPlaybackRenewal<T extends { expiresAtMs: number }>(input: {
     let stopped = false;
     let busy = false;
     let failures = 0;
+    let renewalRetries = 0;
 
     const clear = () => {
         if (timer !== undefined) timers.clearTimeout(timer);
@@ -167,10 +179,17 @@ export function startPlaybackRenewal<T extends { expiresAtMs: number }>(input: {
             const next = await input.request();
             if (stopped) return;
             access = next;
+            renewalRetries = 0;
             input.apply(next);
             schedule();
-        } catch {
-            fail();
+        } catch (error) {
+            if (stopped) return;
+            const delay = RENEWAL_RETRY_DELAYS_MS[renewalRetries];
+            if (delay === undefined || !input.transient?.(error)
+                || timers.now() + delay > access.expiresAtMs - RENEWAL_RETRY_MARGIN_MS) return fail();
+            renewalRetries += 1;
+            clear();
+            timer = timers.setTimeout(() => { void renew(); }, delay);
         } finally {
             busy = false;
         }

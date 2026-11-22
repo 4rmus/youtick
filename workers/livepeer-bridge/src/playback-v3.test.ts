@@ -110,6 +110,8 @@ async function setup(input: {
         LIVEPEER_PLAYBACK_ISSUANCE_ENABLED: 'true',
         LIVEPEER_PLAYBACK_V3_ENABLED: 'true',
         MARKET_PROTOCOL: 'v2',
+        // Market V2 enforces the native limiter; the release config always carries the binding.
+        PUBLIC_BETA_RATE_LIMITER: { limit: async () => ({ success: true }) } as RateLimit,
         ALLOWED_ORIGINS: ORIGIN,
         NEAR_NETWORK: 'testnet',
         NEAR_RPC_URL: RPC_URL,
@@ -179,6 +181,16 @@ describe('/v3/playback-tokens', () => {
         const later = await setup({ status: 'watched' });
         expect((await later.call()).status).toBe(200);
         expect(later.markWatched).not.toHaveBeenCalled();
+    });
+
+    it('answers 429 from the account bucket on Market V2 before any settlement', async () => {
+        const limit = vi.fn().mockResolvedValue({ success: false });
+        const limited = await setup({ status: 'purchased', flags: { PUBLIC_BETA_RATE_LIMITER: { limit } as RateLimit } });
+        const response = await limited.call();
+        expect(response.status).toBe(429);
+        expect(await response.json()).toEqual({ error: 'rate_limited' });
+        expect(limit).toHaveBeenCalledWith({ key: expect.stringMatching(/^\/v3\/playback-tokens:/) });
+        expect(limited.markWatched).not.toHaveBeenCalled();
     });
 
     it('issues no token while mark_watched is pending or refused', async () => {

@@ -38,6 +38,11 @@ export class PlaybackV3Error extends Error {
     }
 }
 
+/** No answer, or a Bridge or provider outage (5xx): the same request may succeed a moment later. */
+export function isTransientPlaybackError(error: unknown): boolean {
+    return error instanceof PlaybackV3Error && (error.status === 0 || error.status >= 500);
+}
+
 export async function requestPlaybackV3Token(input: {
     bridgeUrl: string;
     network: string;

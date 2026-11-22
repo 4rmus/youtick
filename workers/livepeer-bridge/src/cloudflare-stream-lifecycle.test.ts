@@ -11,7 +11,9 @@ import {
     internalStreamWebhook,
     signedStreamWebhook,
     streamBackend,
+    streamCancellationRequest,
     streamEnv,
+    streamIntentBody,
     streamIntentRequest,
     streamJobRecord,
     streamVideo,
@@ -56,6 +58,8 @@ async function wired(options: { env?: Partial<Env>; backend?: Partial<StreamBack
 
 const isDelete = (call: { method: string; url: string }) => call.method === 'DELETE' && call.url === `${API}/${V.UID}`;
 const isVideoGet = (call: { method: string; url: string }) => call.method === 'GET' && call.url === `${API}/${V.UID}`;
+const isTusHead = (call: { method: string }) => call.method === 'HEAD';
+const isFinalize = (request: Request) => new URL(request.url).pathname === '/internal/finalize';
 
 async function seedReservation(run: Awaited<ReturnType<typeof wired>>, jobId = 'job-001') {
     const response = await run.admission.fetch(admissionRequest('reserve', candidate(jobId, CREATOR, { reservedSeconds: 7200 })));
@@ -163,6 +167,18 @@ describe('Stream admission: reservation budget and storage headroom', () => {
         expect(response.status).toBe(503);
         expect(await response.json()).toEqual({ error: 'provider_admission_closed' });
         expect(run.job()).toMatchObject({ state: 'AUTHORIZED', provider: 'stream' });
+        expect(run.calls((call) => call.method === 'POST' && call.url.endsWith('?direct_user=true'))).toHaveLength(0);
+        expect(run.admissionRecord()?.stream?.openReservedSeconds ?? 0).toBe(0);
+    });
+
+    it.each([
+        ['refuses an intent the account bucket denies', { limit: async () => ({ success: false }) } as RateLimit, 429, 'rate_limited'],
+        ['fails closed on a V2 Bridge without the limiter binding', undefined, 503, 'runtime_not_configured'],
+    ])('%s before any reservation or Stream creation', async (_case, limiter, status, error) => {
+        const run = await wired({ env: { PUBLIC_BETA_RATE_LIMITER: limiter } });
+        const response = await run.control.fetch(await streamIntentRequest(keys));
+        expect(response.status).toBe(status);
+        expect(await response.json()).toEqual({ error });
         expect(run.calls((call) => call.method === 'POST' && call.url.endsWith('?direct_user=true'))).toHaveLength(0);
         expect(run.admissionRecord()?.stream?.openReservedSeconds ?? 0).toBe(0);
     });
@@ -275,6 +291,77 @@ describe('Stream lifecycle: bounded poll and deletion', () => {
         });
         await run.control.alarm();
         expect(run.job().state).toBe('PROCESSING');
+    });
+
+    it('fails an overflow the poll finds while Stream still transcodes, deletes the UID once and releases the reservation', async () => {
+        const run = await wired({
+            job: { state: 'PROCESSING' },
+            backend: { video: await streamVideo('video-inprogress.json'), head: { status: 200, offset: '20262144', length: V.LENGTH } },
+        });
+        await seedReservation(run);
+        await run.control.alarm();
+        expect(run.job()).toMatchObject({ state: 'PROVIDER_FAILED', providerDelete: { outcome: 'DELETED' } });
+        expect(run.calls(isTusHead)).toHaveLength(1);
+        expect(run.calls(isDelete)).toHaveLength(1);
+        expect(run.operatorCalls.filter(isFinalize)).toHaveLength(0);
+        expect(run.admissionRecord()!.stream).toMatchObject({ openReservedSeconds: 0 });
+        // Terminal: a later alarm reads nothing more and never deletes twice.
+        await run.control.alarm();
+        expect(run.calls(isTusHead)).toHaveLength(1);
+        expect(run.calls(isDelete)).toHaveLength(1);
+    });
+
+    it.each([
+        ['an upload URL the HEAD cannot read', { status: 503, offset: '', length: '' }],
+        ['an upload URL already gone', { status: 404, offset: '', length: '' }],
+        ['a complete upload', { status: 200, offset: V.LENGTH, length: V.LENGTH }],
+    ])('keeps polling a transcoding job with %s: only the ready proof decides', async (_case, head) => {
+        const run = await wired({ job: { state: 'PROCESSING' }, backend: { video: await streamVideo('video-inprogress.json'), head } });
+        await run.control.alarm();
+        expect(run.job().state).toBe('PROCESSING');
+        expect(run.calls(isTusHead)).toHaveLength(1);
+        expect(run.calls(isDelete)).toHaveLength(0);
+    });
+
+    it('fails an overflow through the poll when the ready webhook is lost, and never finalizes', async () => {
+        const run = await wired({ job: { state: 'UPLOADING' }, backend: { head: { status: 200, offset: '20262144', length: V.LENGTH } } });
+        await seedReservation(run);
+        await run.control.alarm();
+        expect(run.job()).toMatchObject({ state: 'PROVIDER_FAILED', providerDelete: { outcome: 'DELETED' } });
+        expect(run.calls(isDelete)).toHaveLength(1);
+        expect(run.operatorCalls.filter(isFinalize)).toHaveLength(0);
+        expect(run.admissionRecord()!.stream).toMatchObject({ openReservedSeconds: 0 });
+    });
+
+    it('cancels a Stream upload the creator gives up before the bytes are in: UID deleted, reservation released at once', async () => {
+        const body = streamIntentBody();
+        const run = await wired({ job: { state: 'UPLOADING', jobId: body.job_id, generation: body.generation } });
+        await seedReservation(run, body.job_id);
+        const response = await run.control.fetch(await streamCancellationRequest(keys, body));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ cancelled: true, duplicate: false, refundable: false });
+        expect(run.job()).toMatchObject({ state: 'CANCELLED', providerDelete: { outcome: 'DELETED' } });
+        expect(run.calls(isDelete)).toHaveLength(1);
+        expect(run.admissionRecord()!.stream).toMatchObject({ openReservedSeconds: 0 });
+        // A second cancellation is a duplicate; a later alarm reads and deletes nothing more.
+        const again = await run.control.fetch(await streamCancellationRequest(keys, body));
+        expect(await again.json()).toMatchObject({ cancelled: true, duplicate: true });
+        await run.control.alarm();
+        expect(run.calls(isDelete)).toHaveLength(1);
+        expect(run.calls(isTusHead)).toHaveLength(0);
+    });
+
+    it('refuses to cancel a Stream job once its bytes are in', async () => {
+        const body = streamIntentBody();
+        const run = await wired({
+            job: { state: 'PROCESSING', jobId: body.job_id, generation: body.generation },
+            backend: { video: await streamVideo('video-inprogress.json') },
+        });
+        const response = await run.control.fetch(await streamCancellationRequest(keys, body));
+        expect(response.status).toBe(409);
+        expect(await response.json()).toEqual({ error: 'upload_cancel_denied' });
+        expect(run.job().state).toBe('PROCESSING');
+        expect(run.calls(isDelete)).toHaveLength(0);
     });
 
     it('fails a job the poll finds in error and deletes the UID', async () => {

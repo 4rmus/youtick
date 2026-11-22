@@ -1196,6 +1196,10 @@ describe('Livepeer browser upload', () => {
         expect(instance.options.storeFingerprintForResuming).toBe(false);
         expect(instance.options.chunkSize).toBe(32 * 1024 * 1024);
         expect(instance.options.parallelUploads).toBe(1);
+        // About 100 s of retries, so a short connection drop does not end a paid upload.
+        const retryDelays = instance.options.retryDelays as number[];
+        expect(retryDelays[0]).toBe(0);
+        expect(retryDelays.reduce((sum, delay) => sum + delay, 0)).toBeGreaterThanOrEqual(90_000);
         expect(log.mock.calls.map(([value]) => JSON.parse(String(value))))
             .toContainEqual(expect.objectContaining({
                 phase: 'source_transfer', outcome: 'completed', sourceBytes, durationMs: expect.any(Number),
@@ -1210,6 +1214,9 @@ describe('Livepeer browser upload', () => {
         });
         expect(shouldRetry(error(409))).toBe(false);
         expect(shouldRetry(error(503))).toBe(true);
+        expect(shouldRetry(error(0))).toBe(true);
+        expect(shouldRetry(error(423))).toBe(true);
+        expect(shouldRetry(error(400))).toBe(false);
 
         await expect(uploadLivepeerSource(
             new File(['video'], 'video.mov', { type: 'video/quicktime' }),

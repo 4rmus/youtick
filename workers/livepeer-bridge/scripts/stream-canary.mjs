@@ -323,12 +323,17 @@ async function cmdWebhook(ctx) {
     const lastWebhook = async () => {
         const response = await ctx.fetchImpl(healthUrl.toString(), { signal: AbortSignal.timeout(15_000) });
         const body = await response.json().catch(() => null);
-        const value = body?.stream?.lastWebhookAtMs;
-        return response.status === 200 && Number.isSafeInteger(value) && value >= 0 ? value : null;
+        const stream = body?.stream;
+        if (response.status !== 200 || !stream || typeof stream !== 'object' || Array.isArray(stream)) return null;
+        const value = stream.lastWebhookAtMs;
+        // A Bridge that has not yet accepted a delivery reports no time; its baseline is 0.
+        if (value === undefined || value === null) return 0;
+        return Number.isSafeInteger(value) && value >= 0 ? value : null;
     };
-    // Contract with the Bridge: /__health stream.lastWebhookAtMs is a number and advances on every
-    // validly signed Stream delivery, routable or not (this canary's video has no meta.jobId). A
-    // reachable health URL without it fails here, before anything is uploaded.
+    // Contract with the Bridge: /__health stream.lastWebhookAtMs is a number (absent or null before the
+    // first delivery) and advances on every validly signed Stream delivery, routable or not (this
+    // canary's video has no meta.jobId). A reachable health URL without the stream block, or with a
+    // malformed time, fails here, before anything is uploaded.
     const before = healthUrl ? await lastWebhook() : null;
     if (healthUrl && !check(ctx, 'bridge_health_reports_lastWebhookAtMs', before !== null)) return;
     const created = await createVideo(ctx, { name: `youtick-canary-webhook-${ctx.now()}`, length: NON_VIDEO_BYTES });

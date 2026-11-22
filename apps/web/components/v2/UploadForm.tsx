@@ -8,11 +8,12 @@ import { ScreenState } from '@/components/ScreenState';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { FEATURE_FLAGS, NEAR_CONFIG, NEAR_NETWORK } from '@/lib/constants';
-import { formatUsdc, readLivepeerUploadProgress } from '@/lib/livepeer-publication';
+import { formatUsdc } from '@/lib/livepeer-publication';
 import {
     LIVEPEER_SOURCE_ACCEPT,
     LivepeerAdmissionDeniedError,
     advanceLivepeerUploadDraftStage,
+    cancelLivepeerUpload,
     clearLivepeerJobSessionKey,
     clearLivepeerUploadDraft,
     createLivepeerJobId,
@@ -31,11 +32,11 @@ import {
 } from '@/lib/livepeer-upload';
 import { readAccessKey } from '@/lib/v2/near-reads';
 import {
-    authorizeV2PaidJob, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, PROCESSING_POLL_MS, processingWaitMs, PROFILE_ID,
-    TERMINAL_UPLOAD_STATES, UploadError, v2ProfileOf,
+    authorizeV2PaidJob, awaitV2Publication, bridgeStatusProbe, MIN_TICKET_PRICE_USDC, prepareV2UploadResume, processingWaitMs, PROFILE_ID,
+    TERMINAL_UPLOAD_STATES, terminalUploadErrorCode, UploadError, v2ProfileOf, v2UploadProfileHash, type ProcessingProbe,
 } from '@/lib/v2/upload';
 import { useNearAuthV2 } from './NearAuthV2Provider';
-import { SignInPanel } from './SignInPanel';
+import { SignedInBar, SignInPanel } from './SignInPanel';
 
 const ERRORS: Record<string, string> = {
     empty_file: 'Choose a video file first.',
@@ -66,6 +67,7 @@ const ERRORS: Record<string, string> = {
     livepeer_provider_failed: 'The video could not be processed. The fee is not refunded; start a new upload with another file.',
     provider_recovery_not_ready: 'This upload cannot be resumed from here. Start a new upload.',
     livepeer_resume_required: 'This upload was already paid. Use Resume to continue it.',
+    upload_cancel_denied: 'This upload can no longer be discarded: the video was already received, or the job has ended. Use Resume to see where it stands.',
     livepeer_already_published: 'This screening is already published.',
     livepeer_resume_file_mismatch: 'Choose the same file you started this upload with.',
     account_not_ready: 'Your youtick account is still being set up. Please try again in a minute.',
@@ -75,6 +77,8 @@ const ERRORS: Record<string, string> = {
 /** Preflight refusals with a Bridge reason; any other reason keeps the `admission_denied` copy. */
 const ADMISSION_ERRORS: Partial<Record<LivepeerAdmissionReason, string>> = {
     reservation_budget: 'Another upload is in progress on the platform. Please try again in a few minutes. No fee was taken.',
+    active_upload: 'You already have an upload in progress. Finish it, or wait about 30 minutes after leaving it, before starting another. No fee was taken.',
+    daily_limit: 'You have used today\'s upload attempts. Please try again after midnight UTC. No fee was taken.',
     capacity: 'Uploads are at capacity right now. Please try again in a few minutes. No fee was taken.',
 };
 
@@ -83,7 +87,7 @@ const PAID_ERRORS: Record<string, string> = {
     provider_admission_closed: 'Uploads are at capacity right now. Your fee is paid and this upload stays here; use Resume later.',
 };
 
-type Step = 'idle' | 'paying' | 'uploading' | 'processing' | 'published' | 'error';
+type Step = 'idle' | 'paying' | 'uploading' | 'processing' | 'discarding' | 'published' | 'error';
 
 export function uploadErrorMessage(error: unknown, feePaid = false): string {
     if (error instanceof LivepeerAdmissionDeniedError && error.reason && ADMISSION_ERRORS[error.reason]) {
@@ -125,29 +129,43 @@ export function UploadForm() {
         setError(uploadErrorMessage(reason, feePaid));
     }, []);
 
-    /** Media processing and the Bridge's on-chain publication; the chain is the only source of truth. */
-    const awaitPublication = useCallback(async (accountId: string, activeJobId: string, controller: AbortController, waitMs: number) => {
+    /** The Bridge state probe of the processing wait, for the file this tab holds. */
+    const probeFor = useCallback(async (accountId: string, activeJobId: string, profileConfigSha256: string): Promise<ProcessingProbe> => {
+        if (!file) throw new UploadError('empty_file');
+        const source = validateLivepeerSourceFile(file);
+        if (!source.ok) throw new UploadError(source.error);
+        return bridgeStatusProbe({
+            accountId, jobId: activeJobId, expectedSourceBytes: file.size, sourceFingerprintSha256: await fingerprintLivepeerSource(file),
+            sourceType: source.sourceType, profileConfigSha256,
+        });
+    }, [file]);
+
+    /**
+     * Media processing and the Bridge's on-chain publication; the chain is the only source of truth,
+     * the Bridge is asked only whether the job ended. A job that ended is over: the next attempt is a new job.
+     */
+    const awaitPublication = useCallback(async (accountId: string, activeJobId: string, controller: AbortController, waitMs: number, probe: ProcessingProbe) => {
         setProgress(100);
         setStep('processing');
-        for (let attempt = 0; attempt < waitMs / PROCESSING_POLL_MS; attempt += 1) {
-            const state = await readLivepeerUploadProgress(activeJobId, accountId).catch(() => null);
-            controller.signal.throwIfAborted();
-            if (state?.publication) {
-                clearLivepeerUploadDraft(accountId);
-                clearLivepeerJobSessionKey(accountId, activeJobId);
-                forgetLivepeerUploadJob(accountId, activeJobId);
+        try {
+            await awaitV2Publication({ accountId, jobId: activeJobId, waitMs, probe, signal: controller.signal });
+        } catch (reason) {
+            if (reason instanceof UploadError && reason.message !== 'livepeer_processing_timeout') {
                 setResumable(false);
-                setStep('published');
-                return;
+                setJobId(null);
             }
-            await new Promise((resolve) => setTimeout(resolve, PROCESSING_POLL_MS));
+            // On the timeout the fee stays paid and the job stays resumable; only this page stops waiting.
+            throw reason;
         }
-        // The fee stays paid and the job stays resumable; only this page stops waiting.
-        throw new UploadError('livepeer_processing_timeout');
+        clearLivepeerUploadDraft(accountId);
+        clearLivepeerJobSessionKey(accountId, activeJobId);
+        forgetLivepeerUploadJob(accountId, activeJobId);
+        setResumable(false);
+        setStep('published');
     }, []);
 
     const transfer = useCallback(async (
-        accountId: string, activeJobId: string, intent: LivepeerUploadIntent, controller: AbortController, waitMs: number,
+        accountId: string, activeJobId: string, intent: LivepeerUploadIntent, controller: AbortController, waitMs: number, probe: ProcessingProbe,
     ) => {
         if (!file) throw new UploadError('empty_file');
         setStep('uploading');
@@ -159,7 +177,7 @@ export function UploadForm() {
         });
         controller.signal.throwIfAborted();
         advanceLivepeerUploadDraftStage(accountId, activeJobId, 'provider_processing');
-        await awaitPublication(accountId, activeJobId, controller, waitMs);
+        await awaitPublication(accountId, activeJobId, controller, waitMs, probe);
     }, [file, awaitPublication]);
 
     async function start() {
@@ -202,13 +220,45 @@ export function UploadForm() {
                 // The hash the chain job carries (a reused job keeps its own).
                 profileId: PROFILE_ID, profileConfigSha256: paid.profileConfigSha256,
             });
-            await transfer(accountId, activeJobId, intent, controller, processingWaitMs(v2ProfileOf(paid.profileConfigSha256)));
+            await transfer(accountId, activeJobId, intent, controller, processingWaitMs(v2ProfileOf(paid.profileConfigSha256)),
+                await probeFor(accountId, activeJobId, paid.profileConfigSha256));
         } catch (reason) {
             if (!popup.closed) popup.close();
             if (!controller.signal.aborted) fail(reason, feePaid);
         } finally {
             if (operation.current === controller) operation.current = null;
         }
+    }
+
+    /**
+     * Gives up a paid upload that cannot continue. The Bridge deletes the host upload and frees the
+     * platform's upload slot at once instead of holding it until the lease lapses; the fee stays spent.
+     * Refused once the video was received (then Resume follows the publication) or the job has ended.
+     */
+    async function discard() {
+        if (!signedIn || !jobId || operation.current) return;
+        const controller = new AbortController();
+        operation.current = controller;
+        const accountId = session.accountId;
+        const activeJobId = jobId;
+        setError('');
+        setStep('discarding');
+        try {
+            await cancelLivepeerUpload({ accountId, jobId: activeJobId, generation: 1, signal: controller.signal });
+        } catch (reason) {
+            // The job stays resumable; the message says what Resume would show.
+            if (!controller.signal.aborted) fail(reason, true);
+            return;
+        } finally {
+            if (operation.current === controller) operation.current = null;
+        }
+        clearLivepeerUploadDraft(accountId);
+        clearLivepeerJobSessionKey(accountId, activeJobId);
+        forgetLivepeerUploadJob(accountId, activeJobId);
+        setResumable(false);
+        setJobId(null);
+        setProgress(0);
+        setStep('idle');
     }
 
     async function resume() {
@@ -224,22 +274,24 @@ export function UploadForm() {
                 config, session: { accountId: session.accountId, publicKey: session.publicKey }, jobId, file, popup,
                 redirectUri: window.location.origin, deps: { view, accessKey: readAccessKey }, signal: controller.signal,
             });
-            // The resume path does not surface the job's hash, so the wait follows this build's profile.
+            // The resume path does not surface the job's hash, so the wait follows this build's profile;
+            // the probe takes the hash from the chain job it reads.
             const waitMs = processingWaitMs();
+            const probe = await probeFor(session.accountId, jobId, v2UploadProfileHash());
             if ('state' in result) {
                 if (result.state === 'ONCHAIN_PUBLISHED') {
-                    await awaitPublication(session.accountId, jobId, controller, waitMs);
+                    await awaitPublication(session.accountId, jobId, controller, waitMs, probe);
                 } else if (TERMINAL_UPLOAD_STATES.includes(result.state)) {
                     // Nothing more can happen on this job; the next attempt is a new job.
                     setResumable(false);
                     setJobId(null);
-                    throw new UploadError(result.state === 'PROVIDER_FAILED' ? 'livepeer_provider_failed' : 'livepeer_upload_expired');
+                    throw new UploadError(terminalUploadErrorCode(result.state));
                 } else {
                     // Source received; only media processing and the Bridge's publication remain.
-                    await awaitPublication(session.accountId, jobId, controller, waitMs);
+                    await awaitPublication(session.accountId, jobId, controller, waitMs, probe);
                 }
             } else {
-                await transfer(session.accountId, jobId, result, controller, waitMs);
+                await transfer(session.accountId, jobId, result, controller, waitMs, probe);
             }
         } catch (reason) {
             if (!popup.closed) popup.close();
@@ -267,8 +319,9 @@ export function UploadForm() {
         </ScreenState>;
     }
 
-    const busy = step === 'paying' || step === 'uploading' || step === 'processing';
+    const busy = step === 'paying' || step === 'uploading' || step === 'processing' || step === 'discarding';
     return <Card className="mx-auto max-w-xl space-y-4 p-6">
+        <SignedInBar busy={busy} />
         <h1 className="text-xl font-semibold">Upload a screening</h1>
         <label className="block space-y-1 text-sm">
             <span className="text-white/80">Video file</span>
@@ -304,7 +357,14 @@ export function UploadForm() {
                 {step === 'paying' ? 'Waiting for your approval…' : step === 'uploading' ? `Uploading ${progress}%` : step === 'processing' ? 'Processing…' : 'Pay the fee and upload'}
             </Button>}
             {resumable && !busy && <Button className="min-h-11" onClick={() => void resume()}>Resume this upload</Button>}
+            {resumable && !busy && <Button variant="outline" className="min-h-11" onClick={() => void discard()}>Discard this upload</Button>}
+            {step === 'discarding' && <Button variant="outline" className="min-h-11 gap-2" disabled>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Discarding…
+            </Button>}
         </div>
+        {resumable && !busy && <p className="text-xs text-white/50">
+            Resume continues this paid upload with the same file. Discard frees the upload slot for other creators right away; the fee stays spent and this upload cannot be resumed afterwards.
+        </p>}
         <p className="text-xs text-white/50">The fee pays for processing and is not refunded. Keep this tab open until the upload finishes.</p>
         {step === 'error' && <p className="text-sm text-red-300" role="alert">{error}</p>}
     </Card>;

@@ -166,8 +166,10 @@ exact `main` commit, separately from the relayer and payment service. The releas
 
 What differs from the Workers release:
 - **Deployed config.** The repository `wrangler.toml` without the V1 Queue, DLQ and read-model D1
-  bindings, with its own rate-limit namespace (`6003`), and with the fixed V2 values written into
-  `[vars]`:
+  bindings, with its own rate-limit namespace (`6003`; since 2026-11-03 the Bridge enforces the
+  30 requests / 60 s IP and account buckets on Market V2 too, on the same routes as the public
+  beta plus `/__health`, and answers 503 `runtime_not_configured` if the binding is missing), and
+  with the fixed V2 values written into `[vars]`:
   - `MARKET_PROTOCOL=v2`, `VIDEO_ENVIRONMENT=v2-testnet`, `MARKET_CONTRACT_ID=v2-market-261007…`,
     `NEAR_OPERATOR_ACCOUNT_ID=v2-bridge-261007…`;
   - Livepeer project `youtick-paid-media-canary`, API token name `youtick-v2-testnet-bridge`, and

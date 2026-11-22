@@ -133,6 +133,27 @@ describe('/v3/playback-tokens on a Stream publication', () => {
         expect((await outage.call()).status).toBe(503);
     });
 
+    it('reads the Stream video once more after one outage answer, and no more', async () => {
+        const run = await v3();
+        const original = run.backend.fetch;
+        let reads = 0;
+        vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+            if (String(input) === `${API}/${V.UID}` && (reads += 1) === 1) return new Response(null, { status: 503 });
+            return original(input, init);
+        });
+        expect((await run.call()).status).toBe(200);
+        expect(reads).toBe(2);
+
+        const down = await v3();
+        let downReads = 0;
+        const downOriginal = down.backend.fetch;
+        vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => (
+            String(input) === `${API}/${V.UID}` ? ((downReads += 1), new Response(null, { status: 503 })) : downOriginal(input, init)
+        ));
+        expect((await down.call()).status).toBe(503);
+        expect(downReads).toBe(2);
+    });
+
     it('reuses the 30-second provider-policy cache across tokens', async () => {
         const run = await v3();
         expect((await run.call()).status).toBe(200);

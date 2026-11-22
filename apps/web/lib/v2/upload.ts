@@ -11,6 +11,7 @@ import profiles from '../../../../protocol/paid-media-livepeer-v1/profiles.json'
 import { hasTitleContent } from '../../../../protocol/paid-media-livepeer-v1/title';
 import { requestDelegateApproval, type OidcEnvironment, type PopupLike } from '../near-auth/oidc';
 import { V2_MEDIA_CONFIG, type V2MediaProfile } from '../constants';
+import { readLivepeerUploadProgress, type LivepeerMediaJob } from '../livepeer-publication';
 import {
     STREAM_PROFILE_HASH,
     livepeerUploadFeeUsdc,
@@ -22,6 +23,7 @@ import {
     validateJobSessionIdentity,
     validateLivepeerSourceFile,
     writeLivepeerUploadDraft,
+    type LivepeerSourceType,
     type LivepeerUploadIntent,
     type LivepeerUploadStatus,
 } from '../livepeer-upload';
@@ -56,6 +58,13 @@ const MAX_SOURCE_BYTES = 20_000_000_000n;
 export const LEGACY_PROCESSING_WAIT_MS = 120 * 5_000;
 export const STREAM_PROCESSING_WAIT_MS = 30 * 60 * 1000;
 export const PROCESSING_POLL_MS = 5_000;
+/**
+ * Every how many chain polls the processing wait asks the Bridge whether the job ended
+ * (`recovery: 'reconcile'`, one minute). A failed encode (`PROVIDER_FAILED`: duration over the
+ * cap, a deleted video) or an expired upload is otherwise invisible on chain and would show only as
+ * the processing timeout, with the job offered for Resume.
+ */
+export const PROCESSING_PROBE_EVERY = 12;
 
 /** Media profile of a job's profile hash: the Stream descriptor hash or the legacy profile. */
 export function v2ProfileOf(profileConfigSha256: string): V2MediaProfile {
@@ -356,6 +365,71 @@ export async function authorizeV2PaidJob(input: {
 const UPLOADABLE_STATES = ['UPLOAD_READY', 'UPLOADING'];
 /** Bridge job states that end an upload; a new job (and a new fee) is the only way forward. */
 export const TERMINAL_UPLOAD_STATES = ['UPLOAD_EXPIRED', 'PROVIDER_FAILED', 'CANCELLED', 'AUTO_CLOSED'];
+
+/** The copy code for a Bridge job state that ended the upload (`TERMINAL_UPLOAD_STATES`). */
+export function terminalUploadErrorCode(state: string): 'livepeer_provider_failed' | 'livepeer_upload_expired' {
+    return state === 'PROVIDER_FAILED' ? 'livepeer_provider_failed' : 'livepeer_upload_expired';
+}
+
+/** Asks the Bridge for a job's state; `job` is the chain job the wait just read. */
+export type ProcessingProbe = (job: LivepeerMediaJob) => Promise<LivepeerUploadStatus>;
+
+/**
+ * The `recovery: 'reconcile'` probe of a job this tab sent the source of. The body must repeat the
+ * intent the Bridge holds (bytes, fingerprint, source type, the hash the job was paid under), or the
+ * Bridge answers `reservation_conflict`; the chain job's hash wins over the caller's.
+ */
+export function bridgeStatusProbe(input: {
+    accountId: string;
+    jobId: string;
+    expectedSourceBytes: number;
+    sourceFingerprintSha256: string;
+    sourceType: LivepeerSourceType;
+    profileConfigSha256: string;
+}): ProcessingProbe {
+    return (job) => requestLivepeerUploadIntent({
+        accountId: input.accountId, jobId: input.jobId, generation: 1, expectedSourceBytes: input.expectedSourceBytes,
+        sourceFingerprintSha256: input.sourceFingerprintSha256, sourceType: input.sourceType,
+        profileId: PROFILE_ID, profileConfigSha256: job.profile_config_sha256 ?? input.profileConfigSha256, recovery: 'reconcile',
+    });
+}
+
+/**
+ * Waits for a paid job's on-chain publication once its source is with the provider. The chain is
+ * the only source of truth for success; every `PROCESSING_PROBE_EVERY` polls the Bridge is asked
+ * whether the job ended instead, so `PROVIDER_FAILED` and `UPLOAD_EXPIRED` show at once rather
+ * than as the processing timeout. A failed chain read or probe is tried again on the next poll.
+ * Resolves when the publication exists; throws `UploadError` `livepeer_provider_failed`,
+ * `livepeer_upload_expired` or, past `waitMs`, `livepeer_processing_timeout` (the job stays resumable).
+ */
+export async function awaitV2Publication(input: {
+    accountId: string;
+    jobId: string;
+    waitMs: number;
+    probe: ProcessingProbe;
+    signal?: AbortSignal;
+    readProgress?: typeof readLivepeerUploadProgress;
+    sleep?: (ms: number) => Promise<void>;
+    pollMs?: number;
+    probeEvery?: number;
+}): Promise<void> {
+    const readProgress = input.readProgress ?? readLivepeerUploadProgress;
+    const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const pollMs = input.pollMs ?? PROCESSING_POLL_MS;
+    const probeEvery = input.probeEvery ?? PROCESSING_PROBE_EVERY;
+    for (let attempt = 0; attempt < input.waitMs / pollMs; attempt += 1) {
+        const state = await readProgress(input.jobId, input.accountId).catch(() => null);
+        input.signal?.throwIfAborted();
+        if (state?.publication) return;
+        if (state && attempt % probeEvery === probeEvery - 1) {
+            const status = await input.probe(state.job).catch(() => null);
+            input.signal?.throwIfAborted();
+            if (status && TERMINAL_UPLOAD_STATES.includes(status.state)) throw new UploadError(terminalUploadErrorCode(status.state));
+        }
+        await sleep(pollMs);
+    }
+    throw new UploadError('livepeer_processing_timeout');
+}
 
 /**
  * Resumes an upload whose fee was paid: replaces the upload key through the relayer when this tab
