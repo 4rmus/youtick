@@ -106,6 +106,43 @@ import type {
     AdmissionReopenInput,
     LivepeerWebhookQueueMessage,
 } from './types';
+import {
+    MAX_CONTROL_BODY_BYTES,
+    MAX_SOURCE_BYTES,
+    PUBLIC_TESTNET_BETA_MAX_SOURCE_BYTES,
+    MIN_CREATOR_UPLOAD_FEE_USD_MICROS,
+    CREATOR_FEE_QUOTE_LIFETIME_MS,
+    SPONSORED_RELAY_REJECTION_CODES,
+    CONTROL_MAX_FUTURE_MS,
+    LIFECYCLE_DELETE_BATCH,
+    PLAYBACK_MIN_TTL_SECONDS,
+    PLAYBACK_MAX_TTL_SECONDS,
+    PLAYBACK_V2_TTL_SECONDS,
+    STREAM_DEFAULT_STUCK_TIMEOUT_MS,
+    PROVIDER_POLICY_CACHE_MS,
+    JOB_KEY,
+    RECONCILE_KEY,
+    RECONCILE_HEALTHY_INTERVAL_MS,
+    RECONCILE_CONFIRMATION_MS,
+    RECONCILE_BACKOFF_MS,
+    OPERATOR_ARCHIVE_SCAN_KEY,
+    ADMISSION_KEY,
+    ADMISSION_LEASE_HEARTBEAT_MS,
+    ACCOUNT_ID_PATTERN,
+    JOB_ID_PATTERN,
+    SHA256_PATTERN,
+    SESSION_KEY_PATTERN,
+    NONCE_PATTERN,
+    LEASE_ID_PATTERN,
+    IDEMPOTENCY_PATTERN,
+    IDENTIFIER_PATTERN,
+    PROVIDER_ID_PATTERN,
+    PLAYBACK_ID_PATTERN,
+    V1_OUTBOX_METHODS,
+    NEUTRAL_OUTBOX_METHODS,
+    OUTBOX_METHODS,
+    LEGACY_PROFILE_ID,
+} from './constants';
 
 export type { Env } from './env';
 
@@ -291,15 +328,10 @@ const PUBLIC_BETA_RATE_LIMIT_ROUTES = new Set([
     '/v2/playback-tokens',
     '/v3/playback-tokens',
 ]);
-const MAX_CONTROL_BODY_BYTES = 64 * 1024;
-const MAX_SOURCE_BYTES = 20_000_000_000n;
-const PUBLIC_TESTNET_BETA_MAX_SOURCE_BYTES = 1_000_000_000n;
 const PUBLIC_TESTNET_BETA_JOB_TTL_MS = 24 * 60 * 60 * 1_000;
-const MIN_CREATOR_UPLOAD_FEE_USD_MICROS = 500_000n;
 const CREATOR_FEE_RATE_SOURCE = 'outlayer-price-oracle-wrap-near-v1';
 const OUTLAYER_NEAR_ASSET_ID = 'wrap.near';
 const CREATOR_FEE_MAX_SOURCE_AGE_MS = 60_000;
-const CREATOR_FEE_QUOTE_LIFETIME_MS = 120_000;
 const CREATOR_FEE_RATE_LIMIT = 5;
 const CREATOR_FEE_RATE_WINDOW_MS = 60_000;
 const YOCTO_NEAR = 10n ** 24n;
@@ -308,14 +340,6 @@ const SPONSORED_UPLOAD_FEE_USDC = 100_000n;
 const SPONSORED_UPLOAD_MAX_BLOCK_WINDOW = 200n;
 const SPONSORED_UPLOAD_SIGNING_HEADROOM_BLOCKS = 200n;
 const SPONSORED_UPLOAD_FINAL_BLOCK_MAX_AGE_MS = 60_000;
-const SPONSORED_RELAY_REJECTION_CODES = Object.freeze({
-    delegate_decode: 'invalid_sponsored_upload_relay_delegate_decode',
-    delegate_shape: 'invalid_sponsored_upload_relay_delegate_shape',
-    quote_validation: 'invalid_sponsored_upload_relay_quote_validation',
-    signature_validation: 'invalid_sponsored_upload_relay_signature_validation',
-    freshness: 'invalid_sponsored_upload_relay_freshness',
-    access_key: 'invalid_sponsored_upload_relay_access_key',
-});
 type SponsoredRelayRejectionReason = keyof typeof SPONSORED_RELAY_REJECTION_CODES;
 const TESTNET_USDC_CONTRACT_ID = '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af';
 const MAINNET_USDC_CONTRACT_ID = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
@@ -325,14 +349,8 @@ const LIVEPEER_TUS_CHUNK_BYTES = 32 * 1024 * 1024;
 const PUBLICATION_COVER_CACHE_SECONDS = 24 * 60 * 60;
 // Bounds how long a takedown can leave a cover visible: the edge visibility marker plus the browser max-age.
 const PUBLICATION_COVER_VISIBLE_SECONDS = 30;
-const CONTROL_MAX_FUTURE_MS = 5 * 60 * 1000;
 const WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000;
 const WEBHOOK_DEDUP_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-const LIFECYCLE_DELETE_BATCH = 128;
-const PLAYBACK_MIN_TTL_SECONDS = 120;
-const PLAYBACK_MAX_TTL_SECONDS = 300;
-const PLAYBACK_V2_TTL_SECONDS = 180;
-const STREAM_DEFAULT_STUCK_TIMEOUT_MS = 15 * 60 * 1000;
 const STREAM_MIN_READY_PENDING_MS = 60 * 60 * 1000;
 // Stuck jobs counted in /__health: terminations in the last 24 hours (a gauge, not a lifetime total).
 const STREAM_STUCK_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -347,7 +365,6 @@ const DEVICE_CERTIFICATE_CACHE_MS = 60 * 1000;
 const PUBLICATION_CACHE_MS = 30 * 1000;
 const POSITIVE_ENTITLEMENT_CACHE_MS = 5 * 60 * 1000;
 const NEGATIVE_ENTITLEMENT_CACHE_MS = 3 * 1000;
-const PROVIDER_POLICY_CACHE_MS = 30 * 1000;
 const FINALIZE_GAS = 15_000_000_000_000n;
 // mark_watched settles escrow and pushes the creator share (20 TGas transfer + 15 TGas callback).
 const MARK_WATCHED_GAS = 100_000_000_000_000n;
@@ -355,22 +372,14 @@ const MARK_WATCHED_GAS = 100_000_000_000_000n;
 const RELEASE_EXPIRED_GAS = 150_000_000_000_000n;
 const RELEASE_BATCH_SIZE = 25;
 const ESCROW_RELEASE_MS = 30 * 24 * 60 * 60 * 1000;
-const JOB_KEY = 'job:v1';
-const RECONCILE_KEY = 'reconcile:v1';
-const RECONCILE_HEALTHY_INTERVAL_MS = 15 * 60 * 1000;
-const RECONCILE_CONFIRMATION_MS = 60 * 1000;
-const RECONCILE_BACKOFF_MS = [60, 120, 240, 480, 900].map((seconds) => seconds * 1000);
 const UPLOAD_JOB_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const OPERATOR_OUTBOX_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
-const OPERATOR_ARCHIVE_SCAN_KEY = 'operator:archive-scan:v1';
 const OPERATOR_ARCHIVE_SCAN_BATCH = 32;
-const ADMISSION_KEY = 'admission:v1';
 const ADMISSION_REOPEN_KEY_PREFIX = 'admission:reopen:';
 const ADMISSION_GLOBAL_CONCURRENCY = 2;
 const ADMISSION_CREATOR_DAILY_ATTEMPTS = 2;
 const ADMISSION_AMBIGUOUS_TIMEOUT_MS = 15 * 60 * 1000;
 const ADMISSION_LEASE_TTL_MS = 30 * 60 * 1000;
-const ADMISSION_LEASE_HEARTBEAT_MS = 5 * 60 * 1000;
 const ADMISSION_PROVIDER_FAILURE_LIMIT = 2;
 const ADMISSION_PROVIDER_FAILURE_WINDOW_MS = 60 * 1000;
 const ADMISSION_AUDIT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -381,24 +390,6 @@ const ADMISSION_CLOSURE_CODES = new Set([
     'create_ambiguous_timeout',
 ]);
 const DEFAULT_ALLOWED_ORIGINS = 'https://youtick.net,https://www.youtick.net';
-const ACCOUNT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/;
-const JOB_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
-const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-const SESSION_KEY_PATTERN = /^ed25519:[1-9A-HJ-NP-Za-km-z]{32,64}$/;
-const NONCE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
-const LEASE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
-const IDENTIFIER_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
-const PROVIDER_ID_PATTERN = /^[A-Za-z0-9._:-]{1,192}$/;
-const PLAYBACK_ID_PATTERN = /^[A-Za-z0-9_-]{6,128}$/;
-// V1 (Preview, public testnet) keeps the Livepeer-named methods; Market V2 (gate MC) renamed them.
-const V1_OUTBOX_METHODS = new Set<OutboxMethod>([
-    'finalize_livepeer_publication',
-    'suspend_livepeer_sales',
-]);
-const NEUTRAL_OUTBOX_METHODS = new Set<OutboxMethod>(['finalize_publication', 'suspend_sales']);
-// Env-less record validity: records of either generation stay valid in storage and status reads.
-const OUTBOX_METHODS = new Set<OutboxMethod>([...V1_OUTBOX_METHODS, ...NEUTRAL_OUTBOX_METHODS]);
 const MARKET_V2_OUTBOX_METHODS = new Set<OutboxMethod>([...NEUTRAL_OUTBOX_METHODS, 'mark_watched', 'release_expired']);
 // A stored record written under a V1 method name maps to its Market V2 name.
 const LEGACY_METHOD_ALIASES = new Map<OutboxMethod, OutboxMethod>([
@@ -409,7 +400,6 @@ const LEGACY_METHOD_ALIASES = new Map<OutboxMethod, OutboxMethod>([
 // never archived (the operator object's record budget must not grow with tickets).
 const EPHEMERAL_OUTBOX_METHODS = new Set<OutboxMethod>(['mark_watched', 'release_expired']);
 const TICKET_ID_PATTERN = /^[0-9a-f]{64}$/;
-const LEGACY_PROFILE_ID = 'paid-media-livepeer-v1' satisfies MediaProfileId;
 const NEUTRAL_PROFILE_ID = 'paid-media-v1' satisfies MediaProfileId;
 
 function isMarketV2(env: Env): boolean {
