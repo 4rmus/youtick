@@ -203,9 +203,11 @@ import {
     validSponsoredUploadRelayConfig,
     validOperatorConfig,
 } from './config';
+import { jobObjectName, operatorObjectName, admissionObjectName } from './object-names';
 
 export type { Env } from './env';
 export { sanitizeForLog, formatLog } from './helpers';
+export { jobObjectName, operatorObjectName, admissionObjectName } from './object-names';
 
 type PlaybackTokenBody = {
     job_id: string;
@@ -5737,23 +5739,6 @@ function parseLivepeerWebhookQueueMessage(value: unknown): LivepeerWebhookQueueM
         throw new Error('invalid_webhook');
     }
     return input as LivepeerWebhookQueueMessage;
-}
-
-export function jobObjectName(
-    network: string,
-    contractId: string,
-    jobId: string,
-    generation: number,
-): string {
-    return `job:${network}:${contractId}:${jobId}:${generation}`;
-}
-
-export function operatorObjectName(network: string, publicKey: string, keyEpoch: number): string {
-    return `operator:${network}:${publicKey}:${keyEpoch}`;
-}
-
-export function admissionObjectName(network: string, contractId: string): string {
-    return `admission:${network}:${contractId}`;
 }
 
 function logJobStateTransition(
