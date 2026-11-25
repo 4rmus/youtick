@@ -1,6 +1,6 @@
 # youtick payment service
 
-Status: `LOCAL_TEST only / NOT_DEPLOYED`; V2 testnet deploy path: `.github/workflows/deploy-v2-testnet.yml` (`docs/v2-testnet-runbook.md`, Workers). Roadmap gate E7a; E8 adds the card path (disabled, see "Card path").
+Status: `DEPLOYED_ON_V2_TESTNET / NOT_ON_MAINNET`. Deployed only through `.github/workflows/deploy-v2-testnet.yml`; the workflow first ran with `PASS` on 2026-10-11, and the refund inbox was accepted on 2026-10-15 (PROVIDER, testnet; `docs/v2-testnet-runbook.md`, "Refund inbox acceptance"). These are dated records, not a statement about what is running now. The tests in this directory are LOCAL_TEST only. Roadmap gate E7a; E8 adds the card path (disabled, see "Card path").
 
 This Worker issues **VAT attestations** for V2 crypto purchases
 (`protocol/youtick-market-v2`, "VAT attestation"), counts **checkout funnel steps** (E7e) and keeps

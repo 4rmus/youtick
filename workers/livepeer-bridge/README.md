@@ -1,5 +1,11 @@
 # Livepeer Bridge Worker
 
+The directory and most variable names keep the V1 name. A V2 deployment
+(`MARKET_PROTOCOL=v2`) runs on Market V2 with Cloudflare Stream as the media
+provider; see [Cloudflare Stream adapter](#cloudflare-stream-adapter-m2-flag-off)
+and [V2 Market ticket playback](#v2-market-ticket-playback-v3playback-tokens).
+The description below was written for V1 and Livepeer Studio.
+
 This Worker is the control plane for direct browser-to-Livepeer upload and
 authenticated playback. Source video and HLS bytes must never be sent through
 its routes. The public publication-cover route is the only exception: after a
