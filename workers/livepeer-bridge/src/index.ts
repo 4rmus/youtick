@@ -1,4 +1,7 @@
-import { COMPACT_UPLOAD_PREFIX, unpackCompactUpload } from '../../../protocol/paid-media-livepeer-v1/compact-upload';
+import {
+    COMPACT_UPLOAD_PREFIX,
+    unpackCompactUpload,
+} from '../../../protocol/paid-media-livepeer-v1/compact-upload';
 import { hasTitleContent } from '../../../protocol/paid-media-livepeer-v1/title';
 import profiles from '../../../protocol/paid-media-livepeer-v1/profiles.json';
 import { base58Decode } from './base58';
@@ -54,10 +57,7 @@ import {
     assertDurableObjectRecordCapacity,
     DURABLE_OBJECT_MAX_PERSISTENT_RECORDS,
 } from './durable-object-capacity';
-import {
-    MAX_PROVIDER_PLAYBACK_OUTPUTS,
-    playbackUrlAllowed,
-} from './provider-verification';
+import { MAX_PROVIDER_PLAYBACK_OUTPUTS, playbackUrlAllowed } from './provider-verification';
 import {
     isProcessingEvent,
     isProviderFailureEvent,
@@ -65,10 +65,7 @@ import {
     synthesizedProviderEvent,
 } from './provider-webhook';
 import { commitUploadJobArchive, type UploadJobArchive } from './upload-job-archive';
-import {
-    commitOperatorOutboxArchive,
-    type OperatorOutboxArchive,
-} from './operator-outbox-archive';
+import { commitOperatorOutboxArchive, type OperatorOutboxArchive } from './operator-outbox-archive';
 import {
     paymentAssets,
     expirePaymentRateLimit,
@@ -77,84 +74,9 @@ import {
     paymentRateLimit,
     paymentStatus,
 } from './payments';
-export interface Env {
-    CF_VERSION_METADATA: WorkerVersionMetadata;
-    VIDEO_ENVIRONMENT?: string;
-    LIVEPEER_BRIDGE_ENABLED?: string;
-    LIVEPEER_NEW_UPLOADS_ENABLED?: string;
-    LIVEPEER_PLAYBACK_ISSUANCE_ENABLED?: string;
-    LIVEPEER_PROVIDER_MUTATIONS_ENABLED?: string;
-    LIVEPEER_OPERATOR_MUTATIONS_ENABLED?: string;
-    LIVEPEER_OPERATOR_JOB_ID?: string;
-    LIVEPEER_PLAYBACK_V2_ENABLED?: string;
-    // 'v2' points this deployment at contracts/market-v2 (tickets); anything else keeps V1.
-    MARKET_PROTOCOL?: string;
-    LIVEPEER_PLAYBACK_V3_ENABLED?: string;
-    // Scheduled release_expired for V2 tickets older than 30 days (reads MARKET_READ_MODEL).
-    MARKET_V2_RELEASE_ENABLED?: string;
-    LIVEPEER_PLAYBACK_SHADOW_V2_ENABLED?: string;
-    LIVEPEER_NEAR_CREATOR_FEE_ENABLED?: string;
-    LIVEPEER_SPONSORED_UPLOADS_ENABLED?: string;
-    LIVEPEER_SPONSOR_RELAYER_MUTATIONS_ENABLED?: string;
-    LIVEPEER_API_KEY?: string;
-    LIVEPEER_PROJECT_ID?: string;
-    LIVEPEER_API_TOKEN_NAME?: string;
-    LIVEPEER_CREATOR_ALLOWLIST?: string;
-    LIVEPEER_MONTHLY_OPERATION_BUDGET_USD_MICROS?: string;
-    LIVEPEER_JOB_OPERATION_RESERVATION_USD_MICROS?: string;
-    LIVEPEER_PAID_MEDIA_OPERATOR_ID?: string;
-    LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN?: string;
-    LIVEPEER_PAID_MEDIA_OPERATOR_TOKEN_PREVIOUS?: string;
-    LIVEPEER_WEBHOOK_SECRET?: string;
-    LIVEPEER_WEBHOOK_SECRET_PREVIOUS?: string;
-    LIVEPEER_WEBHOOK_QUEUE_ENABLED?: string;
-    LIVEPEER_WEBHOOK_QUEUE_BATCH_SIZE?: string;
-    LIVEPEER_WEBHOOK_QUEUE_BATCH_TIMEOUT_SECONDS?: string;
-    LIVEPEER_WEBHOOK_QUEUE_MAX_RETRIES?: string;
-    LIVEPEER_WEBHOOK_QUEUE_MAX_CONCURRENCY?: string;
-    LIVEPEER_WEBHOOK_QUEUE_RETENTION_SECONDS?: string;
-    LIVEPEER_WEBHOOK_QUEUE_DLQ?: string;
-    LIVEPEER_EVENTS?: Queue;
-    ALLOWED_ORIGINS?: string;
-    NEAR_NETWORK?: string;
-    NEAR_RPC_URL?: string;
-    MARKET_CONTRACT_ID?: string;
-    ACCESS_CONTRACT_ID?: string;
-    LIVEPEER_JWT_PRIVATE_KEY?: string;
-    LIVEPEER_JWT_PUBLIC_KEY?: string;
-    LIVEPEER_JWT_ISSUER?: string;
-    NEAR_OPERATOR_ACCOUNT_ID?: string;
-    NEAR_OPERATOR_PRIVATE_KEY?: string;
-    NEAR_OPERATOR_KEY_EPOCH?: string;
-    NEAR_SPONSOR_RELAYER_ACCOUNT_ID?: string;
-    NEAR_SPONSOR_RELAYER_PRIVATE_KEY?: string;
-    NEAR_SPONSOR_RELAYER_KEY_EPOCH?: string;
-    CREATOR_FEE_QUOTE_PRIVATE_KEY?: string;
-    CREATOR_FEE_QUOTE_KEY_VERSION?: string;
-    MULTI_ASSET_PAYMENTS_MODE?: string;
-    MULTI_ASSET_PAYMENT_ASSET_IDS?: string;
-    ONECLICK_API_KEY?: string;
-    LIVEPEER_CONTROL?: DurableObjectNamespace;
-    UPLOAD_JOB_ARCHIVE_ENABLED?: string;
-    OPERATOR_OUTBOX_ARCHIVE_ENABLED?: string;
-    MARKET_READ_MODEL?: D1Database;
-    PUBLIC_BETA_RATE_LIMITER?: RateLimit;
-    // Cloudflare Stream adapter (M2). New intents select it only with the flag on and the
-    // paid-media-v1 Stream descriptor hash; with the flag on, Market V2 is Stream-only (OD19).
-    MEDIA_PROVIDER_STREAM_ENABLED?: string;
-    STREAM_ACCOUNT_ID?: string;
-    STREAM_API_TOKEN?: string;
-    STREAM_CUSTOMER_CODE?: string;
-    STREAM_SIGNING_KEY_ID?: string;
-    STREAM_SIGNING_PUBLIC_KEY?: string;
-    STREAM_SIGNING_KEY_PEM?: string;
-    STREAM_WEBHOOK_SECRET?: string;
-    STREAM_WEBHOOK_SECRET_PREVIOUS?: string;
-    STREAM_MAX_DURATION_SECONDS?: string;
-    STREAM_STORAGE_MINUTES_CAPACITY?: string;
-    STREAM_RESERVATION_SECONDS_BUDGET?: string;
-    STREAM_STUCK_TIMEOUT_MS?: string;
-}
+import type { Env } from './env';
+
+export type { Env } from './env';
 
 type JsonObject = Record<string, unknown>;
 type LivepeerSourceType = MediaSourceType;
