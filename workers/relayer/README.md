@@ -1,6 +1,6 @@
 # youtick relayer
 
-Status: `LOCAL_TEST only / NOT_DEPLOYED`; V2 testnet deploy path: `.github/workflows/deploy-v2-testnet.yml` (`docs/v2-testnet-runbook.md`, Workers). Roadmap gate E5c, decision D7.
+Status: `DEPLOYED_ON_V2_TESTNET / NOT_ON_MAINNET`. Deployed only through `.github/workflows/deploy-v2-testnet.yml`; the workflow first ran with `PASS` on 2026-10-11, and upload fee and purchase relays were accepted on 2026-10-13 (PROVIDER, testnet; `docs/v2-testnet-runbook.md`, "E5b acceptance"). These are dated records, not a statement about what is running now. The tests in this directory are LOCAL_TEST only. Device linking (`/v1/devices`) has no testnet acceptance record. Roadmap gate E5c, decision D7.
 
 A Cloudflare Worker with its own NEAR account and key, separate from the Livepeer Bridge. It pays
 gas and small amounts for NEAR Auth users so that sign-in and the invite credit need no wallet:

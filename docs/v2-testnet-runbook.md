@@ -1,6 +1,8 @@
 # V2 testnet runbook
 
-Status: part 1 `PASS` on 2026-10-08 (run 37832347847); Workers `PREPARED / NOT_RUN`. This creates the separate V2 testnet environment (roadmap: E5
+Status: part 1 `PASS` on 2026-10-08 (run 37832347847); Workers, Bridge, read model and the MC and
+Stream cutover have run since (see the dated records below, the latest under
+[MC and Stream cutover record](#mc-and-stream-cutover-record-2026-10-22-provider-testnet)). This creates the separate V2 testnet environment (roadmap: E5
 acceptance, decision D9). Nothing here touches the V1 public testnet pilot or mainnet.
 
 The setup has three parts:
@@ -475,7 +477,9 @@ service reading a real `reserve_exhausted` RPC failure.
 
 ## MC cutover: provider-neutral Market V2 names
 
-Status: `PREPARED / NOT_RUN` (2026-10-22). Owner decision OD6 renames the Market V2 surface (gate
+Status: `RUN` on 2026-10-22 (PROVIDER, testnet); see
+[MC and Stream cutover record](#mc-and-stream-cutover-record-2026-10-22-provider-testnet). The
+steps below are kept as the procedure that was followed. Owner decision OD6 renames the Market V2 surface (gate
 MC): profile id `paid-media-livepeer-v1` → `paid-media-v1`; `finalize_livepeer_publication` →
 `finalize_publication`; `suspend_livepeer_sales` → `suspend_sales`; `takedown_livepeer_publication`
 → `takedown_publication`; `LivepeerPublicationSubmission` → `PublicationSubmission`. Storage
@@ -657,6 +661,34 @@ Open after this walk: the first watermark and the `lp-bcc8f530…` publication i
 the `watched` ticket row, the Bridge binding and cron, and the 30-day release (earliest
 2026-11-12).
 
+### MC and Stream cutover record, 2026-10-22 (PROVIDER, testnet)
+
+Transcribed on 2026-11-26 from the owner's cutover evidence note, which is kept outside the
+repository. Nothing was re-read from the chain or the Workers for this transcription. Times are
+UTC.
+
+| Step | Evidence |
+|---|---|
+| Cutover commit | `0e6010a` (#360), main CI run 39827749561 `success`; the contract jobs were skipped because M3 did not touch `contracts/` |
+| Artifact | `git diff dd44112 0e6010a -- contracts/` is empty, so the MC push CI run 39759849289 (`v2-contracts-dd441127…`) was used; `SHA256SUMS` 7/7 and `gh attestation verify` passed; `youtick_market_v2.wasm` sha256 `4edfd54d40a5fac9092d3da4464bcf9bfffd1eeaaa1c8a36deff5d54224ff0fd` |
+| Before | code sha256 `f64a5d37…1c3d` (E8.0); `bridge_frozen: false`, `state_version: 3`, no pending upgrade; 2 publications |
+| Operator outbox | not verified before the freeze (owner decision to continue). Read after the freeze: 4 records, 3 confirmed on chain and waiting only for the D1 archive, 1 failing schema validation with content not visible from the endpoint. The runbook criterion `confirmed == total` was not met |
+| Freeze | `B2vodAh6ccDmJNwfW45Jth1wcj2dY2kc8CHipYM1C8zz`, block 274285551 → `bridge_frozen: true` |
+| Propose | `3NTCTubYp3dFrijDNQJfB5D4Pajxjc2p8z2uPthzPiHX`, block 274285801; pending `4edfd54d…f0fd`, timelock 0 |
+| Execute | `HAaGwpDiXzK5hbn9uWB55iQSUY96RucnSoTSgz1wiL6T`, block 274285860, signed by `youtick-dev-v3.testnet`; `code_upgraded`, `state_version: 3`; code sha256 `4edfd54d…f0fd`; no pending upgrade; still 2 publications, `lp-bcc8f530…` `ACTIVE` with `profile_id: paid-media-livepeer-v1` |
+| Operator key | `7vGhtfS1A5DJd7QnsxR6LqCz1ar2oiUmRH8JjowGjRuF`: one transaction, delete-key and add-key for `BDyHUFs1…`; now `finalize_publication`, `suspend_sales`, `mark_watched`, `release_expired`, allowance 0.5 NEAR; the V1 names are gone. near-cli-rs 0.29.0 takes `--contract-account-id` and `--function-names` |
+| Workers run 39833549956 | `FAILURE` before any deploy: the D1 migration step got `Authentication error [10000]` with the media account token. No Worker was deployed |
+| Workers run 39839510694 | `SUCCESS` after the owner rolled the media deploy token (`acceptance`, `card_path: off`); both D1 steps "No migrations to apply"; relayer `9f44e81c-…`, payment service `4d34cdf1-…` (card webhook 503, off) and read model `f17a44d9-…` verified |
+| Bridge `closed` run 39840491333 | `SUCCESS`; receipt `PASS`, `operatorKeySet: neutral`, Stream webhook binding and secret `matched`; version `3171f0f0-fc08-4162-9645-8410aea223cc`; health `DISABLED`, `mediaProvider.kind: stream`, `streamConfigured: true` |
+| Bridge `acceptance` run 39846569198 | `SUCCESS`; receipt `PASS`; version `56dc5862-4494-4c2d-82df-e7489bc42431`; health `ENABLED`, upload, control plane, playback and operator mutations ready; allowed origin 204, denied origin 403, empty `/v3/playback-tokens` 400 |
+| Unfreeze | request `AgkmpERetWarpK6XTbLVtoNgxGcpEvqAbHBo3WgXvjbe` (block 274296742), unfreeze `AvQjvVGFX6iZNuM7my5NXsJq1h738LhkX22zA8j57hb9` (block 274296773) → `bridge_frozen: false`; governance as before the cutover. Frozen from block 274285551 to 274296773 |
+| Stream canaries | provider, reservation, playback, ladder and keys `PASS`; webhook `OPERATOR_CHECK` with five checks ok, and the Bridge's `lastWebhookAtMs` moved from `null` to `1792701249480`. A first webhook run failed on `lastWebhookAtMs: null` of a fresh Bridge, a canary defect fixed later in #378. The temporary signing key was deleted; nothing was left on the provider |
+
+Not covered by this record: an upload, purchase and play on Stream. The first such walk was done
+from the local web on 2026-10-26 and is not transcribed here; its fixes are in #365–#369 and #378.
+Not shown anywhere yet: playback on iPhone Safari, the 30-day `release_expired` on a Stream
+ticket, and anything on Preview, Production or mainnet.
+
 ## Media account (2026-10-22)
 
 Step M1.5 of the Cloudflare Stream migration moves the Bridge and the read model into a separate
@@ -825,7 +857,8 @@ once M1.5-G3 is done.
 
 ## Stream cutover inputs (M2)
 
-Status: `PREPARED / NOT_RUN` (2026-10-22). Owner decision OD19 makes the V2 Bridge Stream-only: the
+Status: `RUN` on 2026-10-22 together with the MC cutover (PROVIDER, testnet); see
+[MC and Stream cutover record](#mc-and-stream-cutover-record-2026-10-22-provider-testnet). Owner decision OD19 makes the V2 Bridge Stream-only: the
 first Bridge deploy into the media account is the M2 build (Stream adapter and M2-G0 names) together
 with the on-chain MC cutover. Cloudflare Stream lives in the same media account (`6caaaf27…1dcb`) as
 the Worker, so `STREAM_ACCOUNT_ID` is that account id. The release no longer reads the Studio

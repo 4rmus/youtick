@@ -1,6 +1,12 @@
 # youtick Market v2 contract
 
-Status: `E3D_LOCAL / NOT_DEPLOYED / RUNTIME_DISABLED`
+Status: `DEPLOYED_ON_V2_TESTNET / NOT_ON_MAINNET`. The V2 testnet bootstrap created the contract
+on 2026-10-08 (run 37832347847, `PASS`); owner-signed self-upgrades on 2026-10-14 (refund rule),
+2026-10-15 (gate E8.0) and 2026-10-22 (gate MC, code sha256 `4edfd54d…f0fd`) are recorded in
+`docs/v2-testnet-runbook.md` (PROVIDER, testnet).
+These are dated records: the code hash on chain may be newer than this source or older, so
+compare it against a CI artifact before relying on it. The tests in this crate are LOCAL_TEST
+only.
 
 This crate is the V2 Market. It is forked from `contracts/nft-ticket` at the merged self-upgrade
 gate (#257) and goes to mainnet under a new contract ID with empty state. Nothing is migrated
