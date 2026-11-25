@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 import { CATALOG_CAPACITY_WARNING_COUNT } from '../read-model/current-catalog.mjs';
 import { SIGNALS, WINDOW_MS, envelope } from './pilot-alerts.mjs';
@@ -9,14 +9,21 @@ const root = new URL('../', import.meta.url);
 test('SLO policy locks report thresholds to emitted bounded events', async () => {
     const policy = JSON.parse(await readFile(new URL('observability/slo-policy.json', root), 'utf8'));
     const runbook = await readFile(new URL('docs/testnet-pilot-runbook.md', root), 'utf8');
+    // The Bridge is split across modules (#383), so the emitted events are looked up in every
+    // production source file of the Worker, not only in its entry point.
+    const bridgeSrc = 'workers/livepeer-bridge/src/';
+    const bridgeSources = (await readdir(new URL(bridgeSrc, root)))
+        .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts') && !name.includes('-test-'))
+        .sort()
+        .map((name) => `${bridgeSrc}${name}`);
+    assert.ok(bridgeSources.includes(`${bridgeSrc}index.ts`));
     const sources = await Promise.all([
-        'workers/livepeer-bridge/src/index.ts',
+        ...bridgeSources,
         'read-model/api.mjs',
         'contracts/nft-ticket/src/lib.rs',
         'workers/livepeer-bridge/scripts/near-finality-canary.mjs',
         'workers/livepeer-bridge/scripts/tus-resume-canary.mjs',
         'workers/livepeer-bridge/wrangler.toml',
-        'workers/livepeer-bridge/src/durable-object-capacity.ts',
         'apps/web/app/api/near-rpc/proxy.ts',
     ].map((path) => readFile(new URL(path, root), 'utf8')));
     const source = sources.join('\n');
