@@ -28,6 +28,21 @@ const DISABLED_BRIDGE_MUTATIONS = [
     { path: '/v1/sponsored-upload-relays', cors: true },
 ];
 
+// Root hosts (youtick.net, www.youtick.net) serve only the public set of apps/web/lib/public-routes.ts.
+// ROOT_PUBLIC_PAGES mirrors PUBLIC_ROOT_SITEMAP_PATHS there; release-smoke.test.mjs keeps the two equal.
+export const ROOT_PUBLIC_PAGES = Object.freeze([
+    '/', '/tr', '/apply', '/tr/apply', '/notify', '/tr/notify',
+    '/privacy', '/terms', '/refund-policy', '/report', '/faq', '/tr/faq',
+]);
+export const ROOT_GATED_PATHS = Object.freeze([
+    '/discover', '/watch', '/upload', '/profile', '/studio', '/tickets', '/invite',
+]);
+// Marks of the pre-#76 root deployment: its proxy headers and the claims and tag its landing carried.
+const ROOT_LEGACY_HEADERS = ['x-proxy', 'x-web4-origin'];
+const ROOT_LEGACY_CONTENT = /lighthouse|ipfs|googletagmanager/i;
+const CSP_NONCE_RE = /'nonce-[A-Za-z0-9+/_=-]+'/;
+const ROOT_STABLE_PATH = '/robots.txt';
+
 export function canonicalJson(value) {
     const sort = (entry) => {
         if (Array.isArray(entry)) return entry.map(sort);
@@ -81,11 +96,23 @@ async function fetchBody(url, init, fetchImpl) {
 export async function fingerprintUrl(value, { fetchImpl = fetch } = {}) {
     const url = httpUrl(value, 'fingerprint_url');
     const { response, body } = await fetchBody(url, {}, fetchImpl);
-    return {
+    const headers = Object.fromEntries(STABLE_HEADERS.map((name) => [name, response.headers.get(name)]));
+    const fingerprint = {
         status: response.status,
         final_url: response.url || url,
         body_sha256: createHash('sha256').update(body).digest('hex'),
-        headers: Object.fromEntries(STABLE_HEADERS.map((name) => [name, response.headers.get(name)])),
+        headers,
+    };
+    const csp = headers['content-security-policy'];
+    if (!csp || !CSP_NONCE_RE.test(csp)) return fingerprint;
+    // A page with a per-request nonce (the youtick web) never hashes the same twice. Its origin is
+    // fingerprinted by the robots.txt it serves for this host and by the policy with the nonce masked.
+    const stable = await fetchBody(new URL(ROOT_STABLE_PATH, fingerprint.final_url), {}, fetchImpl);
+    return {
+        ...fingerprint,
+        body_sha256: createHash('sha256').update(stable.body).digest('hex'),
+        body_source: { path: ROOT_STABLE_PATH, status: stable.response.status },
+        headers: { ...headers, 'content-security-policy': csp.replace(new RegExp(CSP_NONCE_RE, 'g'), "'nonce-*'") },
     };
 }
 
@@ -443,6 +470,65 @@ export async function runReleaseSmoke({
     };
 }
 
+export async function runRootSmoke({
+    origins,
+    fetchImpl = fetch,
+    browserRunner = runChromeSmoke,
+} = {}) {
+    if (!Array.isArray(origins) || !origins.length) throw new Error('release_smoke_root_origins_invalid');
+    const results = [];
+    for (const value of origins) {
+        const origin = httpUrl(value, 'root_origin', true);
+        const send = async (path, init = {}) => {
+            const result = await request(origin, path, { redirect: 'manual', ...init }, {}, fetchImpl);
+            if (ROOT_LEGACY_HEADERS.some((name) => result.response.headers.has(name))) {
+                throw new Error(`release_smoke_root_legacy_proxy path=${path}`);
+            }
+            return result;
+        };
+        for (const path of ROOT_PUBLIC_PAGES) {
+            const page = await send(path);
+            if (page.response.status !== 200) {
+                throw new Error(`release_smoke_root_public_status_${page.response.status} path=${path}`);
+            }
+            const html = text(page.body);
+            const lang = path === '/tr' || path.startsWith('/tr/') ? 'tr' : 'en';
+            if (!new RegExp(`<html[^>]*\\slang="${lang}"`).test(html)) {
+                throw new Error(`release_smoke_root_lang_invalid path=${path}`);
+            }
+            if ((path === '/' || path === '/tr') && ROOT_LEGACY_CONTENT.test(html)) {
+                throw new Error(`release_smoke_root_legacy_content path=${path}`);
+            }
+        }
+        const robots = await send('/robots.txt');
+        if (robots.response.status !== 200) {
+            throw new Error(`release_smoke_root_public_status_${robots.response.status} path=/robots.txt`);
+        }
+        const gated = [
+            ...ROOT_GATED_PATHS.map((path) => ({ path, init: {} })),
+            {
+                path: '/api/near-rpc',
+                init: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+            },
+        ];
+        for (const { path, init } of gated) {
+            const { response } = await send(path, init);
+            if (response.status !== 404
+                || !(response.headers.get('x-robots-tag') || '').toLowerCase().includes('noindex')) {
+                throw new Error(`release_smoke_root_gate_open path=${path} status=${response.status}`);
+            }
+        }
+        const browser = await browserRunner({ webUrl: origin, headers: {} });
+        results.push({
+            origin,
+            public_pages: ROOT_PUBLIC_PAGES.length,
+            gated_paths: gated.length,
+            browser,
+        });
+    }
+    return { schema: 'youtick.root-smoke.v1', origins: results };
+}
+
 async function main(args = process.argv.slice(2)) {
     const [command, ...values] = args;
     if (command === 'fingerprint' && values.length === 1) {
@@ -466,7 +552,11 @@ async function main(args = process.argv.slice(2)) {
         })));
         return;
     }
-    throw new Error('usage: release-smoke.mjs fingerprint <url> | compare <before.json> <after.json> | run <web-url> <bridge-url> <allowed-origin> <denied-origin> [override-worker override-version]');
+    if (command === 'root' && values.length >= 1) {
+        process.stdout.write(canonicalJson(await runRootSmoke({ origins: values })));
+        return;
+    }
+    throw new Error('usage: release-smoke.mjs fingerprint <url> | compare <before.json> <after.json> | root <origin>... | run <web-url> <bridge-url> <allowed-origin> <denied-origin> [override-worker override-version]');
 }
 
 if (import.meta.main) {

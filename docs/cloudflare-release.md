@@ -1,7 +1,9 @@
 # Cloudflare release runbook
 
-Bu akış yalnız dark Preview/Production hedeflerini yönetir. `youtick.net`, NEAR kontratları ve eski
-`youtick-livepeer-bridge-c3-4ea2011` Worker'ı kapsam dışıdır.
+Bu akış yalnız dark Preview/Production hedeflerini yönetir. NEAR kontratları ve eski
+`youtick-livepeer-bridge-c3-4ea2011` Worker'ı kapsam dışıdır. Kök alan adı (`youtick.net`,
+`www.youtick.net`) bu akışla bağlanmaz veya ayrılmaz; Production release'i kökte bulduğu bağı yalnız
+doğrular (bkz. "Kök alan adı").
 
 ## Güvenlik sınırları
 
@@ -65,7 +67,8 @@ USDC, read-model URL, creator allowlist, ücret rezervi ve operasyon bütçesi d
 Derived read gate kapalıyken read-model URL boş tutulur. Yalnız Preview,
 `https://read-preview.youtick.net` ile bu gate'i açabilir; Production zorunlu `false` kalır.
 Placeholder, `localhost`, `workers.dev`, kök `youtick.net` hedefi ve diğer açık feature flag'ler
-build öncesinde reddedilir.
+build öncesinde reddedilir. Tek istisna Production web Worker'ının `PUBLIC_ROOT_HOSTS` değişkenidir;
+değeri `apps/web/wrangler.jsonc` içinde sabittir ve repository variable'dan gelmez.
 `NEAR_RPC_URL` zorunlu environment secret'ıdır; artifact/config/manifest içine yazılmaz ve yalnız
 Bridge version upload sırasında geçici `0600` secrets file üzerinden Wrangler'a aktarılır. Eksik,
 placeholder/example, genel public NEAR RPC, HTTP, credentials veya whitespace içeren değer reddedilir.
@@ -150,9 +153,65 @@ hata verirse geri kaldırılır. Worker ve Durable Object kaynağı otomatik sil
 
 Smoke; `/`, `/tr`, `/api/near-rpc`, browser hydration/console, Bridge `/__health`, bütün kapalı mutation
 endpoint'leri, CORS, exact Worker version ID ve manifest SHA eşleşmesini kontrol eder. Release
-öncesi/sonrası `youtick.net` parmak izi aynı olmalıdır.
+öncesi/sonrası `youtick.net` parmak izi aynı olmalıdır; tek istisna, kökü Production web Worker'ının
+sunduğu bir Production release'idir (bkz. "Kök alan adı").
 
 Production akışı önceki version ID'yi kaydeder; yeni sürüm sonrası eski sürüme yüzde 100 dönüşü ve tekrar
 yeni sürüme çıkışı dark alanlarda test eder. İlk bootstrap'ta aynı exact-SHA artifact'inden ikinci bir
 candidate version oluşturulur; böylece trafik rollback mekanizması ilk manuel çalıştırmada da test edilir.
 Bu yalnız version trafiğini sınar; Durable Object migration/state geri alma iddiası yoktur.
+
+## Kök alan adı
+
+Karar K10(a): `youtick.net` ve `www.youtick.net` yalnız Production web Worker'ı (`youtick-web`) tarafından,
+kök-host kapısının arkasında sunulabilir. Kapı `apps/web/lib/public-routes.ts` içindedir ve Production
+Worker'ındaki `PUBLIC_ROOT_HOSTS=youtick.net,www.youtick.net` değişkeniyle açılır: kök host'larda yalnız
+landing, başvuru, açılış bildirimi, SSS ve hukuk sayfaları cevap verir, diğer her yol `noindex` ile 404
+döner. `app.youtick.net` ve Preview bu kapıdan etkilenmez.
+
+Kurallar (`scripts/cloudflare-release.mjs`):
+
+- Kök host'un Custom Domain kaydı bu akışın yönettiği başka bir Worker'a (Preview web, Bridge, read
+  model), eski Bridge'e veya başka zone'daki `youtick-web`'e bağlıysa release hiçbir mutasyon yapmadan
+  `worker_domain_root_or_legacy_forbidden` ile durur.
+- Kök host `youtick-web`'e bağlıyken aynı host'ta klasik Worker route'u varsa release
+  `worker_classic_route_shadows_root` ile durur. Cloudflare'de route, aynı host'taki Custom Domain'den
+  önce çalışır.
+- Kök `youtick-web`'e bağlıysa Production release'i terfiden sonra kök duman testini çalıştırır
+  (`release-smoke.mjs root`): açık sayfalar 200 ve doğru `lang`, landing'de eski derlemenin izleri yok
+  (proxy başlıkları, "Lighthouse/IPFS", analytics etiketi), uygulama rotaları ve `/api/near-rpc` 404 +
+  `noindex`, tarayıcıda konsol hatası yok. Test düşerse önceki sürümler geri yüklenir.
+- Production rollback testi sürüm trafiğini kısa süre önceki sürüme çevirir. Kök `youtick-web`'e
+  bağlıyken bu, kökte de kısa süre önceki sürümün sunulması demektir.
+- Makbuzdaki `rootHosts.attached` hangi kök host'ların `youtick-web`'e bağlı bulunduğunu kaydeder. Liste
+  `youtick.net` içermiyorsa workflow kök parmak izinin değişmediğini kanıtlar; içeriyorsa kanıt kök duman
+  testidir.
+
+Nonce'lu CSP taşıyan bir sayfanın gövdesi her istekte değişir. `release-smoke.mjs fingerprint` böyle bir
+origin'i `robots.txt` gövdesi ve nonce'u maskelenmiş CSP ile parmak izler; kök `youtick-web`'e geçtikten
+sonra Preview, public-testnet ve V2 testnet workflow'larındaki "kök değişmedi" kontrolü bu sayede
+çalışmaya devam eder.
+
+### Kökü taşıma (sahip, Cloudflare paneli)
+
+Otomasyon bu adımı yapmaz; token yetkisi okuma düzeyinde kalır.
+
+1. Ön koşul: aynı SHA için başarılı bir `Dark Production` koşusu ve çalışan `app.youtick.net`.
+2. `youtick.net` ve `www.youtick.net` üzerindeki mevcut bağı kaldır: eski Worker'ın route'u veya Custom
+   Domain'i ve varsa bu host'ların CNAME kaydı. Cloudflare, CNAME kaydı olan bir host'ta Custom Domain
+   oluşturmaz.
+3. İki host'u `youtick-web` Worker'ına Custom Domain olarak ekle. Eski Worker'ı ve Pages projesini silme.
+4. Doğrula:
+
+   ```bash
+   node scripts/release-smoke.mjs root https://youtick.net https://www.youtick.net
+   ```
+
+   Ardından `fingerprint https://youtick.net` iki kez alınıp `compare` ile karşılaştırılır; eşit çıkması
+   diğer workflow'ların kök kontrolünün geçeceğini gösterir.
+5. Geri alma: 3. adımdaki Custom Domain'leri kaldır, 2. adımda kaldırılan bağı geri koy.
+
+Kaynak: Cloudflare Workers dokümanı, "Custom Domains" ve "Routes" sayfaları (2026-11-26'da okundu).
+Başka bir Worker'a bağlı host'a Custom Domain eklemenin davranışı orada yazmıyor; bu yüzden 2. adım
+3. adımdan önce gelir.
+

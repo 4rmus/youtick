@@ -222,7 +222,7 @@ jobs:
       - name: Verify pinned Wrangler policy runtime
         run: |
           [[ "$(apps/web/node_modules/.bin/wrangler --version)" == "4.151.2" ]]
-      - name: Record unchanged root origin
+      - name: Record root origin before the release
         run: node scripts/release-smoke.mjs fingerprint https://youtick.net > "${RUNNER_TEMP}/root-before.json"
       - name: Upload, smoke, promote and rollback-test dark versions
         env:
@@ -239,12 +239,25 @@ jobs:
           node scripts/cloudflare-release.mjs deploy production "${SHA}" \
             "${RUNNER_TEMP}/release" \
             "${RUNNER_TEMP}/production-deployment.json"
-      - name: Prove root origin stayed unchanged
+      - name: Prove root origin is unchanged or served by the promoted web
         run: |
+          set -euo pipefail
           node scripts/release-smoke.mjs fingerprint https://youtick.net > "${RUNNER_TEMP}/root-after.json"
-          node scripts/release-smoke.mjs compare \
-            "${RUNNER_TEMP}/root-before.json" \
-            "${RUNNER_TEMP}/root-after.json"
+          root_attached="$(jq -r '.rootHosts.attached | if type == "array" then index("youtick.net") != null else error("rootHosts missing") end' \
+            "${RUNNER_TEMP}/production-deployment.json")"
+          case "${root_attached}" in
+            false)
+              node scripts/release-smoke.mjs compare \
+                "${RUNNER_TEMP}/root-before.json" \
+                "${RUNNER_TEMP}/root-after.json"
+              ;;
+            true)
+              echo "youtick.net is a Custom Domain of the promoted web Worker; the deploy step ran its root smoke."
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: production-deployment-${{ steps.authorize.outputs.sha }}

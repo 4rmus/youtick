@@ -667,3 +667,16 @@ test('V2 testnet media account (M1.5): the Bridge and the read model use V2_MEDI
     assert.deepEqual(steps.filter((entry) => /release-smoke\.mjs/.test(entry.text)).map((entry) => entry.name),
         ['Fingerprint unrelated root origin', 'Verify unrelated root origin']);
 });
+
+test('production promote proves the root unchanged unless the promoted web serves it', async () => {
+    const source = await readFile(new URL('../.github/workflows/promote-production.yml', import.meta.url), 'utf8');
+    const before = source.indexOf('node scripts/release-smoke.mjs fingerprint https://youtick.net > "${RUNNER_TEMP}/root-before.json"');
+    const deploy = source.indexOf('node scripts/cloudflare-release.mjs deploy production');
+    const after = source.indexOf('node scripts/release-smoke.mjs fingerprint https://youtick.net > "${RUNNER_TEMP}/root-after.json"');
+    assert.ok(before > 0 && before < deploy && deploy < after);
+    const proof = source.slice(after);
+    // The receipt decides: a missing or malformed rootHosts field fails the step instead of skipping the comparison.
+    assert.match(proof, /root_attached="\$\(jq -r '\.rootHosts\.attached \| if type == "array" then index\("youtick\.net"\) != null else error\("rootHosts missing"\) end' \\\n\s+"\$\{RUNNER_TEMP\}\/production-deployment\.json"\)"/);
+    assert.match(proof, /case "\$\{root_attached\}" in\n\s+false\)\n\s+node scripts\/release-smoke\.mjs compare \\\n\s+"\$\{RUNNER_TEMP\}\/root-before\.json" \\\n\s+"\$\{RUNNER_TEMP\}\/root-after\.json"\n\s+;;\n\s+true\)\n[^\n]+\n\s+;;\n\s+\*\)\n\s+exit 1\n\s+;;\n\s+esac/);
+    assert.doesNotMatch(source, /stayed unchanged/);
+});
