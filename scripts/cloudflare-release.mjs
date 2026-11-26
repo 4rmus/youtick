@@ -19,7 +19,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import process from 'node:process';
-import { runReleaseSmoke } from './release-smoke.mjs';
+import { runReleaseSmoke, runRootSmoke } from './release-smoke.mjs';
 import { PUBLIC_TESTNET_TARGET, PUBLIC_TESTNET_BRIDGE_KEYS, PUBLIC_TESTNET_READ_MODEL, publicTestnetMode, validatePublicTestnetConfig } from './release-metadata.mjs';
 
 const WRANGLER_VERSION = '4.151.2';
@@ -54,6 +54,17 @@ const ALL_TARGETS = Object.freeze({
 
 const READ_MODEL_TARGET = Object.freeze({ worker: 'youtick-market-read-model-testnet' });
 const PUBLIC_READ_MODEL_TARGET = PUBLIC_TESTNET_READ_MODEL;
+// The public root (launch path K10a). Only the production web Worker may serve these hosts, behind the
+// public-route gate that PUBLIC_ROOT_HOSTS switches on. This flow never attaches or detaches them: the
+// owner moves the root in the Cloudflare dashboard, and a production release verifies what it finds.
+const ROOT_HOSTS = Object.freeze(['youtick.net', 'www.youtick.net']);
+const ROOT_HOSTS_VAR = ROOT_HOSTS.join(',');
+const LEGACY_BRIDGE_WORKER = 'youtick-livepeer-bridge-c3-4ea2011';
+const MANAGED_WORKERS = new Set([
+    ...Object.values(TARGETS).flatMap((environment) => Object.values(environment).map((entry) => entry.worker)),
+    READ_MODEL_TARGET.worker,
+    PUBLIC_READ_MODEL_TARGET.worker,
+]);
 const PREVIEW_READ_MODEL_ORIGIN = 'https://read-preview.youtick.net';
 
 function transientWebPropagationError(error) {
@@ -344,13 +355,12 @@ async function verifyRecord(root, record, expectedPath, label) {
 
 function forbiddenTargetString(value) {
     if (typeof value !== 'string') return false;
-    if (value.includes('*') || value === 'youtick-livepeer-bridge-c3-4ea2011') return true;
+    if (value.includes('*') || value === LEGACY_BRIDGE_WORKER) return true;
     const candidates = value.split(',').map((entry) => entry.trim());
     return candidates.some((entry) => {
-        if (['youtick.net', 'www.youtick.net'].includes(entry.toLowerCase())) return true;
+        if (ROOT_HOSTS.includes(entry.toLowerCase())) return true;
         try {
-            const hostname = new URL(entry).hostname.toLowerCase();
-            return hostname === 'youtick.net' || hostname === 'www.youtick.net';
+            return ROOT_HOSTS.includes(new URL(entry).hostname.toLowerCase());
         } catch {
             return false;
         }
@@ -360,6 +370,8 @@ function forbiddenTargetString(value) {
 function scanForbiddenTargets(value, key = '') {
     if (typeof value === 'string'
         && !(key === 'LIVEPEER_CREATOR_ALLOWLIST' && value === '*')
+        // The exact web config comparison pins this variable to the production environment.
+        && !(key === 'PUBLIC_ROOT_HOSTS' && value === ROOT_HOSTS_VAR)
         && forbiddenTargetString(value)) fail('forbidden_target');
     if (Array.isArray(value)) value.forEach((entry) => scanForbiddenTargets(entry));
     else if (value && typeof value === 'object') {
@@ -604,6 +616,7 @@ async function validateWebWrangler(configPath, extractedRoot, target) {
                     { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '2002', simple: { limit: 10, period: 60 } },
                 ],
                 routes: [{ pattern: TARGETS.production.web.domain, custom_domain: true }],
+                vars: { PUBLIC_ROOT_HOSTS: ROOT_HOSTS_VAR },
             },
         },
     };
@@ -1230,14 +1243,31 @@ async function listDomains(api, accountId, filter, value) {
     return records;
 }
 
+// The Custom Domains of one release component. Root hosts on the production web Worker are not part of
+// its own domain and are inspected separately.
+async function componentDomains(api, accountId, wanted) {
+    const [byHostname, byWorker] = await Promise.all([
+        listDomains(api, accountId, 'hostname', wanted.domain),
+        listDomains(api, accountId, 'service', wanted.worker),
+    ]);
+    return [
+        byHostname,
+        wanted.worker === TARGETS.production.web.worker
+            ? byWorker.filter((record) => !ROOT_HOSTS.includes(record.hostname))
+            : byWorker,
+    ];
+}
+
 async function inspectDomainBindings(api, accountId, zoneId, target, phase) {
     const expected = domainTargets(target);
-    const targetWorkers = new Set(Object.values(expected).map((entry) => entry.worker));
-    for (const root of ['youtick.net', 'www.youtick.net']) {
-        const records = await listDomains(api, accountId, 'hostname', root);
-        if (records.some((record) => targetWorkers.has(record.service)
-            || record.service === 'youtick-livepeer-bridge-c3-4ea2011')) {
-            fail('worker_domain_root_or_legacy_forbidden');
+    const rootHosts = [];
+    for (const root of ROOT_HOSTS) {
+        for (const record of await listDomains(api, accountId, 'hostname', root)) {
+            if (record.service === TARGETS.production.web.worker && record.zone_id === zoneId) {
+                rootHosts.push(root);
+            } else if (MANAGED_WORKERS.has(record.service) || record.service === LEGACY_BRIDGE_WORKER) {
+                fail('worker_domain_root_or_legacy_forbidden');
+            }
         }
     }
 
@@ -1245,10 +1275,7 @@ async function inspectDomainBindings(api, accountId, zoneId, target, phase) {
     const zoneIds = new Set();
     for (const component of Object.keys(expected)) {
         const wanted = expected[component];
-        const [byHostname, byWorker] = await Promise.all([
-            listDomains(api, accountId, 'hostname', wanted.domain),
-            listDomains(api, accountId, 'service', wanted.worker),
-        ]);
+        const [byHostname, byWorker] = await componentDomains(api, accountId, wanted);
         if (!byHostname.length && !byWorker.length) {
             states[component] = 'missing';
         } else {
@@ -1268,14 +1295,11 @@ async function inspectDomainBindings(api, accountId, zoneId, target, phase) {
             fail(`${component}_worker_domain_missing`);
         }
     }
-    return { states, zoneIds: [...zoneIds] };
+    return { states, zoneIds: [...zoneIds], rootHosts };
 }
 
 async function exactTargetDomain(api, accountId, zoneId, wanted) {
-    const [byHostname, byWorker] = await Promise.all([
-        listDomains(api, accountId, 'hostname', wanted.domain),
-        listDomains(api, accountId, 'service', wanted.worker),
-    ]);
+    const [byHostname, byWorker] = await componentDomains(api, accountId, wanted);
     if (!byHostname.length && !byWorker.length) return null;
     if (byHostname.length !== 1 || byWorker.length !== 1
         || byHostname[0].id !== byWorker[0].id
@@ -1311,10 +1335,7 @@ async function attachDomains(api, accountId, zoneId, target, states, attempted, 
     for (const component of Object.keys(domainTargets(target)).reverse()) {
         if (states[component] === 'attached') continue;
         const wanted = expected[component];
-        const [byHostname, byWorker] = await Promise.all([
-            listDomains(api, accountId, 'hostname', wanted.domain),
-            listDomains(api, accountId, 'service', wanted.worker),
-        ]);
+        const [byHostname, byWorker] = await componentDomains(api, accountId, wanted);
         if (byHostname.length || byWorker.length) fail(`${component}_worker_domain_attach_race`);
         attempted.add(component);
         let result;
@@ -1403,7 +1424,7 @@ function routeHostname(pattern) {
     return match?.[1]?.toLowerCase() ?? null;
 }
 
-async function verifyClassicRoutes(api, zoneIds, target) {
+async function verifyClassicRoutes(api, zoneIds, target, rootHosts = []) {
     const expected = domainTargets(target);
     const targetWorkers = new Set(Object.values(expected).map((entry) => entry.worker));
     for (const zoneId of zoneIds) {
@@ -1416,10 +1437,11 @@ async function verifyClassicRoutes(api, zoneIds, target) {
             const hostname = routeHostname(route.pattern);
             if (targetWorkers.has(route.script)
                 || Object.values(expected).some((entry) => entry.domain === hostname)
-                || (['youtick.net', 'www.youtick.net'].includes(hostname)
-                    && route.script === 'youtick-livepeer-bridge-c3-4ea2011')) {
+                || (ROOT_HOSTS.includes(hostname) && route.script === LEGACY_BRIDGE_WORKER)) {
                 fail('worker_classic_route_forbidden');
             }
+            // A route takes precedence over a Custom Domain on the same hostname.
+            if (rootHosts.includes(hostname)) fail('worker_classic_route_shadows_root');
         }
     }
 }
@@ -1505,6 +1527,7 @@ export async function deployRelease({
     repoRoot: repoValue = resolve(import.meta.dirname, '..'),
     wranglerPaths,
     smokeFn = runReleaseSmoke,
+    rootSmokeFn = runRootSmoke,
     echoWrangler = true,
     rollbackTest = process.env.RELEASE_ROLLBACK_TEST,
     cloudflareFetch = fetch,
@@ -1608,7 +1631,9 @@ export async function deployRelease({
             'before',
         );
         if (publicMode && publicMode !== 'closed' && Object.values(beforeDomains.states).some((state) => state !== 'attached')) fail('public_testnet_closed_bootstrap_required');
-        await verifyClassicRoutes(api, [cloudflareZoneId], target);
+        await verifyClassicRoutes(
+            api, [cloudflareZoneId], target, target === 'production' ? beforeDomains.rootHosts : [],
+        );
         const accountSubdomain = await accountWorkersDevSubdomain(api, cloudflareAccountId);
 
         const defaultWrangler = join(repoRoot, 'apps', 'web', 'node_modules', '.bin', 'wrangler');
@@ -1680,6 +1705,7 @@ export async function deployRelease({
 
         let promotionStarted = false;
         let rollbackPerformed = false;
+        let attachedRootHosts = [];
         const createdDomains = [];
         const attemptedDomains = new Set();
         try {
@@ -1778,7 +1804,8 @@ export async function deployRelease({
                 target,
                 'after',
             );
-            await verifyClassicRoutes(api, [cloudflareZoneId], target);
+            if (target === 'production') attachedRootHosts = afterDomains.rootHosts;
+            await verifyClassicRoutes(api, [cloudflareZoneId], target, attachedRootHosts);
             await requireTraffic(
                 runByComponent.bridge,
                 argsByComponent.bridge,
@@ -1825,6 +1852,14 @@ export async function deployRelease({
                 sleepFn,
                 createdDomains,
             );
+            if (attachedRootHosts.length) {
+                await runPostPromotionSmoke(
+                    rootSmokeFn,
+                    { origins: attachedRootHosts.map((host) => `https://${host}`) },
+                    sleepFn,
+                    [],
+                );
+            }
             rollbackPerformed = target === 'production' && rollbackTest === 'true'
                 ? await runProductionRollbackTest({
                     runByComponent, argsByComponent, prepared, smokeFn, target,
@@ -1900,6 +1935,7 @@ export async function deployRelease({
                 requested: target === 'production' && rollbackTest === 'true',
                 performed: rollbackPerformed,
             },
+            ...(target === 'production' ? { rootHosts: { attached: attachedRootHosts } } : {}),
         };
         await mkdir(dirname(receiptOutput), { recursive: true });
         const temporaryReceipt = `${receiptOutput}.tmp-${process.pid}`;

@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import {
+    ROOT_GATED_PATHS,
+    ROOT_PUBLIC_PAGES,
     browserOverrideHeaders,
     canonicalJson,
     compareFingerprints,
     fingerprintUrl,
     runReleaseSmoke,
+    runRootSmoke,
 } from './release-smoke.mjs';
 
 async function serve(handler) {
@@ -921,4 +925,183 @@ for (const mode of ['closed', 'acceptance', 'drain']) test(`public ${mode} check
     await assert.rejects(() => runReleaseSmoke(options), /release_smoke_bridge_version_invalid/);
     assert.equal(healthRequests, 1);
     assert.deepEqual(delays, []);
+});
+
+// A root host behind the public-route gate: public pages answer 200, everything else 404 with noindex.
+// `override(request)` may return { status, headers, body } to replace one answer.
+function serveRoot(override = () => null) {
+    return serve((request, response) => {
+        const path = new URL(request.url, 'http://fixture').pathname;
+        const replaced = override({ method: request.method, path });
+        if (replaced) {
+            response.writeHead(replaced.status, replaced.headers ?? { 'Content-Type': 'text/html; charset=utf-8' });
+            response.end(replaced.body ?? '');
+            return;
+        }
+        if (request.method === 'GET' && path === '/robots.txt') {
+            response.writeHead(200, { 'Content-Type': 'text/plain' });
+            response.end('User-agent: *\n');
+            return;
+        }
+        if (request.method === 'GET' && ROOT_PUBLIC_PAGES.includes(path)) {
+            const lang = path === '/tr' || path.startsWith('/tr/') ? 'tr' : 'en';
+            response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            response.end(`<!doctype html><html lang="${lang}"><body>youtick</body></html>`);
+            return;
+        }
+        response.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8', 'X-Robots-Tag': 'noindex' });
+        response.end('<!doctype html><html lang="en"><body>Page not found</body></html>');
+    });
+}
+
+test('root smoke proves the public set, the closed gate and a clean browser load', async () => {
+    const server = await serveRoot();
+    const browserInputs = [];
+    try {
+        const result = await runRootSmoke({
+            origins: [server.origin],
+            browserRunner: async (input) => {
+                browserInputs.push(input);
+                return { channel: 'fixture', routes: ['/', '/tr'] };
+            },
+        });
+        assert.deepEqual(browserInputs, [{ webUrl: server.origin, headers: {} }]);
+        assert.deepEqual(result, {
+            schema: 'youtick.root-smoke.v1',
+            origins: [{
+                origin: server.origin,
+                public_pages: ROOT_PUBLIC_PAGES.length,
+                gated_paths: ROOT_GATED_PATHS.length + 1,
+                browser: { channel: 'fixture', routes: ['/', '/tr'] },
+            }],
+        });
+    } finally {
+        await server.close();
+    }
+});
+
+test('root smoke rejects a root that is not the gated youtick web', async (t) => {
+    const html = (body, lang = 'en') => ({
+        status: 200,
+        body: `<!doctype html><html lang="${lang}"><body>${body}</body></html>`,
+    });
+    const cases = [
+        {
+            name: 'still served through the legacy proxy',
+            override: ({ path }) => path === '/' ? {
+                ...html('youtick'),
+                headers: { 'Content-Type': 'text/html', 'X-Proxy': 'youtick-web4', 'X-Web4-Origin': 'https://old.pages.dev' },
+            } : null,
+            error: /release_smoke_root_legacy_proxy path=\//,
+        },
+        {
+            name: 'a public page is missing',
+            override: ({ path }) => path === '/notify' ? { status: 404, headers: { 'X-Robots-Tag': 'noindex' } } : null,
+            error: /release_smoke_root_public_status_404 path=\/notify/,
+        },
+        {
+            name: 'the landing still carries retired claims',
+            override: ({ path }) => path === '/' ? html('prepared for Lighthouse/IPFS delivery') : null,
+            error: /release_smoke_root_legacy_content path=\//,
+        },
+        {
+            name: 'the landing loads the retired analytics tag',
+            override: ({ path }) => path === '/tr' ? html('<script src="https://www.googletagmanager.com/gtag/js"></script>', 'tr') : null,
+            error: /release_smoke_root_legacy_content path=\/tr/,
+        },
+        {
+            name: 'the Turkish page is not marked as Turkish',
+            override: ({ path }) => path === '/tr' ? html('youtick', 'en') : null,
+            error: /release_smoke_root_lang_invalid path=\/tr/,
+        },
+        {
+            name: 'an application route is served on the root',
+            override: ({ path }) => path === '/discover' ? html('discover') : null,
+            error: /release_smoke_root_gate_open path=\/discover status=200/,
+        },
+        {
+            name: 'a gated answer is indexable',
+            override: ({ path }) => path === '/studio' ? { status: 404 } : null,
+            error: /release_smoke_root_gate_open path=\/studio status=404/,
+        },
+        {
+            name: 'the RPC proxy is reachable on the root',
+            override: ({ method, path }) => method === 'POST' && path === '/api/near-rpc'
+                ? { status: 200, headers: { 'Content-Type': 'application/json' }, body: '{}' }
+                : null,
+            error: /release_smoke_root_gate_open path=\/api\/near-rpc status=200/,
+        },
+        {
+            name: 'a gated path redirects instead of answering 404',
+            override: ({ path }) => path === '/upload' ? { status: 302, headers: { Location: '/' } } : null,
+            error: /release_smoke_root_gate_open path=\/upload status=302/,
+        },
+    ];
+    for (const entry of cases) {
+        await t.test(entry.name, async () => {
+            const server = await serveRoot(entry.override);
+            try {
+                await assert.rejects(runRootSmoke({
+                    origins: [server.origin],
+                    browserRunner: async () => ({ channel: 'fixture', routes: [] }),
+                }), entry.error);
+            } finally {
+                await server.close();
+            }
+        });
+    }
+});
+
+test('root smoke needs at least one valid origin', async () => {
+    await assert.rejects(runRootSmoke({ origins: [] }), /release_smoke_root_origins_invalid/);
+    await assert.rejects(runRootSmoke({ origins: ['https://youtick.net/tr'] }), /release_smoke_root_origin_invalid/);
+});
+
+test('root smoke lists stay inside the web public-route gate', () => {
+    const source = readFileSync(new URL('../apps/web/lib/public-routes.ts', import.meta.url), 'utf8');
+    const list = (name) => {
+        const match = new RegExp(`export const ${name}: readonly string\\[\\] = \\[([^\\]]*)\\]`).exec(source);
+        assert.ok(match, `${name} not found`);
+        return [...match[1].matchAll(/'([^']+)'/g)].map((entry) => entry[1]);
+    };
+    assert.deepEqual([...ROOT_PUBLIC_PAGES].sort(), list('PUBLIC_ROOT_SITEMAP_PATHS').sort());
+    const allowed = list('PUBLIC_ROOT_PAGES');
+    for (const path of ROOT_GATED_PATHS) assert.equal(allowed.includes(path), false, path);
+});
+
+test('a nonce-protected root fingerprints the same twice and still shows a changed origin', async () => {
+    let robots = 'User-agent: *\nAllow: /apply$\nDisallow: /\n';
+    let requests = 0;
+    const server = await serve((request, response) => {
+        if (request.url === '/robots.txt') {
+            response.writeHead(200, { 'Content-Type': 'text/plain' });
+            response.end(robots);
+            return;
+        }
+        requests += 1;
+        const nonce = Buffer.from(`nonce-${requests}`).toString('base64');
+        response.writeHead(200, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Content-Security-Policy': `default-src 'self'; script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+        });
+        response.end(`<!doctype html><html lang="en"><script nonce="${nonce}"></script></html>`);
+    });
+    try {
+        const first = await fingerprintUrl(`${server.origin}/`);
+        const second = await fingerprintUrl(`${server.origin}/`);
+        assert.equal(requests, 2);
+        assert.deepEqual(compareFingerprints(first, second), { equal: true });
+        assert.deepEqual(first.body_source, { path: '/robots.txt', status: 200 });
+        assert.equal(first.body_sha256, createHash('sha256').update(robots).digest('hex'));
+        assert.equal(
+            first.headers['content-security-policy'],
+            "default-src 'self'; script-src 'self' 'nonce-*' 'strict-dynamic'",
+        );
+
+        robots = 'User-agent: *\nDisallow: /\n';
+        const changed = await fingerprintUrl(`${server.origin}/`);
+        assert.throws(() => compareFingerprints(first, changed), /release_smoke_fingerprints_differ/);
+    } finally {
+        await server.close();
+    }
 });

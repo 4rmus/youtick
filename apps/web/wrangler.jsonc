@@ -37,7 +37,10 @@
           "pattern": "app.youtick.net",
           "custom_domain": true
         }
-      ]
+      ],
+      "vars": {
+        "PUBLIC_ROOT_HOSTS": "youtick.net,www.youtick.net"
+      }
     }
   }
 }

@@ -181,7 +181,7 @@ function createTar(source, output) {
     execFileSync('tar', ['-czf', output, '-C', source, '.']);
 }
 
-function makeRelease(t, target = 'preview') {
+function makeRelease(t, target = 'preview', { mutateWebWrangler = () => {} } = {}) {
     const root = mkdtempSync(join(tmpdir(), 'cloudflare-release-test-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const artifactDir = join(root, 'artifact');
@@ -193,7 +193,7 @@ function makeRelease(t, target = 'preview') {
     mkdirSync(readModelRoot, { recursive: true });
     writeFileSync(join(webRoot, '.open-next', 'worker.js'), 'export default { fetch() {} };\n');
     writeFileSync(join(webRoot, '.open-next', 'assets', 'index.txt'), 'asset\n');
-    writeFileSync(join(webRoot, 'wrangler.jsonc'), canonicalJson({
+    const webWrangler = {
         $schema: 'node_modules/wrangler/config-schema.json',
         name: 'youtick-web',
         main: '.open-next/worker.js',
@@ -217,9 +217,12 @@ function makeRelease(t, target = 'preview') {
                     { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '2002', simple: { limit: 10, period: 60 } },
                 ],
                 routes: [{ pattern: TARGETS.production.web.domain, custom_domain: true }],
+                vars: { PUBLIC_ROOT_HOSTS: 'youtick.net,www.youtick.net' },
             },
         },
-    }));
+    };
+    mutateWebWrangler(webWrangler);
+    writeFileSync(join(webRoot, 'wrangler.jsonc'), canonicalJson(webWrangler));
     writeFileSync(join(bridgeRoot, 'index.js'), 'export default { fetch() {} };\n');
     writeFileSync(join(bridgeRoot, 'wrangler.toml'), [
         'name = "youtick-livepeer-bridge"',
@@ -843,6 +846,7 @@ function deployFixture(
             ? NEAR_SPONSOR_RELAYER_PRIVATE_KEY
             : undefined,
         sleepFn,
+        rootSmokeFn = async () => { throw new Error('unexpected_root_smoke'); },
     } = {},
 ) {
     return withFakeEnvironment(fake, () => deployRelease({
@@ -853,6 +857,7 @@ function deployFixture(
         repoRoot: release.root,
         wranglerPaths: { web: fake.binary, bridge: fake.binary, readModel: fake.binary },
         smokeFn,
+        rootSmokeFn,
         echoWrangler: false,
         rollbackTest,
         cloudflareFetch: fake.apiFetch,
@@ -2505,4 +2510,190 @@ for (const catalogMode of ['shadow', 'current']) test(`public ${catalogMode} cat
     // The post-deploy smoke must expect the same scanner state as the deployed packet.
     assert.equal(smokeInputs.at(-1).expectedReadModel.enabled, true);
     assert.equal(smokeInputs.at(-1).expectedReadModel.ingestionEnabled, catalogMode !== 'current');
+});
+
+function productionRootFake(release, { rootServices = {}, routes, target = 'production', zoneId = ZONE_ID } = {}) {
+    const fake = makeFakeWrangler(release, {
+        workers: {
+            [TARGETS[target].web.worker]: { traffic: [{ version_id: 'web-old', percentage: 100 }] },
+            [TARGETS[target].bridge.worker]: { traffic: [{ version_id: 'bridge-old', percentage: 100 }] },
+        },
+        uploadFailures: {},
+        ...(routes ? { routes } : {}),
+    });
+    const state = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+    for (const [hostname, service] of Object.entries(rootServices)) {
+        state.domains[hostname] = {
+            id: `domain-root-${hostname.replaceAll('.', '-')}`,
+            hostname,
+            service,
+            environment: 'production',
+            zone_id: zoneId,
+        };
+    }
+    writeFileSync(fake.statePath, JSON.stringify(state));
+    return fake;
+}
+
+test('production release smokes the root hosts attached to the production web Worker', async (t) => {
+    await t.test('both root hosts', async (subtest) => {
+        const release = makeRelease(subtest, 'production');
+        const fake = productionRootFake(release, {
+            rootServices: {
+                'youtick.net': TARGETS.production.web.worker,
+                'www.youtick.net': TARGETS.production.web.worker,
+            },
+            // A route on another hostname of the zone is not the root's business.
+            routes: [{ pattern: 'docs.youtick.net/*', script: 'youtick-docs' }],
+        });
+        const rootSmokes = [];
+        const receipt = await deployFixture(release, fake, undefined, {
+            target: 'production',
+            rootSmokeFn: async (input) => { rootSmokes.push(input); return { ok: true }; },
+        });
+        assert.deepEqual(rootSmokes, [{ origins: ['https://youtick.net', 'https://www.youtick.net'] }]);
+        assert.deepEqual(receipt.rootHosts, { attached: ['youtick.net', 'www.youtick.net'] });
+        const finalState = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+        assert.deepEqual(finalState.workers[TARGETS.production.web.worker].traffic, [
+            { version_id: 'web-new', percentage: 100 },
+        ]);
+    });
+
+    await t.test('one root host', async (subtest) => {
+        const release = makeRelease(subtest, 'production');
+        const fake = productionRootFake(release, {
+            rootServices: { 'youtick.net': TARGETS.production.web.worker },
+        });
+        const rootSmokes = [];
+        const receipt = await deployFixture(release, fake, undefined, {
+            target: 'production',
+            rootSmokeFn: async (input) => { rootSmokes.push(input); return { ok: true }; },
+        });
+        assert.deepEqual(rootSmokes, [{ origins: ['https://youtick.net'] }]);
+        assert.deepEqual(receipt.rootHosts, { attached: ['youtick.net'] });
+    });
+});
+
+test('production release leaves a root it does not serve alone', async (t) => {
+    const release = makeRelease(t, 'production');
+    // Today's state: the root is routed to another Worker that this flow does not manage.
+    const fake = productionRootFake(release, {
+        rootServices: { 'youtick.net': 'youtick-web4' },
+        routes: [{ pattern: 'youtick.net/*', script: 'youtick-web4' }],
+    });
+    const receipt = await deployFixture(release, fake, undefined, { target: 'production' });
+    assert.deepEqual(receipt.rootHosts, { attached: [] });
+});
+
+test('Preview release neither owns nor smokes the root', async (t) => {
+    const release = makeRelease(t);
+    const fake = productionRootFake(release, {
+        target: 'preview',
+        rootServices: { 'youtick.net': TARGETS.production.web.worker },
+    });
+    const receipt = await deployFixture(release, fake);
+    assert.equal('rootHosts' in receipt, false);
+});
+
+test('a root host bound to anything but the production web Worker is refused before mutation', async (t) => {
+    const cases = [
+        { name: 'production Bridge', target: 'production', service: TARGETS.production.bridge.worker },
+        { name: 'Preview web', target: 'preview', service: TARGETS.preview.web.worker },
+        { name: 'Preview web during a production release', target: 'production', service: TARGETS.preview.web.worker },
+        { name: 'legacy Bridge', target: 'production', service: 'youtick-livepeer-bridge-c3-4ea2011' },
+        {
+            name: 'production web in another zone',
+            target: 'production',
+            service: TARGETS.production.web.worker,
+            zoneId: 'f'.repeat(32),
+        },
+    ];
+    for (const entry of cases) {
+        await t.test(entry.name, async (subtest) => {
+            const release = makeRelease(subtest, entry.target);
+            const fake = productionRootFake(release, {
+                target: entry.target,
+                rootServices: { 'www.youtick.net': entry.service },
+                zoneId: entry.zoneId,
+            });
+            await assert.rejects(
+                deployFixture(release, fake, undefined, { target: entry.target }),
+                /worker_domain_root_or_legacy_forbidden/,
+            );
+            assert.deepEqual(calls(fake), []);
+        });
+    }
+});
+
+test('a classic route on an attached root host is refused before mutation', async (t) => {
+    const release = makeRelease(t, 'production');
+    const fake = productionRootFake(release, {
+        rootServices: { 'youtick.net': TARGETS.production.web.worker },
+        routes: [{ pattern: 'youtick.net/*', script: 'youtick-web4' }],
+    });
+    await assert.rejects(
+        deployFixture(release, fake, undefined, { target: 'production' }),
+        /worker_classic_route_shadows_root/,
+    );
+    assert.deepEqual(calls(fake), []);
+});
+
+test('a failed root smoke restores the previous production versions', async (t) => {
+    const release = makeRelease(t, 'production');
+    const fake = productionRootFake(release, {
+        rootServices: { 'youtick.net': TARGETS.production.web.worker },
+    });
+    await assert.rejects(deployFixture(release, fake, undefined, {
+        target: 'production',
+        rootSmokeFn: async () => { throw new Error('release_smoke_root_gate_open path=/discover status=200'); },
+    }), /release_smoke_root_gate_open/);
+    const finalState = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+    assert.deepEqual(finalState.workers[TARGETS.production.web.worker].traffic, [
+        { version_id: 'web-old', percentage: 100 },
+    ]);
+    assert.deepEqual(finalState.workers[TARGETS.production.bridge.worker].traffic, [
+        { version_id: 'bridge-old', percentage: 100 },
+    ]);
+    assert.equal(existsSync(release.receipt), false);
+});
+
+test('the root-host gate variable is accepted only on the production web Worker', async (t) => {
+    const cases = [
+        {
+            name: 'missing on production',
+            mutate: (config) => { delete config.env.production.vars; },
+        },
+        {
+            name: 'another host list',
+            mutate: (config) => { config.env.production.vars.PUBLIC_ROOT_HOSTS = 'youtick.net'; },
+        },
+        {
+            name: 'set on Preview',
+            mutate: (config) => { config.env.preview.vars = { PUBLIC_ROOT_HOSTS: 'youtick.net,www.youtick.net' }; },
+        },
+        {
+            name: 'root host under another variable',
+            mutate: (config) => { config.env.production.vars.OTHER = 'youtick.net,www.youtick.net'; },
+        },
+    ];
+    for (const entry of cases) {
+        await t.test(entry.name, async (subtest) => {
+            const release = makeRelease(subtest, 'production', { mutateWebWrangler: entry.mutate });
+            const fake = productionRootFake(release);
+            await assert.rejects(
+                deployFixture(release, fake, undefined, { target: 'production' }),
+                /web_wrangler_config_invalid|forbidden_target/,
+            );
+            assert.deepEqual(calls(fake), []);
+        });
+    }
+});
+
+test('the tracked web config switches the root-host gate on for production only', () => {
+    const config = JSON.parse(readFileSync(new URL('../apps/web/wrangler.jsonc', import.meta.url), 'utf8'));
+    assert.deepEqual(config.env.production.vars, { PUBLIC_ROOT_HOSTS: 'youtick.net,www.youtick.net' });
+    assert.equal('vars' in config.env.preview, false);
+    assert.equal('vars' in config, false);
+    // The root is moved in the Cloudflare dashboard, never by a Wrangler route in this file.
+    assert.deepEqual(config.env.production.routes, [{ pattern: 'app.youtick.net', custom_domain: true }]);
 });
