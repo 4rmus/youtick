@@ -1053,7 +1053,10 @@ async function prepareComponent({ component, target, sha, run, args, bootstrapAl
         'versions', 'upload', args.entry, ...args.uploadMode, ...args.base, ...args.vars, ...args.secrets,
         '--tag', sha, '--message', message,
     ], { cwd: dirname(args.config), allowFailure });
-    if (component !== 'bridge' || before.traffic) {
+    // A Worker the status call proved missing (10007) goes straight to its bootstrap deploy: Wrangler
+    // refuses `versions upload` for it with an error that carries no code.
+    const workerMissing = !before.traffic && exactBootstrapFailure(before.result);
+    if ((component !== 'bridge' || before.traffic) && !workerMissing) {
         const upload = await uploadVersion(`YouTick ${target} ${sha}`, true);
 
         if (upload.code === 0) {

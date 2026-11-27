@@ -455,6 +455,10 @@ if (args[0] === 'versions' && args[1] === 'upload') {
     save();
     failed(code);
   }
+  // wrangler 4.151.2 refuses this itself, with no error code, once the API says the Worker is missing.
+  if (!state.workers[worker] && !state.noDeployments?.includes(worker)) {
+    failed(undefined, 'You cannot upload a new version of a Worker that does not yet exist. Please run the \x60deploy\x60 command first.');
+  }
   const text = configText();
   if (worker === 'youtick-market-read-model-public-testnet') {
     const config = JSON.parse(text);
@@ -1154,6 +1158,7 @@ test('Durable Object bootstrap fallback is limited to a proven first Bridge depl
         const release = makeRelease(subtest);
         const fake = makeFakeWrangler(release, {
             workers: {},
+            noDeployments: [TARGETS.preview.web.worker],
             uploadFailures: { [TARGETS.preview.web.worker]: 10211 },
         });
 
@@ -1239,13 +1244,11 @@ test('an unverified Bridge status cannot enter the direct bootstrap path', async
     )), false);
 });
 
-test('only structured error 10007 permits workers.dev bootstrap before safe domain attach', async (t) => {
+test('a Worker the status call proves missing bootstraps on workers.dev before safe domain attach', async (t) => {
     const release = makeRelease(t);
     const fake = makeFakeWrangler(release, {
         workers: {},
-        uploadFailures: {
-            [TARGETS.preview.web.worker]: 10007,
-        },
+        uploadFailures: {},
     });
     const smokeInputs = [];
     const receipt = await deployFixture(release, fake, async (input) => {
@@ -1329,9 +1332,7 @@ test('a Domains API response may omit its deprecated environment field', async (
     const release = makeRelease(t);
     const fake = makeFakeWrangler(release, {
         workers: {},
-        uploadFailures: {
-            [TARGETS.preview.web.worker]: 10007,
-        },
+        uploadFailures: {},
         omitDomainEnvironment: true,
     });
     const receipt = await deployFixture(release, fake);
@@ -1351,6 +1352,7 @@ test('a non-10007 upload error never falls back to deploy', async (t) => {
     const release = makeRelease(t);
     const fake = makeFakeWrangler(release, {
         workers: {},
+        noDeployments: [TARGETS.preview.web.worker],
         uploadFailures: { [TARGETS.preview.web.worker]: 10008 },
     });
     await assert.rejects(deployFixture(release, fake), /web_upload_failed_10008/);
@@ -2128,9 +2130,7 @@ test('a partial first domain attach is detached before the failed release return
     const release = makeRelease(t);
     const fake = makeFakeWrangler(release, {
         workers: {},
-        uploadFailures: {
-            [TARGETS.preview.web.worker]: 10007,
-        },
+        uploadFailures: {},
         failAttachService: TARGETS.preview.web.worker,
     });
     await assert.rejects(deployFixture(release, fake), /cloudflare_api_status_409/);
@@ -2145,9 +2145,7 @@ test('a committed domain with a lost PUT response is reconciled and later detach
     const release = makeRelease(t);
     const fake = makeFakeWrangler(release, {
         workers: {},
-        uploadFailures: {
-            [TARGETS.preview.web.worker]: 10007,
-        },
+        uploadFailures: {},
         commitThenThrowService: TARGETS.preview.bridge.worker,
         failAttachService: TARGETS.preview.web.worker,
     });
@@ -2165,9 +2163,7 @@ test('production bootstrap creates v1 previous and promotes v2 with rollback pro
     const release = makeRelease(t, 'production');
     const fake = makeFakeWrangler(release, {
         workers: {},
-        uploadFailures: {
-            [TARGETS.production.web.worker]: 10007,
-        },
+        uploadFailures: {},
     });
     const receipt = await deployFixture(
         release,
@@ -2213,9 +2209,7 @@ test('bootstrap fails before attach when Web v2 has no preview URL', async (t) =
     const release = makeRelease(t);
     const fake = makeFakeWrangler(release, {
         workers: {},
-        uploadFailures: {
-            [TARGETS.preview.web.worker]: 10007,
-        },
+        uploadFailures: {},
         omitWebPreview: true,
     });
     await assert.rejects(deployFixture(release, fake), /web_preview_url_invalid/);
@@ -2227,9 +2221,7 @@ test('Web v2 preview URL must match the candidate, worker, and account', async (
     const release = makeRelease(t);
     const fake = makeFakeWrangler(release, {
         workers: {},
-        uploadFailures: {
-            [TARGETS.preview.web.worker]: 10007,
-        },
+        uploadFailures: {},
         badWebPreview: 'https://web-new-another-worker.account.workers.dev',
     });
     await assert.rejects(deployFixture(release, fake), /web_preview_url_invalid/);
@@ -2696,4 +2688,41 @@ test('the tracked web config switches the root-host gate on for production only'
     assert.equal('vars' in config, false);
     // The root is moved in the Cloudflare dashboard, never by a Wrangler route in this file.
     assert.deepEqual(config.env.production.routes, [{ pattern: 'app.youtick.net', custom_domain: true }]);
+});
+
+test('a first deployment never asks Wrangler to upload a version of a missing Worker', async (t) => {
+    // Dark Production run 45976479210 (2026-11-27): wrangler 4.151.2 answered the upload with a codeless
+    // "does not yet exist" error, which the release took for an unknown failure.
+    const release = makeRelease(t, 'production');
+    const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+    const receipt = await deployFixture(release, fake, async () => ({ ok: true }), { target: 'production' });
+
+    assert.equal(receipt.web.bootstrap, true);
+    assert.equal(receipt.bridge.bootstrap, true);
+    assert.equal(receipt.web.previousVersionId, 'web-bootstrap');
+    assert.equal(receipt.web.versionId, 'web-new');
+    for (const worker of [TARGETS.production.web.worker, TARGETS.production.bridge.worker]) {
+        const bootstrapCalls = calls(fake)
+            .filter((args) => args.includes(worker)
+                && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload')))
+            .map((args) => (args[0] === 'deploy' ? 'deploy' : 'versions upload'));
+        assert.deepEqual(bootstrapCalls, ['deploy', 'versions upload'], worker);
+    }
+});
+
+test('a Worker without deployments still bootstraps when its upload answers 10007', async (t) => {
+    const release = makeRelease(t);
+    const fake = makeFakeWrangler(release, {
+        workers: {},
+        noDeployments: [TARGETS.preview.web.worker],
+        uploadFailures: { [TARGETS.preview.web.worker]: 10007 },
+    });
+    const receipt = await deployFixture(release, fake, async () => ({ ok: true }));
+    assert.equal(receipt.web.bootstrap, true);
+    assert.equal(receipt.web.previousVersionId, 'web-bootstrap');
+    const webCalls = calls(fake)
+        .filter((args) => args.includes(TARGETS.preview.web.worker)
+            && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload')))
+        .map((args) => (args[0] === 'deploy' ? 'deploy' : 'versions upload'));
+    assert.deepEqual(webCalls, ['versions upload', 'deploy', 'versions upload']);
 });
