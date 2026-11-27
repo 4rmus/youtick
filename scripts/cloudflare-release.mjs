@@ -19,7 +19,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import process from 'node:process';
-import { runReleaseSmoke, runRootSmoke } from './release-smoke.mjs';
+import { runFormsSmoke, runReleaseSmoke, runRootSmoke } from './release-smoke.mjs';
 import { PUBLIC_TESTNET_TARGET, PUBLIC_TESTNET_BRIDGE_KEYS, PUBLIC_TESTNET_READ_MODEL, publicTestnetMode, validatePublicTestnetConfig } from './release-metadata.mjs';
 
 const WRANGLER_VERSION = '4.151.2';
@@ -59,6 +59,45 @@ const PUBLIC_READ_MODEL_TARGET = PUBLIC_TESTNET_READ_MODEL;
 // owner moves the root in the Cloudflare dashboard, and a production release verifies what it finds.
 const ROOT_HOSTS = Object.freeze(['youtick.net', 'www.youtick.net']);
 const ROOT_HOSTS_VAR = ROOT_HOSTS.join(',');
+// The public forms (launch path L2): creator application, content report and opening notice. Each route
+// mails the youtick inbox through its own Email Sending binding, restricted to one recipient and one
+// sender, and reads a `<prefix>_FROM`, `<prefix>_TO`, rate limiter and Turnstile secret. Addresses are
+// fixed here and compared exactly; only the Turnstile secret comes from the environment. A form is shown
+// to visitors only when its site key is set in the release config, so a set site key requires the secret.
+const FORMS_FROM = 'forms@youtick.net';
+const FORMS = Object.freeze([
+    Object.freeze({
+        prefix: 'CREATOR_APPLICATION',
+        to: 'contact@youtick.net',
+        path: '/api/creator-applications',
+        siteKey: 'NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY',
+    }),
+    Object.freeze({
+        prefix: 'CONTENT_REPORT',
+        to: 'abuse@youtick.net',
+        path: '/api/content-reports',
+        siteKey: 'NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY',
+    }),
+    Object.freeze({
+        prefix: 'OPENING_NOTICE',
+        to: 'contact@youtick.net',
+        path: '/api/opening-notices',
+        siteKey: 'NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY',
+    }),
+]);
+const FORM_SEND_EMAIL = FORMS.map(({ prefix, to }) => ({
+    name: `${prefix}_EMAIL`, destination_address: to, allowed_sender_addresses: [FORMS_FROM],
+}));
+const FORM_VARS = Object.fromEntries(FORMS.flatMap(({ prefix, to }) => [
+    [`${prefix}_FROM`, FORMS_FROM],
+    [`${prefix}_TO`, to],
+]));
+// Rate limiter namespaces are account-wide counters, so each form gets its own per environment.
+const formRateLimits = (firstNamespace) => FORMS.map(({ prefix }, index) => ({
+    name: `${prefix}_RATE_LIMITER`, namespace_id: String(firstNamespace + index), simple: { limit: 5, period: 60 },
+}));
+// A real widget secret. Cloudflare's published test secrets start with 1x, 2x or 3x.
+const TURNSTILE_SECRET_RE = /^0x[0-9A-Za-z_-]+$/;
 const LEGACY_BRIDGE_WORKER = 'youtick-livepeer-bridge-c3-4ea2011';
 const MANAGED_WORKERS = new Set([
     ...Object.values(TARGETS).flatMap((environment) => Object.values(environment).map((entry) => entry.worker)),
@@ -302,6 +341,15 @@ function validatePreviewSecret(value, label, pattern) {
         || (pattern && !pattern.test(value))) {
         fail(`${label}_invalid`);
     }
+    return value;
+}
+
+/** The forms' Turnstile secret, or null when the environment does not provide one. */
+function validateFormsTurnstileSecret(value, siteKeys) {
+    if (value === undefined || value === null || value === '') return null;
+    validatePreviewSecret(value, 'forms_turnstile_secret', TURNSTILE_SECRET_RE);
+    // A site key is public and shorter; pasted here it would switch every check off in practice.
+    if (siteKeys.includes(value)) fail('forms_turnstile_secret_invalid');
     return value;
 }
 
@@ -606,17 +654,22 @@ async function validateWebWrangler(configPath, extractedRoot, target) {
                 ratelimits: [
                     { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '1001', simple: { limit: 60, period: 60 } },
                     { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '1002', simple: { limit: 10, period: 60 } },
+                    ...formRateLimits(1003),
                 ],
                 routes: [{ pattern: TARGETS.preview.web.domain, custom_domain: true }],
+                send_email: FORM_SEND_EMAIL,
+                vars: FORM_VARS,
             },
             production: {
                 name: TARGETS.production.web.worker,
                 ratelimits: [
                     { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '2001', simple: { limit: 60, period: 60 } },
                     { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '2002', simple: { limit: 10, period: 60 } },
+                    ...formRateLimits(2003),
                 ],
                 routes: [{ pattern: TARGETS.production.web.domain, custom_domain: true }],
-                vars: { PUBLIC_ROOT_HOSTS: ROOT_HOSTS_VAR },
+                send_email: FORM_SEND_EMAIL,
+                vars: { PUBLIC_ROOT_HOSTS: ROOT_HOSTS_VAR, ...FORM_VARS },
             },
         },
     };
@@ -901,6 +954,7 @@ async function makeWranglerRunner(binary, tempRoot, { echo, label }) {
         };
         delete childEnvironment.NEAR_RPC_URL;
         delete childEnvironment.ONECLICK_API_KEY;
+        delete childEnvironment.FORMS_TURNSTILE_SECRET;
         delete childEnvironment.LIVEPEER_API_KEY;
         delete childEnvironment.LIVEPEER_WEBHOOK_SECRET;
         delete childEnvironment.LIVEPEER_JWT_PRIVATE_KEY;
@@ -974,7 +1028,7 @@ function assertTraffic(actual, expected, label) {
     if (!sameJson(normalize(actual), normalize(expected))) fail(`${label}_traffic_invalid`);
 }
 
-function componentArgs(component, target, extracted, releaseConfig, sanitized, bridgeSecretsFile) {
+function componentArgs(component, target, extracted, releaseConfig, sanitized, bridgeSecretsFile, webSecretsFile = null) {
     const expected = component === 'readModel' ? (target === 'public-testnet' ? PUBLIC_READ_MODEL_TARGET : READ_MODEL_TARGET) : TARGETS[target][component];
     const config = component === 'web'
         ? target === 'public-testnet' ? sanitized.webBootstrap : join(extracted, 'wrangler.jsonc')
@@ -998,7 +1052,10 @@ function componentArgs(component, target, extracted, releaseConfig, sanitized, b
             .flatMap((key) => ['--var', `${key}:${releaseConfig.bridge[key]}`])
         : [];
     const uploadMode = component === 'web' ? [] : ['--no-bundle'];
-    const secrets = component === 'bridge' ? ['--secrets-file', bridgeSecretsFile] : [];
+    // Wrangler adds a secrets file to the secrets of earlier versions and never deletes one that is left out.
+    const secrets = component === 'bridge'
+        ? ['--secrets-file', bridgeSecretsFile]
+        : component === 'web' && webSecretsFile ? ['--secrets-file', webSecretsFile] : [];
     return {
         expected,
         config,
@@ -1531,6 +1588,7 @@ export async function deployRelease({
     wranglerPaths,
     smokeFn = runReleaseSmoke,
     rootSmokeFn = runRootSmoke,
+    formsSmokeFn = runFormsSmoke,
     echoWrangler = true,
     rollbackTest = process.env.RELEASE_ROLLBACK_TEST,
     cloudflareFetch = fetch,
@@ -1539,6 +1597,7 @@ export async function deployRelease({
     cloudflareZoneId = process.env.CLOUDFLARE_ZONE_ID,
     nearRpcUrl: nearRpcUrlValue = process.env.NEAR_RPC_URL,
     oneClickApiKey: oneClickApiKeyValue = process.env.ONECLICK_API_KEY,
+    formsTurnstileSecret: formsTurnstileSecretValue = process.env.FORMS_TURNSTILE_SECRET,
     livepeerApiKey: livepeerApiKeyValue = process.env.LIVEPEER_API_KEY,
     livepeerWebhookSecret: livepeerWebhookSecretValue = process.env.LIVEPEER_WEBHOOK_SECRET,
     livepeerJwtPrivateKey: livepeerJwtPrivateKeyValue = process.env.LIVEPEER_JWT_PRIVATE_KEY,
@@ -1558,6 +1617,13 @@ export async function deployRelease({
     const release = await readRelease(artifactDir, target, sha);
     const oneClickApiKey = target === 'public-testnet' ? null : validateOneClickApiKey(oneClickApiKeyValue, true);
     const publicMode = target === 'public-testnet' ? publicTestnetMode(release.config) : null;
+    // The public-testnet web Worker has no mail bindings: it gets no forms secret and shows no form.
+    const shownForms = target === 'public-testnet' ? [] : FORMS.filter(({ siteKey }) => release.config.web?.[siteKey]);
+    const formsTurnstileSecret = target === 'public-testnet' ? null : validateFormsTurnstileSecret(
+        formsTurnstileSecretValue,
+        FORMS.map(({ siteKey }) => release.config.web?.[siteKey]).filter(Boolean),
+    );
+    if (shownForms.length && !formsTurnstileSecret) fail('forms_turnstile_secret_missing');
     const sponsorCanary = release.config.bridge.LIVEPEER_SPONSORED_UPLOADS_ENABLED === 'true';
     const previewSecrets = target !== 'production' ? {
         LIVEPEER_API_KEY: validatePreviewSecret(livepeerApiKeyValue, 'livepeer_api_key'),
@@ -1607,6 +1673,16 @@ export async function deployRelease({
         );
         if (((await stat(bridgeSecretsFile)).mode & 0o777) !== 0o600) {
             fail('near_rpc_secrets_file_mode_invalid');
+        }
+        // One widget protects the three forms, so the same secret goes in under each route's name.
+        const webSecretsFile = formsTurnstileSecret ? join(tempRoot, 'web-secrets.json') : null;
+        if (webSecretsFile) {
+            await writeFile(
+                webSecretsFile,
+                canonicalJson(Object.fromEntries(FORMS.map(({ prefix }) => [`${prefix}_TURNSTILE_SECRET`, formsTurnstileSecret]))),
+                { flag: 'wx', mode: 0o600 },
+            );
+            if (((await stat(webSecretsFile)).mode & 0o777) !== 0o600) fail('forms_secrets_file_mode_invalid');
         }
         const extracted = {
             web: join(tempRoot, 'web'),
@@ -1658,7 +1734,7 @@ export async function deployRelease({
         };
         const argsByComponent = {
             web: componentArgs(
-                'web', target, extracted.web, release.config, sanitized, bridgeSecretsFile,
+                'web', target, extracted.web, release.config, sanitized, bridgeSecretsFile, webSecretsFile,
             ),
             bridge: componentArgs(
                 'bridge', target, extracted.bridge, release.config, sanitized, bridgeSecretsFile,
@@ -1863,6 +1939,14 @@ export async function deployRelease({
                     [],
                 );
             }
+            if (shownForms.length) {
+                await runPostPromotionSmoke(
+                    formsSmokeFn,
+                    { origin: `https://${TARGETS[target].web.domain}`, paths: shownForms.map(({ path }) => path) },
+                    sleepFn,
+                    [],
+                );
+            }
             rollbackPerformed = target === 'production' && rollbackTest === 'true'
                 ? await runProductionRollbackTest({
                     runByComponent, argsByComponent, prepared, smokeFn, target,
@@ -1939,6 +2023,9 @@ export async function deployRelease({
                 performed: rollbackPerformed,
             },
             ...(target === 'production' ? { rootHosts: { attached: attachedRootHosts } } : {}),
+            ...(target === 'public-testnet' ? {} : {
+                forms: { secret: Boolean(formsTurnstileSecret), ready: shownForms.map(({ path }) => path) },
+            }),
         };
         await mkdir(dirname(receiptOutput), { recursive: true });
         const temporaryReceipt = `${receiptOutput}.tmp-${process.pid}`;

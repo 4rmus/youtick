@@ -98,7 +98,22 @@ const WEB_KEYS = Object.freeze([
   "NEXT_PUBLIC_USDC_CONTRACT_ID",
   "NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO",
   "NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO",
+  "NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY",
+  "NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY",
+  "NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY",
 ]);
+
+// Build-time switches of the three public forms (creator application, content report, opening notice).
+// Empty keeps a form on its e-mail fallback. A set key shows the form, so the deploy step then requires
+// the Turnstile secret (scripts/cloudflare-release.mjs).
+export const FORM_SITE_KEYS = Object.freeze([
+  "NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY",
+  "NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY",
+  "NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY",
+]);
+// A real widget's site key. Cloudflare's published test keys (1x…, 2x…, 3x…) and secret keys (longer)
+// do not match.
+const TURNSTILE_SITE_KEY_RE = /^0x[0-9A-Za-z_-]{16,32}$/;
 
 const BRIDGE_KEYS = Object.freeze([
   "ALLOWED_ORIGINS",
@@ -137,6 +152,9 @@ const BRIDGE_KEYS = Object.freeze([
 ]);
 
 const OPTIONAL_KEYS = new Set([
+  "NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY",
+  "NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY",
+  "NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY",
   "NEXT_PUBLIC_USDC_CONTRACT_ID",
   "NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO",
   "NEXT_PUBLIC_MARKET_READ_MODEL_URL",
@@ -288,6 +306,15 @@ function buildConfig(environment) {
 
   const web = Object.fromEntries(WEB_KEYS.map((key) => [key, envValue(environment, key)]));
   const bridge = Object.fromEntries(BRIDGE_KEYS.map((key) => [key, envValue(environment, key)]));
+
+  for (const key of FORM_SITE_KEYS) {
+    if (!web[key]) continue;
+    // The public-testnet Worker has no mail binding, so a form there could only answer 503.
+    if (environment === "public-testnet") fail("public_testnet_form_site_key_forbidden");
+    if (!TURNSTILE_SITE_KEY_RE.test(web[key])) {
+      fail(`${environment.toUpperCase()}_${key} must be a Turnstile site key`);
+    }
+  }
 
   for (const flag of FALSE_FLAGS) {
     if (environment === "public-testnet" && flag === "LIVEPEER_WEBHOOK_QUEUE_ENABLED") continue;

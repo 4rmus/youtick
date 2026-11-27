@@ -4,12 +4,14 @@ import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import {
+    FORM_ROUTES,
     ROOT_GATED_PATHS,
     ROOT_PUBLIC_PAGES,
     browserOverrideHeaders,
     canonicalJson,
     compareFingerprints,
     fingerprintUrl,
+    runFormsSmoke,
     runReleaseSmoke,
     runRootSmoke,
 } from './release-smoke.mjs';
@@ -1104,4 +1106,71 @@ test('a nonce-protected root fingerprints the same twice and still shows a chang
     } finally {
         await server.close();
     }
+});
+
+// A form route as the web serves it: 503 until its binding, addresses, rate limiter and secret are all
+// present, then 403 for a request that carries no Origin header.
+function serveForms(answers, seen = []) {
+    return serve((request, response) => {
+        const path = new URL(request.url, 'http://fixture').pathname;
+        seen.push({ method: request.method, path, origin: request.headers.origin ?? null, type: request.headers['content-type'] ?? null });
+        const answer = answers[path] ?? { status: 404, body: {} };
+        json(response, answer.status, answer.body);
+    });
+}
+
+test('forms smoke passes when every shown form refuses an origin-less post as a configured route does', async () => {
+    const seen = [];
+    const server = await serveForms({
+        '/api/opening-notices': { status: 403, body: { error: 'invalid_request' } },
+        '/api/creator-applications': { status: 403, body: { error: 'invalid_request' } },
+    }, seen);
+    try {
+        const result = await runFormsSmoke({
+            origin: server.origin,
+            paths: ['/api/creator-applications', '/api/opening-notices'],
+        });
+        assert.deepEqual(result, {
+            schema: 'youtick.forms-smoke.v1',
+            origin: server.origin,
+            ready: ['/api/creator-applications', '/api/opening-notices'],
+        });
+        // The probe can never reach the Turnstile check or the mail binding: it sends no Origin header.
+        assert.deepEqual(seen, [
+            { method: 'POST', path: '/api/creator-applications', origin: null, type: 'application/json' },
+            { method: 'POST', path: '/api/opening-notices', origin: null, type: 'application/json' },
+        ]);
+    } finally {
+        await server.close();
+    }
+});
+
+test('forms smoke rejects a shown form whose route is not configured', async (t) => {
+    const cases = {
+        'binding, address, limiter or secret missing': [{ status: 503, body: { error: 'unavailable' } }, /release_smoke_form_unavailable path=\/api\/opening-notices/],
+        'route missing': [{ status: 404, body: {} }, /release_smoke_form_status_404 path=\/api\/opening-notices/],
+        'a 403 from something other than the route': [{ status: 403, body: { error: 'blocked' } }, /release_smoke_form_refusal_invalid path=\/api\/opening-notices/],
+        'the probe was accepted': [{ status: 200, body: { ok: true } }, /release_smoke_form_status_200 path=\/api\/opening-notices/],
+    };
+    for (const [name, [answer, error]] of Object.entries(cases)) {
+        await t.test(name, async () => {
+            const server = await serveForms({ '/api/opening-notices': answer });
+            try {
+                await assert.rejects(runFormsSmoke({ origin: server.origin, paths: ['/api/opening-notices'] }), error);
+            } finally {
+                await server.close();
+            }
+        });
+    }
+});
+
+test('forms smoke only posts to the three form routes of one origin', async () => {
+    await assert.rejects(runFormsSmoke({ origin: 'https://app.youtick.net/tr', paths: ['/api/opening-notices'] }), /release_smoke_forms_origin_invalid/);
+    await assert.rejects(runFormsSmoke({ origin: 'https://app.youtick.net', paths: [] }), /release_smoke_forms_paths_invalid/);
+    await assert.rejects(runFormsSmoke({ origin: 'https://app.youtick.net', paths: ['/api/near-rpc'] }), /release_smoke_forms_paths_invalid/);
+});
+
+test('forms smoke routes are open to POST on the root hosts', () => {
+    const source = readFileSync(new URL('../apps/web/lib/public-routes.ts', import.meta.url), 'utf8');
+    for (const path of FORM_ROUTES) assert.ok(source.includes(`'${path}': ['POST']`), path);
 });

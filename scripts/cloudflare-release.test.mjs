@@ -181,7 +181,35 @@ function createTar(source, output) {
     execFileSync('tar', ['-czf', output, '-C', source, '.']);
 }
 
-function makeRelease(t, target = 'preview', { mutateWebWrangler = () => {} } = {}) {
+// The public forms (launch path L2), spelled out here on purpose: the release must refuse any other shape.
+const FORMS_FROM = 'forms@youtick.net';
+const FORM_SEND_EMAIL = [
+    { name: 'CREATOR_APPLICATION_EMAIL', destination_address: 'contact@youtick.net', allowed_sender_addresses: [FORMS_FROM] },
+    { name: 'CONTENT_REPORT_EMAIL', destination_address: 'abuse@youtick.net', allowed_sender_addresses: [FORMS_FROM] },
+    { name: 'OPENING_NOTICE_EMAIL', destination_address: 'contact@youtick.net', allowed_sender_addresses: [FORMS_FROM] },
+];
+const FORM_VARS = {
+    CREATOR_APPLICATION_FROM: FORMS_FROM,
+    CREATOR_APPLICATION_TO: 'contact@youtick.net',
+    CONTENT_REPORT_FROM: FORMS_FROM,
+    CONTENT_REPORT_TO: 'abuse@youtick.net',
+    OPENING_NOTICE_FROM: FORMS_FROM,
+    OPENING_NOTICE_TO: 'contact@youtick.net',
+};
+const formRateLimits = (first) => [
+    { name: 'CREATOR_APPLICATION_RATE_LIMITER', namespace_id: String(first), simple: { limit: 5, period: 60 } },
+    { name: 'CONTENT_REPORT_RATE_LIMITER', namespace_id: String(first + 1), simple: { limit: 5, period: 60 } },
+    { name: 'OPENING_NOTICE_RATE_LIMITER', namespace_id: String(first + 2), simple: { limit: 5, period: 60 } },
+];
+const FORM_SECRET_NAMES = [
+    'CREATOR_APPLICATION_TURNSTILE_SECRET',
+    'CONTENT_REPORT_TURNSTILE_SECRET',
+    'OPENING_NOTICE_TURNSTILE_SECRET',
+];
+const FORM_SITE_KEY = '0x4AAAAAAAexampleSiteKey0';
+const FORMS_TURNSTILE_SECRET = `0x4AAAAAAA${'s'.repeat(25)}`;
+
+function makeRelease(t, target = 'preview', { mutateWebWrangler = () => {}, mutateConfig } = {}) {
     const root = mkdtempSync(join(tmpdir(), 'cloudflare-release-test-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const artifactDir = join(root, 'artifact');
@@ -207,17 +235,22 @@ function makeRelease(t, target = 'preview', { mutateWebWrangler = () => {} } = {
                 ratelimits: [
                     { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '1001', simple: { limit: 60, period: 60 } },
                     { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '1002', simple: { limit: 10, period: 60 } },
+                    ...formRateLimits(1003),
                 ],
                 routes: [{ pattern: TARGETS.preview.web.domain, custom_domain: true }],
+                send_email: structuredClone(FORM_SEND_EMAIL),
+                vars: { ...FORM_VARS },
             },
             production: {
                 name: TARGETS.production.web.worker,
                 ratelimits: [
                     { name: 'NEAR_RPC_READ_RATE_LIMITER', namespace_id: '2001', simple: { limit: 60, period: 60 } },
                     { name: 'NEAR_RPC_BROADCAST_RATE_LIMITER', namespace_id: '2002', simple: { limit: 10, period: 60 } },
+                    ...formRateLimits(2003),
                 ],
                 routes: [{ pattern: TARGETS.production.web.domain, custom_domain: true }],
-                vars: { PUBLIC_ROOT_HOSTS: 'youtick.net,www.youtick.net' },
+                send_email: structuredClone(FORM_SEND_EMAIL),
+                vars: { PUBLIC_ROOT_HOSTS: 'youtick.net,www.youtick.net', ...FORM_VARS },
             },
         },
     };
@@ -308,7 +341,9 @@ function makeRelease(t, target = 'preview', { mutateWebWrangler = () => {} } = {
     const webPath = join(artifactDir, webName);
     const bridgePath = join(artifactDir, 'bridge.tar.gz');
     const readModelPath = join(artifactDir, 'read-model.tar.gz');
-    writeFileSync(configPath, canonicalJson(makeConfig(target)));
+    const releaseConfig = makeConfig(target);
+    mutateConfig?.(releaseConfig);
+    writeFileSync(configPath, canonicalJson(releaseConfig));
     createTar(webRoot, webPath);
     createTar(bridgeRoot, bridgePath);
     createTar(readModelRoot, readModelPath);
@@ -360,7 +395,21 @@ const logPath = process.env.FAKE_WRANGLER_LOG;
 const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
 fs.appendFileSync(logPath, JSON.stringify(args) + '\n');
 const secretsIndex = args.indexOf('--secrets-file');
-if (secretsIndex >= 0) {
+const secretsWorker = args[args.indexOf('--name') + 1] || '';
+if (secretsIndex >= 0 && secretsWorker.startsWith('youtick-web')) {
+  // Web Worker: only the forms' Turnstile secret, once per route name.
+  const secretsPath = args[secretsIndex + 1];
+  const parsed = JSON.parse(fs.readFileSync(secretsPath, 'utf8'));
+  const mode = fs.statSync(secretsPath).mode & 0o777;
+  const keys = Object.keys(parsed);
+  if (mode !== 0o600 || keys.some((key) => parsed[key] !== process.env.FAKE_FORMS_TURNSTILE_SECRET)
+      || !process.env.FAKE_FORMS_TURNSTILE_SECRET || process.env.FORMS_TURNSTILE_SECRET) {
+    throw new Error('invalid fake Wrangler web secret contract');
+  }
+  fs.appendFileSync(process.env.FAKE_WRANGLER_SECRET_LOG, JSON.stringify({
+    command: args.slice(0, 2), worker: secretsWorker, mode, keys,
+  }) + '\n');
+} else if (secretsIndex >= 0) {
   const secretsPath = args[secretsIndex + 1];
   const raw = fs.readFileSync(secretsPath, 'utf8');
   const parsed = JSON.parse(raw);
@@ -829,6 +878,20 @@ function secretCalls(fake) {
     return readFileSync(fake.secretLogPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
 }
 
+// The workflow hands the secret over in the environment; the fake Wrangler refuses to run if it still
+// sees it there.
+async function withFormsSecretInEnvironment(secret, callback) {
+    if (typeof secret !== 'string' || !secret) return callback();
+    process.env.FORMS_TURNSTILE_SECRET = secret;
+    process.env.FAKE_FORMS_TURNSTILE_SECRET = secret;
+    try {
+        return await callback();
+    } finally {
+        delete process.env.FORMS_TURNSTILE_SECRET;
+        delete process.env.FAKE_FORMS_TURNSTILE_SECRET;
+    }
+}
+
 function deployFixture(
     release,
     fake,
@@ -851,9 +914,11 @@ function deployFixture(
             : undefined,
         sleepFn,
         rootSmokeFn = async () => { throw new Error('unexpected_root_smoke'); },
+        formsSmokeFn = async () => { throw new Error('unexpected_forms_smoke'); },
+        formsTurnstileSecret,
     } = {},
 ) {
-    return withFakeEnvironment(fake, () => deployRelease({
+    return withFakeEnvironment(fake, () => withFormsSecretInEnvironment(formsTurnstileSecret, () => deployRelease({
         target,
         sha: SHA,
         artifactDir: release.artifactDir,
@@ -862,6 +927,8 @@ function deployFixture(
         wranglerPaths: { web: fake.binary, bridge: fake.binary, readModel: fake.binary },
         smokeFn,
         rootSmokeFn,
+        formsSmokeFn,
+        formsTurnstileSecret,
         echoWrangler: false,
         rollbackTest,
         cloudflareFetch: fake.apiFetch,
@@ -878,7 +945,7 @@ function deployFixture(
         creatorFeeQuotePrivateKey,
         nearSponsorRelayerPrivateKey,
         sleepFn,
-    }), {
+    })), {
         oneClickApiKey,
         previewCredentials: target !== 'production',
         sponsorCredentials: target !== 'production'
@@ -2661,7 +2728,7 @@ test('the root-host gate variable is accepted only on the production web Worker'
         },
         {
             name: 'set on Preview',
-            mutate: (config) => { config.env.preview.vars = { PUBLIC_ROOT_HOSTS: 'youtick.net,www.youtick.net' }; },
+            mutate: (config) => { config.env.preview.vars.PUBLIC_ROOT_HOSTS = 'youtick.net,www.youtick.net'; },
         },
         {
             name: 'root host under another variable',
@@ -2683,8 +2750,8 @@ test('the root-host gate variable is accepted only on the production web Worker'
 
 test('the tracked web config switches the root-host gate on for production only', () => {
     const config = JSON.parse(readFileSync(new URL('../apps/web/wrangler.jsonc', import.meta.url), 'utf8'));
-    assert.deepEqual(config.env.production.vars, { PUBLIC_ROOT_HOSTS: 'youtick.net,www.youtick.net' });
-    assert.equal('vars' in config.env.preview, false);
+    assert.equal(config.env.production.vars.PUBLIC_ROOT_HOSTS, 'youtick.net,www.youtick.net');
+    assert.equal('PUBLIC_ROOT_HOSTS' in config.env.preview.vars, false);
     assert.equal('vars' in config, false);
     // The root is moved in the Cloudflare dashboard, never by a Wrangler route in this file.
     assert.deepEqual(config.env.production.routes, [{ pattern: 'app.youtick.net', custom_domain: true }]);
@@ -2725,4 +2792,203 @@ test('a Worker without deployments still bootstraps when its upload answers 1000
             && (args[0] === 'deploy' || (args[0] === 'versions' && args[1] === 'upload')))
         .map((args) => (args[0] === 'deploy' ? 'deploy' : 'versions upload'));
     assert.deepEqual(webCalls, ['versions upload', 'deploy', 'versions upload']);
+});
+
+function formsFake(release, target = 'preview') {
+    return makeFakeWrangler(release, {
+        workers: {
+            [TARGETS[target].web.worker]: { traffic: [{ version_id: 'web-old', percentage: 100 }] },
+            [TARGETS[target].bridge.worker]: { traffic: [{ version_id: 'bridge-old', percentage: 100 }] },
+        },
+        uploadFailures: {},
+    });
+}
+
+const webSecretCalls = (fake, target) => secretCalls(fake).filter((call) => call.worker === TARGETS[target].web.worker);
+
+test('the tracked web config gives both environments the same form mail bindings and addresses', () => {
+    const config = JSON.parse(readFileSync(new URL('../apps/web/wrangler.jsonc', import.meta.url), 'utf8'));
+    assert.equal('send_email' in config, false);
+    for (const [environment, first] of [['preview', 1003], ['production', 2003]]) {
+        const entry = config.env[environment];
+        assert.deepEqual(entry.send_email, FORM_SEND_EMAIL, environment);
+        assert.deepEqual(entry.ratelimits.slice(2), formRateLimits(first), environment);
+        for (const [name, value] of Object.entries(FORM_VARS)) assert.equal(entry.vars[name], value, `${environment} ${name}`);
+        // A secret never sits in the config file.
+        for (const name of FORM_SECRET_NAMES) assert.equal(name in entry.vars, false, `${environment} ${name}`);
+    }
+    // Rate limiter namespaces are account-wide counters: none may be shared.
+    const namespaces = ['preview', 'production'].flatMap((environment) => (
+        config.env[environment].ratelimits.map((limiter) => limiter.namespace_id)
+    ));
+    assert.equal(new Set(namespaces).size, namespaces.length);
+});
+
+test('a web config with another mail binding, recipient, sender or form variable is refused before mutation', async (t) => {
+    const cases = {
+        'no mail bindings': (config) => { delete config.env.production.send_email; },
+        'unrestricted recipient': (config) => { delete config.env.production.send_email[0].destination_address; },
+        'another recipient': (config) => { config.env.production.send_email[2].destination_address = 'someone@example.net'; },
+        'unrestricted sender': (config) => { delete config.env.production.send_email[1].allowed_sender_addresses; },
+        'another sender variable': (config) => { config.env.production.vars.OPENING_NOTICE_FROM = 'other@youtick.net'; },
+        'a Turnstile secret as a plain variable': (config) => {
+            config.env.production.vars.OPENING_NOTICE_TURNSTILE_SECRET = FORMS_TURNSTILE_SECRET;
+        },
+        'a shared rate limiter namespace': (config) => { config.env.production.ratelimits[4].namespace_id = '2003'; },
+        'mail bindings at the top level': (config) => { config.send_email = structuredClone(FORM_SEND_EMAIL); },
+    };
+    for (const [name, mutate] of Object.entries(cases)) {
+        await t.test(name, async (subtest) => {
+            const release = makeRelease(subtest, 'production', { mutateWebWrangler: mutate });
+            const fake = formsFake(release, 'production');
+            await assert.rejects(
+                deployFixture(release, fake, undefined, { target: 'production' }),
+                /web_wrangler_config_invalid/,
+            );
+            assert.deepEqual(calls(fake), []);
+        });
+    }
+});
+
+test('without the forms secret the web Worker gets no secrets file and no forms smoke runs', async (t) => {
+    for (const target of ['preview', 'production']) {
+        await t.test(target, async (subtest) => {
+            const release = makeRelease(subtest, target);
+            const fake = formsFake(release, target);
+            const receipt = await deployFixture(release, fake, undefined, { target });
+            assert.ok(calls(fake).filter((args) => args.includes(TARGETS[target].web.worker))
+                .every((args) => !args.includes('--secrets-file')));
+            assert.deepEqual(webSecretCalls(fake, target), []);
+            assert.deepEqual(receipt.forms, { secret: false, ready: [] });
+        });
+    }
+});
+
+test('the forms secret reaches the web Worker under the three route names, and only there', async (t) => {
+    for (const target of ['preview', 'production']) {
+        await t.test(target, async (subtest) => {
+            const release = makeRelease(subtest, target);
+            const fake = formsFake(release, target);
+            const receipt = await deployFixture(release, fake, undefined, {
+                target, formsTurnstileSecret: FORMS_TURNSTILE_SECRET,
+            });
+            const webUploads = calls(fake).filter((args) => (
+                args.includes(TARGETS[target].web.worker) && args[0] === 'versions' && args[1] === 'upload'
+            ));
+            assert.equal(webUploads.length, 1);
+            assert.deepEqual(webSecretCalls(fake, target), [{
+                command: ['versions', 'upload'],
+                worker: TARGETS[target].web.worker,
+                mode: 0o600,
+                keys: FORM_SECRET_NAMES,
+            }]);
+            const secretPath = webUploads[0][webUploads[0].indexOf('--secrets-file') + 1];
+            assert.equal(existsSync(secretPath), false);
+            // The Bridge file keeps its own contract; the forms secret is not in it.
+            assert.ok(secretCalls(fake).filter((call) => call.worker === TARGETS[target].bridge.worker)
+                .every((call) => !call.keys.some((key) => FORM_SECRET_NAMES.includes(key))));
+            // The secret is in place but no site key shows a form yet, so nothing is smoked.
+            assert.deepEqual(receipt.forms, { secret: true, ready: [] });
+            assert.ok(!readFileSync(release.receipt, 'utf8').includes(FORMS_TURNSTILE_SECRET));
+        });
+    }
+});
+
+test('a first deployment of the web Worker carries the forms secret in its bootstrap deploy', async (t) => {
+    const release = makeRelease(t, 'production');
+    const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+    await deployFixture(release, fake, undefined, { target: 'production', formsTurnstileSecret: FORMS_TURNSTILE_SECRET });
+    // The log keeps the first two arguments: `deploy <entry>` and `versions upload`.
+    const commands = webSecretCalls(fake, 'production').map((call) => call.command[0]);
+    assert.deepEqual(commands, ['deploy', 'versions']);
+    assert.ok(webSecretCalls(fake, 'production').every((call) => (
+        call.mode === 0o600 && JSON.stringify(call.keys) === JSON.stringify(FORM_SECRET_NAMES)
+    )));
+});
+
+test('a form site key without a usable forms secret stops the release before mutation', async (t) => {
+    const withSiteKey = (config) => { config.web.NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY = FORM_SITE_KEY; };
+    const cases = {
+        'no secret': [undefined, /forms_turnstile_secret_missing/],
+        'empty secret': ['', /forms_turnstile_secret_missing/],
+        'the site key pasted as the secret': [FORM_SITE_KEY, /forms_turnstile_secret_invalid/],
+        'Cloudflare always-pass test secret': ['1x0000000000000000000000000000000AA', /forms_turnstile_secret_invalid/],
+        'secret with whitespace': [`${FORMS_TURNSTILE_SECRET} `, /forms_turnstile_secret_invalid/],
+    };
+    for (const [name, [secret, error]] of Object.entries(cases)) {
+        await t.test(name, async (subtest) => {
+            const release = makeRelease(subtest, 'production', { mutateConfig: withSiteKey });
+            const fake = formsFake(release, 'production');
+            await assert.rejects(
+                deployFixture(release, fake, undefined, { target: 'production', formsTurnstileSecret: secret }),
+                error,
+            );
+            assert.deepEqual(calls(fake), []);
+            assert.deepEqual(secretCalls(fake), []);
+        });
+    }
+});
+
+test('an invalid forms secret stops the release even when no form is switched on', async (t) => {
+    const release = makeRelease(t, 'production');
+    const fake = formsFake(release, 'production');
+    await assert.rejects(
+        deployFixture(release, fake, undefined, { target: 'production', formsTurnstileSecret: 'short' }),
+        /forms_turnstile_secret_invalid/,
+    );
+    assert.deepEqual(calls(fake), []);
+});
+
+test('after promotion the release smokes exactly the forms whose site key is set', async (t) => {
+    const release = makeRelease(t, 'production', {
+        mutateConfig: (config) => {
+            config.web.NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY = FORM_SITE_KEY;
+            config.web.NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY = FORM_SITE_KEY;
+            config.web.NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY = '';
+        },
+    });
+    const fake = formsFake(release, 'production');
+    const smokes = [];
+    const receipt = await deployFixture(release, fake, undefined, {
+        target: 'production',
+        formsTurnstileSecret: FORMS_TURNSTILE_SECRET,
+        formsSmokeFn: async (input) => {
+            const state = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+            smokes.push({ input, traffic: state.workers[TARGETS.production.web.worker].traffic });
+            return { ok: true };
+        },
+    });
+    assert.deepEqual(smokes, [{
+        input: { origin: 'https://app.youtick.net', paths: ['/api/creator-applications', '/api/opening-notices'] },
+        traffic: [{ version_id: 'web-new', percentage: 100 }],
+    }]);
+    assert.deepEqual(receipt.forms, { secret: true, ready: ['/api/creator-applications', '/api/opening-notices'] });
+});
+
+test('a failed forms smoke restores the previous versions', async (t) => {
+    const release = makeRelease(t, 'production', {
+        mutateConfig: (config) => { config.web.NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY = FORM_SITE_KEY; },
+    });
+    const fake = formsFake(release, 'production');
+    await assert.rejects(deployFixture(release, fake, undefined, {
+        target: 'production',
+        formsTurnstileSecret: FORMS_TURNSTILE_SECRET,
+        formsSmokeFn: async () => { throw new Error('release_smoke_form_unavailable path=/api/opening-notices'); },
+    }), /release_smoke_form_unavailable/);
+    const finalState = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+    assert.deepEqual(finalState.workers[TARGETS.production.web.worker].traffic, [
+        { version_id: 'web-old', percentage: 100 },
+    ]);
+    assert.deepEqual(finalState.workers[TARGETS.production.bridge.worker].traffic, [
+        { version_id: 'bridge-old', percentage: 100 },
+    ]);
+    assert.equal(existsSync(release.receipt), false);
+});
+
+test('the public-testnet web Worker never gets the forms secret', async (t) => {
+    const release = makeRelease(t, 'public-testnet');
+    const fake = makeFakeWrangler(release, { workers: {}, uploadFailures: {} });
+    await deployFixture(release, fake, undefined, { target: 'public-testnet', formsTurnstileSecret: FORMS_TURNSTILE_SECRET })
+        .catch(() => {});
+    assert.deepEqual(secretCalls(fake).filter((call) => call.worker.startsWith('youtick-web')), []);
 });
