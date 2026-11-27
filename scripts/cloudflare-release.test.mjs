@@ -183,11 +183,14 @@ function createTar(source, output) {
 
 // The public forms (launch path L2), spelled out here on purpose: the release must refuse any other shape.
 const FORMS_FROM = 'forms@youtick.net';
+// Plain Email Sending bindings, as Cloudflare's own "Connect to Email Service" example declares them.
 const FORM_SEND_EMAIL = [
-    { name: 'CREATOR_APPLICATION_EMAIL', destination_address: 'contact@youtick.net', allowed_sender_addresses: [FORMS_FROM] },
-    { name: 'CONTENT_REPORT_EMAIL', destination_address: 'contact@youtick.net', allowed_sender_addresses: [FORMS_FROM] },
-    { name: 'OPENING_NOTICE_EMAIL', destination_address: 'contact@youtick.net', allowed_sender_addresses: [FORMS_FROM] },
+    { name: 'CREATOR_APPLICATION_EMAIL' },
+    { name: 'CONTENT_REPORT_EMAIL' },
+    { name: 'OPENING_NOTICE_EMAIL' },
 ];
+// The Worker's own log lines only (one per form mail); no per-request invocation logs.
+const WEB_OBSERVABILITY = { logs: { enabled: true, invocation_logs: false } };
 // All three forms mail the one verified inbox address; the subject line tells them apart.
 const FORM_VARS = {
     CREATOR_APPLICATION_FROM: FORMS_FROM,
@@ -240,6 +243,7 @@ function makeRelease(t, target = 'preview', { mutateWebWrangler = () => {}, muta
                 ],
                 routes: [{ pattern: TARGETS.preview.web.domain, custom_domain: true }],
                 send_email: structuredClone(FORM_SEND_EMAIL),
+                observability: structuredClone(WEB_OBSERVABILITY),
                 vars: { ...FORM_VARS },
             },
             production: {
@@ -251,6 +255,7 @@ function makeRelease(t, target = 'preview', { mutateWebWrangler = () => {}, muta
                 ],
                 routes: [{ pattern: TARGETS.production.web.domain, custom_domain: true }],
                 send_email: structuredClone(FORM_SEND_EMAIL),
+                observability: structuredClone(WEB_OBSERVABILITY),
                 vars: { PUBLIC_ROOT_HOSTS: 'youtick.net,www.youtick.net', ...FORM_VARS },
             },
         },
@@ -2813,6 +2818,7 @@ test('the tracked web config gives both environments the same form mail bindings
     for (const [environment, first] of [['preview', 1003], ['production', 2003]]) {
         const entry = config.env[environment];
         assert.deepEqual(entry.send_email, FORM_SEND_EMAIL, environment);
+        assert.deepEqual(entry.observability, WEB_OBSERVABILITY, environment);
         assert.deepEqual(entry.ratelimits.slice(2), formRateLimits(first), environment);
         for (const [name, value] of Object.entries(FORM_VARS)) assert.equal(entry.vars[name], value, `${environment} ${name}`);
         // A secret never sits in the config file.
@@ -2825,12 +2831,16 @@ test('the tracked web config gives both environments the same form mail bindings
     assert.equal(new Set(namespaces).size, namespaces.length);
 });
 
-test('a web config with another mail binding, recipient, sender or form variable is refused before mutation', async (t) => {
+test('a web config with another mail binding, form variable or log setting is refused before mutation', async (t) => {
     const cases = {
         'no mail bindings': (config) => { delete config.env.production.send_email; },
-        'unrestricted recipient': (config) => { delete config.env.production.send_email[0].destination_address; },
-        'another recipient': (config) => { config.env.production.send_email[2].destination_address = 'someone@example.net'; },
-        'unrestricted sender': (config) => { delete config.env.production.send_email[1].allowed_sender_addresses; },
+        // A recipient-restricted binding answered the form with success on 2026-11-27 and sent nothing.
+        'a recipient-restricted binding': (config) => { config.env.production.send_email[2].destination_address = 'contact@youtick.net'; },
+        'a sender-restricted binding': (config) => { config.env.production.send_email[1].allowed_sender_addresses = [FORMS_FROM]; },
+        'another binding name': (config) => { config.env.production.send_email[0].name = 'EMAIL'; },
+        'another recipient variable': (config) => { config.env.production.vars.CONTENT_REPORT_TO = 'someone@example.net'; },
+        'no log setting': (config) => { delete config.env.production.observability; },
+        'invocation logs switched on': (config) => { config.env.production.observability.logs.invocation_logs = true; },
         'another sender variable': (config) => { config.env.production.vars.OPENING_NOTICE_FROM = 'other@youtick.net'; },
         'a Turnstile secret as a plain variable': (config) => {
             config.env.production.vars.OPENING_NOTICE_TURNSTILE_SECRET = FORMS_TURNSTILE_SECRET;

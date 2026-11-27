@@ -238,11 +238,19 @@ birebir karşılaştırır, başka bir şekil `web_wrangler_config_invalid` ile 
 | İçerik bildirimi | `CONTENT_REPORT_EMAIL` | `contact@youtick.net` | `CONTENT_REPORT_RATE_LIMITER` (1004 / 2004) |
 | Açılış bildirimi | `OPENING_NOTICE_EMAIL` | `contact@youtick.net` | `OPENING_NOTICE_RATE_LIMITER` (1005 / 2005) |
 
-- Üç form da aynı doğrulanmış adrese yazar; konu satırı formu ayırt eder. Sitenin içerik bildirimi için
-  gösterdiği `abuse@youtick.net` bağ alıcısı olarak kullanılmaz: Cloudflare'in hedef adres doğrulama
-  e-postası bu adrese ulaşmadı (2026-11-27, yeniden gönderimden sonra da). Adres normal postayı alır.
-- Gönderen her üçünde `forms@youtick.net`. Her bağ `destination_address` ile tek alıcıya,
-  `allowed_sender_addresses` ile tek gönderene kısıtlıdır; formu dolduranın adresi yalnız gövdeye yazılır.
+- Üç form da aynı doğrulanmış adrese yazar; konu satırı formu ayırt eder. Gönderen her üçünde
+  `forms@youtick.net`. Formu dolduranın adresi yalnız gövdeye yazılır.
+- Bağlar sadedir (`{ "name": … }`), Cloudflare'in "Connect to Email Service" örneğindeki gibi. İlk sürümde
+  bağlar `destination_address` ve `allowed_sender_addresses` ile kısıtlıydı: 2026-11-27'de Preview'daki
+  gerçek bir gönderim sayfada başarı gösterdi, ama Email Sending kaydına ve gelen kutusuna hiçbir şey
+  düşmedi. Kısıtlı biçim bu yüzden reddedilir. Alıcı yalnız sabit `<FORM>_TO` değişkeninden gelir.
+- Rota "gönderildi" cevabını yalnız Email Sending bir `messageId` döndürdüğünde verir
+  (`apps/web/lib/form-mail.ts`). `messageId` yoksa ya da gönderim reddedilirse ziyaretçi e-posta yedeğini
+  görür.
+- Her gönderim denemesi Workers Logs'a tek satır bırakır: form adı, sonuç (`accepted`, `no_message_id`,
+  `failed`) ve `messageId` ya da hata kodu. İleti, adresler ve hata metni log'a yazılmaz. Web Worker'ında
+  yalnız bu kendi satırları tutulur (`observability.logs`, `invocation_logs: false`); istek başına log
+  kapalıdır. Satırlar panelde Worker > Observability altında `form_mail` ile aranır.
 - Rate limiter IP başına dakikada 5 istektir. Namespace'ler hesap genelinde sayaçtır; paylaşılmaz.
 - `<FORM>_FROM` ve `<FORM>_TO` değişkenleri aynı dosyadadır. Adres değiştirmek bir PR'dır.
 - public-testnet web Worker'ında bağ yoktur; orada site key `public_testnet_form_site_key_forbidden` ile
@@ -295,9 +303,17 @@ hangi rotaların sınandığını kaydeder.
 
 Geri alma: site key variable'ını boşaltıp yeniden deploy etmek formu e-posta yedeğine döndürür.
 
+Dikkat: Cloudflare panelinde Email Routing > `youtick.net` > Settings sayfası kök alan adı için Cloudflare
+MX ve SPF kayıtlarını "Missing" gösterir ve "Add missing records" düğmesi sunar. Bu düğmeye basılmaz:
+gelen posta Google Workspace'tedir, kök MX kaydı Cloudflare'e çevrilirse kutuya posta gelmez. Email
+Sending'in ihtiyaç duyduğu kayıtlar yalnız `cf-bounce` altındadır ve yerindedir.
+
+Gelen form postası ilk günlerde Gmail'de Spam'e düşebilir (Cloudflare'in doğrulama postaları 2026-11-27'de
+düştü). Kutuda `from:forms@youtick.net` için "hiçbir zaman Spam'e gönderme" filtresi tutulur.
+
 Kaynak: Cloudflare Email Service dokümanı ("Send bindings", "Domains", "Pricing", "Limits"), Workers
 "Secrets" ve "Rate limiting" sayfaları, Turnstile "Hostname management" ve "Testing" sayfaları
 (2026-11-27'de okundu). Email Sending o tarihte açık betaydı. Doğrulanmamış olanlar: `send_email` bağı
-taşıyan bir sürümü yüklemek için deploy token'ına ek yetki gerekip gerekmediği ve `destination_address`
-kısıtının yükleme sırasında hedef adres doğrulaması isteyip istemediği. İkisini de ilk Preview deploy'u
-ve 6. adımdaki gönderim gösterir.
+taşıyan bir sürümü yüklemek için Production deploy token'ına ek yetki gerekip gerekmediği (Preview
+token'ı 2026-11-27'de ek yetki olmadan yükledi) ve kısıtlı bağın neden posta göndermediği (Cloudflare
+dokümanında açıklaması bulunamadı).

@@ -29,10 +29,13 @@
         }
       ],
       "send_email": [
-        { "name": "CREATOR_APPLICATION_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
-        { "name": "CONTENT_REPORT_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
-        { "name": "OPENING_NOTICE_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] }
+        { "name": "CREATOR_APPLICATION_EMAIL" },
+        { "name": "CONTENT_REPORT_EMAIL" },
+        { "name": "OPENING_NOTICE_EMAIL" }
       ],
+      "observability": {
+        "logs": { "enabled": true, "invocation_logs": false }
+      },
       "vars": {
         "CREATOR_APPLICATION_FROM": "forms@youtick.net",
         "CREATOR_APPLICATION_TO": "contact@youtick.net",
@@ -58,10 +61,13 @@
         }
       ],
       "send_email": [
-        { "name": "CREATOR_APPLICATION_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
-        { "name": "CONTENT_REPORT_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
-        { "name": "OPENING_NOTICE_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] }
+        { "name": "CREATOR_APPLICATION_EMAIL" },
+        { "name": "CONTENT_REPORT_EMAIL" },
+        { "name": "OPENING_NOTICE_EMAIL" }
       ],
+      "observability": {
+        "logs": { "enabled": true, "invocation_logs": false }
+      },
       "vars": {
         "PUBLIC_ROOT_HOSTS": "youtick.net,www.youtick.net",
         "CREATOR_APPLICATION_FROM": "forms@youtick.net",

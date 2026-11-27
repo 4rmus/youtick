@@ -1,10 +1,11 @@
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { handleContentReport, type ContentReportMail } from '@/lib/content-report';
+import { sendFormMail, type FormMailBinding } from '@/lib/form-mail';
 
 // Cloudflare Email Service binding (`send_email`, structured API), as for creator applications. Off
 // until the binding, the sender and recipient addresses, the rate limiter and the Turnstile secret
 // are all configured; the route then answers 503 and the report page shows the e-mail address instead.
-type EmailBinding = { send(message: { to: string; from: string; subject: string; text: string }): Promise<unknown> };
+type EmailBinding = FormMailBinding;
 type RateLimiter = { limit(input: { key: string }): Promise<{ success: boolean }> };
 
 type ContentReportEnv = {
@@ -27,7 +28,7 @@ export async function POST(request: Request): Promise<Response> {
     const binding = env.CONTENT_REPORT_EMAIL;
     const limiter = env.CONTENT_REPORT_RATE_LIMITER;
     const send = binding && from && to && limiter
-        ? async (mail: ContentReportMail) => { await binding.send({ to, from, subject: mail.subject, text: mail.text }); }
+        ? (mail: ContentReportMail) => sendFormMail('content_report', binding, { to, from, subject: mail.subject, text: mail.text })
         : null;
 
     return handleContentReport(request, {
