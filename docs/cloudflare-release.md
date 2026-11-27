@@ -235,9 +235,12 @@ birebir karşılaştırır, başka bir şekil `web_wrangler_config_invalid` ile 
 | Form | Bağ | Alıcı | Rate limiter (Preview / Production namespace) |
 | --- | --- | --- | --- |
 | Sanatçı başvurusu | `CREATOR_APPLICATION_EMAIL` | `contact@youtick.net` | `CREATOR_APPLICATION_RATE_LIMITER` (1003 / 2003) |
-| İçerik bildirimi | `CONTENT_REPORT_EMAIL` | `abuse@youtick.net` | `CONTENT_REPORT_RATE_LIMITER` (1004 / 2004) |
+| İçerik bildirimi | `CONTENT_REPORT_EMAIL` | `contact@youtick.net` | `CONTENT_REPORT_RATE_LIMITER` (1004 / 2004) |
 | Açılış bildirimi | `OPENING_NOTICE_EMAIL` | `contact@youtick.net` | `OPENING_NOTICE_RATE_LIMITER` (1005 / 2005) |
 
+- Üç form da aynı doğrulanmış adrese yazar; konu satırı formu ayırt eder. Sitenin içerik bildirimi için
+  gösterdiği `abuse@youtick.net` bağ alıcısı olarak kullanılmaz: Cloudflare'in hedef adres doğrulama
+  e-postası bu adrese ulaşmadı (2026-11-27, yeniden gönderimden sonra da). Adres normal postayı alır.
 - Gönderen her üçünde `forms@youtick.net`. Her bağ `destination_address` ile tek alıcıya,
   `allowed_sender_addresses` ile tek gönderene kısıtlıdır; formu dolduranın adresi yalnız gövdeye yazılır.
 - Rate limiter IP başına dakikada 5 istektir. Namespace'ler hesap genelinde sayaçtır; paylaşılmaz.
@@ -273,10 +276,12 @@ hangi rotaların sınandığını kaydeder.
    alt alanına MX ve SPF, `cf-bounce._domainkey` altına DKIM kaydı ekler; kökteki Google Workspace MX ve
    SPF kayıtlarına dokunmaz. `_dmarc` kaydını yalnız hiç yoksa (`p=reject` ile) oluşturur; 2026-11-27'de
    `youtick.net` için `p=none` kaydı ve Google Workspace DKIM kaydı (`google._domainkey`) vardı, yani
-   mevcut kayıt kalır. Onboard sonrası `_dmarc` kaydının değişmediğini kontrol et.
-2. Aynı sayfada `contact@youtick.net` ve `abuse@youtick.net` adreslerini doğrulanmış hedef adres olarak
-   ekle ve gelen bağlantıya tıkla. İki adresin Workspace'te teslim alan bir posta kutusu veya takma ad
-   olduğunu önce doğrula.
+   mevcut kayıt kalır. İnceleme ekranı `_dmarc` için `p=reject` satırını kayıt varken de listeler;
+   2026-11-27'deki onboard'da mevcut kayıt değişmedi (yetkili ad sunucusundan okundu). Yine de onboard
+   sonrası `_dmarc` kaydını kontrol et.
+2. Email Routing > Destination addresses sayfasında `contact@youtick.net` adresini ekle ve gelen
+   bağlantıya tıkla (2026-11-27'de doğrulandı). Doğrulanmış adrese gönderim ücretsizdir ve günlük kotadan
+   düşmez.
 3. Turnstile widget'ının hostname listesinde `youtick.net` olsun; alt alan adları (`www`, `app`,
    `preview`) kendiliğinden kapsanır.
 4. `FORMS_TURNSTILE_SECRET` secret'ını Preview ve Production environment'larına gir. Değer sohbet
@@ -293,6 +298,6 @@ Geri alma: site key variable'ını boşaltıp yeniden deploy etmek formu e-posta
 Kaynak: Cloudflare Email Service dokümanı ("Send bindings", "Domains", "Pricing", "Limits"), Workers
 "Secrets" ve "Rate limiting" sayfaları, Turnstile "Hostname management" ve "Testing" sayfaları
 (2026-11-27'de okundu). Email Sending o tarihte açık betaydı. Doğrulanmamış olanlar: `send_email` bağı
-taşıyan bir sürümü yüklemek için deploy token'ına ek yetki gerekip gerekmediği, alan adı onboard
-edilmeden yüklemenin kabul edilip edilmediği ve `destination_address` kısıtının hedef adres doğrulaması
-isteyip istemediği. Üçünü de ilk Preview deploy'u ve 6. adımdaki gönderim gösterir.
+taşıyan bir sürümü yüklemek için deploy token'ına ek yetki gerekip gerekmediği ve `destination_address`
+kısıtının yükleme sırasında hedef adres doğrulaması isteyip istemediği. İkisini de ilk Preview deploy'u
+ve 6. adımdaki gönderim gösterir.

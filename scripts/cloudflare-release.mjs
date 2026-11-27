@@ -64,6 +64,9 @@ const ROOT_HOSTS_VAR = ROOT_HOSTS.join(',');
 // sender, and reads a `<prefix>_FROM`, `<prefix>_TO`, rate limiter and Turnstile secret. Addresses are
 // fixed here and compared exactly; only the Turnstile secret comes from the environment. A form is shown
 // to visitors only when its site key is set in the release config, so a set site key requires the secret.
+// All three mail the same verified inbox address; the subject line tells them apart. The address the site
+// shows for content reports (abuse@youtick.net) is not used as a binding recipient because Cloudflare's
+// destination-address verification mail never reached it (2026-11-27).
 const FORMS_FROM = 'forms@youtick.net';
 const FORMS = Object.freeze([
     Object.freeze({
@@ -74,7 +77,7 @@ const FORMS = Object.freeze([
     }),
     Object.freeze({
         prefix: 'CONTENT_REPORT',
-        to: 'abuse@youtick.net',
+        to: 'contact@youtick.net',
         path: '/api/content-reports',
         siteKey: 'NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY',
     }),

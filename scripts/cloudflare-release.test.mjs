@@ -185,14 +185,15 @@ function createTar(source, output) {
 const FORMS_FROM = 'forms@youtick.net';
 const FORM_SEND_EMAIL = [
     { name: 'CREATOR_APPLICATION_EMAIL', destination_address: 'contact@youtick.net', allowed_sender_addresses: [FORMS_FROM] },
-    { name: 'CONTENT_REPORT_EMAIL', destination_address: 'abuse@youtick.net', allowed_sender_addresses: [FORMS_FROM] },
+    { name: 'CONTENT_REPORT_EMAIL', destination_address: 'contact@youtick.net', allowed_sender_addresses: [FORMS_FROM] },
     { name: 'OPENING_NOTICE_EMAIL', destination_address: 'contact@youtick.net', allowed_sender_addresses: [FORMS_FROM] },
 ];
+// All three forms mail the one verified inbox address; the subject line tells them apart.
 const FORM_VARS = {
     CREATOR_APPLICATION_FROM: FORMS_FROM,
     CREATOR_APPLICATION_TO: 'contact@youtick.net',
     CONTENT_REPORT_FROM: FORMS_FROM,
-    CONTENT_REPORT_TO: 'abuse@youtick.net',
+    CONTENT_REPORT_TO: 'contact@youtick.net',
     OPENING_NOTICE_FROM: FORMS_FROM,
     OPENING_NOTICE_TO: 'contact@youtick.net',
 };

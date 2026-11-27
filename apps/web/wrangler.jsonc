@@ -30,14 +30,14 @@
       ],
       "send_email": [
         { "name": "CREATOR_APPLICATION_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
-        { "name": "CONTENT_REPORT_EMAIL", "destination_address": "abuse@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
+        { "name": "CONTENT_REPORT_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
         { "name": "OPENING_NOTICE_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] }
       ],
       "vars": {
         "CREATOR_APPLICATION_FROM": "forms@youtick.net",
         "CREATOR_APPLICATION_TO": "contact@youtick.net",
         "CONTENT_REPORT_FROM": "forms@youtick.net",
-        "CONTENT_REPORT_TO": "abuse@youtick.net",
+        "CONTENT_REPORT_TO": "contact@youtick.net",
         "OPENING_NOTICE_FROM": "forms@youtick.net",
         "OPENING_NOTICE_TO": "contact@youtick.net"
       }
@@ -59,7 +59,7 @@
       ],
       "send_email": [
         { "name": "CREATOR_APPLICATION_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
-        { "name": "CONTENT_REPORT_EMAIL", "destination_address": "abuse@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
+        { "name": "CONTENT_REPORT_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
         { "name": "OPENING_NOTICE_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] }
       ],
       "vars": {
@@ -67,7 +67,7 @@
         "CREATOR_APPLICATION_FROM": "forms@youtick.net",
         "CREATOR_APPLICATION_TO": "contact@youtick.net",
         "CONTENT_REPORT_FROM": "forms@youtick.net",
-        "CONTENT_REPORT_TO": "abuse@youtick.net",
+        "CONTENT_REPORT_TO": "contact@youtick.net",
         "OPENING_NOTICE_FROM": "forms@youtick.net",
         "OPENING_NOTICE_TO": "contact@youtick.net"
       }
