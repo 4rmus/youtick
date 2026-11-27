@@ -17,20 +17,39 @@
       "name": "youtick-web-preview",
       "ratelimits": [
         { "name": "NEAR_RPC_READ_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } },
-        { "name": "NEAR_RPC_BROADCAST_RATE_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } }
+        { "name": "NEAR_RPC_BROADCAST_RATE_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },
+        { "name": "CREATOR_APPLICATION_RATE_LIMITER", "namespace_id": "1003", "simple": { "limit": 5, "period": 60 } },
+        { "name": "CONTENT_REPORT_RATE_LIMITER", "namespace_id": "1004", "simple": { "limit": 5, "period": 60 } },
+        { "name": "OPENING_NOTICE_RATE_LIMITER", "namespace_id": "1005", "simple": { "limit": 5, "period": 60 } }
       ],
       "routes": [
         {
           "pattern": "preview.youtick.net",
           "custom_domain": true
         }
-      ]
+      ],
+      "send_email": [
+        { "name": "CREATOR_APPLICATION_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
+        { "name": "CONTENT_REPORT_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
+        { "name": "OPENING_NOTICE_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] }
+      ],
+      "vars": {
+        "CREATOR_APPLICATION_FROM": "forms@youtick.net",
+        "CREATOR_APPLICATION_TO": "contact@youtick.net",
+        "CONTENT_REPORT_FROM": "forms@youtick.net",
+        "CONTENT_REPORT_TO": "contact@youtick.net",
+        "OPENING_NOTICE_FROM": "forms@youtick.net",
+        "OPENING_NOTICE_TO": "contact@youtick.net"
+      }
     },
     "production": {
       "name": "youtick-web",
       "ratelimits": [
         { "name": "NEAR_RPC_READ_RATE_LIMITER", "namespace_id": "2001", "simple": { "limit": 60, "period": 60 } },
-        { "name": "NEAR_RPC_BROADCAST_RATE_LIMITER", "namespace_id": "2002", "simple": { "limit": 10, "period": 60 } }
+        { "name": "NEAR_RPC_BROADCAST_RATE_LIMITER", "namespace_id": "2002", "simple": { "limit": 10, "period": 60 } },
+        { "name": "CREATOR_APPLICATION_RATE_LIMITER", "namespace_id": "2003", "simple": { "limit": 5, "period": 60 } },
+        { "name": "CONTENT_REPORT_RATE_LIMITER", "namespace_id": "2004", "simple": { "limit": 5, "period": 60 } },
+        { "name": "OPENING_NOTICE_RATE_LIMITER", "namespace_id": "2005", "simple": { "limit": 5, "period": 60 } }
       ],
       "routes": [
         {
@@ -38,8 +57,19 @@
           "custom_domain": true
         }
       ],
+      "send_email": [
+        { "name": "CREATOR_APPLICATION_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
+        { "name": "CONTENT_REPORT_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] },
+        { "name": "OPENING_NOTICE_EMAIL", "destination_address": "contact@youtick.net", "allowed_sender_addresses": ["forms@youtick.net"] }
+      ],
       "vars": {
-        "PUBLIC_ROOT_HOSTS": "youtick.net,www.youtick.net"
+        "PUBLIC_ROOT_HOSTS": "youtick.net,www.youtick.net",
+        "CREATOR_APPLICATION_FROM": "forms@youtick.net",
+        "CREATOR_APPLICATION_TO": "contact@youtick.net",
+        "CONTENT_REPORT_FROM": "forms@youtick.net",
+        "CONTENT_REPORT_TO": "contact@youtick.net",
+        "OPENING_NOTICE_FROM": "forms@youtick.net",
+        "OPENING_NOTICE_TO": "contact@youtick.net"
       }
     }
   }

@@ -529,6 +529,42 @@ export async function runRootSmoke({
     return { schema: 'youtick.root-smoke.v1', origins: results };
 }
 
+/** The public form routes (apps/web/lib/public-routes.ts, PUBLIC_ROOT_API). */
+export const FORM_ROUTES = Object.freeze(['/api/creator-applications', '/api/content-reports', '/api/opening-notices']);
+
+/**
+ * Readiness of the shown forms, without sending anything. A form route answers 503 until its mail
+ * binding, sender and recipient addresses, rate limiter and Turnstile secret are all present; only then
+ * does it look at the request, and it refuses one without an Origin header with 403 `invalid_request`.
+ * That refusal comes before the rate limiter, the Turnstile check and the mail, so the probe leaves no
+ * trace. It does not prove that the secret is the widget's or that mail is delivered.
+ */
+export async function runFormsSmoke({ origin: originValue, paths, fetchImpl = fetch } = {}) {
+    const origin = httpUrl(originValue, 'forms_origin', true);
+    if (!Array.isArray(paths) || !paths.length || paths.some((path) => !FORM_ROUTES.includes(path))
+        || new Set(paths).size !== paths.length) {
+        throw new Error('release_smoke_forms_paths_invalid');
+    }
+    for (const path of paths) {
+        const probe = await request(origin, path, {
+            method: 'POST',
+            redirect: 'manual',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        }, {}, fetchImpl);
+        if (probe.response.status === 503) throw new Error(`release_smoke_form_unavailable path=${path}`);
+        if (probe.response.status !== 403) throw new Error(`release_smoke_form_status_${probe.response.status} path=${path}`);
+        let refusal = null;
+        try {
+            refusal = JSON.parse(new TextDecoder().decode(probe.body));
+        } catch {
+            // Not the route's own answer.
+        }
+        if (refusal?.error !== 'invalid_request') throw new Error(`release_smoke_form_refusal_invalid path=${path}`);
+    }
+    return { schema: 'youtick.forms-smoke.v1', origin, ready: [...paths] };
+}
+
 async function main(args = process.argv.slice(2)) {
     const [command, ...values] = args;
     if (command === 'fingerprint' && values.length === 1) {
@@ -556,7 +592,12 @@ async function main(args = process.argv.slice(2)) {
         process.stdout.write(canonicalJson(await runRootSmoke({ origins: values })));
         return;
     }
-    throw new Error('usage: release-smoke.mjs fingerprint <url> | compare <before.json> <after.json> | root <origin>... | run <web-url> <bridge-url> <allowed-origin> <denied-origin> [override-worker override-version]');
+    if (command === 'forms' && values.length >= 2) {
+        const [origin, ...paths] = values;
+        process.stdout.write(canonicalJson(await runFormsSmoke({ origin, paths })));
+        return;
+    }
+    throw new Error('usage: release-smoke.mjs fingerprint <url> | compare <before.json> <after.json> | root <origin>... | forms <origin> <path>... | run <web-url> <bridge-url> <allowed-origin> <denied-origin> [override-worker override-version]');
 }
 
 if (import.meta.main) {

@@ -23,6 +23,7 @@ doğrular (bkz. "Kök alan adı").
 - Environment secret: `CLOUDFLARE_API_TOKEN`
 - Environment secret: `NEAR_RPC_URL`
 - Environment secret: `ONECLICK_API_KEY`
+- Environment secret (opsiyonel): `FORMS_TURNSTILE_SECRET` ("Formlar" bölümü)
 
 İki environment yalnız korumalı branch'lerden deployment kabul etmelidir. Token'lar ortam bazlı;
 Workers Scripts Read/Write ve `youtick.net` zone'u için Workers Routes Read yetkileriyle sınırlı
@@ -44,6 +45,8 @@ değişkenler:
 - `NEXT_PUBLIC_MARKET_READ_MODEL_URL` (required as `https://read-preview.youtick.net` when that gate is `true`)
 - `NEXT_PUBLIC_MULTI_ASSET_PAYMENTS_MODE=off`
 - `NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO`
+- `NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY`, `NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY`,
+  `NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY` (opsiyonel; boşken form e-posta yedeğinde kalır)
 - `ALLOWED_ORIGINS`, `NEAR_NETWORK`, `MARKET_CONTRACT_ID`, `ACCESS_CONTRACT_ID`
 - `LIVEPEER_PROJECT_ID`, `LIVEPEER_API_TOKEN_NAME`, `LIVEPEER_PAID_MEDIA_OPERATOR_ID`
 - `LIVEPEER_JWT_PUBLIC_KEY`, `LIVEPEER_JWT_ISSUER`
@@ -215,3 +218,86 @@ Kaynak: Cloudflare Workers dokümanı, "Custom Domains" ve "Routes" sayfaları (
 Başka bir Worker'a bağlı host'a Custom Domain eklemenin davranışı orada yazmıyor; bu yüzden 2. adım
 3. adımdan önce gelir.
 
+## Formlar
+
+Üç açık form vardır: sanatçı başvurusu (`/apply`), içerik bildirimi (`/report`) ve açılış bildirimi
+(`/notify`). Her biri kendi API rotasından youtick gelen kutusuna tek bir e-posta gönderir; web servisi
+kopya tutmaz. Rotalar kök host'larda da açıktır (`apps/web/lib/public-routes.ts`, `PUBLIC_ROOT_API`).
+
+Bir rota beş şey bulunmadan çalışmaz, eksikse 503 döner: Email Sending bağı, gönderen adresi, alıcı adresi,
+rate limiter ve Turnstile secret'ı. Sayfa ise formu yalnız build sırasında site key'i verilmişse gösterir;
+yoksa "şu an kullanılamıyor" metni ve `mailto:` bağlantısı çıkar. Bu yüzden sıra şudur: önce bağlar ve
+secret, en son site key.
+
+Repoda sabit olanlar (`apps/web/wrangler.jsonc`, Preview ve Production; `scripts/cloudflare-release.mjs`
+birebir karşılaştırır, başka bir şekil `web_wrangler_config_invalid` ile reddedilir):
+
+| Form | Bağ | Alıcı | Rate limiter (Preview / Production namespace) |
+| --- | --- | --- | --- |
+| Sanatçı başvurusu | `CREATOR_APPLICATION_EMAIL` | `contact@youtick.net` | `CREATOR_APPLICATION_RATE_LIMITER` (1003 / 2003) |
+| İçerik bildirimi | `CONTENT_REPORT_EMAIL` | `contact@youtick.net` | `CONTENT_REPORT_RATE_LIMITER` (1004 / 2004) |
+| Açılış bildirimi | `OPENING_NOTICE_EMAIL` | `contact@youtick.net` | `OPENING_NOTICE_RATE_LIMITER` (1005 / 2005) |
+
+- Üç form da aynı doğrulanmış adrese yazar; konu satırı formu ayırt eder. Sitenin içerik bildirimi için
+  gösterdiği `abuse@youtick.net` bağ alıcısı olarak kullanılmaz: Cloudflare'in hedef adres doğrulama
+  e-postası bu adrese ulaşmadı (2026-11-27, yeniden gönderimden sonra da). Adres normal postayı alır.
+- Gönderen her üçünde `forms@youtick.net`. Her bağ `destination_address` ile tek alıcıya,
+  `allowed_sender_addresses` ile tek gönderene kısıtlıdır; formu dolduranın adresi yalnız gövdeye yazılır.
+- Rate limiter IP başına dakikada 5 istektir. Namespace'ler hesap genelinde sayaçtır; paylaşılmaz.
+- `<FORM>_FROM` ve `<FORM>_TO` değişkenleri aynı dosyadadır. Adres değiştirmek bir PR'dır.
+- public-testnet web Worker'ında bağ yoktur; orada site key `public_testnet_form_site_key_forbidden` ile
+  reddedilir.
+
+Ortamdan gelenler:
+
+- `FORMS_TURNSTILE_SECRET` (environment secret, Preview ve Production ayrı ayrı). Release bunu geçici bir
+  `0600` secrets file ile web Worker'ına `CREATOR_APPLICATION_TURNSTILE_SECRET`,
+  `CONTENT_REPORT_TURNSTILE_SECRET` ve `OPENING_NOTICE_TURNSTILE_SECRET` adlarıyla yükler; üç form tek
+  widget'ı kullanır. Artifact, config, manifest ve makbuza yazılmaz. Wrangler bir secrets file'ı önceki
+  sürümün secret'larına ekler ve dosyada olmayanı silmez: GitHub'dan kaldırılan secret Worker'da kalır,
+  silmek için `wrangler versions secret delete` gerekir. Boşluk içeren, `0x` ile başlamayan (Cloudflare'in
+  test secret'ları `1x`, `2x`, `3x` ile başlar) veya bir site key'e eşit değer `forms_turnstile_secret_invalid`
+  ile reddedilir.
+- `PREVIEW_` / `PRODUCTION_NEXT_PUBLIC_*_TURNSTILE_SITE_KEY` (repository variable, form başına bir tane).
+  Site key gizli değildir. Gerçek bir widget anahtarı olmalıdır; test anahtarları config adımında
+  reddedilir. Herhangi biri doluyken `FORMS_TURNSTILE_SECRET` yoksa release hiçbir mutasyon yapmadan
+  `forms_turnstile_secret_missing` ile durur.
+
+Terfiden sonra release, site key'i dolu olan her formun rotasına `Origin` başlığı olmayan bir POST gönderir
+(`release-smoke.mjs forms`). Hazır bir rota bunu 403 `invalid_request` ile reddeder; eksik bir rota 503
+döner ve önceki sürümler geri yüklenir. Bu ret rate limiter'dan, Turnstile kontrolünden ve e-postadan önce
+geldiği için iz bırakmaz. Kontrol secret'ın widget'a ait olduğunu veya e-postanın ulaştığını kanıtlamaz;
+onun kanıtı aşağıdaki elle gönderimdir. Makbuzdaki `forms` alanı secret'ın yüklenip yüklenmediğini ve
+hangi rotaların sınandığını kaydeder.
+
+### Formları açma (sahip)
+
+1. Cloudflare > Email Service > Email Sending > Onboard Domain: `youtick.net`. Cloudflare `cf-bounce`
+   alt alanına MX ve SPF, `cf-bounce._domainkey` altına DKIM kaydı ekler; kökteki Google Workspace MX ve
+   SPF kayıtlarına dokunmaz. `_dmarc` kaydını yalnız hiç yoksa (`p=reject` ile) oluşturur; 2026-11-27'de
+   `youtick.net` için `p=none` kaydı ve Google Workspace DKIM kaydı (`google._domainkey`) vardı, yani
+   mevcut kayıt kalır. İnceleme ekranı `_dmarc` için `p=reject` satırını kayıt varken de listeler;
+   2026-11-27'deki onboard'da mevcut kayıt değişmedi (yetkili ad sunucusundan okundu). Yine de onboard
+   sonrası `_dmarc` kaydını kontrol et.
+2. Email Routing > Destination addresses sayfasında `contact@youtick.net` adresini ekle ve gelen
+   bağlantıya tıkla (2026-11-27'de doğrulandı). Doğrulanmış adrese gönderim ücretsizdir ve günlük kotadan
+   düşmez.
+3. Turnstile widget'ının hostname listesinde `youtick.net` olsun; alt alan adları (`www`, `app`,
+   `preview`) kendiliğinden kapsanır.
+4. `FORMS_TURNSTILE_SECRET` secret'ını Preview ve Production environment'larına gir. Değer sohbet
+   penceresine, issue'ya veya log'a yazılmaz.
+5. Bu durumda bir Preview deploy'u ve promote yap: bağlar ve secret yerleşir, formlar hâlâ e-posta
+   yedeğindedir.
+6. Açmak istediğin formun site key variable'ını önce Preview için gir, Preview deploy'u yap ve
+   `preview.youtick.net` üzerinden gerçek bir gönderim yap; e-postanın gelen kutusuna ulaştığını gör.
+7. Aynı variable'ı Production için gir, Preview deploy'u (yeni artifact) ve promote yap. Kökte bir
+   gönderimle doğrula.
+
+Geri alma: site key variable'ını boşaltıp yeniden deploy etmek formu e-posta yedeğine döndürür.
+
+Kaynak: Cloudflare Email Service dokümanı ("Send bindings", "Domains", "Pricing", "Limits"), Workers
+"Secrets" ve "Rate limiting" sayfaları, Turnstile "Hostname management" ve "Testing" sayfaları
+(2026-11-27'de okundu). Email Sending o tarihte açık betaydı. Doğrulanmamış olanlar: `send_email` bağı
+taşıyan bir sürümü yüklemek için deploy token'ına ek yetki gerekip gerekmediği ve `destination_address`
+kısıtının yükleme sırasında hedef adres doğrulaması isteyip istemediği. İkisini de ilk Preview deploy'u
+ve 6. adımdaki gönderim gösterir.

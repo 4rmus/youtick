@@ -50,6 +50,9 @@ function publicEnv(environment) {
     NEXT_PUBLIC_USDC_CONTRACT_ID: environment === "public-testnet" ? "" : "usdc.testnet",
     NEXT_PUBLIC_LIVEPEER_CREATOR_FEE_GAS_RESERVE_YOCTO: "1",
     NEXT_PUBLIC_PAYMENT_GAS_RESERVE_YOCTO: "1",
+    NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY: "",
+    NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY: "",
+    NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY: "",
     ALLOWED_ORIGINS: webOrigin,
     NEAR_NETWORK: "testnet",
     MARKET_CONTRACT_ID: marketContractId,
@@ -349,6 +352,94 @@ test("config emits only canonical public values", () => {
   assert.doesNotMatch(text, /API_KEY|NEAR_RPC_URL|secret-rpc/);
   assert.ok(!text.includes(secret));
   assert.ok(!text.includes(createHash("sha256").update(secret).digest("hex")));
+});
+
+const FORM_SITE_KEYS = [
+  "NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY",
+  "NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY",
+  "NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY",
+];
+const SITE_KEY = "0x4AAAAAAAexampleSiteKey0";
+
+test("config carries the form site keys, empty unless a variable sets them", () => {
+  const root = mkdtempSync(join(tmpdir(), "youtick-release-forms-"));
+  for (const environment of ["preview", "production"]) {
+    const prefix = environment.toUpperCase();
+    const closed = join(root, `${environment}-closed.json`);
+    const unset = publicEnv(environment);
+    for (const key of FORM_SITE_KEYS) delete unset[`${prefix}_${key}`];
+    assertSuccess(run(["config", "--environment", environment, "--output", closed], unset));
+    const closedWeb = JSON.parse(readFileSync(closed, "utf8")).web;
+    for (const key of FORM_SITE_KEYS) assert.equal(closedWeb[key], "", `${environment} ${key}`);
+
+    // Each form has its own switch: one key may be set while the others stay empty.
+    const open = join(root, `${environment}-open.json`);
+    assertSuccess(run(["config", "--environment", environment, "--output", open], {
+      ...publicEnv(environment),
+      [`${prefix}_NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY`]: SITE_KEY,
+    }));
+    const openWeb = JSON.parse(readFileSync(open, "utf8")).web;
+    assert.equal(openWeb.NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY, SITE_KEY);
+    assert.equal(openWeb.NEXT_PUBLIC_CREATOR_APPLICATION_TURNSTILE_SITE_KEY, "");
+    assert.equal(openWeb.NEXT_PUBLIC_CONTENT_REPORT_TURNSTILE_SITE_KEY, "");
+  }
+});
+
+test("config rejects form site keys that are not real Turnstile site keys", async (t) => {
+  const cases = {
+    "always-pass test key": "1x00000000000000000000AA",
+    "always-block test key": "2x00000000000000000000AB",
+    "forced-challenge test key": "3x00000000000000000000FF",
+    "a secret key pasted by mistake": "0x4AAAAAAAexampleSecretKeyThatIsLongerThanASiteKeyEver12345",
+    "free text": "turnstile",
+  };
+  for (const [name, value] of Object.entries(cases)) {
+    await t.test(name, () => {
+      for (const key of FORM_SITE_KEYS) {
+        const result = run(
+          ["config", "--environment", "production", "--output", join(tmpdir(), "unused-config.json")],
+          { ...publicEnv("production"), [`PRODUCTION_${key}`]: value },
+        );
+        assert.notEqual(result.status, 0, key);
+        assert.match(result.stderr, new RegExp(`PRODUCTION_${key} must be a Turnstile site key`));
+      }
+    });
+  }
+});
+
+test("public-testnet never carries a form site key", () => {
+  for (const key of FORM_SITE_KEYS) {
+    const result = run(
+      ["config", "--environment", "public-testnet", "--output", join(tmpdir(), "unused-config.json")],
+      { ...publicEnv("public-testnet"), [`PUBLIC_TESTNET_${key}`]: SITE_KEY },
+    );
+    assert.notEqual(result.status, 0, key);
+    assert.match(result.stderr, /public_testnet_form_site_key_forbidden/);
+  }
+});
+
+test("only the deploy step of each release workflow receives the forms secret", () => {
+  for (const name of ["deploy-preview.yml", "promote-production.yml"]) {
+    const workflow = readFileSync(join(REPO_ROOT, ".github/workflows", name), "utf8");
+    const uses = workflow.split("\n").filter((line) => line.includes("FORMS_TURNSTILE_SECRET"));
+    assert.deepEqual(uses, ["          FORMS_TURNSTILE_SECRET: ${{ secrets.FORMS_TURNSTILE_SECRET }}"], name);
+    const step = workflow.slice(0, workflow.indexOf(uses[0])).lastIndexOf("      - ");
+    const stepText = workflow.slice(step, workflow.indexOf(uses[0]));
+    assert.match(stepText, /name: Upload, smoke/, name);
+    assert.match(stepText, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/, name);
+  }
+});
+
+test("release workflows pass the form site keys to the config step", () => {
+  const preview = readFileSync(join(REPO_ROOT, ".github/workflows/deploy-preview.yml"), "utf8");
+  const promote = readFileSync(join(REPO_ROOT, ".github/workflows/promote-production.yml"), "utf8");
+  for (const key of FORM_SITE_KEYS) {
+    for (const prefix of ["PREVIEW", "PRODUCTION"]) {
+      const line = `  ${prefix}_${key}: \${{ vars.${prefix}_${key} }}\n`;
+      assert.ok(preview.includes(line), `deploy-preview ${prefix}_${key}`);
+      assert.ok(promote.includes(line), `promote-production ${prefix}_${key}`);
+    }
+  }
 });
 
 test("config rejects placeholders and enforces release flag policy", async (t) => {
