@@ -3,6 +3,7 @@
 // inbox is the only record, deleted 30 days after the opening (privacy notice, "Opening notices").
 
 import { verifyTurnstile } from './creator-application';
+import { sendFormMail, type FormMailBinding } from './form-mail';
 
 export type OpeningNotice = {
     locale: 'en' | 'tr';
@@ -81,8 +82,8 @@ export type OpeningNoticeDeps = {
     now?: () => Date;
 };
 
-// Cloudflare Email Service binding (`send_email`, structured API) and the bindings and vars the route reads.
-type EmailBinding = { send(message: { to: string; from: string; subject: string; text: string }): Promise<unknown> };
+// The bindings and vars the route reads.
+type EmailBinding = FormMailBinding;
 type RateLimiter = { limit(input: { key: string }): Promise<{ success: boolean }> };
 
 export type OpeningNoticeEnv = {
@@ -105,7 +106,7 @@ export function openingNoticeDeps(env: OpeningNoticeEnv): OpeningNoticeDeps {
     return {
         turnstileSecret: env.OPENING_NOTICE_TURNSTILE_SECRET?.trim() || null,
         send: binding && from && to && limiter
-            ? async (mail) => { await binding.send({ to, from, subject: mail.subject, text: mail.text }); }
+            ? (mail) => sendFormMail('opening_notice', binding, { to, from, subject: mail.subject, text: mail.text })
             : null,
         // Without the limiter binding `send` is null and the route answers 503 before this runs.
         limit: async (key) => {

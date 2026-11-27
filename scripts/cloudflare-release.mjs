@@ -60,8 +60,11 @@ const PUBLIC_READ_MODEL_TARGET = PUBLIC_TESTNET_READ_MODEL;
 const ROOT_HOSTS = Object.freeze(['youtick.net', 'www.youtick.net']);
 const ROOT_HOSTS_VAR = ROOT_HOSTS.join(',');
 // The public forms (launch path L2): creator application, content report and opening notice. Each route
-// mails the youtick inbox through its own Email Sending binding, restricted to one recipient and one
-// sender, and reads a `<prefix>_FROM`, `<prefix>_TO`, rate limiter and Turnstile secret. Addresses are
+// mails the youtick inbox through its own Email Sending binding and reads a `<prefix>_FROM`,
+// `<prefix>_TO`, rate limiter and Turnstile secret. The bindings are plain, as Cloudflare's "Connect to
+// Email Service" example declares them: bindings restricted with `destination_address` and
+// `allowed_sender_addresses` answered a real submission with success on 2026-11-27 while no mail reached
+// Email Sending. The recipient comes only from the fixed `<prefix>_TO` variable. Addresses are
 // fixed here and compared exactly; only the Turnstile secret comes from the environment. A form is shown
 // to visitors only when its site key is set in the release config, so a set site key requires the secret.
 // All three mail the same verified inbox address; the subject line tells them apart. The address the site
@@ -88,9 +91,10 @@ const FORMS = Object.freeze([
         siteKey: 'NEXT_PUBLIC_OPENING_NOTICE_TURNSTILE_SITE_KEY',
     }),
 ]);
-const FORM_SEND_EMAIL = FORMS.map(({ prefix, to }) => ({
-    name: `${prefix}_EMAIL`, destination_address: to, allowed_sender_addresses: [FORMS_FROM],
-}));
+const FORM_SEND_EMAIL = FORMS.map(({ prefix }) => ({ name: `${prefix}_EMAIL` }));
+// Workers Logs for the web Worker's own lines (lib/form-mail.ts leaves one per form mail: form, outcome,
+// message id or error code). Invocation logs, which record every request, stay off.
+const WEB_OBSERVABILITY = Object.freeze({ logs: Object.freeze({ enabled: true, invocation_logs: false }) });
 const FORM_VARS = Object.fromEntries(FORMS.flatMap(({ prefix, to }) => [
     [`${prefix}_FROM`, FORMS_FROM],
     [`${prefix}_TO`, to],
@@ -661,6 +665,7 @@ async function validateWebWrangler(configPath, extractedRoot, target) {
                 ],
                 routes: [{ pattern: TARGETS.preview.web.domain, custom_domain: true }],
                 send_email: FORM_SEND_EMAIL,
+                observability: WEB_OBSERVABILITY,
                 vars: FORM_VARS,
             },
             production: {
@@ -672,6 +677,7 @@ async function validateWebWrangler(configPath, extractedRoot, target) {
                 ],
                 routes: [{ pattern: TARGETS.production.web.domain, custom_domain: true }],
                 send_email: FORM_SEND_EMAIL,
+                observability: WEB_OBSERVABILITY,
                 vars: { PUBLIC_ROOT_HOSTS: ROOT_HOSTS_VAR, ...FORM_VARS },
             },
         },

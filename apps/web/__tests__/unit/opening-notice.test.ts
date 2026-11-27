@@ -144,7 +144,8 @@ describe('opening notice page', () => {
     });
 
     it('sends mail only when the binding, both addresses and the rate limiter are configured', async () => {
-        const send = vi.fn(async () => undefined);
+        // Email Sending answers an accepted mail with its message id (lib/form-mail.ts).
+        const send = vi.fn(async () => ({ messageId: 'msg-1' }));
         const limit = vi.fn(async () => ({ success: true }));
         const complete = {
             OPENING_NOTICE_EMAIL: { send },
